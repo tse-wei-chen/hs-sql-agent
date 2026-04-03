@@ -1,0 +1,8 @@
+{
+    "servers": {
+        "hs-sql-agent": {
+            "type": "http",
+            "url": "http://localhost:8080/mcp"
+        }
+    }
+}
