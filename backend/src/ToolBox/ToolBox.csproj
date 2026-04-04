@@ -28,4 +28,8 @@
 	  <ProjectReference Include="..\Common\Common.csproj" />
 	  <ProjectReference Include="..\Modules\Modules.csproj" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+  </PropertyGroup>
 </Project>
