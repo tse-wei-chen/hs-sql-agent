@@ -7,20 +7,19 @@ COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install
 
 COPY frontend/ .
-RUN pnpm run generate
+RUN npx nuxi generate --output /app/frontend/build_output
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-builder
 WORKDIR /app
 
 COPY backend/Directory.Packages.props ./backend/
-
 COPY backend/src/Common/Common.csproj ./backend/src/Common/
 COPY backend/src/ToolBox/ToolBox.csproj ./backend/src/ToolBox/
 RUN dotnet restore ./backend/src/ToolBox/ToolBox.csproj
 
 COPY backend/ ./backend/
 
-COPY --from=frontend-builder /app/frontend/.output/public/ ./backend/src/ToolBox/wwwroot/
+COPY --from=frontend-builder /app/frontend/build_output/public/ ./backend/src/ToolBox/wwwroot/
 
 RUN dotnet publish ./backend/src/ToolBox/ToolBox.csproj -c Release -o /app/publish /p:UseAppHost=false
 

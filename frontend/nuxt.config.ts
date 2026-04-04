@@ -10,7 +10,6 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/tailwind.css'],
 
-  // 3. dev mode
   routeRules: {
     '/api/**': {
       proxy: 'http://localhost:8080/api/**'
