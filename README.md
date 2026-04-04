@@ -21,6 +21,52 @@ A Model Context Protocol (MCP) server that exposes SQL query capabilities as too
 | `get_tables` | List all tables in the database |
 | `get_table_reference` | Get table reference metadata |
 
+## Try it Out
+
+Public hosted endpoint: `https://hs-sql-agent-pg.zeabur.app/mcp`
+
+This endpoint is connected to a **Northwind demo database** for testing and learning.
+
+### Claude Desktop Integration
+
+Add the server to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "hs-sql-agent": {
+      "url": "https://hs-sql-agent-pg.zeabur.app/mcp"
+    }
+  }
+}
+```
+### vscode
+
+Add the server to your `mcp.json`:
+```json
+{
+    "servers": {
+        "hs-sql-agent": {
+            "type": "http",
+            "url": "https://hs-sql-agent-pg.zeabur.app/mcp"
+        }
+    }
+}
+```
+
+### cursor
+Add the server to your `mcp.json`:
+```json
+{
+	"mcpServers": {
+		"hs-sql-agent": {
+			"type": "http",
+			"url": "https://hs-sql-agent-pg.zeabur.app/mcp"
+		}
+	}
+}
+```
+
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
@@ -40,7 +86,7 @@ Choose one of the following methods.
 
 Option A: use `appsettings.json` (good for local development)
 
-1. Copy `src/ToolBox/appsettings.sample.json` to `src/ToolBox/appsettings.json`.
+1. Copy `src/ToolBox/appsettings.Sample.json` to `src/ToolBox/appsettings.json`.
 2. Fill in `SqlConfig.Provider` and `SqlConfig.ConnectionString`.
 
 ```json
@@ -62,6 +108,13 @@ Option A: use `appsettings.json` (good for local development)
     "PermitLimit": 0,
     "WindowSeconds": 0,
     "QueueLimit": 0
+  },
+  "JwtSettings": {
+    "SecretKey": "YourSuperSecretKeyHere",
+    "Issuer": "YourAppIssuer",
+    "Audience": "YourAppAudience",
+    "AccessTokenExpirationMinutes": 60,
+    "RefreshTokenExpirationDays": 30
   }
 }
 ```

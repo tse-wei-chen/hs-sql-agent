@@ -12,7 +12,7 @@
 			"args": [
 				"run",
 				"--project",
-				"src/ToolBox/ToolBox.csproj"
+				"backend/src/ToolBox/ToolBox.csproj"
 			],
 			"cwd": "${workspaceFolder}",
 			"stopAtEntry": false,

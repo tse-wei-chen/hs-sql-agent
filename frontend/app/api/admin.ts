@@ -1,0 +1,52 @@
+import { xiorInstance, xiorInstanceRefreshToken, xiorInstanceToken } from "./xiorInstance";
+
+export const checkFirstRun = async () => {
+    try {
+        const response = await xiorInstance.get('/admin/first-run');
+        return response.data;
+    } catch (error) {
+        console.error("Error checking first run:", error);
+        throw error;
+    }
+};
+
+export const signIn = async (email: string, password: string) => {
+  try {
+    const response = await xiorInstance.post('/admin/sign-in', { email, password });
+    return response.data;
+  } catch (error) {
+    console.error("Error signing in:", error);
+    throw error;
+  }
+};
+
+export const signUp = async (email: string, password: string) => {
+  try {
+    const response = await xiorInstance.post('/admin/sign-up', { email, password });
+    return response.data;
+  } catch (error) {
+    console.error("Error signing up:", error);
+    throw error;
+  }
+};
+
+export const changePassword = async (oldPassword: string, newPassword: string) => {
+  try {
+    const response = await xiorInstanceToken.post('/admin/change-password', { oldPassword, newPassword });
+    return response.data;
+  } catch (error) {
+    console.error("Error changing password:", error);
+    throw error;
+  }
+};
+
+
+export const refreshToken = async () => {
+  try {
+    const response = await xiorInstanceRefreshToken.post('/admin/refresh-token');
+    return response.data;
+  } catch (error) {
+    console.error("Error refreshing token:", error);
+    throw error;
+  };
+}
