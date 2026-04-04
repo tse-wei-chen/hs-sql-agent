@@ -28,9 +28,4 @@
 	  <ProjectReference Include="..\Common\Common.csproj" />
 	  <ProjectReference Include="..\Modules\Modules.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <Content Include="wwwroot\\**\\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
 </Project>
