@@ -20,7 +20,7 @@ RUN dotnet restore ./backend/src/ToolBox/ToolBox.csproj
 
 COPY backend/ ./backend/
 
-COPY --from=frontend-builder /app/backend/src/ToolBox/wwwroot/ ./backend/src/ToolBox/wwwroot/
+COPY --from=frontend-builder /app/frontend/.output/public/ ./backend/src/ToolBox/wwwroot/
 
 RUN dotnet publish ./backend/src/ToolBox/ToolBox.csproj -c Release -o /app/publish /p:UseAppHost=false
 

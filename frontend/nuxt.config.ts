@@ -10,13 +10,6 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/tailwind.css'],
 
-  // 2. 
-  nitro: {
-    output: {
-      publicDir: '../backend/src/ToolBox/wwwroot'
-    }
-  },
-
   // 3. dev mode
   routeRules: {
     '/api/**': {
