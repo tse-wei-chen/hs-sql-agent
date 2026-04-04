@@ -15,8 +15,7 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
-	Args = args,
-	WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot")
+	Args = args
 });
 
 builder.Configuration
