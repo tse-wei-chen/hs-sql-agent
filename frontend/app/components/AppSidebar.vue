@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import type { SidebarProps } from '@/components/ui/sidebar'
-
 import {
   Command, LifeBuoy, Send
 } from "lucide-vue-next"
@@ -19,9 +17,12 @@ import {
   SidebarGroupLabel,
 } from '@/components/ui/sidebar'
 
-const props = withDefaults(defineProps<SidebarProps>(), {
-  variant: "inset",
-})
+const props = defineProps<{
+  side?: "left" | "right"
+  variant?: "sidebar" | "floating" | "inset"
+  collapsible?: "offcanvas" | "icon" | "none"
+  class?: any
+}>()
 
 const data = {
   user: {
