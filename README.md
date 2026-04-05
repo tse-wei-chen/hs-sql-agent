@@ -34,7 +34,24 @@ It lets MCP clients call safe SQL tools while you manage access keys, audit logs
 
 ## Quick Start (Docker)
 
-Build and run:
+Pull from GHCR and run:
+
+```bash
+docker pull ghcr.io/tse-wei-chen/hs-sql-agent:latest
+docker run --rm -p 8080:8080 \
+  -e AppConnectionString="Data Source=hsqlagent.db" \
+  -e McpKeySettings__HmacSecretKey="YourMcpHmacSecretKeyHere-AtLeast32Chars!" \
+  -e JwtSettings__SecretKey="YourSuperSecretKeyHere-AtLeast32Chars!" \
+  -e JwtSettings__Issuer="YourAppIssuer" \
+  -e JwtSettings__Audience="YourAppAudience" \
+  -e JwtSettings__AccessTokenExpirationMinutes="60" \
+  -e RefreshTokenExpirationDays="1" \
+  ghcr.io/tse-wei-chen/hs-sql-agent:latest
+```
+
+⚠️ For production deployment, replace the example values for `McpKeySettings__HmacSecretKey`, `JwtSettings__SecretKey`, `JwtSettings__Issuer`, and `JwtSettings__Audience` before running the container.
+
+If you want to build locally instead of pulling from GHCR:
 
 ```bash
 docker build -t hs-sql-agent .
@@ -44,65 +61,11 @@ docker run --rm -p 8080:8080 \
   -e JwtSettings__SecretKey="YourSuperSecretKeyHere-AtLeast32Chars!" \
   -e JwtSettings__Issuer="YourAppIssuer" \
   -e JwtSettings__Audience="YourAppAudience" \
+  -e JwtSettings__AccessTokenExpirationMinutes="60" \
+  -e RefreshTokenExpirationDays="1" \
   hs-sql-agent
 ```
-
-The Docker image builds frontend static assets and serves them from the backend container.
-
-## How to Use
-
-### First-time setup flow
-
-1. Start backend and frontend.
-2. Open `http://localhost:3000` (if you using Docker `http://localhost:8080`).
-3. First run: go to sign-up page and create the first admin account.
-4. Sign in with that admin account.
-5. Go to Runtime MCP Keys page (`/runtime/mcp-keys`).
-6. Click `Issue Key` to create a new MCP key.
-7. Copy the `One-time key value` immediately (it is only shown once).
-8. Paste that value into MCP client config headers: `"X-MCP-Server-Key": "<YOUR_MCP_KEY>"`.
-
-### Claude Desktop
-
-```json
-{
-  "mcpServers": {
-    "hs-sql-agent": {
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
-    }
-  }
-}
-```
-
-### VS Code
-
-```json
-{
-  "servers": {
-    "hs-sql-agent": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
-    }
-  }
-}
-```
-
-### Cursor
-
-```json
-{
-  "mcpServers": {
-    "hs-sql-agent": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
-    }
-  }
-}
-```
-
+[![How to Use](https://img.shields.io/badge/How%20to%20Use-Jump-0f766e)](#how-to-use)
 
 
 ## Quick Start (Local Development)
@@ -203,6 +166,60 @@ pnpm dev
 ```
 
 Frontend runs on `http://localhost:3000`.
+
+## How to Use
+
+### First-time setup flow
+
+1. Start backend and frontend.
+2. Open `http://localhost:3000` (if you using Docker `http://localhost:8080`).
+3. First run: create the first admin account.
+4. Sign in with that admin account.
+5. Go to Runtime MCP Keys page (`/runtime/mcp-keys`).
+6. Click `Issue Key` to create a new MCP key.
+7. Copy the `One-time key value` immediately (it is only shown once).
+8. Paste that value into MCP client config headers: `"X-MCP-Server-Key": "<YOUR_MCP_KEY>"`.
+
+### Claude Desktop
+
+```json
+{
+  "mcpServers": {
+    "hs-sql-agent": {
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
+    }
+  }
+}
+```
+
+### VS Code
+
+```json
+{
+  "servers": {
+    "hs-sql-agent": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
+    }
+  }
+}
+```
+
+### Cursor
+
+```json
+{
+  "mcpServers": {
+    "hs-sql-agent": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
+    }
+  }
+}
+```
 
 ## Project Structure
 
