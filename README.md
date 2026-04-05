@@ -1,5 +1,5 @@
 # hs-sql-agent
-![GitHub License](https://img.shields.io/github/license/tse-wei-chen/hs-sql-agent)
+![GitHub License](https://img.shields.io/github/license/tse-wei-chen/hs-sql-agent) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml)
 
 `hs-sql-agent` is an HTTP MCP server for relational databases with an integrated admin panel.
 It lets MCP clients call safe SQL tools while you manage access keys, audit logs, per-key database mapping, and per-key rate limits.
