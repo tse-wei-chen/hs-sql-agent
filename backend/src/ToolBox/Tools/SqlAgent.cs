@@ -15,7 +15,7 @@ public class SqlAgent(IConfiguration configuration, IHttpContextAccessor httpCon
 	private readonly IConfiguration _configuration = configuration;
 	private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
 
-    [McpServerTool, Description("Execute a query (supports join, where, order by, limit). don't use alias")]
+	[McpServerTool, Description("Execute a query (supports join, where, where-date, where-in, where-string, group, having, combine, cte, order by, limit). don't use alias")]
 	public async Task<string> ExecuteQuerySafe(
 		[Description("The table name")]
 		string tableName,
@@ -23,6 +23,12 @@ public class SqlAgent(IConfiguration configuration, IHttpContextAccessor httpCon
 		List<SelectCondition> selectColumns,
 		[Description("Dictionary of where columns and their values")]
 		List<WhereCondition>? whereColumnsAndValues = null,
+		[Description("Date-only where conditions handled by SqlKata WhereDate.")]
+		List<DateWhereCondition>? dateWhereConditions = null,
+		[Description("IN/NOT IN specific where conditions.")]
+		List<InWhereCondition>? inWhereConditions = null,
+		[Description("String matching where conditions (contains/starts/ends/like).")]
+		List<StringWhereCondition>? stringWhereConditions = null,
 		[Description("List of columns to order by. Each item can include 'Field', 'Aggregation' (e.g., COUNT, SUM), and 'Direction' (ASC or DESC).")]
 		List<OrderByCondition>? orderByColumns = null,
 		[Description("Limit the number of results returned")]
@@ -30,7 +36,13 @@ public class SqlAgent(IConfiguration configuration, IHttpContextAccessor httpCon
 		[Description("List of joins. Each join is a dictionary with keys: 'Table', 'On', and optional 'Type' (default 'INNER').")]
 		List<JoinCondition>? joins = null,
 		[Description("List of group by conditions. Each condition includes 'Table', 'Field'.")]
-		List<GroupByCondition>? groupByConditions = null)
+		List<GroupByCondition>? groupByConditions = null,
+		[Description("List of having conditions.")]
+		List<HavingCondition>? havingConditions = null,
+		[Description("List of combine conditions (union/union all/intersect/except).")]
+		List<CombineCondition>? combineConditions = null,
+		[Description("List of CTE definitions.")]
+		List<CteCondition>? cteConditions = null)
 	{
 		var sqlConfig = await ResolveSqlConfigAsync();
 		if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
@@ -43,8 +55,14 @@ public class SqlAgent(IConfiguration configuration, IHttpContextAccessor httpCon
 			tableName,
 			selectColumns,
 			whereColumnsAndValues,
+			dateWhereConditions,
+			inWhereConditions,
+			stringWhereConditions,
 			orderByColumns,
 			groupByConditions,
+			havingConditions,
+			combineConditions,
+			cteConditions,
 			limit,
 			joins
 		);
