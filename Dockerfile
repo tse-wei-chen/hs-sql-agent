@@ -1,4 +1,4 @@
-FROM node:20-slim AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 WORKDIR /app/frontend
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
