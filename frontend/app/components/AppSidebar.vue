@@ -100,7 +100,7 @@ const data = ref({
           <SidebarMenu>
             <SidebarMenuItem v-for="childItem in item.items" :key="childItem.title">
               <SidebarMenuButton as-child :is-active="route.path === childItem.url">
-                <a :href="childItem.url">{{ childItem.title }}</a>
+                <a v-on:click="navigateTo(childItem.url)">{{ childItem.title }}</a>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
