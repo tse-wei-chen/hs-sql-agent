@@ -26,6 +26,17 @@ let loginData: Ref<{ email: string; password: string }> = ref({
   password: "",
 })
 
+onMounted(async () => {
+  try {
+    const response = await checkFirstRun()
+    if (response) {
+      await navigateTo("/sign-up")
+    }
+  } catch (error) {
+    console.error("Failed to check first run status:", error)
+  }
+})
+
 const submit = async () => {
   try {
     const response = await signIn(loginData.value.email, loginData.value.password)
