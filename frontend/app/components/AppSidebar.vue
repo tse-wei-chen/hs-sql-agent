@@ -17,6 +17,8 @@ import {
   SidebarGroupLabel,
 } from '@/components/ui/sidebar'
 
+const route = useRoute()
+
 const props = defineProps<{
   side?: "left" | "right"
   variant?: "sidebar" | "floating" | "inset"
@@ -24,11 +26,16 @@ const props = defineProps<{
   class?: any
 }>()
 
-const data = {
+onMounted(() => {
+  data.value.user.name = localStorage.getItem("userName") || "User"
+  data.value.user.email = localStorage.getItem("userEmail") || "user@example.com";
+})
+
+const data = ref({
   user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
+    name: "",
+    email: "",
+    avatar: "",
   },
   navSecondary: [
     {
@@ -44,23 +51,25 @@ const data = {
   ],
   navMain: [
     {
-      title: "design",
+      title: "Runtime Admin",
       url: "#",
       items: [
         {
-          title: "workflow",
-          url: "/workflow",
-          isActive: true,
+          title: "Overview",
+          url: "/home",
         },
         {
-          title: "instance",
-          url: "/instance",
-          isActive: true,
+          title: "MCP Keys",
+          url: "/runtime/mcp-keys",
+        },
+        {
+          title: "Audit",
+          url: "/runtime/audit",
         },
       ],
     },
   ],
-}
+})
 </script>
 
 <template>
@@ -75,8 +84,8 @@ const data = {
                 <Command class="size-4" />
               </div>
               <div class="grid flex-1 text-left text-sm leading-tight">
-                <span class="truncate font-medium">Acme Inc</span>
-                <span class="truncate text-xs">Enterprise</span>
+                <span class="truncate font-medium">HS Admin Panel</span>
+                <span class="truncate text-xs">Dashboard</span>
               </div>
             </a>
           </SidebarMenuButton>
@@ -90,7 +99,7 @@ const data = {
         <SidebarGroupContent>
           <SidebarMenu>
             <SidebarMenuItem v-for="childItem in item.items" :key="childItem.title">
-              <SidebarMenuButton as-child :is-active="childItem.isActive">
+              <SidebarMenuButton as-child :is-active="route.path === childItem.url">
                 <a :href="childItem.url">{{ childItem.title }}</a>
               </SidebarMenuButton>
             </SidebarMenuItem>

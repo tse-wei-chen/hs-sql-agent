@@ -1,6 +1,8 @@
 
 using System.ComponentModel;
+using Microsoft.Extensions.Configuration;
 using ModelContextProtocol.Server;
+using Modules.Models;
 using ToolBox.Enums;
 using ToolBox.Factories;
 using ToolBox.Models;
@@ -8,9 +10,10 @@ using ToolBox.Models;
 namespace ToolBox.Tools;
 
 [McpServerToolType]
-public class SqlAgent(SqlConfig dbCtx)
+public class SqlAgent(IConfiguration configuration, IHttpContextAccessor httpContextAccessor)
 {
-	private readonly SqlConfig _dbCtx = dbCtx;
+	private readonly IConfiguration _configuration = configuration;
+	private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
 
     [McpServerTool, Description("Execute a query (supports join, where, order by, limit). don't use alias")]
 	public async Task<string> ExecuteQuerySafe(
@@ -29,13 +32,14 @@ public class SqlAgent(SqlConfig dbCtx)
 		[Description("List of group by conditions. Each condition includes 'Table', 'Field'.")]
 		List<GroupByCondition>? groupByConditions = null)
 	{
-		if (!CheckProviderAndConnectionString(out var dbType))
+		var sqlConfig = await ResolveSqlConfigAsync();
+		if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
 		{
-			return $"Invalid provider or connection string: {_dbCtx.Provider} - {_dbCtx.ConnectionString}";
+			return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 		}
 		var strategy = SqlStrategyFactory.GetStrategy(dbType);
 		var result = await strategy.ExecuteQueryAsync(
-			_dbCtx.ConnectionString ?? "",
+			sqlConfig.ConnectionString,
 			tableName,
 			selectColumns,
 			whereColumnsAndValues,
@@ -52,16 +56,17 @@ public class SqlAgent(SqlConfig dbCtx)
 	{
 		try
 		{
-			if (!CheckProviderAndConnectionString(out var dbType))
+			var sqlConfig = await ResolveSqlConfigAsync();
+			if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
 			{
-				return $"Invalid provider or connection string: {_dbCtx.Provider} - {_dbCtx.ConnectionString}";
+				return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 			}
 			if (string.IsNullOrEmpty(tableName))
 			{
 				return "Table name cannot be empty. please provide a valid table name.";
 			}
 			var strategy = SqlStrategyFactory.GetStrategy(dbType);
-			var columns = await strategy.GetColumnsAsync(_dbCtx.ConnectionString ?? "", tableName);
+			var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, tableName);
 			return string.Join(", ", columns);
 		}
 		catch (Exception ex)
@@ -75,12 +80,13 @@ public class SqlAgent(SqlConfig dbCtx)
 	{
 		try
 		{
-			if (!CheckProviderAndConnectionString(out var dbType))
+			var sqlConfig = await ResolveSqlConfigAsync();
+			if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
 			{
-				return $"Invalid provider or connection string: {_dbCtx.Provider} - {_dbCtx.ConnectionString}";
+				return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 			}
 			var strategy = SqlStrategyFactory.GetStrategy(dbType);
-			var schemas = await strategy.GetSchemasAsync(_dbCtx.ConnectionString ?? "");
+			var schemas = await strategy.GetSchemasAsync(sqlConfig.ConnectionString);
 			return string.Join(", ", schemas);
 		}
 		catch (Exception ex)
@@ -94,12 +100,13 @@ public class SqlAgent(SqlConfig dbCtx)
 	{
 		try
 		{
-			if (!CheckProviderAndConnectionString(out var dbType))
+			var sqlConfig = await ResolveSqlConfigAsync();
+			if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
 			{
-				return $"Invalid provider or connection string: {_dbCtx.Provider} - {_dbCtx.ConnectionString}";
+				return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 			}
 			var strategy = SqlStrategyFactory.GetStrategy(dbType);
-			var tables = await strategy.GetTablesAsync(_dbCtx.ConnectionString ?? "");
+			var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString);
 			return string.Join(", ", tables);
 		}
 		catch (Exception ex)
@@ -113,16 +120,17 @@ public class SqlAgent(SqlConfig dbCtx)
 	{
 		try
 		{
-			if (!CheckProviderAndConnectionString(out var dbType))
+			var sqlConfig = await ResolveSqlConfigAsync();
+			if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
 			{
-				return $"Invalid provider or connection string: {_dbCtx.Provider} - {_dbCtx.ConnectionString}";
+				return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 			}
 			if (string.IsNullOrEmpty(tableName))
 			{
 				return "Table name cannot be empty. please provide a valid table name.";
 			}
 			var strategy = SqlStrategyFactory.GetStrategy(dbType);
-			return await strategy.GetTableReferenceAsync(_dbCtx.ConnectionString ?? "", tableName);
+			return await strategy.GetTableReferenceAsync(sqlConfig.ConnectionString, tableName);
 		}
 		catch (Exception ex)
 		{
@@ -130,21 +138,50 @@ public class SqlAgent(SqlConfig dbCtx)
 		}
 	}
 
-	private bool CheckProviderAndConnectionString(out SqlAgentToolType dbType)
+	private static bool CheckProviderAndConnectionString(SqlRuntimeConfig sqlConfig, out SqlAgentToolType dbType)
 	{
 		dbType = default;
-		if (string.IsNullOrEmpty(_dbCtx.Provider))
+		if (string.IsNullOrEmpty(sqlConfig.Provider))
 		{
 			return false;
 		}
-		if (string.IsNullOrEmpty(_dbCtx.ConnectionString))
+		if (string.IsNullOrEmpty(sqlConfig.ConnectionString))
 		{
 			return false;
 		}
-		if (!Enum.TryParse(_dbCtx.Provider, true, out dbType))
+		if (!Enum.TryParse(sqlConfig.Provider, true, out dbType))
 		{
 			return false;
 		}
 		return true;
+	}
+
+	private async Task<SqlRuntimeConfig> ResolveSqlConfigAsync()
+	{
+		var context = _httpContextAccessor.HttpContext;
+		if (context is not null)
+		{
+			var provider = context.Items.TryGetValue(McpContextItemKeys.SqlProvider, out var providerObj)
+				? providerObj?.ToString()
+				: null;
+			var connectionString = context.Items.TryGetValue(McpContextItemKeys.SqlConnectionString, out var connObj)
+				? connObj?.ToString()
+				: null;
+
+			if (!string.IsNullOrWhiteSpace(provider) && !string.IsNullOrWhiteSpace(connectionString))
+			{
+				return new SqlRuntimeConfig
+				{
+					Provider = provider,
+					ConnectionString = connectionString
+				};
+			}
+		}
+
+		return new SqlRuntimeConfig
+		{
+			Provider = _configuration["SqlConfig:Provider"] ?? string.Empty,
+			ConnectionString = _configuration["SqlConfig:ConnectionString"] ?? string.Empty
+		};
 	}
 }

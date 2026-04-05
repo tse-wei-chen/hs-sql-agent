@@ -1,0 +1,54 @@
+import { xiorInstanceToken } from './xiorInstance'
+
+export interface IssueMcpKeyRequest {
+  name: string
+  expiresAt?: string | null
+  allowedTools?: string | null
+  sqlProvider?: string | null
+  sqlConnectionString?: string | null
+  permitLimitOverride?: number | null
+  windowSecondsOverride?: number | null
+  queueLimitOverride?: number | null
+}
+
+export interface AuditDailySummaryItem {
+  day: string
+  successCount: number
+  failedCount: number
+}
+
+export const listMcpKeys = async () => {
+  const response = await xiorInstanceToken.get('/runtime/mcp-keys')
+  return response.data
+}
+
+export const issueMcpKey = async (payload: IssueMcpKeyRequest) => {
+  const response = await xiorInstanceToken.post('/runtime/mcp-keys', payload)
+  return response.data
+}
+
+export const revokeMcpKey = async (id: number) => {
+  const response = await xiorInstanceToken.post(`/runtime/mcp-keys/${id}/revoke`)
+  return response.data
+}
+
+export const getRuntimeAudit = async (page = 1, pageSize = 20, action = '', keyword = '') => {
+  const response = await xiorInstanceToken.get('/runtime/audit', {
+    params: {
+      page,
+      pageSize,
+      action: action || undefined,
+      keyword: keyword || undefined,
+    },
+  })
+  return response.data
+}
+
+export const getRuntimeAuditDailySummary = async (days = 7) => {
+  const response = await xiorInstanceToken.get('/runtime/audit/daily-summary', {
+    params: {
+      days,
+    },
+  })
+  return response.data
+}

@@ -49,6 +49,8 @@ const submit = async () => {
     if (response?.accessToken && response?.refreshToken) {
       localStorage.setItem("accessToken", response.accessToken)
       localStorage.setItem("refreshToken", response.refreshToken)
+      localStorage.setItem("userEmail", response.email)
+      localStorage.setItem("userName", response.userName)
       return navigateTo("/home")
     }
 

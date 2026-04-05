@@ -22,23 +22,6 @@ builder.Configuration
 	.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
 	.AddEnvironmentVariables();
 
-builder.Services.AddSingleton(_ =>
-{
-	var provider = builder.Configuration["SqlConfig:Provider"];
-	var connectionString = builder.Configuration["SqlConfig:ConnectionString"];
-
-	if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(connectionString))
-	{
-		throw new InvalidOperationException("Missing SqlConfig. Set SqlConfig:Provider and SqlConfig:ConnectionString via appsettings or environment variables.");
-	}
-
-	return new SqlConfig
-	{
-		Provider = provider,
-		ConnectionString = connectionString
-	};
-});
-
 var appConnectionString = builder.Configuration["AppConnectionString"];
 if (string.IsNullOrWhiteSpace(appConnectionString))
 {
@@ -48,7 +31,11 @@ if (string.IsNullOrWhiteSpace(appConnectionString))
 builder.Services.AddDbContext<AdminContext>(options => options.UseSqlite(appConnectionString));
 builder.Services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
 builder.Services.AddScoped<IAdminService, AdminService>();
+builder.Services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
+builder.Services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
+builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
+builder.Services.Configure<McpKeySettings>(builder.Configuration.GetSection("McpKeySettings"));
 
 var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>()
 	?? throw new InvalidOperationException("Missing JwtSettings in configuration.");
@@ -61,6 +48,14 @@ if (string.IsNullOrWhiteSpace(jwtSettings.SecretKey))
 if (Encoding.UTF8.GetByteCount(jwtSettings.SecretKey) < 32)
 {
 	throw new InvalidOperationException("JwtSettings:SecretKey must be at least 32 bytes for HS256.");
+}
+
+var mcpKeySettings = builder.Configuration.GetSection("McpKeySettings").Get<McpKeySettings>()
+	?? throw new InvalidOperationException("Missing McpKeySettings in configuration.");
+
+if (string.IsNullOrWhiteSpace(mcpKeySettings.HmacSecretKey) || Encoding.UTF8.GetByteCount(mcpKeySettings.HmacSecretKey) < 32)
+{
+	throw new InvalidOperationException("McpKeySettings:HmacSecretKey must be at least 32 bytes.");
 }
 
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.SecretKey));
@@ -99,43 +94,65 @@ builder.Logging.AddConsole(consoleLogOptions =>
 	consoleLogOptions.LogToStandardErrorThreshold = LogLevel.Trace;
 });
 
-var permitLimit = builder.Configuration.GetValue<int?>("RateLimiting:PermitLimit") ?? 60;
-var windowSeconds = builder.Configuration.GetValue<int?>("RateLimiting:WindowSeconds") ?? 60;
-var queueLimit = builder.Configuration.GetValue<int?>("RateLimiting:QueueLimit") ?? 0;
-// Enable rate limiting only if both PermitLimit and WindowSeconds are greater than 0
-var isRateLimitingEnabled = permitLimit > 0 && windowSeconds > 0;
-
-if (isRateLimitingEnabled)
+builder.Services.AddRateLimiter(options =>
 {
-	builder.Services.AddRateLimiter(options =>
+	options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+	options.AddPolicy("mcp-policy", context =>
 	{
-		options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-		options.AddPolicy("mcp-policy", context =>
-		{
-			var clientIp = context.Connection.RemoteIpAddress?.ToString();
-			var forwardedFor = context.Request.Headers["X-Forwarded-For"].ToString();
-			var partitionKey = !string.IsNullOrWhiteSpace(forwardedFor)
-				? forwardedFor.Split(',')[0].Trim()
-				: string.IsNullOrWhiteSpace(clientIp)
-					? "unknown"
-					: clientIp;
+		var rateState = context.RequestServices.GetRequiredService<IRateLimitingRuntimeState>();
+		var effective = rateState.GetCurrent();
 
-			return RateLimitPartition.GetFixedWindowLimiter(
-				partitionKey,
-				_ => new FixedWindowRateLimiterOptions
-				{
-					PermitLimit = permitLimit,
-					Window = TimeSpan.FromSeconds(windowSeconds),
-					QueueLimit = queueLimit,
-					QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-					AutoReplenishment = true
-				});
-		});
+		if (context.Items.TryGetValue(McpContextItemKeys.PermitLimit, out var permitObj) && permitObj is int permit)
+		{
+			effective.PermitLimit = permit;
+		}
+
+		if (context.Items.TryGetValue(McpContextItemKeys.WindowSeconds, out var windowObj) && windowObj is int window)
+		{
+			effective.WindowSeconds = window;
+		}
+
+		if (context.Items.TryGetValue(McpContextItemKeys.QueueLimit, out var queueObj) && queueObj is int queue)
+		{
+			effective.QueueLimit = queue;
+		}
+
+		var keyBucket = context.Items.TryGetValue(McpContextItemKeys.AccessKeyId, out var keyIdObj) && keyIdObj is int keyId
+			? $"key:{keyId}"
+			: null;
+
+		var clientIp = context.Connection.RemoteIpAddress?.ToString();
+		var forwardedFor = context.Request.Headers["X-Forwarded-For"].ToString();
+		var ipBucket = !string.IsNullOrWhiteSpace(forwardedFor)
+			? forwardedFor.Split(',')[0].Trim()
+			: string.IsNullOrWhiteSpace(clientIp)
+				? "unknown"
+				: clientIp;
+
+		var bucketBase = keyBucket ?? $"ip:{ipBucket}";
+		var partitionKey = $"{bucketBase}:{effective.PermitLimit}:{effective.WindowSeconds}:{effective.QueueLimit}";
+
+		if (effective.PermitLimit <= 0 || effective.WindowSeconds <= 0)
+		{
+			return RateLimitPartition.GetNoLimiter(partitionKey);
+		}
+
+		return RateLimitPartition.GetFixedWindowLimiter(
+			partitionKey,
+			_ => new FixedWindowRateLimiterOptions
+			{
+				PermitLimit = effective.PermitLimit,
+				Window = TimeSpan.FromSeconds(effective.WindowSeconds),
+				QueueLimit = Math.Max(0, effective.QueueLimit),
+				QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+				AutoReplenishment = true
+			});
 	});
-}
+});
 
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:8080");
 builder.Services.AddScoped<McpContextMiddleware>();
+builder.Services.AddScoped<McpAccessKeyAuthMiddleware>();
 builder.Services.AddScoped<McpResponseFlattenerMiddleware>();
 builder.Services.AddScoped<SqlAgent>();
 builder.Services.AddHttpContextAccessor();
@@ -168,10 +185,15 @@ if (app.Environment.IsDevelopment())
 {
 	app.UseCors("DevCors");
 }
-if (isRateLimitingEnabled)
-{
-	app.UseRateLimiter();
-}
+
+app.UseWhen(
+	context => context.Request.Path.StartsWithSegments("/mcp"),
+	branch =>
+	{
+		branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
+	});
+
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -184,16 +206,8 @@ app.UseWhen(
 		branch.UseMiddleware<McpResponseFlattenerMiddleware>();
 	});
 
-if (isRateLimitingEnabled)
-{
-	app.MapMcp("/mcp").RequireRateLimiting("mcp-policy");
-}
-else
-{
-	app.MapMcp("/mcp");
-}
+app.MapMcp("/mcp").AllowAnonymous().RequireRateLimiting("mcp-policy");
 app.MapControllers();
 app.MapFallbackToFile("index.html");
-// SqlAgent.Initialize(app.Services, dbConn, dbType);
 
 await app.RunAsync();

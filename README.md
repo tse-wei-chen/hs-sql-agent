@@ -1,105 +1,170 @@
 # hs-sql-agent
-[![.NET](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/dotnet.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/dotnet.yml) ![GitHub License](https://img.shields.io/github/license/tse-wei-chen/hs-sql-agent)
+![GitHub License](https://img.shields.io/github/license/tse-wei-chen/hs-sql-agent)
 
-A Model Context Protocol (MCP) server that exposes SQL query capabilities as tools, allowing AI assistants to safely query relational databases via structured parameters.
+`hs-sql-agent` is an HTTP MCP server for relational databases with an integrated admin panel.
+It lets MCP clients call safe SQL tools while you manage access keys, audit logs, per-key database mapping, and per-key rate limits.
 
 ## Features
 
-- Supports **SQLite**, **PostgreSQL**, and **MySQL**
-- Exposes MCP tools for querying, schema inspection, and table discovery
-- Query builder powered by [SqlKata](https://sqlkata.com/) — no raw SQL injection risk
-- HTTP transport at `/mcp` (compatible with Claude Desktop and other MCP clients)
-- Provider and connection string configurable via `appsettings` or environment variables
+- MCP over HTTP at `/mcp`
+- SQL tools powered by [SqlKata](https://sqlkata.com/) (structured query building)
+- Built-in admin APIs and web UI
+- API key lifecycle management (issue, list, revoke)
+- Audit log and daily summary APIs
+- Per-key SQL provider/connection override
+- Per-key rate limit override
+- Supports `Sqlite`, `Postgres`, and `Mysql`
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `execute_query_safe` | Execute a SELECT query with joins, filters, ordering, grouping, and limits |
-| `get_columns` | List columns of a given table |
-| `get_schemas` | List all schemas in the database |
-| `get_tables` | List all tables in the database |
+| `execute_query_safe` | Execute a query (supports join, where, order by, group by, limit) |
+| `get_columns` | Get column names of a table |
+| `get_schemas` | Get schemas in the database |
+| `get_tables` | Get tables in the database |
 | `get_table_reference` | Get table reference metadata |
 
-## Try it Out
+## Architecture
 
-Public hosted endpoint: `https://hs-sql-agent-pg.zeabur.app/mcp`
+- Backend: ASP.NET Core (`net10.0`) in `backend/src/ToolBox`
+- Admin data store: SQLite via `AppConnectionString`
+- Frontend: Nuxt 4 in `frontend`
+- MCP endpoint: `http://localhost:8080/mcp`
 
-This endpoint is connected to a **Northwind demo database** for testing and learning.
+## Quick Start (Docker)
 
-### Claude Desktop Integration
+Build and run:
 
-Add the server to your `claude_desktop_config.json`:
+```bash
+docker build -t hs-sql-agent .
+docker run --rm -p 8080:8080 \
+  -e AppConnectionString="Data Source=hsqlagent.db" \
+  -e McpKeySettings__HmacSecretKey="YourMcpHmacSecretKeyHere-AtLeast32Chars!" \
+  -e JwtSettings__SecretKey="YourSuperSecretKeyHere-AtLeast32Chars!" \
+  -e JwtSettings__Issuer="YourAppIssuer" \
+  -e JwtSettings__Audience="YourAppAudience" \
+  hs-sql-agent
+```
+
+The Docker image builds frontend static assets and serves them from the backend container.
+
+## How to Use
+
+### First-time setup flow
+
+1. Start backend and frontend.
+2. Open `http://localhost:3000` (if you using Docker `http://localhost:8080`).
+3. First run: go to sign-up page and create the first admin account.
+4. Sign in with that admin account.
+5. Go to Runtime MCP Keys page (`/runtime/mcp-keys`).
+6. Click `Issue Key` to create a new MCP key.
+7. Copy the `One-time key value` immediately (it is only shown once).
+8. Paste that value into MCP client config headers: `"X-MCP-Server-Key": "<YOUR_MCP_KEY>"`.
+
+### Claude Desktop
 
 ```json
 {
   "mcpServers": {
     "hs-sql-agent": {
-      "url": "https://hs-sql-agent-pg.zeabur.app/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
     }
   }
 }
 ```
-### vscode
 
-Add the server to your `mcp.json`:
+### VS Code
+
 ```json
 {
-    "servers": {
-        "hs-sql-agent": {
-            "type": "http",
-            "url": "https://hs-sql-agent-pg.zeabur.app/mcp"
-        }
+  "servers": {
+    "hs-sql-agent": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
     }
+  }
 }
 ```
 
-### cursor
-Add the server to your `mcp.json`:
+### Cursor
+
 ```json
 {
-	"mcpServers": {
-		"hs-sql-agent": {
-			"type": "http",
-			"url": "https://hs-sql-agent-pg.zeabur.app/mcp"
-		}
-	}
+  "mcpServers": {
+    "hs-sql-agent": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
+    }
+  }
 }
 ```
 
-## Prerequisites
+
+
+## Quick Start (Local Development)
+
+### Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Node.js 20+](https://nodejs.org/)
+- [pnpm](https://pnpm.io/) (recommended)
 
-## Getting Started
-
-### 1. Clone the repository
+### 1. Clone
 
 ```bash
 git clone https://github.com/your-org/hs-sql-agent.git
 cd hs-sql-agent
 ```
 
-### 2. Configure database connection
+### 2. Configure backend settings
 
-Choose one of the following methods.
+Copy the sample file:
 
-Option A: use `appsettings.json` (good for local development)
+```bash
+cp backend/src/ToolBox/appsettings.Sample.json backend/src/ToolBox/appsettings.json
+```
 
-1. Copy `src/ToolBox/appsettings.Sample.json` to `src/ToolBox/appsettings.json`.
-2. Fill in `SqlConfig.Provider` and `SqlConfig.ConnectionString`.
+Required settings:
+
+- `AppConnectionString`
+- `McpKeySettings.HmacSecretKey` (at least 32 bytes)
+- `JwtSettings.SecretKey` (at least 32 bytes)
+- `JwtSettings.Issuer`
+- `JwtSettings.Audience`
+
+Optional settings:
+
+- `SqlConfig` (global SQL fallback if key override is not provided)
+- `RateLimiting` (global fallback rate limit)
+
+Minimal example:
 
 ```json
 {
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.AspNetCore": "Warning",
-      "Microsoft.EntityFrameworkCore.Database.Command": "Information"
-    }
-  },
-  "AllowedHosts": "*",
   "ASPNETCORE_URLS": "http://localhost:8080",
+  "AppConnectionString": "Data Source=hsqlagent.db",
+  "McpKeySettings": {
+    "HmacSecretKey": "YourMcpHmacSecretKeyHere-AtLeast32Chars!"
+  },
+  "JwtSettings": {
+    "SecretKey": "YourSuperSecretKeyHere-AtLeast32Chars!",
+    "Issuer": "YourAppIssuer",
+    "Audience": "YourAppAudience",
+    "AccessTokenExpirationMinutes": 60,
+    "RefreshTokenExpirationDays": 30,
+    "ChangePasswordTokenExpirationMinutes": 5
+  }
+}
+```
+
+Optional SQL and rate limit block:
+
+```json
+{
   "SqlConfig": {
     "Provider": "Postgres",
     "ConnectionString": "Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypassword"
@@ -108,86 +173,47 @@ Option A: use `appsettings.json` (good for local development)
     "PermitLimit": 0,
     "WindowSeconds": 0,
     "QueueLimit": 0
-  },
-  "JwtSettings": {
-    "SecretKey": "YourSuperSecretKeyHere",
-    "Issuer": "YourAppIssuer",
-    "Audience": "YourAppAudience",
-    "AccessTokenExpirationMinutes": 60,
-    "RefreshTokenExpirationDays": 30
   }
 }
 ```
 
-Option B: use environment variables (recommended for deployment)
+Notes:
 
-```powershell
-$env:SqlConfig__Provider="Postgres"
-$env:SqlConfig__ConnectionString="Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypassword"
-```
+- `RateLimiting.PermitLimit <= 0` or `WindowSeconds <= 0` means no limit.
+- Current defaults are `0/0/0` when `RateLimiting` is omitted.
+- `SqlConfig` is optional and acts as fallback when key-level SQL override is absent.
 
-Supported providers: `Sqlite`, `Postgres`, `Mysql`
-
-### 3. Run the server
+### 3. Run backend
 
 ```bash
-cd src/ToolBox
+cd backend/src/ToolBox
 dotnet run
 ```
 
-The MCP endpoint will be available at `http://localhost:8080/mcp`.
+Backend runs on `http://localhost:8080` by default.
 
-### Claude Desktop Integration
+### 4. Run frontend (optional, for admin UI)
 
-Add the server to your `claude_desktop_config.json`:
+In another terminal:
 
-```json
-{
-  "mcpServers": {
-    "hs-sql-agent": {
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}
-```
-### vscode
-
-Add the server to your `mcp.json`:
-```json
-{
-    "servers": {
-        "hs-sql-agent": {
-            "type": "http",
-            "url": "http://localhost:8080/mcp"
-        }
-    }
-}
+```bash
+cd frontend
+pnpm install
+pnpm dev
 ```
 
-### cursor
-Add the server to your `mcp.json`:
-```json
-{
-	"mcpServers": {
-		"hs-sql-agent": {
-			"type": "http",
-			"url": "http://localhost:8080/mcp"
-		}
-	}
-}
-```
+Frontend runs on `http://localhost:3000`.
+
 ## Project Structure
 
-```
-src/
-  Common/           Shared models and base types
-  ToolBox/          MCP server entry point and tools
-    Tools/          SqlAgent MCP tool definitions
-    Strategies/     Database-specific query strategies (SQLite, Postgres, MySQL)
-    Factories/      Strategy factory
-    Middleware/      MCP context and response middleware
-    Models/         Configuration and request models
-    Enums/          SqlAgentToolType enum
+```text
+backend/
+  src/
+    Common/      Shared models and utilities
+    Modules/     Data access and domain services
+    ToolBox/     ASP.NET host, MCP tools, middleware, and controllers
+frontend/
+  app/           Nuxt app (admin panel)
 ```
 
 ## License

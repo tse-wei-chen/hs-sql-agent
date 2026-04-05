@@ -155,34 +155,12 @@ public class AdminService : IAdminService
     }
 
     private string GenerateAccessToken(int userId, string userName, string email)
-    {
-        if (string.IsNullOrWhiteSpace(_jwtSettings.SecretKey))
-        {
-            throw new InvalidOperationException("JwtSettings:SecretKey is required.");
-        }
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.SecretKey));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var claims = new[]
-        {
-            new Claim(JwtRegisteredClaimNames.Typ, "access"),
-            new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
-            new Claim(JwtRegisteredClaimNames.UniqueName, userName),
-            new Claim(JwtRegisteredClaimNames.Email, email)
-        };
-
-        var token = new JwtSecurityToken(
-            issuer: _jwtSettings.Issuer,
-            audience: _jwtSettings.Audience,
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
-            signingCredentials: creds);
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
-    }
+        => GenerateToken(userId, userName, email, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
 
     private string GenerateRefreshToken(int userId, string userName, string email)
+        => GenerateToken(userId, userName, email, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
+
+    private string GenerateToken(int userId, string userName, string email, string tokenType, DateTime expires)
     {
         if (string.IsNullOrWhiteSpace(_jwtSettings.SecretKey))
         {
@@ -194,7 +172,7 @@ public class AdminService : IAdminService
 
         var claims = new[]
         {
-            new Claim(JwtRegisteredClaimNames.Typ, "refresh"),
+            new Claim(JwtRegisteredClaimNames.Typ, tokenType),
             new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
             new Claim(JwtRegisteredClaimNames.UniqueName, userName),
             new Claim(JwtRegisteredClaimNames.Email, email)
@@ -204,7 +182,7 @@ public class AdminService : IAdminService
             issuer: _jwtSettings.Issuer,
             audience: _jwtSettings.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays),
+            expires: expires,
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

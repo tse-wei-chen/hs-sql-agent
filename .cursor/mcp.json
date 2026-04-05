@@ -2,7 +2,8 @@
 	"mcpServers": {
 		"hs-sql-agent": {
 			"type": "http",
-			"url": "http://localhost:8080/mcp"
+			"url": "http://localhost:8080/mcp",
+			"headers": { "X-MCP-Server-Key": "" }
 		}
 	}
 }

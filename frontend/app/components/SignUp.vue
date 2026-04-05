@@ -16,7 +16,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { signUp } from "~/api/admin"
+import { checkFirstRun, signUp } from "~/api/admin"
 
 const props = defineProps<{
   class?: HTMLAttributes["class"]
@@ -24,6 +24,23 @@ const props = defineProps<{
 let loginData: Ref<{ email: string; password: string }> = ref({
   email: "",
   password: "",
+})
+const loading =  ref(false)
+
+onMounted(async () => {
+  loading.value = true
+  try {
+    const response = await checkFirstRun()
+    if (!response) {
+      await navigateTo("/login")
+      loading.value = false
+      return
+    }
+  } catch (error) {
+    console.error("Failed to check first run status:", error)
+    loading.value = false
+    return
+  }
 })
 
 
@@ -33,6 +50,8 @@ const submit = async () => {
     if (response?.accessToken && response?.refreshToken) {
       localStorage.setItem("accessToken", response.accessToken)
       localStorage.setItem("refreshToken", response.refreshToken)
+      localStorage.setItem("userEmail", response.email)
+      localStorage.setItem("userName", response.userName)
       return navigateTo("/home")
     }
     alert("Sign up failed. Please try again.")
@@ -73,7 +92,7 @@ const submit = async () => {
               <Input v-model="loginData.password" id="password" type="password" required />
             </Field>
             <Field>
-              <Button type="submit" @click.prevent="submit">
+              <Button type="submit" @click.prevent="submit" :disabled="!loading">
                 Sign Up
               </Button>
             </Field>

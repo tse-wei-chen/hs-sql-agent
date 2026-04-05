@@ -1,0 +1,96 @@
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { getRuntimeAudit } from '@/api/runtime'
+
+definePageMeta({
+  layout: 'default',
+})
+
+interface AuditItem {
+  id: number
+  actorType: string
+  actorId?: string | null
+  action: string
+  target: string
+  detail?: string | null
+  result: string
+  createdAt: string
+}
+
+const page = ref(1)
+const pageSize = ref(20)
+const action = ref('')
+const keyword = ref('')
+const totalCount = ref(0)
+const items = ref<AuditItem[]>([])
+const loading = ref(false)
+
+const load = async () => {
+  loading.value = true
+  try {
+    const result = await getRuntimeAudit(page.value, pageSize.value, action.value, keyword.value)
+    items.value = result.items || []
+    totalCount.value = result.totalCount || 0
+  } finally {
+    loading.value = false
+  }
+}
+
+const nextPage = async () => {
+  if (page.value * pageSize.value >= totalCount.value) return
+  page.value += 1
+  await load()
+}
+
+const prevPage = async () => {
+  if (page.value <= 1) return
+  page.value -= 1
+  await load()
+}
+
+onMounted(load)
+</script>
+
+<template>
+  <div class="space-y-4">
+    <Card>
+      <CardHeader class="border-b bg-muted/40">
+        <CardTitle>Audit Logs</CardTitle>
+        <CardDescription>Runtime settings and MCP key operation history.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="mb-4 flex flex-col gap-2 md:flex-row">
+          <Input v-model="action" placeholder="Filter action" />
+          <Input v-model="keyword" placeholder="Keyword" />
+          <Button @click="load">Search</Button>
+        </div>
+
+        <div v-if="loading">Loading audit logs...</div>
+        <div v-else class="space-y-2">
+          <div v-for="item in items" :key="item.id" class="rounded border bg-card p-3 text-sm">
+            <div class="font-medium">{{ item.action }} ({{ item.result }})</div>
+            <div class="text-muted-foreground">target: {{ item.target }} | actor: {{ item.actorType }} {{ item.actorId || '' }}</div>
+            <div class="text-muted-foreground">{{ item.createdAt }}</div>
+            <div v-if="item.detail" class="mt-1">{{ item.detail }}</div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center gap-2">
+          <Button variant="outline" @click="prevPage" :disabled="page <= 1">Previous</Button>
+          <span class="text-sm">Page {{ page }}</span>
+          <Button variant="outline" @click="nextPage" :disabled="page * pageSize >= totalCount">Next</Button>
+          <span class="text-sm text-muted-foreground">Total {{ totalCount }}</span>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
+</template>

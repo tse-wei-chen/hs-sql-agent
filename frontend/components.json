@@ -1,11 +1,13 @@
 {
   "$schema": "https://shadcn-vue.com/schema.json",
-  "style": "new-york",
+  "style": "nova",
+  "base": "reka",
+  "font": "geist",
   "typescript": true,
   "tailwind": {
     "config": "",
     "css": "app/assets/css/tailwind.css",
-    "baseColor": "neutral",
+    "baseColor": "gray",
     "cssVariables": true,
     "prefix": ""
   },
