@@ -1,5 +1,5 @@
 namespace Modules.Models;
-public class SignInVM
+public class PermissionVM
 {
     public string? UserName { get; set; }
     public string? Email { get; set; }

@@ -30,6 +30,12 @@ let loginData: Ref<{ email: string; password: string }> = ref({
 const submit = async () => {
   try {
     const response = await signUp(loginData.value.email, loginData.value.password)
+    if (response?.accessToken && response?.refreshToken) {
+      localStorage.setItem("accessToken", response.accessToken)
+      localStorage.setItem("refreshToken", response.refreshToken)
+      return navigateTo("/home")
+    }
+    alert("Sign up failed. Please try again.")
   } catch (error: any) {
     alert(error?.response?.data || "Sign up failed. Please try again.")
   }

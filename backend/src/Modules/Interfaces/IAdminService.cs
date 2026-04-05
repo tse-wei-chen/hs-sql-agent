@@ -5,7 +5,8 @@ namespace Modules.Interfaces;
 public interface IAdminService
 {
     Task<bool> IsFirstRunAsync();
-    Task<SignInVM> SignInAsync(SignInRequest request);
+    Task<PermissionVM> SignInAsync(SignInRequest request);
+    Task<PermissionVM> SignUpAsync(SignUpRequest request);
     Task ChangePasswordAsync(ChangePasswordRequest request, string userEmail);
-    Task<SignInVM> RefreshTokenAsync(string id);
+    Task<PermissionVM> RefreshTokenAsync(string id);
 };

@@ -12,7 +12,7 @@ export const checkFirstRun = async () => {
 
 export const signIn = async (email: string, password: string) => {
   try {
-    const response = await xiorInstance.post('/admin/sign-in', { email, password });
+    const response = await xiorInstance.post('/admin/sign-in', { email: email, password: password });
     return response.data;
   } catch (error) {
     console.error("Error signing in:", error);
@@ -22,7 +22,7 @@ export const signIn = async (email: string, password: string) => {
 
 export const signUp = async (email: string, password: string) => {
   try {
-    const response = await xiorInstance.post('/admin/sign-up', { email, password });
+    const response = await xiorInstance.post('/admin/sign-up', { email: email, password: password });
     return response.data;
   } catch (error) {
     console.error("Error signing up:", error);
@@ -32,7 +32,7 @@ export const signUp = async (email: string, password: string) => {
 
 export const changePassword = async (oldPassword: string, newPassword: string) => {
   try {
-    const response = await xiorInstanceToken.post('/admin/change-password', { oldPassword, newPassword });
+    const response = await xiorInstanceToken.post('/admin/change-password', { oldPassword: oldPassword, newPassword: newPassword });
     return response.data;
   } catch (error) {
     console.error("Error changing password:", error);

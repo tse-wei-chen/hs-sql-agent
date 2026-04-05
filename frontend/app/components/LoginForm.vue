@@ -26,17 +26,6 @@ let loginData: Ref<{ email: string; password: string }> = ref({
   password: "",
 })
 
-onMounted(async () => {
-  try {
-    const response = await checkFirstRun()
-    if (response) {
-      await navigateTo("/sign-up")
-    }
-  } catch (error) {
-    console.error("Failed to check first run status:", error)
-  }
-})
-
 const submit = async () => {
   try {
     const response = await signIn(loginData.value.email, loginData.value.password)
@@ -49,8 +38,7 @@ const submit = async () => {
     if (response?.accessToken && response?.refreshToken) {
       localStorage.setItem("accessToken", response.accessToken)
       localStorage.setItem("refreshToken", response.refreshToken)
-      window.location.href = "/dashboard"
-      return
+      return navigateTo("/home")
     }
 
     alert("Login failed. Please try again.")

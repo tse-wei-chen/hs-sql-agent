@@ -38,6 +38,12 @@ const props = defineProps<{
 }>()
 
 const { isMobile } = useSidebar()
+
+const logOut = () => {
+  localStorage.removeItem("accessToken")
+  localStorage.removeItem("refreshToken")
+  navigateTo("/login")
+}
 </script>
 
 <template>
@@ -105,7 +111,7 @@ const { isMobile } = useSidebar()
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>
+          <DropdownMenuItem @click="() => logOut()">
             <LogOut />
             Log out
           </DropdownMenuItem>

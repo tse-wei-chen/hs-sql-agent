@@ -46,6 +46,26 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         }
     }
 
+    [HttpPost("sign-up")]
+    [AllowAnonymous]
+    public async Task<IActionResult> SignUp([FromBody] SignUpRequest request)
+    {
+        if (!ModelState.IsValid)
+        {
+            return ValidationProblem(ModelState);
+        }
+        try
+        {
+            var result = await _adminService.SignUpAsync(request);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            _logger.LogWarning(ex, "Invalid sign-up request.");
+            return BadRequest(ex.Message);
+        }
+    }
+
     [HttpPatch("change-password")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
     {

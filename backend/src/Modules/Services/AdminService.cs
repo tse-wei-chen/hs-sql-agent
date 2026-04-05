@@ -8,6 +8,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using Modules.Data.Entites;
 
 namespace Modules.Services;
 
@@ -29,7 +30,7 @@ public class AdminService : IAdminService
         return !await _context.SuperUsers.AnyAsync();
     }
 
-    public async Task<SignInVM> SignInAsync(SignInRequest request)
+    public async Task<PermissionVM> SignInAsync(SignInRequest request)
     {
         if (request is null)
         {
@@ -52,7 +53,45 @@ public class AdminService : IAdminService
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
 
-        return new SignInVM
+        return new PermissionVM
+        {
+            UserName = user.Username,
+            Email = user.Mail,
+            AccessToken = GenerateAccessToken(user.Id, user.Username, user.Mail),
+            RefreshToken = GenerateRefreshToken(user.Id, user.Username, user.Mail)
+        };
+    }
+
+    public async Task<PermissionVM> SignUpAsync(SignUpRequest request)
+    {
+        if (request is null)
+        {
+            throw new ArgumentException("Request body is required.");
+        }
+
+        var email = request.Email?.Trim();
+        var password = request.Password?.Trim();
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        {
+            throw new ArgumentException("Email and password are required.");
+        }
+
+        if (await _context.SuperUsers.AnyAsync(x => x.Mail == email))
+        {
+            throw new ArgumentException("A user with the same email already exists.");
+        }
+
+        var user = new SuperUser
+        {
+            Mail = email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
+            Username = email.Split('@')[0]
+        };
+
+        _context.SuperUsers.Add(user);
+        await _context.SaveChangesAsync();
+
+        return new PermissionVM
         {
             UserName = user.Username,
             Email = user.Mail,
@@ -89,7 +128,7 @@ public class AdminService : IAdminService
         await _context.SaveChangesAsync();
     }
 
-    public async Task<SignInVM> RefreshTokenAsync(string id)
+    public async Task<PermissionVM> RefreshTokenAsync(string id)
     {
         var userId = id?.Trim();
         if (string.IsNullOrWhiteSpace(userId))
@@ -106,7 +145,7 @@ public class AdminService : IAdminService
             throw new UnauthorizedAccessException("User not found.");
         }
 
-        return new SignInVM
+        return new PermissionVM
         {
             UserName = user.Username,
             Email = user.Mail,
