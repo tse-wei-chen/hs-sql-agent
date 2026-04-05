@@ -200,21 +200,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				if (string.IsNullOrWhiteSpace(cond.Field))
 					continue;
 
-				var havingValue = cond.Value is JsonElement je ? UnwrapJsonElement(je) : cond.Value;
-				var havingOp = string.IsNullOrWhiteSpace(cond.Operator) ? "=" : cond.Operator;
-
-				if (!string.IsNullOrWhiteSpace(cond.Aggregation) && IsSupportedAggregation(cond.Aggregation))
-				{
-					query = query.HavingRaw($"{cond.Aggregation.ToUpperInvariant()}({cond.Field}) {havingOp} ?", havingValue);
-				}
-				else if (IsRawExpression(cond.Field))
-				{
-					query = query.HavingRaw($"{cond.Field} {havingOp} ?", havingValue);
-				}
-				else
-				{
-					query = query.Having(cond.Field, havingOp, havingValue);
-				}
+				query = ApplyHavingCondition(query, cond);
 			}
 		}
 
@@ -539,21 +525,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				if (string.IsNullOrWhiteSpace(cond.Field))
 					continue;
 
-				var havingValue = cond.Value is JsonElement je ? UnwrapJsonElement(je) : cond.Value;
-				var havingOp = string.IsNullOrWhiteSpace(cond.Operator) ? "=" : cond.Operator;
-
-				if (!string.IsNullOrWhiteSpace(cond.Aggregation) && IsSupportedAggregation(cond.Aggregation))
-				{
-					query = query.HavingRaw($"{cond.Aggregation.ToUpperInvariant()}({cond.Field}) {havingOp} ?", havingValue);
-				}
-				else if (IsRawExpression(cond.Field))
-				{
-					query = query.HavingRaw($"{cond.Field} {havingOp} ?", havingValue);
-				}
-				else
-				{
-					query = query.Having(cond.Field, havingOp, havingValue);
-				}
+				query = ApplyHavingCondition(query, cond);
 			}
 		}
 
@@ -603,6 +575,106 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			return false;
 
 		return field.IndexOfAny(['(', ')', ' ', '+', '-', '*', '/', ',']) >= 0;
+	}
+
+	private static Query ApplyHavingCondition(Query query, HavingCondition cond)
+	{
+		var havingOp = string.IsNullOrWhiteSpace(cond.Operator)
+			? "="
+			: cond.Operator.Trim().ToLowerInvariant();
+
+		if (havingOp is "between" or "not between")
+		{
+			if (!TryGetBetweenValues(cond.Value, out var start, out var end))
+				return query;
+
+			var expression = BuildHavingExpression(cond);
+			var betweenOperator = havingOp == "not between" ? "NOT BETWEEN" : "BETWEEN";
+			return query.HavingRaw($"{expression} {betweenOperator} ? AND ?", start, end);
+		}
+
+		var havingValue = cond.Value is JsonElement je ? UnwrapJsonElement(je) : cond.Value;
+		var displayOperator = string.IsNullOrWhiteSpace(cond.Operator) ? "=" : cond.Operator;
+
+		if (!string.IsNullOrWhiteSpace(cond.Aggregation) && IsSupportedAggregation(cond.Aggregation))
+			return query.HavingRaw($"{cond.Aggregation.ToUpperInvariant()}({cond.Field}) {displayOperator} ?", havingValue);
+
+		if (IsRawExpression(cond.Field))
+			return query.HavingRaw($"{cond.Field} {displayOperator} ?", havingValue);
+
+		return query.Having(cond.Field, displayOperator, havingValue);
+	}
+
+	private static string BuildHavingExpression(HavingCondition cond)
+	{
+		if (!string.IsNullOrWhiteSpace(cond.Aggregation) && IsSupportedAggregation(cond.Aggregation))
+			return $"{cond.Aggregation.ToUpperInvariant()}({cond.Field})";
+
+		return cond.Field;
+	}
+
+	private static bool TryGetBetweenValues(object? rawValue, out object? start, out object? end)
+	{
+		start = null;
+		end = null;
+
+		if (rawValue is JsonElement je)
+		{
+			if (je.ValueKind == JsonValueKind.Array && je.GetArrayLength() >= 2)
+			{
+				start = UnwrapJsonElement(je[0]);
+				end = UnwrapJsonElement(je[1]);
+				return true;
+			}
+
+			if (je.ValueKind == JsonValueKind.String)
+				rawValue = je.GetString();
+		}
+
+		if (rawValue is IEnumerable<object?> enumerable)
+		{
+			var values = enumerable.Where(v => v is not null).Take(2).ToArray();
+			if (values.Length == 2)
+			{
+				start = values[0];
+				end = values[1];
+				return true;
+			}
+		}
+
+		if (rawValue is string s)
+		{
+			var trimmed = s.Trim();
+			if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+				trimmed = trimmed[1..^1];
+
+			if (trimmed.StartsWith('(') && trimmed.EndsWith(')'))
+				trimmed = trimmed[1..^1];
+
+			var parts = trimmed.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length >= 2)
+			{
+				start = ConvertLiteral(parts[0]);
+				end = ConvertLiteral(parts[1]);
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static object ConvertLiteral(string value)
+	{
+		if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var longVal))
+			return longVal;
+
+		if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var doubleVal))
+			return doubleVal;
+
+		if (bool.TryParse(value, out var boolVal))
+			return boolVal;
+
+		return value.Trim().Trim('\'', '"');
 	}
 
 	private static object UnwrapJsonElement(JsonElement je)
