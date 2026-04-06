@@ -2,7 +2,7 @@
 ![GitHub License](https://img.shields.io/github/license/tse-wei-chen/hs-sql-agent) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml)
 
 `hs-sql-agent` is an HTTP MCP server for relational databases with an integrated admin panel.
-It lets MCP clients call safe SQL tools while you manage access keys, audit logs, per-key database mapping, and per-key rate limits.
+It lets MCP clients call safe SQL tools while you manage access keys, audit logs, per-key database mapping, and global rate limits.
 
 ## Features
 
@@ -12,7 +12,7 @@ It lets MCP clients call safe SQL tools while you manage access keys, audit logs
 - API key lifecycle management (issue, list, revoke)
 - Audit log and daily summary APIs
 - Per-key SQL provider/connection override
-- Per-key rate limit override
+- Global IP rate limit override
 - Supports `Sqlite`, `Postgres`, and `Mysql`
 
 ## MCP Tools
@@ -46,6 +46,9 @@ docker run --rm -p 8080:8080 \
   -e JwtSettings__Audience="YourAppAudience" \
   -e JwtSettings__AccessTokenExpirationMinutes="60" \
   -e JwtSettings__RefreshTokenExpirationDays="1" \
+  -e RateLimiting__PermitLimit="0" \
+  -e RateLimiting__WindowSeconds="0" \
+  -e RateLimiting__QueueLimit="0" \
   ghcr.io/tse-wei-chen/hs-sql-agent:latest
 ```
 
@@ -63,6 +66,9 @@ docker run --rm -p 8080:8080 \
   -e JwtSettings__Audience="YourAppAudience" \
   -e JwtSettings__AccessTokenExpirationMinutes="60" \
   -e JwtSettings__RefreshTokenExpirationDays="1" \
+  -e RateLimiting__PermitLimit="0" \
+  -e RateLimiting__WindowSeconds="0" \
+  -e RateLimiting__QueueLimit="0" \
   hs-sql-agent
 ```
 [![How to Use](https://img.shields.io/badge/How%20to%20Use-Jump-0f766e)](#how-to-use)
@@ -120,22 +126,22 @@ Minimal example:
     "AccessTokenExpirationMinutes": 60,
     "RefreshTokenExpirationDays": 30,
     "ChangePasswordTokenExpirationMinutes": 5
+  },
+  "RateLimiting": {
+    "PermitLimit": 0,
+    "WindowSeconds": 0,
+    "QueueLimit": 0
   }
 }
 ```
 
-Optional SQL and rate limit block:
+Optional SQL:
 
 ```json
 {
   "SqlConfig": {
     "Provider": "Postgres",
     "ConnectionString": "Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypassword"
-  },
-  "RateLimiting": {
-    "PermitLimit": 0,
-    "WindowSeconds": 0,
-    "QueueLimit": 0
   }
 }
 ```

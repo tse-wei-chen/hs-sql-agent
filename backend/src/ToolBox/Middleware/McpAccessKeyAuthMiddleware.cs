@@ -1,7 +1,11 @@
-using Microsoft.AspNetCore.Http;
 using Modules.Interfaces;
 using ToolBox.Background;
 using ToolBox.Models;
+using Modules.Models;
+using Microsoft.Extensions.Caching.Memory;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text;
 
 namespace ToolBox.Middleware;
 
@@ -9,8 +13,16 @@ public class McpAccessKeyAuthMiddleware(
     IMcpAccessKeyService keyService,
     IAuditService auditService,
     IMcpAccessKeyLastUsedQueue lastUsedQueue,
+    IMemoryCache cache,
     ILogger<McpAccessKeyAuthMiddleware> logger) : IMiddleware
 {
+    private const int StripedLockCount = 64;
+    private static readonly SemaphoreSlim[] StripedLocks = Enumerable.Range(0, StripedLockCount).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+    private static readonly TimeSpan CacheExpiry = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan NegativeCacheExpiry = TimeSpan.FromMinutes(1);
+    private static readonly byte[] UnauthorizedResponseBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { error = "Invalid MCP access key." }));
+    private static readonly byte[] MissingKeyResponseBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { error = "Missing MCP access key." }));
+    private static readonly byte[] ForbiddenResponseBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { error = "Origin not allowed." }));
     private const int MaxAuthHeaderLength = 4096;
     private const int MaxMcpKeyHeaderLength = 1024;
     private const int MaxCorsRequestHeadersLength = 2048;
@@ -23,6 +35,7 @@ public class McpAccessKeyAuthMiddleware(
     private readonly IMcpAccessKeyService _keyService = keyService;
     private readonly IAuditService _auditService = auditService;
     private readonly IMcpAccessKeyLastUsedQueue _lastUsedQueue = lastUsedQueue;
+    private readonly IMemoryCache _cache = cache;
     private readonly ILogger<McpAccessKeyAuthMiddleware> _logger = logger;
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
@@ -40,15 +53,15 @@ public class McpAccessKeyAuthMiddleware(
 
         if (!TryExtractKey(context.Request, out var rawKey, out var keyError))
         {
-            await WriteUnauthorizedAsync(context, keyError ?? "Missing MCP access key.");
+            await WriteUnauthorizedAsync(context, keyError == "Missing MCP access key." ? MissingKeyResponseBytes : Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { error = keyError })));
             await AuditFailedAsync(context, "missing_key", context.RequestAborted);
             return;
         }
 
-        var validation = await _keyService.ValidateAsync(rawKey, context.RequestAborted);
+        var validation = await GetOrValidateKeyAsync(rawKey, context.RequestAborted);
         if (!validation.IsValid || validation.KeyId is null)
         {
-            await WriteUnauthorizedAsync(context, "Invalid MCP access key.");
+            await WriteUnauthorizedAsync(context, UnauthorizedResponseBytes);
             await AuditFailedAsync(context, validation.Reason ?? "invalid_key", context.RequestAborted);
             return;
         }
@@ -62,30 +75,16 @@ public class McpAccessKeyAuthMiddleware(
 
         if (!TryApplyCorsPolicy(context, validation.CorsAllowedOriginsSet, out var corsError))
         {
-            await WriteForbiddenAsync(context, corsError ?? "Origin not allowed.");
+            await WriteForbiddenAsync(context, ForbiddenResponseBytes);
             await AuditFailedAsync(context, "cors_origin_not_allowed", context.RequestAborted);
             return;
-        }
-
-        if (validation.PermitLimitOverride.HasValue)
-        {
-            context.Items[McpContextItemKeys.PermitLimit] = validation.PermitLimitOverride.Value;
-        }
-
-        if (validation.WindowSecondsOverride.HasValue)
-        {
-            context.Items[McpContextItemKeys.WindowSeconds] = validation.WindowSecondsOverride.Value;
-        }
-
-        if (validation.QueueLimitOverride.HasValue)
-        {
-            context.Items[McpContextItemKeys.QueueLimit] = validation.QueueLimitOverride.Value;
         }
 
         if (!_lastUsedQueue.TryEnqueue(validation.KeyId.Value))
         {
             _logger.LogWarning("Skipping MCP key last-used update because queue is full. keyId={KeyId}", validation.KeyId.Value);
         }
+
 
         await next(context);
     }
@@ -270,15 +269,61 @@ public class McpAccessKeyAuthMiddleware(
         return true;
     }
 
-    private static async Task WriteUnauthorizedAsync(HttpContext context, string message)
+    private static async Task WriteUnauthorizedAsync(HttpContext context, byte[] responseBytes)
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        await context.Response.WriteAsJsonAsync(new { error = message });
+        context.Response.ContentType = "application/json";
+        await context.Response.Body.WriteAsync(responseBytes);
     }
 
-    private static async Task WriteForbiddenAsync(HttpContext context, string message)
+    private static async Task WriteForbiddenAsync(HttpContext context, byte[] responseBytes)
     {
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        await context.Response.WriteAsJsonAsync(new { error = message });
+        context.Response.ContentType = "application/json";
+        await context.Response.Body.WriteAsync(responseBytes);
+    }
+
+    private async Task<McpAccessKeyValidationResult> GetOrValidateKeyAsync(string rawKey, CancellationToken ct)
+    {
+        var keyHash = ComputeKeyHash(rawKey);
+        var cacheKey = $"mcp_auth_v2_{keyHash}";
+
+        if (_cache.TryGetValue(cacheKey, out McpAccessKeyValidationResult? cachedResult) && cachedResult is not null)
+        {
+            return cachedResult;
+        }
+
+        var lockIndex = Math.Abs(cacheKey.GetHashCode()) % StripedLocks.Length;
+        var semaphore = StripedLocks[lockIndex];
+
+        await semaphore.WaitAsync(ct);
+        try
+        {
+            if (_cache.TryGetValue(cacheKey, out cachedResult) && cachedResult is not null)
+            {
+                return cachedResult;
+            }
+
+            var result = await _keyService.ValidateAsync(rawKey, ct);
+
+            var expiry = result.IsValid ? CacheExpiry : NegativeCacheExpiry;
+            _cache.Set(cacheKey, result, expiry);
+
+            return result;
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
+
+
+    private static string ComputeKeyHash(string rawKey)
+    {
+        var inputBytes = Encoding.UTF8.GetBytes(rawKey);
+        var hashBytes = SHA256.HashData(inputBytes);
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }
 }
+
+

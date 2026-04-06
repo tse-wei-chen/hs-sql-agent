@@ -27,26 +27,6 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             throw new ArgumentException("Key name is required.", nameof(request.Name));
         }
 
-        if ((request.PermitLimitOverride.HasValue || request.WindowSecondsOverride.HasValue || request.QueueLimitOverride.HasValue)
-            && (!request.PermitLimitOverride.HasValue || !request.WindowSecondsOverride.HasValue || !request.QueueLimitOverride.HasValue))
-        {
-            throw new ArgumentException("Rate limit override requires permitLimit, windowSeconds, and queueLimit together.");
-        }
-
-        if (request.PermitLimitOverride.HasValue && request.PermitLimitOverride.Value < 0)
-        {
-            throw new ArgumentException("PermitLimitOverride must be greater than or equal to 0.");
-        }
-
-        if (request.WindowSecondsOverride.HasValue && request.WindowSecondsOverride.Value < 0)
-        {
-            throw new ArgumentException("WindowSecondsOverride must be greater than or equal to 0.");
-        }
-
-        if (request.QueueLimitOverride.HasValue && request.QueueLimitOverride.Value < 0)
-        {
-            throw new ArgumentException("QueueLimitOverride must be greater than or equal to 0.");
-        }
 
         var normalizedProvider = string.IsNullOrWhiteSpace(request.SqlProvider) ? null : request.SqlProvider.Trim();
         var normalizedConnectionString = string.IsNullOrWhiteSpace(request.SqlConnectionString) ? null : request.SqlConnectionString.Trim();
@@ -71,9 +51,6 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             CorsAllowedOrigins = normalizedCorsAllowedOrigins,
             SqlProvider = normalizedProvider,
             SqlConnectionString = normalizedConnectionString,
-            PermitLimitOverride = request.PermitLimitOverride,
-            WindowSecondsOverride = request.WindowSecondsOverride,
-            QueueLimitOverride = request.QueueLimitOverride,
             CreatedAt = DateTime.UtcNow,
             CreatedBy = actorId,
             IsActive = true
@@ -93,9 +70,6 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             SqlProvider = entity.SqlProvider,
             HasSqlConnectionStringOverride = !string.IsNullOrWhiteSpace(entity.SqlConnectionString),
-            PermitLimitOverride = entity.PermitLimitOverride,
-            WindowSecondsOverride = entity.WindowSecondsOverride,
-            QueueLimitOverride = entity.QueueLimitOverride
         };
     }
 
@@ -116,9 +90,6 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
                 CorsAllowedOrigins = x.CorsAllowedOrigins,
                 SqlProvider = x.SqlProvider,
                 HasSqlConnectionStringOverride = !string.IsNullOrWhiteSpace(x.SqlConnectionString),
-                PermitLimitOverride = x.PermitLimitOverride,
-                WindowSecondsOverride = x.WindowSecondsOverride,
-                QueueLimitOverride = x.QueueLimitOverride,
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync(cancellationToken);
@@ -186,11 +157,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             AllowedTools = entity.AllowedTools,
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             CorsAllowedOriginsSet = ParseCorsAllowedOrigins(entity.CorsAllowedOrigins),
-            SqlProvider = entity.SqlProvider,
-            SqlConnectionString = entity.SqlConnectionString,
-            PermitLimitOverride = entity.PermitLimitOverride,
-            WindowSecondsOverride = entity.WindowSecondsOverride,
-            QueueLimitOverride = entity.QueueLimitOverride
+            SqlProvider = entity.SqlProvider
         };
     }
 

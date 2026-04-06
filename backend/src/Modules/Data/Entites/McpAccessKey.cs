@@ -13,9 +13,6 @@ public class McpAccessKey
     public string? CorsAllowedOrigins { get; set; }
     public string? SqlProvider { get; set; }
     public string? SqlConnectionString { get; set; }
-    public int? PermitLimitOverride { get; set; }
-    public int? WindowSecondsOverride { get; set; }
-    public int? QueueLimitOverride { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? RevokedAt { get; set; }

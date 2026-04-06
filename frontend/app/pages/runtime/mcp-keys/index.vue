@@ -34,9 +34,6 @@ interface McpKeyItem {
   corsAllowedOrigins?: string | null
   sqlProvider?: string | null
   hasSqlConnectionStringOverride?: boolean
-  permitLimitOverride?: number | null
-  windowSecondsOverride?: number | null
-  queueLimitOverride?: number | null
 }
 
 const keys = ref<McpKeyItem[]>([])
@@ -49,9 +46,7 @@ const selectedTools = ref<string[]>([])
 const corsAllowedOrigins = ref('')
 const sqlProvider = ref('global')
 const sqlConnectionString = ref('')
-const permitLimitOverride = ref('global')
-const windowSecondsOverride = ref('global')
-const queueLimitOverride = ref('global')
+
 const issuedPlaintextKey = ref('')
 
 const toolOptions = [
@@ -64,9 +59,6 @@ const toolOptions = [
 
 const providerOptions = ['global', 'Sqlite', 'Postgres', 'MySQL']
 
-const permitOptions = ['global', '20', '60', '120', '300', '0']
-const windowOptions = ['global', '10', '30', '60', '120', '300', '0']
-const queueOptions = ['global', '0', '5', '10', '20', '50']
 
 const selectedToolLabel = computed(() => {
   if (selectedTools.value.length === 0) {
@@ -76,11 +68,7 @@ const selectedToolLabel = computed(() => {
   return `${selectedTools.value.length} tools selected`
 })
 
-const canSubmitRateOverride = computed(() => {
-  const values = [permitLimitOverride.value, windowSecondsOverride.value, queueLimitOverride.value]
-  const globals = values.filter((x) => x === 'global').length
-  return globals === 0 || globals === 3
-})
+
 
 const expiresAt = computed(() => {
   if (expiresMode.value === 'never') {
@@ -101,9 +89,7 @@ const expiresAt = computed(() => {
   return now.toISOString()
 })
 
-const mapNumericOverride = (value: string) => {
-  return value === 'global' ? null : Number(value)
-}
+
 
 const load = async () => {
   loading.value = true
@@ -120,10 +106,7 @@ const issue = async () => {
     return
   }
 
-  if (!canSubmitRateOverride.value) {
-    alert('Rate override must be all Global or all concrete values.')
-    return
-  }
+
 
   issuing.value = true
   try {
@@ -134,9 +117,6 @@ const issue = async () => {
       corsAllowedOrigins: corsAllowedOrigins.value.trim() || null,
       sqlProvider: sqlProvider.value === 'global' ? null : sqlProvider.value,
       sqlConnectionString: sqlConnectionString.value.trim() || null,
-      permitLimitOverride: mapNumericOverride(permitLimitOverride.value),
-      windowSecondsOverride: mapNumericOverride(windowSecondsOverride.value),
-      queueLimitOverride: mapNumericOverride(queueLimitOverride.value),
     })
 
     issuedPlaintextKey.value = result.plaintextKey || ''
@@ -147,9 +127,6 @@ const issue = async () => {
     corsAllowedOrigins.value = ''
     sqlProvider.value = 'global'
     sqlConnectionString.value = ''
-    permitLimitOverride.value = 'global'
-    windowSecondsOverride.value = 'global'
-    queueLimitOverride.value = 'global'
     await load()
   } catch (error: any) {
     alert(error?.response?.data || 'Failed to issue MCP key.')
@@ -259,54 +236,10 @@ onMounted(load)
               </p>
             </Field>
 
-            <Field>
-              <FieldLabel>Permit Limit Override</FieldLabel>
-              <Select v-model="permitLimitOverride">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Permit override" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="opt in permitOptions" :key="`permit-${opt}`" :value="opt">
-                    {{ opt === 'global' ? 'Global default' : opt }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
 
-            <Field>
-              <FieldLabel>Window Seconds Override</FieldLabel>
-              <Select v-model="windowSecondsOverride">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Window override" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="opt in windowOptions" :key="`window-${opt}`" :value="opt">
-                    {{ opt === 'global' ? 'Global default' : opt }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field>
-              <FieldLabel>Queue Limit Override</FieldLabel>
-              <Select v-model="queueLimitOverride">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Queue override" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="opt in queueOptions" :key="`queue-${opt}`" :value="opt">
-                    {{ opt === 'global' ? 'Global default' : opt }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
           </FieldGroup>
 
-          <p v-if="!canSubmitRateOverride" class="rounded-md border border-border bg-muted/50 p-2 text-xs text-muted-foreground">
-            Rate overrides must be either all Global, or all concrete values.
-          </p>
-
-          <Button type="submit" :disabled="issuing || !canSubmitRateOverride" class="w-full md:w-auto" @click.prevent="issue">
+          <Button type="submit" :disabled="issuing" class="w-full md:w-auto" @click.prevent="issue">
             {{ issuing ? 'Issuing...' : 'Issue Key' }}
           </Button>
         </form>
@@ -339,7 +272,6 @@ onMounted(load)
               <div class="text-muted-foreground">Last used: {{ key.lastUsedAt || 'never' }}</div>
               <div class="text-muted-foreground">CORS: {{ key.corsAllowedOrigins || 'none' }}</div>
               <div class="text-muted-foreground">SQL: {{ key.sqlProvider || 'global' }} / connection: {{ key.hasSqlConnectionStringOverride ? 'override' : 'global' }}</div>
-              <div class="text-muted-foreground">Rate: {{ key.permitLimitOverride ?? 'global' }}/{{ key.windowSecondsOverride ?? 'global' }}/{{ key.queueLimitOverride ?? 'global' }}</div>
             </div>
             <Button variant="destructive" :disabled="!key.isActive" @click="revoke(key.id)">Revoke</Button>
           </div>
