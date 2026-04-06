@@ -1,8 +1,12 @@
 **/bin/
 **/obj/
 **/.vs/
+**/.cursor/
 **/.vscode/
 .git/
 .gitignore
 README.md
 LICENSE
+CHANGELOG.md
+claude_desktop_config.json
+miscellaneous/
