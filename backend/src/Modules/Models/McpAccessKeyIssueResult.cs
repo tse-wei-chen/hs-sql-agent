@@ -8,6 +8,7 @@ public class McpAccessKeyIssueResult
     public string PlaintextKey { get; set; } = null!;
     public DateTime? ExpiresAt { get; set; }
     public string? AllowedTools { get; set; }
+    public string? CorsAllowedOrigins { get; set; }
     public string? SqlProvider { get; set; }
     public bool HasSqlConnectionStringOverride { get; set; }
     public int? PermitLimitOverride { get; set; }

@@ -34,14 +34,7 @@ public class RuntimeAdminController(
 
         var actorId = GetActorId();
         var result = await _keyService.IssueKeyAsync(
-            request.Name,
-            request.ExpiresAt,
-            request.AllowedTools,
-            request.SqlProvider,
-            request.SqlConnectionString,
-            request.PermitLimitOverride,
-            request.WindowSecondsOverride,
-            request.QueueLimitOverride,
+            request,
             actorId,
             cancellationToken);
 

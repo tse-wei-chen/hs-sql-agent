@@ -14,6 +14,7 @@ public class McpAccessKeyConfig : IEntityTypeConfiguration<McpAccessKey>
         builder.Property(x => x.KeyPrefix).IsRequired().HasMaxLength(16);
         builder.Property(x => x.KeyHash).IsRequired().HasMaxLength(128);
         builder.Property(x => x.AllowedTools).HasMaxLength(2048);
+        builder.Property(x => x.CorsAllowedOrigins).HasMaxLength(4000);
         builder.Property(x => x.SqlProvider).HasMaxLength(32);
         builder.Property(x => x.SqlConnectionString).HasMaxLength(4000);
         builder.Property(x => x.CreatedBy).HasMaxLength(64);

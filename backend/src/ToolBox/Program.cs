@@ -8,6 +8,7 @@ using Modules.Data;
 using Modules.Interfaces;
 using Modules.Models;
 using Modules.Services;
+using ToolBox.Background;
 using ToolBox.Tools;
 using ToolBox.Middleware;
 using ToolBox.Models;
@@ -154,6 +155,8 @@ builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://loca
 builder.Services.AddScoped<McpContextMiddleware>();
 builder.Services.AddScoped<McpAccessKeyAuthMiddleware>();
 builder.Services.AddScoped<McpResponseFlattenerMiddleware>();
+builder.Services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
+builder.Services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
 builder.Services.AddScoped<SqlAgent>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMcpServer(_ => { }).WithToolsFromAssembly().WithHttpTransport();
@@ -186,27 +189,27 @@ using (var scope = app.Services.CreateScope())
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-if (app.Environment.IsDevelopment())
-{
-	app.UseCors("DevCors");
-}
-
 // 3. MCP pipeline
 app.UseWhen(
 	context => context.Request.Path.StartsWithSegments("/mcp"),
 	branch =>
 	{
-		branch.UseRateLimiter();
 		branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
+		branch.UseRateLimiter();
 		branch.UseMiddleware<McpContextMiddleware>();
 		branch.UseMiddleware<McpResponseFlattenerMiddleware>();
 	});
 
 // 4. API pipeline (authentication/authorization)
+var isDev = app.Environment.IsDevelopment();
 app.UseWhen(
 	context => context.Request.Path.StartsWithSegments("/api"),
 	branch =>
 	{
+		if (isDev)
+		{
+			branch.UseCors("DevCors");
+		}
 		branch.UseAuthentication();
 		branch.UseAuthorization();
 	});

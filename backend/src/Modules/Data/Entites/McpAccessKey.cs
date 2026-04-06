@@ -10,6 +10,7 @@ public class McpAccessKey
     public DateTime? ExpiresAt { get; set; }
     public DateTime? LastUsedAt { get; set; }
     public string? AllowedTools { get; set; }
+    public string? CorsAllowedOrigins { get; set; }
     public string? SqlProvider { get; set; }
     public string? SqlConnectionString { get; set; }
     public int? PermitLimitOverride { get; set; }

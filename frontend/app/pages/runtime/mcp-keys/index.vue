@@ -31,6 +31,7 @@ interface McpKeyItem {
   keyPrefix: string
   isActive: boolean
   lastUsedAt?: string | null
+  corsAllowedOrigins?: string | null
   sqlProvider?: string | null
   hasSqlConnectionStringOverride?: boolean
   permitLimitOverride?: number | null
@@ -45,6 +46,7 @@ const newKeyName = ref('')
 const expiresMode = ref('never')
 const customExpiresAt = ref('')
 const selectedTools = ref<string[]>([])
+const corsAllowedOrigins = ref('')
 const sqlProvider = ref('global')
 const sqlConnectionString = ref('')
 const permitLimitOverride = ref('global')
@@ -129,6 +131,7 @@ const issue = async () => {
       name: newKeyName.value.trim(),
       expiresAt: expiresAt.value,
       allowedTools: selectedTools.value.length > 0 ? selectedTools.value.join(',') : null,
+      corsAllowedOrigins: corsAllowedOrigins.value.trim() || null,
       sqlProvider: sqlProvider.value === 'global' ? null : sqlProvider.value,
       sqlConnectionString: sqlConnectionString.value.trim() || null,
       permitLimitOverride: mapNumericOverride(permitLimitOverride.value),
@@ -141,6 +144,7 @@ const issue = async () => {
     expiresMode.value = 'never'
     customExpiresAt.value = ''
     selectedTools.value = []
+    corsAllowedOrigins.value = ''
     sqlProvider.value = 'global'
     sqlConnectionString.value = ''
     permitLimitOverride.value = 'global'
@@ -243,6 +247,18 @@ onMounted(load)
               <Input id="sqlConnectionString" v-model="sqlConnectionString" type="password" placeholder="Host=..." />
             </Field>
 
+            <Field class="md:col-span-2">
+              <FieldLabel for="corsAllowedOrigins">CORS Allowed Origins</FieldLabel>
+              <Input
+                id="corsAllowedOrigins"
+                v-model="corsAllowedOrigins"
+                placeholder="https://app.example.com, https://admin.example.com"
+              />
+              <p class="mt-1 text-xs text-muted-foreground">
+                Comma-separated origins. Leave empty to block browser cross-origin requests for this key.
+              </p>
+            </Field>
+
             <Field>
               <FieldLabel>Permit Limit Override</FieldLabel>
               <Select v-model="permitLimitOverride">
@@ -321,6 +337,7 @@ onMounted(load)
               <div class="font-medium">{{ key.name }}</div>
               <div class="text-muted-foreground">Prefix: {{ key.keyPrefix }} | Active: {{ key.isActive ? 'yes' : 'no' }}</div>
               <div class="text-muted-foreground">Last used: {{ key.lastUsedAt || 'never' }}</div>
+              <div class="text-muted-foreground">CORS: {{ key.corsAllowedOrigins || 'none' }}</div>
               <div class="text-muted-foreground">SQL: {{ key.sqlProvider || 'global' }} / connection: {{ key.hasSqlConnectionStringOverride ? 'override' : 'global' }}</div>
               <div class="text-muted-foreground">Rate: {{ key.permitLimitOverride ?? 'global' }}/{{ key.windowSecondsOverride ?? 'global' }}/{{ key.queueLimitOverride ?? 'global' }}</div>
             </div>

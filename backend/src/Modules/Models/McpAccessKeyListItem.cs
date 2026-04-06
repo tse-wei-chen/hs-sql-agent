@@ -9,6 +9,7 @@ public class McpAccessKeyListItem
     public DateTime? ExpiresAt { get; set; }
     public DateTime? LastUsedAt { get; set; }
     public string? AllowedTools { get; set; }
+    public string? CorsAllowedOrigins { get; set; }
     public string? SqlProvider { get; set; }
     public bool HasSqlConnectionStringOverride { get; set; }
     public int? PermitLimitOverride { get; set; }

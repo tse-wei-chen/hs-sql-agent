@@ -4,6 +4,7 @@ export interface IssueMcpKeyRequest {
   name: string
   expiresAt?: string | null
   allowedTools?: string | null
+  corsAllowedOrigins?: string | null
   sqlProvider?: string | null
   sqlConnectionString?: string | null
   permitLimitOverride?: number | null

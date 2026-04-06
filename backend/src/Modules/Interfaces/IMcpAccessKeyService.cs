@@ -1,18 +1,12 @@
 using Modules.Models;
+using ToolBox.Models;
 
 namespace Modules.Interfaces;
 
 public interface IMcpAccessKeyService
 {
     Task<McpAccessKeyIssueResult> IssueKeyAsync(
-        string name,
-        DateTime? expiresAt,
-        string? allowedTools,
-        string? sqlProvider,
-        string? sqlConnectionString,
-        int? permitLimitOverride,
-        int? windowSecondsOverride,
-        int? queueLimitOverride,
+        IssueMcpAccessKeyRequest request,
         string? actorId,
         CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<McpAccessKeyListItem>> ListKeysAsync(CancellationToken cancellationToken = default);
