@@ -106,6 +106,15 @@ const issue = async () => {
     return
   }
 
+  const normalizedSqlConnectionString = sqlConnectionString.value.trim()
+  const hasSqlProviderOverride = sqlProvider.value !== 'global'
+  const hasSqlConnectionStringOverride = normalizedSqlConnectionString.length > 0
+
+  if (hasSqlProviderOverride !== hasSqlConnectionStringOverride) {
+    alert('SQL Provider and SQL Connection String must be filled together, or both left empty.')
+    return
+  }
+
 
 
   issuing.value = true
@@ -116,7 +125,7 @@ const issue = async () => {
       allowedTools: selectedTools.value.length > 0 ? selectedTools.value.join(',') : null,
       corsAllowedOrigins: corsAllowedOrigins.value.trim() || null,
       sqlProvider: sqlProvider.value === 'global' ? null : sqlProvider.value,
-      sqlConnectionString: sqlConnectionString.value.trim() || null,
+      sqlConnectionString: normalizedSqlConnectionString || null,
     })
 
     issuedPlaintextKey.value = result.plaintextKey || ''
@@ -197,6 +206,9 @@ onMounted(load)
                   </SelectItem>
                 </SelectContent>
               </Select>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Use Global default, or select a provider together with a connection string.
+              </p>
             </Field>
 
             <Field>
@@ -222,17 +234,18 @@ onMounted(load)
             <Field>
               <FieldLabel for="sqlConnectionString">SQL Connection String Override</FieldLabel>
               <Input id="sqlConnectionString" v-model="sqlConnectionString" type="password" placeholder="Host=..." />
+              <p class="mt-1 text-xs text-muted-foreground">
+                Must be provided together with SQL Provider Override.
+              </p>
             </Field>
 
             <Field class="md:col-span-2">
               <FieldLabel for="corsAllowedOrigins">CORS Allowed Origins</FieldLabel>
-              <Input
-                id="corsAllowedOrigins"
-                v-model="corsAllowedOrigins"
-                placeholder="https://app.example.com, https://admin.example.com"
-              />
+              <Input id="corsAllowedOrigins" v-model="corsAllowedOrigins"
+                placeholder="https://app.example.com, https://admin.example.com" />
               <p class="mt-1 text-xs text-muted-foreground">
-                Comma-separated origins. Leave empty to block browser cross-origin requests for this key.
+                Comma-separated origins. Leave empty to block browser cross-origin requests for this
+                key.
               </p>
             </Field>
 
@@ -261,17 +274,16 @@ onMounted(load)
           No issued keys yet.
         </div>
         <div v-else class="space-y-2 pt-4">
-          <div
-            v-for="key in keys"
-            :key="key.id"
-            class="flex flex-col gap-3 rounded-lg border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between"
-          >
+          <div v-for="key in keys" :key="key.id"
+            class="flex flex-col gap-3 rounded-lg border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
             <div class="text-sm">
               <div class="font-medium">{{ key.name }}</div>
-              <div class="text-muted-foreground">Prefix: {{ key.keyPrefix }} | Active: {{ key.isActive ? 'yes' : 'no' }}</div>
+              <div class="text-muted-foreground">Prefix: {{ key.keyPrefix }} | Active: {{ key.isActive ?
+                'yes' : 'no' }}</div>
               <div class="text-muted-foreground">Last used: {{ key.lastUsedAt || 'never' }}</div>
               <div class="text-muted-foreground">CORS: {{ key.corsAllowedOrigins || 'none' }}</div>
-              <div class="text-muted-foreground">SQL: {{ key.sqlProvider || 'global' }} / connection: {{ key.hasSqlConnectionStringOverride ? 'override' : 'global' }}</div>
+              <div class="text-muted-foreground">SQL: {{ key.sqlProvider || 'global' }} / connection: {{
+                key.hasSqlConnectionStringOverride ? 'override' : 'global' }}</div>
             </div>
             <Button variant="destructive" :disabled="!key.isActive" @click="revoke(key.id)">Revoke</Button>
           </div>
