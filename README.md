@@ -150,7 +150,7 @@ Notes:
 
 ```bash
 cd backend/src/ToolBox
-dotnet run
+dotnet run -e Development
 ```
 
 Backend runs on `http://localhost:8080` by default.

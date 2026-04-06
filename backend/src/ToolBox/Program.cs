@@ -174,39 +174,48 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// 1. database migration
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AdminContext>();
-    db.Database.Migrate();
+	var db = scope.ServiceProvider.GetRequiredService<AdminContext>();
+	db.Database.Migrate();
 }
+
+// 2. static files and basic middleware
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
 if (app.Environment.IsDevelopment())
 {
 	app.UseCors("DevCors");
 }
 
+// 3. MCP pipeline
 app.UseWhen(
 	context => context.Request.Path.StartsWithSegments("/mcp"),
 	branch =>
 	{
+		branch.UseRateLimiter();
 		branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
-	});
-
-app.UseRateLimiter();
-
-app.UseAuthentication();
-app.UseAuthorization();
-
-app.UseWhen(
-	context => context.Request.Path.StartsWithSegments("/mcp"),
-	branch =>
-	{
 		branch.UseMiddleware<McpContextMiddleware>();
 		branch.UseMiddleware<McpResponseFlattenerMiddleware>();
 	});
 
-app.MapMcp("/mcp").AllowAnonymous().RequireRateLimiting("mcp-policy");
+// 4. API pipeline (authentication/authorization)
+app.UseWhen(
+	context => context.Request.Path.StartsWithSegments("/api"),
+	branch =>
+	{
+		branch.UseAuthentication();
+		branch.UseAuthorization();
+	});
+
+// 5. endpoints
+app.MapMcp("/mcp")
+   .AllowAnonymous()
+   .RequireRateLimiting("mcp-policy");
+
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 
