@@ -45,7 +45,7 @@ docker run --rm -p 8080:8080 \
   -e JwtSettings__Issuer="YourAppIssuer" \
   -e JwtSettings__Audience="YourAppAudience" \
   -e JwtSettings__AccessTokenExpirationMinutes="60" \
-  -e RefreshTokenExpirationDays="1" \
+  -e JwtSettings__RefreshTokenExpirationDays="1" \
   ghcr.io/tse-wei-chen/hs-sql-agent:latest
 ```
 
@@ -62,7 +62,7 @@ docker run --rm -p 8080:8080 \
   -e JwtSettings__Issuer="YourAppIssuer" \
   -e JwtSettings__Audience="YourAppAudience" \
   -e JwtSettings__AccessTokenExpirationMinutes="60" \
-  -e RefreshTokenExpirationDays="1" \
+  -e JwtSettings__RefreshTokenExpirationDays="1" \
   hs-sql-agent
 ```
 [![How to Use](https://img.shields.io/badge/How%20to%20Use-Jump-0f766e)](#how-to-use)
