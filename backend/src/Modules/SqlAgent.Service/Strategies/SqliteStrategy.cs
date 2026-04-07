@@ -19,7 +19,7 @@ public class SqliteStrategy : BaseSqlStrategy
     {
         // SQLite does not support multiple schemas in the same way as other RDBMS.
         // Returning an empty list or a list with a single default schema.
-        return ["sqllite does not support schemas, please use GetTables to see available tables."];
+        return ["sqllite does not support schemas, please use get_tables to see available tables."];
     }
 
     public override async Task<List<string>> GetTablesAsync(string connectionString, CancellationToken cancellationToken = default)
