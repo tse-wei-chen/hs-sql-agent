@@ -157,7 +157,8 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             AllowedTools = entity.AllowedTools,
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             CorsAllowedOriginsSet = ParseCorsAllowedOrigins(entity.CorsAllowedOrigins),
-            SqlProvider = entity.SqlProvider
+            SqlProvider = entity.SqlProvider,
+			SqlConnectionString = entity.SqlConnectionString
         };
     }
 
