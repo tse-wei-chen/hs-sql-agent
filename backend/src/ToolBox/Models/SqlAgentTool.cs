@@ -1,13 +1,14 @@
 using System.ComponentModel;
 
 namespace ToolBox.Models;
+
 public class SelectCondition
 {
     [Description("The field name to select.")]
     public string Field { get; set; } = string.Empty;
     [Description("Alias for the selected field (Optional).")]
     public string Alias { get; set; } = string.Empty;
-    [Description("Optional aggregation function (e.g., 'SUM', 'COUNT').")]
+    [Description("The aggregation function to apply (e.g., 'SUM', 'COUNT').")]
     public string Aggregation { get; set; } = string.Empty;
 }
 
@@ -75,6 +76,9 @@ public class GroupByCondition
 {
     [Description("The field to group by, format: 'TableName.FieldName' or 'FieldName'")]
     public string Field { get; set; } = string.Empty;
+
+    [Description("The aggregation function to apply (e.g., 'SUM', 'COUNT').")]
+    public string Aggregation { get; set; } = string.Empty;
 }
 
 public class OrderByCondition
