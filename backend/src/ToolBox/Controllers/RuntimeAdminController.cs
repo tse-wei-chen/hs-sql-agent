@@ -2,8 +2,8 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Modules.Interfaces;
-using ToolBox.Models;
+using Admin.Service.Interfaces;
+using Admin.Service.Models;
 
 namespace ToolBox.Controllers;
 

@@ -1,5 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
-using Modules.Interfaces;
+using Admin.Service.Interfaces;
 
 namespace ToolBox.Background;
 

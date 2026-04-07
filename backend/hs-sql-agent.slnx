@@ -1,7 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Common/Common.csproj" />
-    <Project Path="src/Modules/Modules.csproj" />
+    <Project Path="src/Modules/Admin.Service/Admin.Service.csproj" />
     <Project Path="src/ToolBox/ToolBox.csproj" />
   </Folder>
 </Solution>

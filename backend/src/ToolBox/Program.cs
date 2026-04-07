@@ -4,16 +4,14 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Modules.Data;
-using Modules.Interfaces;
-using Modules.Models;
-using Modules.Services;
+using Admin.Service.Data;
+using Admin.Service.Interfaces;
+using Admin.Service.Models;
+using Admin.Service.Services;
 using ToolBox.Background;
 using ToolBox.Tools;
 using ToolBox.Middleware;
-using ToolBox.Models;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {

@@ -2,7 +2,7 @@
 using System.ComponentModel;
 using Microsoft.Extensions.Configuration;
 using ModelContextProtocol.Server;
-using Modules.Models;
+using Admin.Service.Models;
 using ToolBox.Enums;
 using ToolBox.Factories;
 using ToolBox.Models;
