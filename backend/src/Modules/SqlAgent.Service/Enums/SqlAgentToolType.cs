@@ -1,4 +1,4 @@
-namespace ToolBox.Enums;
+namespace SqlAgent.Service.Enums;
 
 public enum SqlAgentToolType
 {

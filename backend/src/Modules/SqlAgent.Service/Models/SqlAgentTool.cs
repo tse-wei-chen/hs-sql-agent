@@ -1,6 +1,6 @@
 using System.ComponentModel;
 
-namespace ToolBox.Models;
+namespace SqlAgent.Service.Models;
 
 public class SelectCondition
 {

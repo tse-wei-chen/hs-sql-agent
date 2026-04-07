@@ -5,10 +5,10 @@ using System.Text.RegularExpressions;
 using SqlKata;
 using SqlKata.Compilers;
 using SqlKata.Execution;
-using ToolBox.Enums;
-using ToolBox.Models;
+using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 
-namespace ToolBox.Strategies;
+namespace SqlAgent.Service.Strategies;
 
 public abstract class BaseSqlStrategy : ISqlStrategy
 {

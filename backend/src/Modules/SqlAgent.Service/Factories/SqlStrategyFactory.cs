@@ -1,8 +1,8 @@
 using System.Reflection;
-using ToolBox.Enums;
-using ToolBox.Strategies;
+using SqlAgent.Service.Enums;
+using SqlAgent.Service.Strategies;
 
-namespace ToolBox.Factories;
+namespace SqlAgent.Service.Factories;
 
 public static class SqlStrategyFactory
 {

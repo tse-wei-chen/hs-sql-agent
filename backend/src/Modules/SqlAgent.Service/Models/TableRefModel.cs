@@ -1,4 +1,4 @@
-namespace ToolBox.Models;
+namespace SqlAgent.Service.Models;
 public class TableRefModel
 {
     public string? SourceTable { get; set; }

@@ -16,16 +16,10 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
-  <ItemGroup>
- 	  <PackageReference Include="SqlKata" />
-	  <PackageReference Include="SqlKata.Execution" />
-    <PackageReference Include="MySql.Data" />
-    <PackageReference Include="Npgsql" />
-    <PackageReference Include="Microsoft.Data.Sqlite" />
-  </ItemGroup>
 
   <ItemGroup>
 	  <ProjectReference Include="..\Common\Common.csproj" />
 	  <ProjectReference Include="..\Modules\Admin.Service\Admin.Service.csproj" />
+	  <ProjectReference Include="..\Modules\SqlAgent.Service\SqlAgent.Service.csproj" />
   </ItemGroup>
 </Project>

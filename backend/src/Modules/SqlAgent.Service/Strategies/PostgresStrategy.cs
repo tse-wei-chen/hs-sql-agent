@@ -3,10 +3,10 @@ using Npgsql;
 using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
-using ToolBox.Enums;
-using ToolBox.Models;
+using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 
-namespace ToolBox.Strategies;
+namespace SqlAgent.Service.Strategies;
 
 public class PostgresStrategy : BaseSqlStrategy
 {

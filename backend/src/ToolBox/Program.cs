@@ -140,7 +140,7 @@ builder.Services.AddScoped<McpAccessKeyAuthMiddleware>();
 builder.Services.AddScoped<McpResponseFlattenerMiddleware>();
 builder.Services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
 builder.Services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
-builder.Services.AddScoped<SqlAgent>();
+builder.Services.AddScoped<SqlAgentTool>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMcpServer(_ => { }).WithToolsFromAssembly().WithHttpTransport();
 builder.Services.AddControllers().AddJsonOptions(options =>
@@ -153,7 +153,7 @@ builder.Services.AddCors(options =>
 {
 	options.AddPolicy("DevCors", policy =>
 	{
-		policy.WithOrigins("http://localhost:3000") // Nuxt 預設 Port
+		policy.WithOrigins("http://localhost:3000") // Nuxt default Port
 			.AllowAnyHeader()
 			.AllowAnyMethod();
 	});

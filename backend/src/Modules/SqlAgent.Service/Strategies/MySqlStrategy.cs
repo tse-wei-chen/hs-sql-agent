@@ -3,9 +3,9 @@ using MySql.Data.MySqlClient;
 using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
-using ToolBox.Enums;
+using SqlAgent.Service.Enums;
 
-namespace ToolBox.Strategies;
+namespace SqlAgent.Service.Strategies;
 
 public class MySqlStrategy : BaseSqlStrategy
 {

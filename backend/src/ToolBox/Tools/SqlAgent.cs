@@ -1,16 +1,16 @@
 
 using System.ComponentModel;
-using Microsoft.Extensions.Configuration;
 using ModelContextProtocol.Server;
 using Admin.Service.Models;
-using ToolBox.Enums;
-using ToolBox.Factories;
+using SqlAgent.Service.Enums;
+using SqlAgent.Service.Factories;
 using ToolBox.Models;
+using SqlAgent.Service.Models;
 
 namespace ToolBox.Tools;
 
 [McpServerToolType]
-public class SqlAgent(IConfiguration configuration, IHttpContextAccessor httpContextAccessor)
+public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor)
 {
 	private readonly IConfiguration _configuration = configuration;
 	private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
