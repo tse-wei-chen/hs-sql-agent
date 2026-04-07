@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-04-07
+
+### Refactor
+- module structure move
+### Security
+- enhance SQL query execution with security guards and aggregation validation
+
 ## [1.1.1] - 2026-04-07
 
 ### Bug Fix
