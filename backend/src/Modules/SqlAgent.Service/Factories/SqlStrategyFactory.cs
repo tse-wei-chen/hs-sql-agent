@@ -1,32 +1,27 @@
-using System.Reflection;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Strategies;
 
 namespace SqlAgent.Service.Factories;
 
-public static class SqlStrategyFactory
+public class SqlStrategyFactory : ISqlStrategyFactory
 {
-	private static readonly Dictionary<SqlAgentToolType, ISqlStrategy> _strategies = new();
+	private readonly IReadOnlyDictionary<SqlAgentToolType, ISqlStrategy> _strategies;
 
-	static SqlStrategyFactory()
+	public SqlStrategyFactory(IEnumerable<ISqlStrategy> strategies)
 	{
-		var strategyType = typeof(ISqlStrategy);
-		var assembly = Assembly.GetExecutingAssembly();
-
-		var strategies = assembly.GetTypes()
-			.Where(t => t.IsClass && !t.IsAbstract && strategyType.IsAssignableFrom(t))
-			.ToList();
-
-		foreach (var type in strategies)
+		var map = new Dictionary<SqlAgentToolType, ISqlStrategy>();
+		foreach (var strategy in strategies)
 		{
-			if (Activator.CreateInstance(type) is ISqlStrategy instance)
+			if (!map.TryAdd(strategy.DbType, strategy))
 			{
-				_strategies[instance.DbType] = instance;
+				throw new InvalidOperationException($"Duplicate strategy registration for database type: {strategy.DbType}");
 			}
 		}
+
+		_strategies = map;
 	}
 
-	public static ISqlStrategy GetStrategy(SqlAgentToolType dbType)
+	public ISqlStrategy GetStrategy(SqlAgentToolType dbType)
 	{
 		if (_strategies.TryGetValue(dbType, out var strategy))
 		{
@@ -36,5 +31,5 @@ public static class SqlStrategyFactory
 		throw new ArgumentOutOfRangeException(nameof(dbType), dbType, $"No strategy found for database type: {dbType}");
 	}
 
-	public static IEnumerable<SqlAgentToolType> GetSupportedDatabaseTypes() => _strategies.Keys;
+	public IEnumerable<SqlAgentToolType> GetSupportedDatabaseTypes() => _strategies.Keys;
 }

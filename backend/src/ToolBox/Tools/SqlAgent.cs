@@ -10,10 +10,11 @@ using SqlAgent.Service.Models;
 namespace ToolBox.Tools;
 
 [McpServerToolType]
-public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor)
+public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory)
 {
 	private readonly IConfiguration _configuration = configuration;
 	private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
+	private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
 
 	[McpServerTool, Description("Execute a query (supports join, where, where-date, where-in, where-string, group, having, combine, cte, order by, limit). don't use alias")]
 	public async Task<string> ExecuteQuerySafe(
@@ -49,7 +50,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 		{
 			return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 		}
-		var strategy = SqlStrategyFactory.GetStrategy(dbType);
+		var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 		var result = await strategy.ExecuteQueryAsync(
 			sqlConfig.ConnectionString,
 			tableName,
@@ -83,7 +84,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 			{
 				return "Table name cannot be empty. please provide a valid table name.";
 			}
-			var strategy = SqlStrategyFactory.GetStrategy(dbType);
+			var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 			var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, tableName);
 			return string.Join(", ", columns);
 		}
@@ -103,7 +104,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 			{
 				return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 			}
-			var strategy = SqlStrategyFactory.GetStrategy(dbType);
+			var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 			var schemas = await strategy.GetSchemasAsync(sqlConfig.ConnectionString);
 			return string.Join(", ", schemas);
 		}
@@ -123,7 +124,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 			{
 				return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 			}
-			var strategy = SqlStrategyFactory.GetStrategy(dbType);
+			var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 			var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString);
 			return string.Join(", ", tables);
 		}
@@ -147,7 +148,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 			{
 				return "Table name cannot be empty. please provide a valid table name.";
 			}
-			var strategy = SqlStrategyFactory.GetStrategy(dbType);
+			var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 			return await strategy.GetTableReferenceAsync(sqlConfig.ConnectionString, tableName);
 		}
 		catch (Exception ex)

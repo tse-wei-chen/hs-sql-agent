@@ -10,8 +10,8 @@
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.2.0" /> 
     <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
-    <PackageVersion Include="SqlKata" Version="2.4.0" />
-    <PackageVersion Include="SqlKata.Execution" Version="2.4.0" />
+    <PackageVersion Include="SqlKata" Version="4.0.1" />
+    <PackageVersion Include="SqlKata.Execution" Version="4.0.1" />
     <PackageVersion Include="MySql.Data" Version="9.6.0" />
     <PackageVersion Include="Npgsql" Version="10.0.2" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.5" />

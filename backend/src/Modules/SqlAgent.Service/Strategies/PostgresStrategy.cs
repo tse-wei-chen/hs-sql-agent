@@ -4,12 +4,18 @@ using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 public class PostgresStrategy : BaseSqlStrategy
 {
+	public PostgresStrategy(IValidator validator, IQueryValueParserService valueParser)
+		: base(validator, valueParser)
+	{
+	}
+
 	public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 
 	protected override DbConnection CreateConnection(string? connectionString) => new NpgsqlConnection(connectionString);

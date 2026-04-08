@@ -76,9 +76,6 @@ public class GroupByCondition
 {
     [Description("The field to group by, format: 'TableName.FieldName' or 'FieldName'")]
     public string Field { get; set; } = string.Empty;
-
-    [Description("The aggregation function to apply (e.g., 'SUM', 'COUNT').")]
-    public string Aggregation { get; set; } = string.Empty;
 }
 
 public class OrderByCondition
