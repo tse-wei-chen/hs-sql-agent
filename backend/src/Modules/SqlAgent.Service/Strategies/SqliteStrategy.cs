@@ -5,11 +5,17 @@ using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Interfaces;
 
 namespace SqlAgent.Service.Strategies;
 
 public class SqliteStrategy : BaseSqlStrategy
 {
+    public SqliteStrategy(IValidator validator, IQueryValueParserService valueParser)
+        : base(validator, valueParser)
+    {
+    }
+
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
     protected override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);

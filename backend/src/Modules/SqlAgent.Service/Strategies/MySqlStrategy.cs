@@ -4,11 +4,17 @@ using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Interfaces;
 
 namespace SqlAgent.Service.Strategies;
 
 public class MySqlStrategy : BaseSqlStrategy
 {
+	public MySqlStrategy(IValidator validator, IQueryValueParserService valueParser)
+		: base(validator, valueParser)
+	{
+	}
+
 	public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
 
 	protected override DbConnection CreateConnection(string? connectionString) => new MySqlConnection(connectionString);

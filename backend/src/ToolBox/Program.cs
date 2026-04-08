@@ -12,6 +12,12 @@ using ToolBox.Background;
 using ToolBox.Tools;
 using ToolBox.Middleware;
 using System.Text.Json;
+using Common.Interfaces;
+using Common.Services;
+using SqlAgent.Service.Factories;
+using SqlAgent.Service.Interfaces;
+using SqlAgent.Service.Services;
+using SqlAgent.Service.Strategies;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -36,6 +42,13 @@ builder.Services.AddScoped<IAdminService, AdminService>();
 builder.Services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
 builder.Services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddSingleton<ICryptoService, CryptoService>();
+builder.Services.AddSingleton<IValidator, SqlQueryValidator>();
+builder.Services.AddSingleton<IQueryValueParserService, QueryValueParserService>();
+builder.Services.AddScoped<ISqlStrategy, MySqlStrategy>();
+builder.Services.AddScoped<ISqlStrategy, PostgresStrategy>();
+builder.Services.AddScoped<ISqlStrategy, SqliteStrategy>();
+builder.Services.AddScoped<ISqlStrategyFactory, SqlStrategyFactory>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
 builder.Services.Configure<McpKeySettings>(builder.Configuration.GetSection("McpKeySettings"));
 builder.Services.Configure<RateLimitingSettings>(builder.Configuration.GetSection("RateLimiting"));

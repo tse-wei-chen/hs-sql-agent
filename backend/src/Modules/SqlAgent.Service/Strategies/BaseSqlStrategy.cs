@@ -1,77 +1,36 @@
 using System.Data.Common;
-using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using SqlKata;
 using SqlKata.Compilers;
 using SqlKata.Execution;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 public abstract class BaseSqlStrategy : ISqlStrategy
 {
+	private readonly IValidator _validator;
+	private readonly IQueryValueParserService _valueParser;
+
+	protected BaseSqlStrategy(IValidator validator, IQueryValueParserService valueParser)
+	{
+		_validator = validator;
+		_valueParser = valueParser;
+	}
+
 	public abstract SqlAgentToolType DbType { get; }
 
 	protected abstract DbConnection CreateConnection(string? connectionString);
 	protected abstract Compiler CreateCompiler();
 
 	#region Security Guards
-	private static readonly Regex SafeIdentifierRegex =
-		new(@"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$", RegexOptions.Compiled);
-
-	private static readonly HashSet<string> AllowedAggregations =
-		new(StringComparer.OrdinalIgnoreCase) { "COUNT", "SUM", "AVG", "MIN", "MAX" };
-
-	private static readonly HashSet<string> AllowedOperators =
-		new(StringComparer.OrdinalIgnoreCase)
-		{
-			"=", "!=", "<>", ">", "<", ">=", "<=",
-			"like", "ilike", "not like",
-			"is", "is null", "is not", "is not null",
-			"in", "not in",
-			"between", "not between"
-		};
-
-	private static readonly HashSet<string> AllowedJoinTypes =
-		new(StringComparer.OrdinalIgnoreCase) { "inner", "left", "right", "cross" };
-
-	private static bool IsSafeIdentifier(string? id)
-	{
-		if (string.IsNullOrWhiteSpace(id)) return false;
-		if (id == "*") return true;
-		return SafeIdentifierRegex.IsMatch(id);
-	}
-
-	private static string RequireSafeIdentifier(string? id, string context)
-	{
-		if (!IsSafeIdentifier(id))
-			throw new InvalidOperationException($"Unsafe {context} identifier: '{id}'");
-		return id!;
-	}
-
-	private static bool IsSupportedAggregation(string? agg) =>
-		!string.IsNullOrWhiteSpace(agg) && AllowedAggregations.Contains(agg);
-
-	private static string RequireSafeAggregation(string agg)
-	{
-		if (!IsSupportedAggregation(agg))
-			throw new InvalidOperationException($"Unsupported aggregation: '{agg}'");
-		return agg.ToUpperInvariant();
-	}
-
-	private static string GetSafeOperator(string? op, string fallback = "=")
-	{
-		var trimmed = (op ?? fallback).Trim();
-		if (!AllowedOperators.Contains(trimmed))
-			throw new InvalidOperationException($"Unsupported operator: '{op}'");
-		return trimmed;
-	}
 	#endregion
 	#region Shared Query Builders
 
-	private static Query ApplySelectColumns(Query query, IList<SelectCondition> cols)
+	private Query ApplySelectColumns(Query query, IList<SelectCondition> cols)
 	{
 		if (cols.Count == 0) return query.Select("*");
 
@@ -79,32 +38,35 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		{
 			if (!string.IsNullOrWhiteSpace(col.Aggregation))
 			{
-				var agg = RequireSafeAggregation(col.Aggregation);
-				var field = RequireSafeIdentifier(col.Field, "select aggregation field");
+				var agg = _validator.RequireSafeAggregation(col.Aggregation);
+				var field = _validator.RequireSafeIdentifier(col.Field, "select aggregation field");
 				if (!string.IsNullOrWhiteSpace(col.Alias))
 				{
-					var alias = RequireSafeIdentifier(col.Alias, "select aggregation alias");
+					var alias = _validator.RequireSafeIdentifier(col.Alias, "select aggregation alias");
 					query = query.SelectRaw($"{agg}({field}) AS {alias}");
 				}
 				else
 				{
-					query = query.SelectRaw($"{agg}({field})");
+					query = query.SelectAggregate(agg, field);
 				}
 			}
 			else if (!string.IsNullOrWhiteSpace(col.Alias))
 			{
-				query = query.Select($"{col.Field} AS {col.Alias}");
+				var field = _validator.RequireSafeIdentifier(col.Field, "select field");
+				var alias = _validator.RequireSafeIdentifier(col.Alias, "select alias");
+				query = query.Select($"{field} AS {alias}");
 			}
 			else
 			{
-				query = query.Select(col.Field);
+				var field = _validator.RequireSafeIdentifier(col.Field, "select field");
+				query = query.Select(field);
 			}
 		}
 
 		return query;
 	}
 
-	private static Query ApplyJoins(Query query, IList<JoinCondition> joins)
+	private Query ApplyJoins(Query query, IList<JoinCondition> joins)
 	{
 		foreach (var join in joins)
 		{
@@ -113,13 +75,13 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				continue;
 
 			var joinType = join.Type.Trim().ToLowerInvariant();
-			if (!AllowedJoinTypes.Contains(joinType))
+			if (!_validator.IsAllowedJoinType(joinType))
 				throw new InvalidOperationException($"Unsupported join type: '{join.Type}'");
 
-			var first = RequireSafeIdentifier(join.First, "join first");
-			var second = RequireSafeIdentifier(join.Second, "join second");
-			var op = GetSafeOperator(join.Operator);
-			var table = RequireSafeIdentifier(join.Table, "join table");
+			var first = _validator.RequireSafeIdentifier(join.First, "join first");
+			var second = _validator.RequireSafeIdentifier(join.Second, "join second");
+			var op = _validator.GetSafeOperator(join.Operator);
+			var table = _validator.RequireSafeIdentifier(join.Table, "join table");
 
 			query = joinType switch
 			{
@@ -133,15 +95,15 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return query;
 	}
 
-	private static Query ApplyWhereConditions(Query query, IList<WhereCondition> conds)
+	private Query ApplyWhereConditions(Query query, IList<WhereCondition> conds)
 	{
 		foreach (var cond in conds)
 		{
 			if (string.IsNullOrWhiteSpace(cond.Field)) continue;
 
-			var op = GetSafeOperator(cond.Operator).ToLowerInvariant();
+			var op = _validator.GetSafeOperator(cond.Operator).ToLowerInvariant();
 			var rawValue = cond.Value;
-			var value = rawValue is JsonElement je ? UnwrapJsonElement(je) : rawValue;
+			var value = rawValue is JsonElement je ? _valueParser.UnwrapJsonElement(je) : rawValue;
 
 			if (op is "is" or "is null")
 			{
@@ -157,7 +119,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 			if (op is "in" or "not in")
 			{
-				if (TryGetInValues(rawValue, out var values))
+				if (_valueParser.TryGetInValues(rawValue, out var values))
 				{
 					query = op == "in"
 						? query.WhereIn(cond.Field, values)
@@ -166,21 +128,21 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				}
 			}
 
-			query = query.Where(cond.Field, GetSafeOperator(cond.Operator), value);
+			query = query.Where(cond.Field, _validator.GetSafeOperator(cond.Operator), value);
 		}
 
 		return query;
 	}
 
-	private static Query ApplyDateWhereConditions(Query query, IList<DateWhereCondition> conds)
+	private Query ApplyDateWhereConditions(Query query, IList<DateWhereCondition> conds)
 	{
 		foreach (var cond in conds)
 		{
 			if (string.IsNullOrWhiteSpace(cond.Field) || string.IsNullOrWhiteSpace(cond.Value))
 				continue;
 
-			var op = GetSafeOperator(cond.Operator);
-			if (!TryToDateTime(cond.Value, out var dt)) continue;
+			var op = _validator.GetSafeOperator(cond.Operator);
+			if (!_valueParser.TryToDateTime(cond.Value, out var dt)) continue;
 
 			query = query.WhereDate(cond.Field, op, dt);
 		}
@@ -188,7 +150,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return query;
 	}
 
-	private static Query ApplyInWhereConditions(Query query, IList<InWhereCondition> conds)
+	private Query ApplyInWhereConditions(Query query, IList<InWhereCondition> conds)
 	{
 		foreach (var cond in conds)
 		{
@@ -196,7 +158,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				continue;
 
 			var values = cond.Values
-				.Select(v => v is JsonElement je ? UnwrapJsonElement(je) : v)
+				.Select(v => v is JsonElement je ? _valueParser.UnwrapJsonElement(je) : v)
 				.Where(v => v is not null)
 				.ToArray();
 
@@ -210,7 +172,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return query;
 	}
 
-	private static Query ApplyStringWhereConditions(Query query, IList<StringWhereCondition> conds)
+	private Query ApplyStringWhereConditions(Query query, IList<StringWhereCondition> conds)
 	{
 		foreach (var cond in conds)
 		{
@@ -233,28 +195,18 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return query;
 	}
 
-	private static Query ApplyGroupByConditions(Query query, IList<GroupByCondition> conds)
+	private Query ApplyGroupByConditions(Query query, IList<GroupByCondition> conds)
 	{
 		foreach (var gf in conds)
 		{
-			if (!string.IsNullOrWhiteSpace(gf.Aggregation))
-			{
-				// Both agg and field go through strict whitelist guards before entering GroupByRaw
-				var agg = RequireSafeAggregation(gf.Aggregation);
-				var field = RequireSafeIdentifier(gf.Field, "group by aggregation field");
-				query = query.GroupByRaw($"{agg}({field})");
-			}
-			else
-			{
-				RequireSafeIdentifier(gf.Field, "group by field");
-				query = query.GroupBy(gf.Field);
-			}
+			var field = _validator.RequireSafeIdentifier(gf.Field, "group by field");
+			query = query.GroupBy(field);
 		}
 
 		return query;
 	}
 
-	private static Query ApplyHavingConditions(Query query, IList<HavingCondition> conds)
+	private Query ApplyHavingConditions(Query query, IList<HavingCondition> conds)
 	{
 		foreach (var cond in conds)
 		{
@@ -265,7 +217,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return query;
 	}
 
-	private static Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
+	private Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
 	{
 		foreach (var col in cols)
 		{
@@ -276,10 +228,10 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				? "DESC"
 				: "ASC";
 
-			if (!string.IsNullOrWhiteSpace(col.Aggregation) && IsSupportedAggregation(col.Aggregation))
+			if (!string.IsNullOrWhiteSpace(col.Aggregation) && _validator.IsSupportedAggregation(col.Aggregation))
 			{
-				var agg = RequireSafeAggregation(col.Aggregation);
-				var safeField = RequireSafeIdentifier(field, "order by aggregation field");
+				var agg = _validator.RequireSafeAggregation(col.Aggregation);
+				var safeField = _validator.RequireSafeIdentifier(field, "order by aggregation field");
 				query = query.OrderByRaw($"{agg}({safeField}) {direction}");
 			}
 			else
@@ -437,13 +389,13 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 	#endregion
 	#region Having Helpers
 
-	private static Query ApplyHavingCondition(Query query, HavingCondition cond)
+	private Query ApplyHavingCondition(Query query, HavingCondition cond)
 	{
-		var havingOp = GetSafeOperator(cond.Operator).ToLowerInvariant();
+		var havingOp = _validator.GetSafeOperator(cond.Operator).ToLowerInvariant();
 
 		if (havingOp is "between" or "not between")
 		{
-			if (!TryGetBetweenValues(cond.Value, out var start, out var end))
+			if (!_valueParser.TryGetBetweenValues(cond.Value, out var start, out var end))
 				return query;
 
 			var expression = BuildHavingExpression(cond);
@@ -451,30 +403,30 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			return query.HavingRaw($"{expression} {betweenOperator} ? AND ?", start, end);
 		}
 
-		var havingValue = cond.Value is JsonElement je ? UnwrapJsonElement(je) : cond.Value;
-		var displayOperator = GetSafeOperator(cond.Operator);
+		var havingValue = cond.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : cond.Value;
+		var displayOperator = _validator.GetSafeOperator(cond.Operator);
 
-		if (IsSupportedAggregation(cond.Aggregation))
+		if (_validator.IsSupportedAggregation(cond.Aggregation))
 		{
-			var agg = RequireSafeAggregation(cond.Aggregation);
-			var field = RequireSafeIdentifier(cond.Field, "having aggregation field");
+			var agg = _validator.RequireSafeAggregation(cond.Aggregation);
+			var field = _validator.RequireSafeIdentifier(cond.Field, "having aggregation field");
 			return query.HavingRaw($"{agg}({field}) {displayOperator} ?", havingValue);
 		}
 
 		return query.Having(cond.Field, displayOperator, havingValue);
 	}
 
-	private static string BuildHavingExpression(HavingCondition cond)
+	private string BuildHavingExpression(HavingCondition cond)
 	{
-		if (IsSupportedAggregation(cond.Aggregation))
+		if (_validator.IsSupportedAggregation(cond.Aggregation))
 		{
-			var agg = RequireSafeAggregation(cond.Aggregation);
-			var field = RequireSafeIdentifier(cond.Field, "having expression field");
+			var agg = _validator.RequireSafeAggregation(cond.Aggregation);
+			var field = _validator.RequireSafeIdentifier(cond.Field, "having expression field");
 			return $"{agg}({field})";
 		}
 
 		// BETWEEN on a plain column: validate as identifier (no raw expressions allowed)
-		return RequireSafeIdentifier(cond.Field, "having between field");
+		return _validator.RequireSafeIdentifier(cond.Field, "having between field");
 	}
 	#endregion
 	#region Error Helpers
@@ -536,140 +488,6 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 	}
 	#endregion
 	#region Value Parsers
-
-	private static bool TryGetBetweenValues(object? rawValue, out object? start, out object? end)
-	{
-		start = null;
-		end = null;
-
-		if (rawValue is JsonElement je)
-		{
-			if (je.ValueKind == JsonValueKind.Array && je.GetArrayLength() >= 2)
-			{
-				start = UnwrapJsonElement(je[0]);
-				end = UnwrapJsonElement(je[1]);
-				return true;
-			}
-
-			if (je.ValueKind == JsonValueKind.String)
-				rawValue = je.GetString();
-		}
-
-		if (rawValue is IEnumerable<object?> enumerable)
-		{
-			var values = enumerable.Where(v => v is not null).Take(2).ToArray();
-			if (values.Length == 2)
-			{
-				start = values[0];
-				end = values[1];
-				return true;
-			}
-		}
-
-		if (rawValue is string s)
-		{
-			var trimmed = s.Trim();
-			if (trimmed.StartsWith('[') && trimmed.EndsWith(']')) trimmed = trimmed[1..^1];
-			if (trimmed.StartsWith('(') && trimmed.EndsWith(')')) trimmed = trimmed[1..^1];
-
-			var parts = trimmed.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-			if (parts.Length >= 2)
-			{
-				start = ConvertLiteral(parts[0]);
-				end = ConvertLiteral(parts[1]);
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	private static object ConvertLiteral(string value)
-	{
-		if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var longVal))
-			return longVal;
-
-		if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var doubleVal))
-			return doubleVal;
-
-		if (bool.TryParse(value, out var boolVal))
-			return boolVal;
-
-		return value.Trim().Trim('\'', '"');
-	}
-
-	private static object UnwrapJsonElement(JsonElement je)
-	{
-		return je.ValueKind switch
-		{
-			JsonValueKind.String => (object)je.GetString()!,
-			JsonValueKind.Number when je.TryGetInt64(out var l) => l,
-			JsonValueKind.Number => je.GetDouble(),
-			JsonValueKind.True => true,
-			JsonValueKind.False => false,
-			_ => (object)je.ToString(),
-		};
-	}
-
-	private static bool TryToDateTime(object? value, out DateTime dateTime)
-	{
-		dateTime = default;
-		if (value is null) return false;
-
-		if (value is DateTime dt)
-		{
-			dateTime = dt;
-			return true;
-		}
-
-		var text = Convert.ToString(value, CultureInfo.InvariantCulture);
-		return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out dateTime);
-	}
-
-	private static bool TryGetInValues(object? value, out IEnumerable<object> values)
-	{
-		values = [];
-
-		if (value is null) return false;
-
-		if (value is JsonElement je && je.ValueKind == JsonValueKind.Array)
-		{
-			values = je.EnumerateArray().Select(UnwrapJsonElement).Cast<object>().ToArray();
-			return values.Any();
-		}
-
-		if (value is JsonElement jeText && jeText.ValueKind == JsonValueKind.String)
-			return TryGetInValues(jeText.GetString(), out values);
-
-		if (value is IEnumerable<object> objEnum)
-		{
-			var arr = objEnum.Where(v => v is not null).ToArray();
-			if (arr.Length == 0) return false;
-			values = arr;
-			return true;
-		}
-
-		if (value is string str)
-		{
-			var trimmed = str.Trim();
-			if (trimmed.StartsWith("(") && trimmed.EndsWith(")")) trimmed = trimmed[1..^1];
-			if (trimmed.StartsWith("[") && trimmed.EndsWith("]")) trimmed = trimmed[1..^1];
-
-			var parts = trimmed
-				.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-				.Select(p => p.Trim('\'', '"'))
-				.Where(p => !string.IsNullOrWhiteSpace(p))
-				.Cast<object>()
-				.ToArray();
-
-			if (parts.Length == 0) return false;
-			values = parts;
-			return true;
-		}
-
-		return false;
-	}
-
 	#endregion
 
 	#region Abstract Members
