@@ -6,15 +6,17 @@ using Admin.Service.Data;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Common.Interfaces;
 
 namespace Admin.Service.Services;
 
-public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings> mcpKeySettings) : IMcpAccessKeyService
+public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings> mcpKeySettings, ICryptoService cryptoService) : IMcpAccessKeyService
 {
     private const int KeyPrefixLength = 8;
     private static readonly char[] CorsOriginsSeparators = [',', ';', '\n', '\r'];
     private readonly IAdminContext _context = context;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
+    private readonly ICryptoService _cryptoService = cryptoService;
 
     public async Task<McpAccessKeyIssueResult> IssueKeyAsync(
         IssueMcpAccessKeyRequest request,
@@ -49,7 +51,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             AllowedTools = string.IsNullOrWhiteSpace(request.AllowedTools) ? null : request.AllowedTools.Trim(),
             CorsAllowedOrigins = normalizedCorsAllowedOrigins,
             SqlProvider = normalizedProvider,
-            SqlConnectionString = normalizedConnectionString,
+            SqlConnectionString = _cryptoService.EncryptText(normalizedConnectionString, _hmacSecret),
             CreatedAt = DateTime.UtcNow,
             CreatedBy = actorId,
             IsActive = true
@@ -157,7 +159,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             CorsAllowedOriginsSet = ParseCorsAllowedOrigins(entity.CorsAllowedOrigins),
             SqlProvider = entity.SqlProvider,
-			SqlConnectionString = entity.SqlConnectionString
+            SqlConnectionString = _cryptoService.DecryptText(entity.SqlConnectionString, _hmacSecret)
         };
     }
 
