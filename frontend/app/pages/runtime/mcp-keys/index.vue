@@ -57,7 +57,7 @@ const toolOptions = [
 	{ label: 'Get Table Reference', value: 'get_table_reference' },
 ]
 
-const providerOptions = ['global', 'Postgres', 'MySQL']
+const providerOptions = ['global', 'Sqlite', 'Postgres', 'MySQL']
 
 
 const selectedToolLabel = computed(() => {
