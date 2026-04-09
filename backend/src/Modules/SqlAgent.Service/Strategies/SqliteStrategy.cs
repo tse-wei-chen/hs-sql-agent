@@ -28,7 +28,7 @@ public class SqliteStrategy : BaseSqlStrategy
         return ["sqllite does not support schemas, please use get_tables to see available tables."];
     }
 
-    public override async Task<List<string>> GetTablesAsync(string connectionString, CancellationToken cancellationToken = default)
+    public override async Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -97,5 +97,44 @@ public class SqliteStrategy : BaseSqlStrategy
                 please try again !!
             ");
         }
+    }
+
+    protected override string BuildExecutionErrorMessage(Exception ex)
+    {
+        var code = ex is SqliteException sqliteEx ? $"SQLITE_{sqliteEx.SqliteErrorCode}" : null;
+        var hint = BuildHint(code, ex.Message);
+        var action = BuildNextAction(code, ex.Message);
+
+        return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
+    }
+
+    protected override string BuildHint(string? code, string message)
+    {
+        if (message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+            return "Table not found. Check table name and ensure SQLite database file is correct.";
+
+        if (message.Contains("no such column", StringComparison.OrdinalIgnoreCase))
+            return "Column not found. Verify selected and filtered column names.";
+
+        if (message.Contains("syntax error", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("near", StringComparison.OrdinalIgnoreCase))
+            return "SQL syntax issue. Validate operators and combined query structure.";
+
+        return base.BuildHint(code, message);
+    }
+
+    protected override string BuildNextAction(string? code, string message)
+    {
+        if (message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+            return "Retry with a valid table from get_tables.";
+
+        if (message.Contains("no such column", StringComparison.OrdinalIgnoreCase))
+            return "Retry with valid columns from get_columns.";
+
+        if (message.Contains("syntax error", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("near", StringComparison.OrdinalIgnoreCase))
+            return "Retry with a simpler query first, then add where/group/combine incrementally.";
+
+        return base.BuildNextAction(code, message);
     }
 }

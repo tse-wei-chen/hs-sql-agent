@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [1.3.2] - 2026-04-09
+
+### Bug Fix
+- Fixed MySQL case-insensitive string filters by avoiding unsupported `ILIKE` and using a compatible `LOWER(field) LIKE lower(pattern)` path.
+- Fixed `combineConditions` handling for `union all` by normalizing combine type values (`union all`, `union_all`, `unionall`).
+- Improved query error output strategy by database type, including PostgreSQL-specific guidance for `42P01` (relation/CTE reference not found).
+- Updated `get_tables` flow to require an explicit schema name so table discovery is deterministic across database providers.
+
 ## [1.3.1] - 2026-04-08
 
 ### Feature

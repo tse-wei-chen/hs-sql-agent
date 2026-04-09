@@ -3,6 +3,7 @@ using MySql.Data.MySqlClient;
 using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 
@@ -37,13 +38,20 @@ public class MySqlStrategy : BaseSqlStrategy
 		}
 	}
 
-	public override async Task<List<string>> GetTablesAsync(string connectionString, CancellationToken cancellationToken = default)
+	public override async Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default)
 	{
 		try
 		{
 			using var connection = new MySqlConnection(connectionString);
 			await connection.OpenAsync(cancellationToken);
-			return [.. await connection.QueryAsync<string>("SHOW TABLES;")];
+			var sql = @"
+            SELECT TABLE_NAME 
+            FROM information_schema.TABLES 
+            WHERE TABLE_SCHEMA = @schemaName
+            AND TABLE_TYPE = 'BASE TABLE';";
+
+			var tables = await connection.QueryAsync<string>(sql, new { schemaName });
+			return [.. tables];
 		}
 		catch (Exception ex)
 		{
@@ -60,7 +68,14 @@ public class MySqlStrategy : BaseSqlStrategy
 		{
 			using var connection = new MySqlConnection(connectionString);
 			await connection.OpenAsync(cancellationToken);
-			return (await connection.QueryAsync<string>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tableName", new { tableName })).ToList();
+			const string sql = @"
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = @tableName";
+
+			var columns = await connection.QueryAsync<string>(sql, new { tableName });
+
+			return [.. columns];
 		}
 		catch (Exception ex)
 		{
@@ -113,5 +128,73 @@ public class MySqlStrategy : BaseSqlStrategy
 				please try again !!
 			");
 		}
+	}
+
+	protected override string BuildExecutionErrorMessage(Exception ex)
+	{
+		var code = TryExtractMySqlCode(ex.Message);
+		var hint = BuildHint(code, ex.Message);
+		var action = BuildNextAction(code, ex.Message);
+
+		return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
+	}
+
+	protected override string BuildHint(string? code, string message)
+	{
+		if (string.Equals(code, "1064", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(code, "42000", StringComparison.OrdinalIgnoreCase))
+		{
+			return "SQL syntax/operator issue. Verify combine type, string match mode, and field/operator compatibility.";
+		}
+
+		if (string.Equals(code, "42S02", StringComparison.OrdinalIgnoreCase)
+			|| message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Table not found. Use schema-qualified table names, for example northwind.customers.";
+		}
+
+		if (string.Equals(code, "42S22", StringComparison.OrdinalIgnoreCase)
+			|| message.Contains("Unknown column", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Column not found. Confirm field names and table prefixes in joins/group/order clauses.";
+		}
+
+		return base.BuildHint(code, message);
+	}
+
+	protected override string BuildNextAction(string? code, string message)
+	{
+		if (string.Equals(code, "1064", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(code, "42000", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Retry with simplified query first (select + where), then add combine/string conditions step-by-step.";
+		}
+
+		if (string.Equals(code, "42S02", StringComparison.OrdinalIgnoreCase)
+			|| message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Retry with fully-qualified table name and verify schema via get_tables in that schema.";
+		}
+
+		if (string.Equals(code, "42S22", StringComparison.OrdinalIgnoreCase)
+			|| message.Contains("Unknown column", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Retry with valid columns from get_columns and qualify fields in joins (table.column).";
+		}
+
+		return base.BuildNextAction(code, message);
+	}
+
+	private static string? TryExtractMySqlCode(string message)
+	{
+		if (string.IsNullOrWhiteSpace(message)) return null;
+
+		var sqlState = Regex.Match(message, @"SQLSTATE\[(?<code>[0-9A-Z]{5})\]", RegexOptions.IgnoreCase);
+		if (sqlState.Success) return sqlState.Groups["code"].Value.ToUpperInvariant();
+
+		var mysqlCode = Regex.Match(message, @"\b(?<code>\d{4})\b");
+		if (mysqlCode.Success) return mysqlCode.Groups["code"].Value;
+
+		return null;
 	}
 }

@@ -180,7 +180,6 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				continue;
 
 			var mode = (cond.MatchMode ?? "contains").Trim().ToLowerInvariant();
-			var likeOperator = cond.CaseInsensitive ? "ilike" : "like";
 			var pattern = mode switch
 			{
 				"starts" => $"{cond.Value}%",
@@ -189,7 +188,22 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				_ => $"%{cond.Value}%"
 			};
 
-			query = query.Where(cond.Field, likeOperator, pattern);
+			if (cond.CaseInsensitive)
+			{
+				if (DbType == SqlAgentToolType.Postgres)
+				{
+					query = query.Where(cond.Field, "ilike", pattern);
+				}
+				else
+				{
+					var safeField = _validator.RequireSafeIdentifier(cond.Field, "string where field");
+					query = query.WhereRaw($"LOWER({safeField}) LIKE ?", pattern.ToLowerInvariant());
+				}
+			}
+			else
+			{
+				query = query.Where(cond.Field, "like", pattern);
+			}
 		}
 
 		return query;
@@ -311,10 +325,13 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				if (string.IsNullOrWhiteSpace(combine.Query?.TableName)) continue;
 
 				var sub = BuildQueryFromDefinition(combine.Query);
-				var combineType = (combine.Type ?? "union").Trim().ToLowerInvariant();
+				var combineType = Regex.Replace(
+					(combine.Type ?? "union").Trim().ToLowerInvariant(),
+					@"\s+",
+					" ");
 				query = combineType switch
 				{
-					"union all" => query.UnionAll(sub),
+					"union all" or "union_all" or "unionall" => query.Union(sub, all: true),
 					"intersect" => query.Intersect(sub),
 					"except" => query.Except(sub),
 					_ => query.Union(sub),
@@ -336,16 +353,11 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		try
 		{
 			var result = await db.GetAsync(query, cancellationToken: cancellationToken);
-			var resultList = result.Select(r => (IDictionary<string, object>)r).ToList();
-			return JsonSerializer.Serialize(resultList);
+			return SerializeQueryResult(result);
 		}
 		catch (Exception ex)
 		{
-			var code = TryExtractSqlStateCode(ex.Message);
-			var hint = BuildHint(code, ex.Message);
-			var action = BuildNextAction(code, ex.Message);
-
-			return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
+			return BuildExecutionErrorMessage(ex);
 		}
 	}
 	#endregion
@@ -431,69 +443,45 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 	#endregion
 	#region Error Helpers
 
-	private static string? TryExtractSqlStateCode(string message)
+	protected virtual string SerializeQueryResult(IEnumerable<dynamic> result)
 	{
-		var match = Regex.Match(message ?? string.Empty, @"\b(?<code>[0-9A-Z]{5})\b");
-		return match.Success ? match.Groups["code"].Value : null;
+		var resultList = result.Select(r => (IDictionary<string, object>)r).ToList();
+		return JsonSerializer.Serialize(resultList);
 	}
 
-	private static string BuildHint(string? code, string message)
+	protected virtual string BuildExecutionErrorMessage(Exception ex)
 	{
-		if (string.Equals(code, "42883", StringComparison.OrdinalIgnoreCase))
-		{
-			if (message.Contains("date >= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date <= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date < text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date > text", StringComparison.OrdinalIgnoreCase))
-			{
-				return "Date vs text type mismatch. Retry with dateWhereConditions.";
-			}
+		var code = TryExtractSqlStateCode(ex.Message);
+		var hint = BuildHint(code, ex.Message);
+		var action = BuildNextAction(code, ex.Message);
 
-			return "Operator/type mismatch. Retry with a compatible operator and typed values. Migration tip: use inWhereConditions for IN/NOT IN cases.";
-		}
+		return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
+	}
 
-		if (string.Equals(code, "42703", StringComparison.OrdinalIgnoreCase))
-			return "Column/expression not recognized. If using SQL expressions (e.g. date_part(...)), pass the full expression and avoid quoting it as a plain column name.";
+	protected static string? TryExtractSqlStateCode(string message)
+	{
+		var match = Regex.Match(message ?? string.Empty, @"\b(?<code>[0-9A-Z]{5})\b");
+		if (!match.Success) return null;
 
-		if (string.Equals(code, "42702", StringComparison.OrdinalIgnoreCase))
-			return "Ambiguous column reference. Qualify fields with table prefixes, for example order_details.unit_price instead of unit_price.";
+		var code = match.Groups["code"].Value;
+		return code.Any(char.IsDigit) ? code : null;
+	}
 
-		if (string.Equals(code, "22P02", StringComparison.OrdinalIgnoreCase))
-			return "Invalid value format for column type. Retry with correct literal format.";
-
+	protected virtual string BuildHint(string? code, string message)
+	{
 		return "Use the SQL and bindings to adjust fields/operators/types, then retry.";
 	}
 
-	private static string BuildNextAction(string? code, string message)
+	protected virtual string BuildNextAction(string? code, string message)
 	{
-		if (string.Equals(code, "42883", StringComparison.OrdinalIgnoreCase)
-			&& (message.Contains("date >= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date <= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date < text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date > text", StringComparison.OrdinalIgnoreCase)))
-		{
-			return "Retry and add dateWhereConditions. Example: { field: 'order_date', operator: '>=', value: '1997-01-01' }.";
-		}
-
-		if (string.Equals(code, "42702", StringComparison.OrdinalIgnoreCase))
-			return "Retry by qualifying ambiguous columns with table names, for example 'order_details.unit_price'.";
-
-		if (string.Equals(code, "42703", StringComparison.OrdinalIgnoreCase))
-			return "Retry with an existing column or pass expression as raw field text, for example date_part('year', order_date).";
-
-		if (string.Equals(code, "22P02", StringComparison.OrdinalIgnoreCase))
-			return "Retry with corrected literal format, for example number without quotes, ISO date string, or boolean true/false.";
-
 		return "Retry after adjusting query fields according to the SQL error. Prefer specialized params: dateWhereConditions and inWhereConditions.";
 	}
-	#endregion
-	#region Value Parsers
 	#endregion
 
 	#region Abstract Members
 
 	public abstract Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
-	public abstract Task<List<string>> GetTablesAsync(string connectionString, CancellationToken cancellationToken = default);
+	public abstract Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default);
 	public abstract Task<List<string>> GetColumnsAsync(string connectionString, string tableName, CancellationToken cancellationToken = default);
 	public abstract Task<string> GetTableReferenceAsync(string connectionString, string tableName, CancellationToken cancellationToken = default);
 

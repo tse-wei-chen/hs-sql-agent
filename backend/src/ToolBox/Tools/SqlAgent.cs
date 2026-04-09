@@ -114,8 +114,8 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 		}
 	}
 
-	[McpServerTool, Description("Get list of tables in the database.")]
-	public async Task<string> GetTables()
+	[McpServerTool, Description("Get list of tables in a schema. ")]
+	public async Task<string> GetTables([Description("The schema name (DO NOT INCLUDE SCHEMA PREFIX)")] string schemaName)
 	{
 		try
 		{
@@ -125,7 +125,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 				return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 			}
 			var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-			var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString);
+			var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
 			return string.Join(", ", tables);
 		}
 		catch (Exception ex)
