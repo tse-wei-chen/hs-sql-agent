@@ -7,4 +7,9 @@
 	<Project Path="src\UnitTest\Admin.Test\Admin.Test.csproj" />
 	<Project Path="src\UnitTest\SqlAgent.Test\SqlAgent.Test.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/" />
+  <Folder Name="/src/Modules/SqlKata.Service/">
+    <Project Path="src/Modules/SqlKata.Service/QueryBuilder/QueryBuilder.csproj" />
+    <Project Path="src/Modules/SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj" />
+  </Folder>
 </Solution>

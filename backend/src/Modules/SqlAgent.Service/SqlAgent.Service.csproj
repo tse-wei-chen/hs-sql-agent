@@ -7,10 +7,12 @@
   </PropertyGroup>
 
     <ItemGroup>
- 	  <PackageReference Include="SqlKata" />
-	  <PackageReference Include="SqlKata.Execution" />
     <PackageReference Include="MySql.Data" />
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
+	  <ProjectReference Include="../SqlKata.Service/QueryBuilder/QueryBuilder.csproj" />
+	  <ProjectReference Include="../SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj" />
   </ItemGroup>
 </Project>

@@ -11,8 +11,8 @@ namespace SqlAgent.Service.Strategies;
 
 public class PostgresStrategy : BaseSqlStrategy
 {
-	public PostgresStrategy(IValidator validator, IQueryValueParserService valueParser)
-		: base(validator, valueParser)
+	public PostgresStrategy(IQueryValueParserService valueParser)
+		: base(valueParser)
 	{
 	}
 
@@ -78,8 +78,6 @@ public class PostgresStrategy : BaseSqlStrategy
 		{
 			using var connection = new NpgsqlConnection(connectionString);
 			await connection.OpenAsync(cancellationToken);
-
-			// 使用更精確的 JOIN 邏輯，並統一欄位命名為小寫
 			const string sql = """
             SELECT
                 kcu.table_name AS sourcetable,

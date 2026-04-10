@@ -10,8 +10,6 @@
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.2.0" /> 
     <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" />
-    <PackageVersion Include="SqlKata" Version="4.0.1" />
-    <PackageVersion Include="SqlKata.Execution" Version="4.0.1" />
     <PackageVersion Include="MySql.Data" Version="9.6.0" />
     <PackageVersion Include="Npgsql" Version="10.0.2" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.5" />
@@ -27,5 +25,8 @@
     <PackageVersion Include="coverlet.collector" Version="6.0.2" />
     <PackageVersion Include="Moq" Version="4.20.72" />
     <PackageVersion Include="Moq.EntityFrameworkCore" Version="10.0.0" />
+
+    <PackageVersion Include="dapper" Version="2.0.123" />
+    <PackageVersion Include="Humanizer.Core" Version="2.8.26" />
   </ItemGroup>
 </Project>

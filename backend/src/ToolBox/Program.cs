@@ -43,7 +43,6 @@ builder.Services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeStat
 builder.Services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddSingleton<ICryptoService, CryptoService>();
-builder.Services.AddSingleton<IValidator, SqlQueryValidator>();
 builder.Services.AddSingleton<IQueryValueParserService, QueryValueParserService>();
 builder.Services.AddScoped<ISqlStrategy, MySqlStrategy>();
 builder.Services.AddScoped<ISqlStrategy, PostgresStrategy>();
@@ -189,7 +188,7 @@ app.UseStaticFiles();
 app.UseWhen(
 	context => context.Request.Path.StartsWithSegments("/mcp"),
 	branch =>
-	{	
+	{
 		branch.UseRateLimiter();
 		branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
 		branch.UseMiddleware<McpContextMiddleware>();

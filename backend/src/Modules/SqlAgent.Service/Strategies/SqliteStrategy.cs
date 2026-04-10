@@ -11,8 +11,8 @@ namespace SqlAgent.Service.Strategies;
 
 public class SqliteStrategy : BaseSqlStrategy
 {
-    public SqliteStrategy(IValidator validator, IQueryValueParserService valueParser)
-        : base(validator, valueParser)
+    public SqliteStrategy(IQueryValueParserService valueParser)
+        : base(valueParser)
     {
     }
 
@@ -25,7 +25,7 @@ public class SqliteStrategy : BaseSqlStrategy
     {
         // SQLite does not support multiple schemas in the same way as other RDBMS.
         // Returning an empty list or a list with a single default schema.
-        return ["sqllite does not support schemas, please use get_tables to see available tables."];
+        return ["sqlite does not support schemas, please use get_tables to see available tables."];
     }
 
     public override async Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default)
