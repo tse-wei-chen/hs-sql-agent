@@ -7,17 +7,16 @@ using SqlKata.Execution;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlKata.Extensions;
 
 namespace SqlAgent.Service.Strategies;
 
 public abstract class BaseSqlStrategy : ISqlStrategy
 {
-	private readonly IValidator _validator;
 	private readonly IQueryValueParserService _valueParser;
 
-	protected BaseSqlStrategy(IValidator validator, IQueryValueParserService valueParser)
+	protected BaseSqlStrategy(IQueryValueParserService valueParser)
 	{
-		_validator = validator;
 		_valueParser = valueParser;
 	}
 
@@ -32,63 +31,78 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 	private Query ApplySelectColumns(Query query, IList<SelectCondition> cols)
 	{
-		if (cols.Count == 0) return query.Select("*");
+		if (cols == null || cols.Count == 0) return query.Select("*");
 
 		foreach (var col in cols)
 		{
-			if (!string.IsNullOrWhiteSpace(col.Aggregation))
+			var hasAlias = !string.IsNullOrWhiteSpace(col.Alias);
+			var hasAgg = !string.IsNullOrWhiteSpace(col.Aggregation);
+
+			AbstractColumn columnExpr;
+
+			if (col.Arithmetic != null)
 			{
-				var agg = _validator.RequireSafeAggregation(col.Aggregation);
-				var field = _validator.RequireSafeIdentifier(col.Field, "select aggregation field");
-				if (!string.IsNullOrWhiteSpace(col.Alias))
-				{
-					var alias = _validator.RequireSafeIdentifier(col.Alias, "select aggregation alias");
-					query = query.SelectRaw($"{agg}({field}) AS {alias}");
-				}
-				else
-				{
-					query = query.SelectAggregate(agg, field);
-				}
+				columnExpr = MapArithmetic(col.Arithmetic);
 			}
-			else if (!string.IsNullOrWhiteSpace(col.Alias))
+			else if (!string.IsNullOrWhiteSpace(col.Field))
 			{
-				var field = _validator.RequireSafeIdentifier(col.Field, "select field");
-				var alias = _validator.RequireSafeIdentifier(col.Alias, "select alias");
-				query = query.Select($"{field} AS {alias}");
+				columnExpr = new Column { Name = col.Field.Trim() };
 			}
 			else
 			{
-				var field = _validator.RequireSafeIdentifier(col.Field, "select field");
-				query = query.Select(field);
+				continue;
 			}
+
+			if (hasAgg)
+			{
+				columnExpr = new AggregatedColumn
+				{
+					Aggregate = col.Aggregation,
+					Column = columnExpr
+				};
+			}
+
+			if (hasAlias)
+			{
+				if (columnExpr is ArithmeticColumn ac) ac.Alias = col.Alias;
+				else if (columnExpr is Column c) c.Name = $"{c.Name} AS {col.Alias}";
+				else if (columnExpr is AggregatedColumn ag)
+				{
+					if (ag.Column is Column inner) inner.Name = $"{inner.Name} AS {col.Alias}";
+				}
+			}
+
+			query = query.Select(columnExpr);
 		}
 
 		return query;
+	}
+
+	private AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
+	{
+		if (arithmetic.Left != null && arithmetic.Operator != null && arithmetic.Right != null)
+		{
+			return MapArithmetic(arithmetic.Left).Arithmetic(arithmetic.Operator, MapArithmetic(arithmetic.Right));
+		}
+
+		if (arithmetic.Constant != null)
+		{
+			return new NumberColumn { Value = arithmetic.Constant };
+		}
+
+		return new Column { Name = arithmetic.FieldName ?? string.Empty };
 	}
 
 	private Query ApplyJoins(Query query, IList<JoinCondition> joins)
 	{
 		foreach (var join in joins)
 		{
-			if (string.IsNullOrEmpty(join.Table) || string.IsNullOrEmpty(join.First)
-				|| string.IsNullOrEmpty(join.Second) || string.IsNullOrEmpty(join.Type))
-				continue;
-
-			var joinType = join.Type.Trim().ToLowerInvariant();
-			if (!_validator.IsAllowedJoinType(joinType))
-				throw new InvalidOperationException($"Unsupported join type: '{join.Type}'");
-
-			var first = _validator.RequireSafeIdentifier(join.First, "join first");
-			var second = _validator.RequireSafeIdentifier(join.Second, "join second");
-			var op = _validator.GetSafeOperator(join.Operator);
-			var table = _validator.RequireSafeIdentifier(join.Table, "join table");
-
-			query = joinType switch
+			query = join.Type.ToLowerInvariant() switch
 			{
-				"left" => query.LeftJoin(table, first, second, op),
-				"right" => query.RightJoin(table, first, second, op),
-				"cross" => query.CrossJoin(table),
-				_ => query.Join(table, first, second, op),
+				"left" => query.LeftJoin(join.Table, join.First, join.Second, join.Operator),
+				"right" => query.RightJoin(join.Table, join.First, join.Second, join.Operator),
+				"cross" => query.CrossJoin(join.Table),
+				_ => query.Join(join.Table, join.First, join.Second, join.Operator),
 			};
 		}
 
@@ -97,123 +111,57 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 	private Query ApplyWhereConditions(Query query, IList<WhereCondition> conds)
 	{
-		foreach (var cond in conds)
-		{
-			if (string.IsNullOrWhiteSpace(cond.Field)) continue;
-
-			var op = _validator.GetSafeOperator(cond.Operator).ToLowerInvariant();
-			var rawValue = cond.Value;
-			var value = rawValue is JsonElement je ? _valueParser.UnwrapJsonElement(je) : rawValue;
-
-			if (op is "is" or "is null")
+		return conds.Where(c => !string.IsNullOrWhiteSpace(c.Field))
+			.Aggregate(query, (q, c) =>
 			{
-				query = value is null ? query.WhereNull(cond.Field) : query.Where(cond.Field, "=", value);
-				continue;
-			}
+				var op = c.Operator?.ToLowerInvariant().Trim();
+				var val = c.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : c.Value;
 
-			if (op is "is not" or "is not null")
-			{
-				query = value is null ? query.WhereNotNull(cond.Field) : query.Where(cond.Field, "!=", value);
-				continue;
-			}
-
-			if (op is "in" or "not in")
-			{
-				if (_valueParser.TryGetInValues(rawValue, out var values))
+				return op switch
 				{
-					query = op == "in"
-						? query.WhereIn(cond.Field, values)
-						: query.WhereNotIn(cond.Field, values);
-					continue;
-				}
-			}
+					"is" or "isnull" => q.Where(c.Field, val),
+					"isnot" or "isnotnull" => q.WhereNot(c.Field, val),
 
-			query = query.Where(cond.Field, _validator.GetSafeOperator(cond.Operator), value);
-		}
+					"in" or "notin" when _valueParser.TryGetInValues(c.Value, out var ins)
+						=> op == "in" ? q.WhereIn(c.Field, ins) : q.WhereNotIn(c.Field, ins),
 
-		return query;
+					"between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high)
+						=> op == "between" ? q.WhereBetween(c.Field, low, high) : q.WhereNotBetween(c.Field, low, high),
+
+					"like" => q.WhereLike(c.Field, val),
+					"notlike" => q.WhereNotLike(c.Field, val),
+					"starts" => q.WhereStarts(c.Field, val),
+					"ends" => q.WhereEnds(c.Field, val),
+					"contains" => q.WhereContains(c.Field, val),
+
+					_ => q.Where(c.Field, c.Operator, val)
+				};
+			});
 	}
 
 	private Query ApplyDateWhereConditions(Query query, IList<DateWhereCondition> conds)
 	{
-		foreach (var cond in conds)
-		{
-			if (string.IsNullOrWhiteSpace(cond.Field) || string.IsNullOrWhiteSpace(cond.Value))
-				continue;
-
-			var op = _validator.GetSafeOperator(cond.Operator);
-			if (!_valueParser.TryToDateTime(cond.Value, out var dt)) continue;
-
-			query = query.WhereDate(cond.Field, op, dt);
-		}
-
-		return query;
-	}
-
-	private Query ApplyInWhereConditions(Query query, IList<InWhereCondition> conds)
-	{
-		foreach (var cond in conds)
-		{
-			if (string.IsNullOrWhiteSpace(cond.Field) || cond.Values == null || cond.Values.Count == 0)
-				continue;
-
-			var values = cond.Values
-				.Select(v => v is JsonElement je ? _valueParser.UnwrapJsonElement(je) : v)
-				.Where(v => v is not null)
-				.ToArray();
-
-			if (values.Length == 0) continue;
-
-			query = cond.NotIn
-				? query.WhereNotIn(cond.Field, values)
-				: query.WhereIn(cond.Field, values);
-		}
-
-		return query;
-	}
-
-	private Query ApplyStringWhereConditions(Query query, IList<StringWhereCondition> conds)
-	{
-		foreach (var cond in conds)
-		{
-			if (string.IsNullOrWhiteSpace(cond.Field) || string.IsNullOrWhiteSpace(cond.Value))
-				continue;
-
-			var mode = (cond.MatchMode ?? "contains").Trim().ToLowerInvariant();
-			var pattern = mode switch
+		return conds.Where(c => !string.IsNullOrWhiteSpace(c.Field))
+			.Aggregate(query, (q, c) =>
 			{
-				"starts" => $"{cond.Value}%",
-				"ends" => $"%{cond.Value}",
-				"like" => cond.Value,
-				_ => $"%{cond.Value}%"
-			};
+				var op = c.Operator?.ToLowerInvariant().Trim();
+				var val = _valueParser.TryToDateTime(c.Value, out var dt) ? dt : (object?)null;
 
-			if (cond.CaseInsensitive)
-			{
-				if (DbType == SqlAgentToolType.Postgres)
+				return op switch
 				{
-					query = query.Where(cond.Field, "ilike", pattern);
-				}
-				else
-				{
-					var safeField = _validator.RequireSafeIdentifier(cond.Field, "string where field");
-					query = query.WhereRaw($"LOWER({safeField}) LIKE ?", pattern.ToLowerInvariant());
-				}
-			}
-			else
-			{
-				query = query.Where(cond.Field, "like", pattern);
-			}
-		}
+					"is" or "isnull" => q.WhereDate(c.Field, val),
+					"isnot" or "isnotnull" => q.WhereNotDate(c.Field, val),
 
-		return query;
+					_ => q.WhereDate(c.Field, c.Operator, val)
+				};
+			});
 	}
 
 	private Query ApplyGroupByConditions(Query query, IList<GroupByCondition> conds)
 	{
 		foreach (var gf in conds)
 		{
-			var field = _validator.RequireSafeIdentifier(gf.Field, "group by field");
+			var field = gf.Field.Trim();
 			query = query.GroupBy(field);
 		}
 
@@ -222,41 +170,101 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 	private Query ApplyHavingConditions(Query query, IList<HavingCondition> conds)
 	{
-		foreach (var cond in conds)
-		{
-			if (string.IsNullOrWhiteSpace(cond.Field)) continue;
-			query = ApplyHavingCondition(query, cond);
-		}
+		if (conds == null || !conds.Any()) return query;
 
-		return query;
+		return conds.Where(c => !string.IsNullOrWhiteSpace(c.Field))
+			.Aggregate(query, (q, c) =>
+			{
+				var op = c.Operator.ToLowerInvariant().Trim();
+				var val = c.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : c.Value;
+
+				var agg = c.Aggregation;
+				var isAgg = agg != null;
+				var field = c.Field.Trim();
+				return op switch
+				{
+					"between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high) =>
+						isAgg
+							? (op == "between" ? q.HavingBetweenAggregate(agg, field, low, high) : q.HavingNotBetweenAggregate(agg, field, low, high))
+							: (op == "between" ? q.HavingBetween(field, low, high) : q.HavingNotBetween(field, low, high)),
+
+					"is" or "isnull" => isAgg ? q.HavingAggregate(agg, field, "=", null) : q.HavingNull(field),
+					"isnot" or "isnotnull" => isAgg ? q.Not().HavingAggregate(agg, field, "=", null) : q.HavingNotNull(field),
+
+					"in" when _valueParser.TryGetInValues(val, out var ins)
+						=> isAgg ? q.HavingInAggregate(agg, field, ins) : q.HavingIn(field, ins),
+					"notin" when _valueParser.TryGetInValues(val, out var nins)
+						=> isAgg ? q.HavingNotInAggregate(agg, field, nins) : q.HavingNotIn(field, nins),
+
+					"like" => isAgg ? q.HavingLikeAggregate(agg, field, val) : q.HavingLike(field, val),
+					"starts" => isAgg ? q.HavingStartsAggregate(agg, field, val) : q.HavingStarts(field, val),
+					"ends" => isAgg ? q.HavingEndsAggregate(agg, field, val) : q.HavingEnds(field, val),
+					"contains" => isAgg ? q.HavingContainsAggregate(agg, field, val) : q.HavingContains(field, val),
+
+
+					_ => isAgg
+						? q.HavingAggregate(agg, field, op, val)
+						: q.Having(field, op, val)
+				};
+			});
+	}
+
+	private Query ApplyDateHavingConditions(Query query, IList<DateHavingCondition> conds)
+	{
+		if (conds == null || !conds.Any()) return query;
+
+		return conds.Where(c => !string.IsNullOrWhiteSpace(c.Field))
+			.Aggregate(query, (q, c) =>
+			{
+				var op = c.Operator.ToLowerInvariant().Trim();
+				var val = _valueParser.TryToDateTime(c.Value, out var dt) ? dt : (object?)null;
+
+				var agg = c.Aggregation;
+				var isAgg = agg != null;
+				var field = c.Field.Trim();
+				return op switch
+				{
+					"is" or "isnull" => isAgg
+						? q.HavingDateAggregate(agg, field, "=", null)
+						: q.HavingNull(field),
+
+					"isnot" or "isnotnull" => isAgg
+						? q.Not().HavingDateAggregate(agg, field, "=", null)
+						: q.HavingNotNull(field),
+
+					"between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high) => isAgg
+						? (op == "between"
+							? q.HavingBetweenAggregate(agg, field, low, high)
+							: q.HavingNotBetweenAggregate(agg, field, low, high))
+						: (op == "between"
+							? q.HavingBetween(field, low, high)
+							: q.HavingNotBetween(field, low, high)),
+
+					_ => isAgg
+						? q.HavingDateAggregate(agg, field, op, val)
+						: q.HavingDate(field, op, val)
+				};
+			});
 	}
 
 	private Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
 	{
-		foreach (var col in cols)
-		{
-			if (string.IsNullOrWhiteSpace(col.Field)) continue;
+		if (cols == null || !cols.Any()) return query;
 
-			var field = col.Field;
-			var direction = string.Equals(col.Direction, "DESC", StringComparison.OrdinalIgnoreCase)
-				? "DESC"
-				: "ASC";
-
-			if (!string.IsNullOrWhiteSpace(col.Aggregation) && _validator.IsSupportedAggregation(col.Aggregation))
+		return cols.Where(c => !string.IsNullOrWhiteSpace(c.Field))
+			.Aggregate(query, (q, c) =>
 			{
-				var agg = _validator.RequireSafeAggregation(col.Aggregation);
-				var safeField = _validator.RequireSafeIdentifier(field, "order by aggregation field");
-				query = query.OrderByRaw($"{agg}({safeField}) {direction}");
-			}
-			else
-			{
-				query = direction == "DESC"
-					? query.OrderByDesc(field)
-					: query.OrderBy(field);
-			}
-		}
+				var field = c.Field.Trim();
+				var dir = c.Direction?.ToLowerInvariant().Trim() ?? "asc";
 
-		return query;
+				return dir switch
+				{
+					"random" => q.OrderByRandom(field),
+					"desc" => q.OrderByDesc(field),
+					"asc" => q.OrderBy(field),
+					_ => q.OrderBy(field)
+				};
+			});
 	}
 	#endregion
 	#region ExecuteQueryAsync
@@ -267,11 +275,10 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		List<SelectCondition>? selectColumns = null,
 		List<WhereCondition>? whereConditions = null,
 		List<DateWhereCondition>? dateWhereConditions = null,
-		List<InWhereCondition>? inWhereConditions = null,
-		List<StringWhereCondition>? stringWhereConditions = null,
 		List<OrderByCondition>? orderByColumns = null,
 		List<GroupByCondition>? groupByConditions = null,
 		List<HavingCondition>? havingConditions = null,
+		List<DateHavingCondition>? dateHavingConditions = null,
 		List<CombineCondition>? combineConditions = null,
 		List<CteCondition>? cteConditions = null,
 		int? limit = null,
@@ -296,17 +303,14 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		if (dateWhereConditions?.Count > 0)
 			query = ApplyDateWhereConditions(query, dateWhereConditions);
 
-		if (inWhereConditions?.Count > 0)
-			query = ApplyInWhereConditions(query, inWhereConditions);
-
-		if (stringWhereConditions?.Count > 0)
-			query = ApplyStringWhereConditions(query, stringWhereConditions);
-
 		if (groupByConditions?.Count > 0)
 			query = ApplyGroupByConditions(query, groupByConditions);
 
 		if (havingConditions?.Count > 0)
 			query = ApplyHavingConditions(query, havingConditions);
+
+		if (dateHavingConditions?.Count > 0)
+			query = ApplyDateHavingConditions(query, dateHavingConditions);
 
 		if (cteConditions?.Count > 0)
 		{
@@ -325,13 +329,10 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				if (string.IsNullOrWhiteSpace(combine.Query?.TableName)) continue;
 
 				var sub = BuildQueryFromDefinition(combine.Query);
-				var combineType = Regex.Replace(
-					(combine.Type ?? "union").Trim().ToLowerInvariant(),
-					@"\s+",
-					" ");
+				var combineType = combine.Type?.ToLowerInvariant().Replace("_", "").Trim() ?? "union";
 				query = combineType switch
 				{
-					"union all" or "union_all" or "unionall" => query.Union(sub, all: true),
+					"unionall" => query.Union(sub, all: true),
 					"intersect" => query.Intersect(sub),
 					"except" => query.Except(sub),
 					_ => query.Union(sub),
@@ -339,15 +340,22 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			}
 		}
 
-		if (orderByColumns?.Count > 0)
-			query = ApplyOrderByColumns(query, orderByColumns);
-
 		var hasCombineConditions = combineConditions?.Count > 0;
-		if (limit > 0)
+		if (hasCombineConditions)
 		{
-			query = hasCombineConditions
-				? new Query().From(query.As("combined_result")).Limit(limit.Value)
-				: query.Limit(limit.Value);
+			var wrapper = new Query().From(query.As("combined_result"));
+			if (orderByColumns?.Count > 0)
+				wrapper = ApplyOrderByColumns(wrapper, orderByColumns);
+			if (limit > 0)
+				wrapper = wrapper.Limit(limit.Value);
+			query = wrapper;
+		}
+		else
+		{
+			if (orderByColumns?.Count > 0)
+				query = ApplyOrderByColumns(query, orderByColumns);
+			if (limit > 0)
+				query = query.Limit(limit.Value);
 		}
 
 		try
@@ -378,12 +386,6 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		if (definition.DateWhereConditions?.Count > 0)
 			query = ApplyDateWhereConditions(query, definition.DateWhereConditions);
 
-		if (definition.InWhereConditions?.Count > 0)
-			query = ApplyInWhereConditions(query, definition.InWhereConditions);
-
-		if (definition.StringWhereConditions?.Count > 0)
-			query = ApplyStringWhereConditions(query, definition.StringWhereConditions);
-
 		if (definition.GroupByConditions?.Count > 0)
 			query = ApplyGroupByConditions(query, definition.GroupByConditions);
 
@@ -399,48 +401,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return query;
 	}
 	#endregion
-	#region Having Helpers
 
-	private Query ApplyHavingCondition(Query query, HavingCondition cond)
-	{
-		var havingOp = _validator.GetSafeOperator(cond.Operator).ToLowerInvariant();
-
-		if (havingOp is "between" or "not between")
-		{
-			if (!_valueParser.TryGetBetweenValues(cond.Value, out var start, out var end))
-				return query;
-
-			var expression = BuildHavingExpression(cond);
-			var betweenOperator = havingOp == "not between" ? "NOT BETWEEN" : "BETWEEN";
-			return query.HavingRaw($"{expression} {betweenOperator} ? AND ?", start, end);
-		}
-
-		var havingValue = cond.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : cond.Value;
-		var displayOperator = _validator.GetSafeOperator(cond.Operator);
-
-		if (_validator.IsSupportedAggregation(cond.Aggregation))
-		{
-			var agg = _validator.RequireSafeAggregation(cond.Aggregation);
-			var field = _validator.RequireSafeIdentifier(cond.Field, "having aggregation field");
-			return query.HavingRaw($"{agg}({field}) {displayOperator} ?", havingValue);
-		}
-
-		return query.Having(cond.Field, displayOperator, havingValue);
-	}
-
-	private string BuildHavingExpression(HavingCondition cond)
-	{
-		if (_validator.IsSupportedAggregation(cond.Aggregation))
-		{
-			var agg = _validator.RequireSafeAggregation(cond.Aggregation);
-			var field = _validator.RequireSafeIdentifier(cond.Field, "having expression field");
-			return $"{agg}({field})";
-		}
-
-		// BETWEEN on a plain column: validate as identifier (no raw expressions allowed)
-		return _validator.RequireSafeIdentifier(cond.Field, "having between field");
-	}
-	#endregion
 	#region Error Helpers
 
 	protected virtual string SerializeQueryResult(IEnumerable<dynamic> result)

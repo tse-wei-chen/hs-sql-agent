@@ -62,6 +62,7 @@ public class QueryValueParserService : IQueryValueParserService
 			JsonValueKind.Number => je.GetDouble(),
 			JsonValueKind.True => true,
 			JsonValueKind.False => false,
+			JsonValueKind.Array => je.EnumerateArray().Select(UnwrapJsonElement).ToArray(),
 			_ => (object)je.ToString(),
 		};
 	}
@@ -120,6 +121,26 @@ public class QueryValueParserService : IQueryValueParserService
 			if (parts.Length == 0) return false;
 			values = parts;
 			return true;
+		}
+
+		return false;
+	}
+
+	public bool TryGetRangeValues(object? value, out object? start, out object? end)
+	{
+		start = null;
+		end = null;
+
+		if (value is null) return false;
+
+		if (value is JsonElement je && je.ValueKind == JsonValueKind.Object)
+		{
+			if (je.TryGetProperty("start", out var startProp) && je.TryGetProperty("end", out var endProp))
+			{
+				start = UnwrapJsonElement(startProp);
+				end = UnwrapJsonElement(endProp);
+				return true;
+			}
 		}
 
 		return false;

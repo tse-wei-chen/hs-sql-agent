@@ -18,7 +18,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 
 	[McpServerTool, Description("Execute a query (supports join, where, where-date, where-in, where-string, group, having, combine, cte, order by, limit). don't use alias")]
 	public async Task<string> ExecuteQuerySafe(
-		[Description("The table name")]
+		[Description("The table name (use schema-qualified table name)")]
 		string tableName,
 		[Description("List of columns to select")]
 		List<SelectCondition> selectColumns,
@@ -26,10 +26,6 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 		List<WhereCondition>? whereColumnsAndValues = null,
 		[Description("Date-only where conditions handled by SqlKata WhereDate.")]
 		List<DateWhereCondition>? dateWhereConditions = null,
-		[Description("IN/NOT IN specific where conditions.")]
-		List<InWhereCondition>? inWhereConditions = null,
-		[Description("String matching where conditions (contains/starts/ends/like).")]
-		List<StringWhereCondition>? stringWhereConditions = null,
 		[Description("List of columns to order by. Each item can include 'Field', 'Aggregation' (e.g., COUNT, SUM), and 'Direction' (ASC or DESC).")]
 		List<OrderByCondition>? orderByColumns = null,
 		[Description("Limit the number of results returned")]
@@ -40,6 +36,8 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 		List<GroupByCondition>? groupByConditions = null,
 		[Description("List of having conditions.")]
 		List<HavingCondition>? havingConditions = null,
+		[Description("List of date-specific having conditions.")]
+		List<DateHavingCondition>? dateHavingConditions = null,
 		[Description("List of combine conditions (union/union all/intersect/except).")]
 		List<CombineCondition>? combineConditions = null,
 		[Description("List of CTE definitions.")]
@@ -57,11 +55,10 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 			selectColumns,
 			whereColumnsAndValues,
 			dateWhereConditions,
-			inWhereConditions,
-			stringWhereConditions,
 			orderByColumns,
 			groupByConditions,
 			havingConditions,
+			dateHavingConditions,
 			combineConditions,
 			cteConditions,
 			limit,
@@ -71,7 +68,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 	}
 
 	[McpServerTool, Description("Get column names of a table.")]
-	public async Task<string> GetColumns(string tableName)
+	public async Task<string> GetColumns([Description("The table name")] string tableName)
 	{
 		try
 		{
@@ -115,7 +112,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 	}
 
 	[McpServerTool, Description("Get list of tables in a schema. ")]
-	public async Task<string> GetTables([Description("The schema name (DO NOT INCLUDE SCHEMA PREFIX)")] string schemaName)
+	public async Task<string> GetTables([Description("The schema name")] string schemaName)
 	{
 		try
 		{

@@ -11,8 +11,8 @@ namespace SqlAgent.Service.Strategies;
 
 public class MySqlStrategy : BaseSqlStrategy
 {
-	public MySqlStrategy(IValidator validator, IQueryValueParserService valueParser)
-		: base(validator, valueParser)
+	public MySqlStrategy(IQueryValueParserService valueParser)
+		: base(valueParser)
 	{
 	}
 
@@ -68,12 +68,15 @@ public class MySqlStrategy : BaseSqlStrategy
 		{
 			using var connection = new MySqlConnection(connectionString);
 			await connection.OpenAsync(cancellationToken);
+			var processedTableName = tableName.Contains('.') 
+				? tableName.Split('.').Last() 
+				: tableName;
 			const string sql = @"
             SELECT COLUMN_NAME 
             FROM INFORMATION_SCHEMA.COLUMNS 
             WHERE TABLE_NAME = @tableName";
 
-			var columns = await connection.QueryAsync<string>(sql, new { tableName });
+			var columns = await connection.QueryAsync<string>(sql, new { tableName = processedTableName });
 
 			return [.. columns];
 		}
@@ -92,7 +95,9 @@ public class MySqlStrategy : BaseSqlStrategy
 		{
 			using var connection = new MySqlConnection(connectionString);
 			await connection.OpenAsync(cancellationToken);
-
+			var processedTableName = tableName.Contains('.') 
+				? tableName.Split('.').Last() 
+				: tableName;
 			const string sql = """
 				SELECT
 					kcu.TABLE_NAME AS SourceTable,
@@ -110,7 +115,7 @@ public class MySqlStrategy : BaseSqlStrategy
 				ORDER BY kcu.REFERENCED_TABLE_NAME, kcu.COLUMN_NAME;
 				""";
 
-			var references = await connection.QueryAsync(sql, new { tableName });
+			var references = await connection.QueryAsync(sql, new { tableName = processedTableName });
 			var result = references.Select(r => new
 			{
 				SourceTable = (string)r.SourceTable,

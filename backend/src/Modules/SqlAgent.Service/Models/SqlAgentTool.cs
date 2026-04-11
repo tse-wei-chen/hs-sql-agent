@@ -4,19 +4,36 @@ namespace SqlAgent.Service.Models;
 
 public class SelectCondition
 {
-    [Description("The field name to select.")]
+    [Description("The field name to select (if not using arithmetic).")]
     public string Field { get; set; } = string.Empty;
     [Description("Alias for the selected field (Optional).")]
     public string Alias { get; set; } = string.Empty;
     [Description("The aggregation function to apply (e.g., 'SUM', 'COUNT').")]
     public string Aggregation { get; set; } = string.Empty;
+    [Description("Arithmetic expression (Optional). If set, 'Field' will be ignored.")]
+    public SelectArithmeticCondition? Arithmetic { get; set; }
+}
+
+public class SelectArithmeticCondition
+{
+    [Description("The field name for this node (if it's a leaf node).")]
+    public string? FieldName { get; set; }
+    [Description("The constant value (if it's a constant node).")]
+    public object? Constant { get; set; }
+
+    [Description("The left operand for arithmetic.")]
+    public SelectArithmeticCondition? Left { get; set; }
+    [Description("The operator (+, -, *, /).")]
+    public string? Operator { get; set; }
+    [Description("The right operand for arithmetic.")]
+    public SelectArithmeticCondition? Right { get; set; }
 }
 
 public class WhereCondition
 {
     [Description("The field name to apply the condition on.")]
     public string Field { get; set; } = string.Empty;
-    [Description("The operator to use in the condition. Legacy note: prefer InWhereConditions instead of using IN/NOT IN here.")]
+    [Description("The operator to use in the condition.")]
     public string Operator { get; set; } = "=";
     [Description("The value to compare the field against.")]
     public object Value { get; set; } = string.Empty;
@@ -82,10 +99,8 @@ public class OrderByCondition
 {
     [Description("The field name to order by (e.g., 'Products.Price' or 'Orders.TotalAmount').")]
     public string Field { get; set; } = string.Empty;
-    [Description("Aggregation function (Optional). Use 'SUM' to order by total, 'COUNT' for frequency.")]
-    public string Aggregation { get; set; } = string.Empty;
-    [Description("ASC or DESC")]
-    public string Direction { get; set; } = "ASC";
+    [Description("asc or desc or random, default is asc")]
+    public string Direction { get; set; } = "asc";
 }
 
 public class HavingCondition
@@ -99,6 +114,19 @@ public class HavingCondition
     [Description("Optional aggregation function (e.g., SUM, COUNT).")]
     public string Aggregation { get; set; } = string.Empty;
 }
+
+public class DateHavingCondition
+{
+    [Description("The date/datetime field name to apply date comparison on.")]
+    public string Field { get; set; } = string.Empty;
+    [Description("The operator to use in date comparison, e.g. '=', '>', '>=', '<', '<='.")]
+    public string Operator { get; set; } = "=";
+    [Description("Date value in ISO format, e.g. '1997-01-01'.")]
+    public string Value { get; set; } = string.Empty;
+    [Description("Optional aggregation function (e.g., SUM, COUNT).")]
+    public string Aggregation { get; set; } = string.Empty;
+}
+
 
 public class QueryDefinition
 {
