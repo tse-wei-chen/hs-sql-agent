@@ -120,7 +120,7 @@ public class PostgresStrategy : BaseSqlStrategy
 				|| message.Contains("date < text", StringComparison.OrdinalIgnoreCase)
 				|| message.Contains("date > text", StringComparison.OrdinalIgnoreCase))
 			{
-				return "Date vs text type mismatch. Retry with dateWhereConditions.";
+				return "Date vs text type mismatch. Retry with .";
 			}
 
 			return "Operator/type mismatch. Retry with a compatible operator and typed values. Migration tip: use inWhereConditions for IN/NOT IN cases.";

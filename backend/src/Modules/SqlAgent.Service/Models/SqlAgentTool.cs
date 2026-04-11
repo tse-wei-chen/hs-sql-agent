@@ -4,7 +4,7 @@ namespace SqlAgent.Service.Models;
 
 public class SelectCondition
 {
-    [Description("The field name to select (if not using arithmetic).")]
+    [Description("The field name to select (if not using arithmetic or CASE).")]
     public string Field { get; set; } = string.Empty;
     [Description("Alias for the selected field (Optional).")]
     public string Alias { get; set; } = string.Empty;
@@ -12,6 +12,18 @@ public class SelectCondition
     public string Aggregation { get; set; } = string.Empty;
     [Description("Arithmetic expression (Optional). If set, 'Field' will be ignored.")]
     public SelectArithmeticCondition? Arithmetic { get; set; }
+    [Description("Cases for CASE WHEN expression (Optional).")]
+    public List<CaseWhenClause>? CaseWhen { get; set; }
+    [Description("The default value for ELSE in a CASE expression (Optional).")]
+    public object? ElseValue { get; set; }
+}
+
+public class CaseWhenClause
+{
+    [Description("The condition for WHEN.")]
+    public WhereCondition Condition { get; set; } = new();
+    [Description("The value for THEN.")]
+    public object Value { get; set; } = string.Empty;
 }
 
 public class SelectArithmeticCondition
@@ -33,43 +45,25 @@ public class WhereCondition
 {
     [Description("The field name to apply the condition on.")]
     public string Field { get; set; } = string.Empty;
-    [Description("The operator to use in the condition.")]
+    [Description("The operator to use in the condition (e.g., '=', '>', 'IN', 'EXISTS').")]
     public string Operator { get; set; } = "=";
     [Description("The value to compare the field against.")]
-    public object Value { get; set; } = string.Empty;
+    public object? Value { get; set; }
+
+    [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
+    public bool IsOr { get; set; }
+    [Description("When true, negates the entire condition or group (NOT).")]
+    public bool IsNot { get; set; }
+    [Description("Recursive nested conditions. If provided, 'Field/Operator/Value' are ignored for this node.")]
+    public List<WhereCondition>? Groups { get; set; }
+    [Description("When true, treats the field and value as dates (obsoletes DateWhereCondition).")]
+    public bool IsDate { get; set; }
+    [Description("Subquery definition for use with 'EXISTS', 'NOT EXISTS', or 'IN' operators.")]
+    public QueryDefinition? SubQuery { get; set; }
+    [Description("List of values for 'IN' or 'NOT IN' operators.")]
+    public List<object>? Values { get; set; }
 }
 
-public class StringWhereCondition
-{
-    [Description("The field name to apply string matching on.")]
-    public string Field { get; set; } = string.Empty;
-    [Description("The value to match.")]
-    public string Value { get; set; } = string.Empty;
-    [Description("Match mode: contains, starts, ends, like.")]
-    public string MatchMode { get; set; } = "contains";
-    [Description("When true, use case-insensitive matching where supported (ILIKE).")]
-    public bool CaseInsensitive { get; set; } = false;
-}
-
-public class DateWhereCondition
-{
-    [Description("The date/datetime field name to apply date comparison on.")]
-    public string Field { get; set; } = string.Empty;
-    [Description("The operator to use in date comparison, e.g. '=', '>', '>=', '<', '<='.")]
-    public string Operator { get; set; } = "=";
-    [Description("Date value in ISO format, e.g. '1997-01-01'.")]
-    public string Value { get; set; } = string.Empty;
-}
-
-public class InWhereCondition
-{
-    [Description("The field name to apply IN/NOT IN on.")]
-    public string Field { get; set; } = string.Empty;
-    [Description("Collection values for IN/NOT IN condition.")]
-    public List<object> Values { get; set; } = [];
-    [Description("When true, apply NOT IN. Otherwise apply IN.")]
-    public bool NotIn { get; set; } = false;
-}
 
 public class JoinCondition
 {
@@ -110,48 +104,50 @@ public class HavingCondition
     [Description("The operator to use in HAVING condition.")]
     public string Operator { get; set; } = "=";
     [Description("The value to compare against in HAVING.")]
-    public object Value { get; set; } = string.Empty;
+    public object? Value { get; set; }
     [Description("Optional aggregation function (e.g., SUM, COUNT).")]
     public string Aggregation { get; set; } = string.Empty;
-}
 
-public class DateHavingCondition
-{
-    [Description("The date/datetime field name to apply date comparison on.")]
-    public string Field { get; set; } = string.Empty;
-    [Description("The operator to use in date comparison, e.g. '=', '>', '>=', '<', '<='.")]
-    public string Operator { get; set; } = "=";
-    [Description("Date value in ISO format, e.g. '1997-01-01'.")]
-    public string Value { get; set; } = string.Empty;
-    [Description("Optional aggregation function (e.g., SUM, COUNT).")]
-    public string Aggregation { get; set; } = string.Empty;
+    [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
+    public bool IsOr { get; set; }
+    [Description("When true, negates the entire condition or group (NOT).")]
+    public bool IsNot { get; set; }
+    [Description("Recursive nested conditions.")]
+    public List<HavingCondition>? Groups { get; set; }
+    [Description("When true, treats the field and value as dates.")]
+    public bool IsDate { get; set; }
 }
-
 
 public class QueryDefinition
 {
     [Description("The table name for this query definition.")]
     public string TableName { get; set; } = string.Empty;
+    [Description("The subquery to select from (Optional). If set, its results will be treated as the source table.")]
+    public QueryDefinition? FromQuery { get; set; }
+    [Description("Alias for the source table or subquery (Optional).")]
+    public string? Alias { get; set; }
+    [Description("When true, only returns unique rows.")]
+    public bool Distinct { get; set; }
     [Description("List of columns to select.")]
     public List<SelectCondition>? SelectColumns { get; set; }
-    [Description("Where conditions.")]
+    [Description("Where conditions (supports nested logic and subqueries).")]
     public List<WhereCondition>? WhereColumnsAndValues { get; set; }
-    [Description("Date-specific where conditions using SqlKata WhereDate.")]
-    public List<DateWhereCondition>? DateWhereConditions { get; set; }
-    [Description("IN/NOT IN specific where conditions.")]
-    public List<InWhereCondition>? InWhereConditions { get; set; }
-    [Description("String matching where conditions.")]
-    public List<StringWhereCondition>? StringWhereConditions { get; set; }
     [Description("Order by conditions.")]
     public List<OrderByCondition>? OrderByColumns { get; set; }
     [Description("Group by conditions.")]
     public List<GroupByCondition>? GroupByConditions { get; set; }
-    [Description("Having conditions.")]
+    [Description("Having conditions (supports nested logic).")]
     public List<HavingCondition>? HavingConditions { get; set; }
     [Description("Join conditions.")]
     public List<JoinCondition>? Joins { get; set; }
+    [Description("Combine conditions (union, intersect, except).")]
+    public List<CombineCondition>? CombineConditions { get; set; }
+    [Description("CTE definitions.")]
+    public List<CteCondition>? CteConditions { get; set; }
     [Description("Limit number of rows.")]
     public int? Limit { get; set; }
+    [Description("Skip a number of rows (Optional).")]
+    public int? Offset { get; set; }
 }
 
 public class CteCondition
@@ -168,4 +164,4 @@ public class CombineCondition
     public string Type { get; set; } = "union";
     [Description("Query definition to combine with.")]
     public QueryDefinition Query { get; set; } = new();
-}
+}

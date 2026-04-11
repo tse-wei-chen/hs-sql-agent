@@ -11,15 +11,16 @@ public interface ISqlStrategy
 		string? tableName = null,
 		List<SelectCondition>? selectColumns = null,
 		List<WhereCondition>? whereConditions = null,
-		List<DateWhereCondition>? dateWhereConditions = null,
 		List<OrderByCondition>? orderByColumns = null,
 		List<GroupByCondition>? groupByConditions = null,
 		List<HavingCondition>? havingConditions = null,
-		List<DateHavingCondition>? dateHavingConditions = null,
 		List<CombineCondition>? combineConditions = null,
 		List<CteCondition>? cteConditions = null,
 		int? limit = null,
+		int? offset = null,
 		List<JoinCondition>? joins = null,
+		QueryDefinition? fromQuery = null,
+		bool distinct = false,
 		CancellationToken cancellationToken = default
 	);
 	Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
