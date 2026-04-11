@@ -14,6 +14,11 @@ WORKDIR /app
 
 COPY backend/Directory.Packages.props ./backend/
 COPY backend/src/Common/Common.csproj ./backend/src/Common/
+COPY backend/src/Modules/Admin.Service/Admin.Service.csproj ./backend/src/Modules/Admin.Service/
+COPY backend/src/Modules/SqlAgent.Service/SqlAgent.Service.csproj ./backend/src/Modules/SqlAgent.Service/
+COPY backend/src/Modules/SqlKata.Service/Directory.Packages.props ./backend/src/Modules/SqlKata.Service/
+COPY backend/src/Modules/SqlKata.Service/QueryBuilder/QueryBuilder.csproj ./backend/src/Modules/SqlKata.Service/QueryBuilder/
+COPY backend/src/Modules/SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj ./backend/src/Modules/SqlKata.Service/SqlKata.Execution/
 COPY backend/src/ToolBox/ToolBox.csproj ./backend/src/ToolBox/
 RUN dotnet restore ./backend/src/ToolBox/ToolBox.csproj
 
