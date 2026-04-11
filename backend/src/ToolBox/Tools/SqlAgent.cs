@@ -16,32 +16,34 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 	private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
 	private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
 
-	[McpServerTool, Description("Execute a query (supports join, where, where-date, where-in, where-string, group, having, combine, cte, order by, limit). don't use alias")]
+	[McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries). don't use alias")]
 	public async Task<string> ExecuteQuerySafe(
-		[Description("The table name (use schema-qualified table name)")]
-		string tableName,
+		[Description("The table name (use schema-qualified table name). Can be null if fromQuery is provided.")]
+		string? tableName = null,
 		[Description("List of columns to select")]
-		List<SelectCondition> selectColumns,
-		[Description("Dictionary of where columns and their values")]
-		List<WhereCondition>? whereColumnsAndValues = null,
-		[Description("Date-only where conditions handled by SqlKata WhereDate.")]
-		List<DateWhereCondition>? dateWhereConditions = null,
+		List<SelectCondition>? selectColumns = null,
+		[Description("List of where conditions")]
+		List<WhereCondition>? whereConditions = null,
 		[Description("List of columns to order by. Each item can include 'Field', 'Aggregation' (e.g., COUNT, SUM), and 'Direction' (ASC or DESC).")]
 		List<OrderByCondition>? orderByColumns = null,
 		[Description("Limit the number of results returned")]
 		int limit = 0,
+		[Description("Offset the number of results returned")]
+		int offset = 0,
 		[Description("List of joins. Each join is a dictionary with keys: 'Table', 'On', and optional 'Type' (default 'INNER').")]
 		List<JoinCondition>? joins = null,
 		[Description("List of group by conditions. Each condition includes 'Table', 'Field'.")]
 		List<GroupByCondition>? groupByConditions = null,
 		[Description("List of having conditions.")]
 		List<HavingCondition>? havingConditions = null,
-		[Description("List of date-specific having conditions.")]
-		List<DateHavingCondition>? dateHavingConditions = null,
 		[Description("List of combine conditions (union/union all/intersect/except).")]
 		List<CombineCondition>? combineConditions = null,
 		[Description("List of CTE definitions.")]
-		List<CteCondition>? cteConditions = null)
+		List<CteCondition>? cteConditions = null,
+		[Description("Whether to use SELECT DISTINCT")]
+		bool distinct = false,
+		[Description("Source subquery definition. If provided, tableName is ignored.")]
+		QueryDefinition? fromQuery = null)
 	{
 		var sqlConfig = await ResolveSqlConfigAsync();
 		if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
@@ -50,19 +52,20 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 		}
 		var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 		var result = await strategy.ExecuteQueryAsync(
-			sqlConfig.ConnectionString,
-			tableName,
-			selectColumns,
-			whereColumnsAndValues,
-			dateWhereConditions,
-			orderByColumns,
-			groupByConditions,
-			havingConditions,
-			dateHavingConditions,
-			combineConditions,
-			cteConditions,
-			limit,
-			joins
+			connectionString: sqlConfig.ConnectionString,
+			tableName: tableName,
+			selectColumns: selectColumns,
+			whereConditions: whereConditions,
+			orderByColumns: orderByColumns,
+			groupByConditions: groupByConditions,
+			havingConditions: havingConditions,
+			combineConditions: combineConditions,
+			cteConditions: cteConditions,
+			limit: limit > 0 ? limit : null,
+			offset: offset > 0 ? offset : null,
+			joins: joins,
+			distinct: distinct,
+			fromQuery: fromQuery
 		);
 		return result;
 	}

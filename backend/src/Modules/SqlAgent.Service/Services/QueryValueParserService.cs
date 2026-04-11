@@ -6,53 +6,6 @@ namespace SqlAgent.Service.Services;
 
 public class QueryValueParserService : IQueryValueParserService
 {
-	public bool TryGetBetweenValues(object? rawValue, out object? start, out object? end)
-	{
-		start = null;
-		end = null;
-
-		if (rawValue is JsonElement je)
-		{
-			if (je.ValueKind == JsonValueKind.Array && je.GetArrayLength() >= 2)
-			{
-				start = UnwrapJsonElement(je[0]);
-				end = UnwrapJsonElement(je[1]);
-				return true;
-			}
-
-			if (je.ValueKind == JsonValueKind.String)
-				rawValue = je.GetString();
-		}
-
-		if (rawValue is IEnumerable<object?> enumerable)
-		{
-			var values = enumerable.Where(v => v is not null).Take(2).ToArray();
-			if (values.Length == 2)
-			{
-				start = values[0];
-				end = values[1];
-				return true;
-			}
-		}
-
-		if (rawValue is string s)
-		{
-			var trimmed = s.Trim();
-			if (trimmed.StartsWith('[') && trimmed.EndsWith(']')) trimmed = trimmed[1..^1];
-			if (trimmed.StartsWith('(') && trimmed.EndsWith(')')) trimmed = trimmed[1..^1];
-
-			var parts = trimmed.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-			if (parts.Length >= 2)
-			{
-				start = ConvertLiteral(parts[0]);
-				end = ConvertLiteral(parts[1]);
-				return true;
-			}
-		}
-
-		return false;
-	}
-
 	public object UnwrapJsonElement(JsonElement je)
 	{
 		return je.ValueKind switch
@@ -115,7 +68,7 @@ public class QueryValueParserService : IQueryValueParserService
 				.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 				.Select(p => p.Trim('\'', '"'))
 				.Where(p => !string.IsNullOrWhiteSpace(p))
-				.Cast<object>()
+				.Select(p => TryToDateTime(p, out var dt) ? (object)dt : p)
 				.ToArray();
 
 			if (parts.Length == 0) return false;
@@ -139,6 +92,10 @@ public class QueryValueParserService : IQueryValueParserService
 			{
 				start = UnwrapJsonElement(startProp);
 				end = UnwrapJsonElement(endProp);
+
+				if (start is string startStr && TryToDateTime(startStr, out var d1)) start = d1;
+				if (end is string endStr && TryToDateTime(endStr, out var d2)) end = d2;
+
 				return true;
 			}
 		}
