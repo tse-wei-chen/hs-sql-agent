@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.3] - 2026-04-11
+### Refactor
+- Refactor SQL strategy classes and improve query handling
+
 ## [1.3.2] - 2026-04-09
 
 ### Bug Fix
