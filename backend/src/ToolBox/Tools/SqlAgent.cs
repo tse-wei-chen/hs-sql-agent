@@ -16,7 +16,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 	private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
 	private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
 
-	[McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries). don't use alias")]
+	[McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries).")]
 	public async Task<string> ExecuteQuerySafe(
 		[Description("The table name (use schema-qualified table name). Can be null if fromQuery is provided.")]
 		string? tableName = null,

@@ -68,12 +68,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 			if (hasAlias)
 			{
-				if (columnExpr is ArithmeticColumn ac) ac.Alias = col.Alias;
-				else if (columnExpr is Column c) c.Name = $"{c.Name} AS {col.Alias}";
-				else if (columnExpr is AggregatedColumn ag)
-				{
-					if (ag.Column is Column inner) inner.Name = $"{inner.Name} AS {col.Alias}";
-				}
+				columnExpr.Alias = col.Alias;
 			}
 
 			query = query.Select(columnExpr);
@@ -150,7 +145,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 		if (string.IsNullOrWhiteSpace(c.Field) && c.SubQuery == null) return query;
 
-		var op = (c.Operator ?? "=").ToLowerInvariant().Trim();
+		var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
 		var val = c.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : c.Value;
 
 		// Subquery handling (EXISTS, IN)
@@ -159,10 +154,18 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			var sub = BuildQueryFromDefinition(c.SubQuery);
 			return op switch
 			{
-				"exists" => c.IsOr ? query.OrWhereExists(sub) : query.WhereExists(sub),
-				"notexists" => c.IsOr ? query.OrWhereNotExists(sub) : query.WhereNotExists(sub),
-				"in" => c.IsOr ? query.OrWhereIn(c.Field, sub) : query.WhereIn(c.Field, sub),
-				"notin" => c.IsOr ? query.OrWhereNotIn(c.Field, sub) : query.WhereNotIn(c.Field, sub),
+				"exists" => c.IsOr 
+                    ? (c.IsNot ? query.OrWhereNotExists(sub) : query.OrWhereExists(sub)) 
+                    : (c.IsNot ? query.WhereNotExists(sub) : query.WhereExists(sub)),
+				"notexists" => c.IsOr 
+                    ? (c.IsNot ? query.OrWhereExists(sub) : query.OrWhereNotExists(sub)) 
+                    : (c.IsNot ? query.WhereExists(sub) : query.WhereNotExists(sub)),
+				"in" => c.IsOr 
+                    ? (c.IsNot ? query.OrWhereNotIn(c.Field, sub) : query.OrWhereIn(c.Field, sub)) 
+                    : (c.IsNot ? query.WhereNotIn(c.Field, sub) : query.WhereIn(c.Field, sub)),
+				"notin" => c.IsOr 
+                    ? (c.IsNot ? query.OrWhereIn(c.Field, sub) : query.OrWhereNotIn(c.Field, sub)) 
+                    : (c.IsNot ? query.WhereIn(c.Field, sub) : query.WhereNotIn(c.Field, sub)),
 				_ => query
 			};
 		}
@@ -267,7 +270,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 		if (string.IsNullOrWhiteSpace(c.Field)) return query;
 
-		var op = (c.Operator ?? "=").ToLowerInvariant().Trim();
+		var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
 		var val = c.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : c.Value;
 		var agg = c.Aggregation;
 		var isAgg = !string.IsNullOrWhiteSpace(agg);
@@ -386,7 +389,6 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 	}
 	#endregion
 	#region ExecuteQueryAsync
-
 	public async Task<string> ExecuteQueryAsync(
 		string? connectionString = null,
 		string? tableName = null,
@@ -404,83 +406,29 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		bool distinct = false,
 		CancellationToken cancellationToken = default)
 	{
+		var definition = new QueryDefinition
+		{
+			TableName = tableName ?? string.Empty,
+			FromQuery = fromQuery,
+			Distinct = distinct,
+			SelectColumns = selectColumns,
+			WhereColumnsAndValues = whereConditions,
+			OrderByColumns = orderByColumns,
+			GroupByConditions = groupByConditions,
+			HavingConditions = havingConditions,
+			Joins = joins,
+			Limit = limit,
+			Offset = offset,
+			CombineConditions = combineConditions,
+			CteConditions = cteConditions
+		};
+
 		using var connection = CreateConnection(connectionString);
 		await connection.OpenAsync(cancellationToken);
 
 		var compiler = CreateCompiler();
 		var db = new QueryFactory(connection, compiler);
-		
-		var query = fromQuery != null 
-			? new Query().From(BuildQueryFromDefinition(fromQuery)) 
-			: new Query(tableName);
-
-		if (distinct) query = query.Distinct();
-
-		query = ApplySelectColumns(query, selectColumns ?? []);
-
-		if (joins?.Count > 0)
-			query = ApplyJoins(query, joins);
-
-		// Unified WHERE logic
-		if (whereConditions?.Count > 0)
-			query = ApplyWhereConditions(query, whereConditions);
-
-		if (groupByConditions?.Count > 0)
-			query = ApplyGroupByConditions(query, groupByConditions);
-
-		// Unified HAVING logic
-		if (havingConditions?.Count > 0)
-			query = ApplyHavingConditions(query, havingConditions);
-
-		if (cteConditions?.Count > 0)
-		{
-			foreach (var cte in cteConditions)
-			{
-				if (string.IsNullOrWhiteSpace(cte.Name) || string.IsNullOrWhiteSpace(cte.Query?.TableName))
-					continue;
-				query = query.With(cte.Name, BuildQueryFromDefinition(cte.Query));
-			}
-		}
-
-		if (combineConditions?.Count > 0)
-		{
-			foreach (var combine in combineConditions)
-			{
-				if (string.IsNullOrWhiteSpace(combine.Query?.TableName)) continue;
-
-				var sub = BuildQueryFromDefinition(combine.Query);
-				var combineType = combine.Type?.ToLowerInvariant().Replace("_", "").Trim() ?? "union";
-				query = combineType switch
-				{
-					"unionall" => query.Union(sub, all: true),
-					"intersect" => query.Intersect(sub),
-					"except" => query.Except(sub),
-					_ => query.Union(sub),
-				};
-			}
-		}
-
-		var hasCombineConditions = combineConditions?.Count > 0;
-		if (hasCombineConditions)
-		{
-			var wrapper = new Query().From(query.As("combined_result"));
-			if (orderByColumns?.Count > 0)
-				wrapper = ApplyOrderByColumns(wrapper, orderByColumns);
-			if (limit > 0)
-				wrapper = wrapper.Limit(limit.Value);
-			if (offset > 0)
-				wrapper = wrapper.Offset(offset.Value);
-			query = wrapper;
-		}
-		else
-		{
-			if (orderByColumns?.Count > 0)
-				query = ApplyOrderByColumns(query, orderByColumns);
-			if (limit > 0)
-				query = query.Limit(limit.Value);
-			if (offset > 0)
-				query = query.Offset(offset.Value);
-		}
+		var query = BuildQueryFromDefinition(definition);
 
 		try
 		{
@@ -493,39 +441,80 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		}
 	}
 	#endregion
-	#region BuildQueryFromDefinition
 
+	#region BuildQueryFromDefinition
 	private Query BuildQueryFromDefinition(QueryDefinition definition)
 	{
+		// 1. Determine Source (Table or Subquery)
 		var query = definition.FromQuery != null 
 			? new Query().From(BuildQueryFromDefinition(definition.FromQuery), definition.Alias) 
 			: new Query(definition.TableName);
 
+		if (!string.IsNullOrEmpty(definition.Alias) && definition.FromQuery == null)
+		{
+			query = query.As(definition.Alias);
+		}
+
+		// 2. Apply CTEs
+		if (definition.CteConditions?.Count > 0)
+		{
+			foreach (var cte in definition.CteConditions)
+			{
+				if (string.IsNullOrWhiteSpace(cte.Name)) continue;
+				query = query.With(cte.Name, BuildQueryFromDefinition(cte.Query));
+			}
+		}
+
+		// 3. Apply Base Components
 		if (definition.Distinct) query = query.Distinct();
-
 		query = ApplySelectColumns(query, definition.SelectColumns ?? []);
+		if (definition.Joins?.Count > 0) query = ApplyJoins(query, definition.Joins);
+		if (definition.WhereColumnsAndValues?.Count > 0) query = ApplyWhereConditions(query, definition.WhereColumnsAndValues);
+		if (definition.GroupByConditions?.Count > 0) query = ApplyGroupByConditions(query, definition.GroupByConditions);
+		if (definition.HavingConditions?.Count > 0) query = ApplyHavingConditions(query, definition.HavingConditions);
 
-		if (definition.Joins?.Count > 0)
-			query = ApplyJoins(query, definition.Joins);
+		// 4. Handle Combines (UNION, INTERSECT, EXCEPT)
+		if (definition.CombineConditions?.Count > 0)
+		{
+			foreach (var combine in definition.CombineConditions)
+			{
+				var sub = BuildQueryFromDefinition(combine.Query);
+				var type = combine.Type?.ToLowerInvariant().Replace("_", "").Trim() ?? "union";
+				query = type switch
+				{
+					"unionall" => query.Union(sub, all: true),
+					"intersect" => query.Intersect(sub),
+					"except" => query.Except(sub),
+					_ => query.Union(sub)
+				};
+			}
 
-		// Unified WHERE logic
-		if (definition.WhereColumnsAndValues?.Count > 0)
-			query = ApplyWhereConditions(query, definition.WhereColumnsAndValues);
-
-		if (definition.GroupByConditions?.Count > 0)
-			query = ApplyGroupByConditions(query, definition.GroupByConditions);
-
-		if (definition.HavingConditions?.Count > 0)
-			query = ApplyHavingConditions(query, definition.HavingConditions);
-
-		if (definition.OrderByColumns?.Count > 0)
-			query = ApplyOrderByColumns(query, definition.OrderByColumns);
-
-		if (definition.Limit > 0)
-			query = query.Limit(definition.Limit!.Value);
-
-		if (definition.Offset > 0)
-			query = query.Offset(definition.Offset!.Value);
+			// 5. Wrapping for Post-Combine Operations
+			// If we have ORDER BY or LIMIT/OFFSET after a combine, we MUST wrap it in a subquery
+			// to ensure the operations apply to the combined set, not just the last branch.
+			if (definition.OrderByColumns?.Count > 0 || (definition.Limit ?? 0) > 0 || (definition.Offset ?? 0) > 0)
+			{
+				var wrapper = new Query().From(query.As("combined_set"));
+				if (definition.OrderByColumns?.Count > 0) 
+					wrapper = ApplyOrderByColumns(wrapper, definition.OrderByColumns);
+				if ((definition.Limit ?? 0) > 0) 
+					wrapper = wrapper.Limit(definition.Limit!.Value);
+				if ((definition.Offset ?? 0) > 0) 
+					wrapper = wrapper.Offset(definition.Offset!.Value);
+				
+				return wrapper;
+			}
+		}
+		else
+		{
+			// Standard No-Combine Operations
+			if (definition.OrderByColumns?.Count > 0) 
+				query = ApplyOrderByColumns(query, definition.OrderByColumns);
+			if ((definition.Limit ?? 0) > 0) 
+				query = query.Limit(definition.Limit!.Value);
+			if ((definition.Offset ?? 0) > 0) 
+				query = query.Offset(definition.Offset!.Value);
+		}
 
 		return query;
 	}

@@ -140,6 +140,10 @@ public class QueryDefinition
     public List<HavingCondition>? HavingConditions { get; set; }
     [Description("Join conditions.")]
     public List<JoinCondition>? Joins { get; set; }
+    [Description("Combine conditions (union, intersect, except).")]
+    public List<CombineCondition>? CombineConditions { get; set; }
+    [Description("CTE definitions.")]
+    public List<CteCondition>? CteConditions { get; set; }
     [Description("Limit number of rows.")]
     public int? Limit { get; set; }
     [Description("Skip a number of rows (Optional).")]

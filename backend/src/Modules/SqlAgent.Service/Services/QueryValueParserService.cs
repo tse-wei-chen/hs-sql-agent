@@ -86,18 +86,37 @@ public class QueryValueParserService : IQueryValueParserService
 
 		if (value is null) return false;
 
-		if (value is JsonElement je && je.ValueKind == JsonValueKind.Object)
+		if (value is JsonElement je)
 		{
-			if (je.TryGetProperty("start", out var startProp) && je.TryGetProperty("end", out var endProp))
+			if (je.ValueKind == JsonValueKind.Object)
 			{
-				start = UnwrapJsonElement(startProp);
-				end = UnwrapJsonElement(endProp);
-
-				if (start is string startStr && TryToDateTime(startStr, out var d1)) start = d1;
-				if (end is string endStr && TryToDateTime(endStr, out var d2)) end = d2;
-
-				return true;
+				if (je.TryGetProperty("start", out var startProp) && je.TryGetProperty("end", out var endProp))
+				{
+					start = UnwrapJsonElement(startProp);
+					end = UnwrapJsonElement(endProp);
+				}
 			}
+			else if (je.ValueKind == JsonValueKind.Array && je.GetArrayLength() >= 2)
+			{
+				start = UnwrapJsonElement(je[0]);
+				end = UnwrapJsonElement(je[1]);
+			}
+		}
+		else if (value is IEnumerable<object> list)
+		{
+			var arr = list.ToArray();
+			if (arr.Length >= 2)
+			{
+				start = arr[0];
+				end = arr[1];
+			}
+		}
+
+		if (start != null && end != null)
+		{
+			if (start is string startStr && TryToDateTime(startStr, out var d1)) start = d1;
+			if (end is string endStr && TryToDateTime(endStr, out var d2)) end = d2;
+			return true;
 		}
 
 		return false;
