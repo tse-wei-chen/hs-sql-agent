@@ -7,15 +7,12 @@ using System.Text.RegularExpressions;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 
+using Microsoft.Extensions.Configuration;
+
 namespace SqlAgent.Service.Strategies;
 
-public class MySqlStrategy : BaseSqlStrategy
+public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
-	public MySqlStrategy(IQueryValueParserService valueParser)
-		: base(valueParser)
-	{
-	}
-
 	public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
 
 	protected override DbConnection CreateConnection(string? connectionString) => new MySqlConnection(connectionString);
@@ -68,8 +65,8 @@ public class MySqlStrategy : BaseSqlStrategy
 		{
 			using var connection = new MySqlConnection(connectionString);
 			await connection.OpenAsync(cancellationToken);
-			var processedTableName = tableName.Contains('.') 
-				? tableName.Split('.').Last() 
+			var processedTableName = tableName.Contains('.')
+				? tableName.Split('.').Last()
 				: tableName;
 			const string sql = @"
             SELECT COLUMN_NAME 
@@ -95,8 +92,8 @@ public class MySqlStrategy : BaseSqlStrategy
 		{
 			using var connection = new MySqlConnection(connectionString);
 			await connection.OpenAsync(cancellationToken);
-			var processedTableName = tableName.Contains('.') 
-				? tableName.Split('.').Last() 
+			var processedTableName = tableName.Contains('.')
+				? tableName.Split('.').Last()
 				: tableName;
 			const string sql = """
 				SELECT
@@ -135,13 +132,12 @@ public class MySqlStrategy : BaseSqlStrategy
 		}
 	}
 
-	protected override string BuildExecutionErrorMessage(Exception ex)
+	protected override string BuildExecutionErrorMessage(Exception ex, string type)
 	{
-		var code = TryExtractMySqlCode(ex.Message);
+		var code = ex is MySqlException mysqlEx2 ? mysqlEx2.Number.ToString() : TryExtractMySqlCode(ex.Message);
 		var hint = BuildHint(code, ex.Message);
-		var action = BuildNextAction(code, ex.Message);
 
-		return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
+		return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
 	}
 
 	protected override string BuildHint(string? code, string message)
@@ -149,45 +145,37 @@ public class MySqlStrategy : BaseSqlStrategy
 		if (string.Equals(code, "1064", StringComparison.OrdinalIgnoreCase)
 			|| string.Equals(code, "42000", StringComparison.OrdinalIgnoreCase))
 		{
-			return "SQL syntax/operator issue. Verify combine type, string match mode, and field/operator compatibility.";
+			if (message.Contains("date", StringComparison.OrdinalIgnoreCase) || message.Contains("time", StringComparison.OrdinalIgnoreCase))
+			{
+				return "Date comparison syntax error. Fix: Use 'IsDate': true in WhereCondition, or ensure your 'Value' is a valid ISO date string.";
+			}
+
+			return "SQL syntax error. Tips: 1. Use 'Arithmetic' object for math instead of raw strings in 'Field'. 2. Check 'Operator' compatibility (e.g., '=', 'IN', 'LIKE'). 3. Ensure 'CombineConditions' type is correct.";
 		}
 
 		if (string.Equals(code, "42S02", StringComparison.OrdinalIgnoreCase)
 			|| message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase))
 		{
-			return "Table not found. Use schema-qualified table names, for example northwind.customers.";
+			return "Table or CTE not found. Check 'TableName'. Note: If using 'FromQuery' (Subquery in FROM), ensure you provide an 'Alias'.";
 		}
 
 		if (string.Equals(code, "42S22", StringComparison.OrdinalIgnoreCase)
 			|| message.Contains("Unknown column", StringComparison.OrdinalIgnoreCase))
 		{
-			return "Column not found. Confirm field names and table prefixes in joins/group/order clauses.";
+			return "Column not found. Tips: 1. For complex logic, use 'CaseWhen' or 'Arithmetic' instead of writing raw SQL in 'Field'. 2. In Joins/OrderBy, use 'TableName.FieldName' to avoid ambiguity.";
+		}
+
+		if (string.Equals(code, "1292", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Truncated/Incorrect value. Check if your 'Value' matches the column data type (e.g., passing a string to an Integer field).";
+		}
+
+		if (message.Contains("Operand should contain 1 column", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Subquery returns too many columns. When using 'SubQuery' in a WhereCondition, ensure the inner 'SelectColumns' list has only ONE column.";
 		}
 
 		return base.BuildHint(code, message);
-	}
-
-	protected override string BuildNextAction(string? code, string message)
-	{
-		if (string.Equals(code, "1064", StringComparison.OrdinalIgnoreCase)
-			|| string.Equals(code, "42000", StringComparison.OrdinalIgnoreCase))
-		{
-			return "Retry with simplified query first (select + where), then add combine/string conditions step-by-step.";
-		}
-
-		if (string.Equals(code, "42S02", StringComparison.OrdinalIgnoreCase)
-			|| message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase))
-		{
-			return "Retry with fully-qualified table name and verify schema via get_tables in that schema.";
-		}
-
-		if (string.Equals(code, "42S22", StringComparison.OrdinalIgnoreCase)
-			|| message.Contains("Unknown column", StringComparison.OrdinalIgnoreCase))
-		{
-			return "Retry with valid columns from get_columns and qualify fields in joins (table.column).";
-		}
-
-		return base.BuildNextAction(code, message);
 	}
 
 	private static string? TryExtractMySqlCode(string message)

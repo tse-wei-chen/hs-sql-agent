@@ -20,6 +20,7 @@ public interface ISqlStrategy
 		int? offset = null,
 		List<JoinCondition>? joins = null,
 		QueryDefinition? fromQuery = null,
+		string? alias = null,
 		bool distinct = false,
 		CancellationToken cancellationToken = default
 	);
@@ -27,4 +28,9 @@ public interface ISqlStrategy
 	Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default);
 	Task<List<string>> GetColumnsAsync(string connectionString, string tableName, CancellationToken cancellationToken = default);
 	Task<string> GetTableReferenceAsync(string connectionString, string tableName, CancellationToken cancellationToken = default);
+	Task<string> ExecuteDmlAsync(
+		string? connectionString = null,
+		DmlDefinition? dml = null,
+		CancellationToken cancellationToken = default
+	);
 }

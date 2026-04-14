@@ -43,7 +43,9 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 		[Description("Whether to use SELECT DISTINCT")]
 		bool distinct = false,
 		[Description("Source subquery definition. If provided, tableName is ignored.")]
-		QueryDefinition? fromQuery = null)
+		QueryDefinition? fromQuery = null,
+		[Description("Alias for the source table or subquery (Optional).")]
+		string? alias = null)
 	{
 		var sqlConfig = await ResolveSqlConfigAsync();
 		if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
@@ -64,10 +66,30 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 			limit: limit > 0 ? limit : null,
 			offset: offset > 0 ? offset : null,
 			joins: joins,
-			distinct: distinct,
-			fromQuery: fromQuery
+			fromQuery: fromQuery,
+			alias: alias,
+			distinct: distinct
 		);
 		return result;
+	}
+
+	[McpServerTool, Description(@"
+		Execute a DML operation (INSERT, UPDATE, DELETE). 
+		This tool uses a mandatory two-step safety mechanism:
+		1. First call (without ConfirmToken): Performs a Dry Run, returns affected rows and a unique ConfirmToken.
+		2. Second call (with ConfirmToken): Actually commits the operation if the token matches.
+	")]
+	public async Task<string> ExecuteDmlSafe(
+		[Description("The DML definition (operation, table, values, conditions).")]
+		DmlDefinition dml)
+	{
+		var sqlConfig = await ResolveSqlConfigAsync();
+		if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
+		{
+			return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+		}
+		var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+		return await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
 	}
 
 	[McpServerTool, Description("Get column names of a table.")]

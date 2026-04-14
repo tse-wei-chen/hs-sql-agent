@@ -6,16 +6,12 @@ using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
+using Microsoft.Extensions.Configuration;
 
 namespace SqlAgent.Service.Strategies;
 
-public class SqliteStrategy : BaseSqlStrategy
+public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
-    public SqliteStrategy(IQueryValueParserService valueParser)
-        : base(valueParser)
-    {
-    }
-
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
     protected override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);
@@ -99,13 +95,12 @@ public class SqliteStrategy : BaseSqlStrategy
         }
     }
 
-    protected override string BuildExecutionErrorMessage(Exception ex)
+    protected override string BuildExecutionErrorMessage(Exception ex, string type)
     {
         var code = ex is SqliteException sqliteEx ? $"SQLITE_{sqliteEx.SqliteErrorCode}" : null;
         var hint = BuildHint(code, ex.Message);
-        var action = BuildNextAction(code, ex.Message);
 
-        return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
+        return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
     }
 
     protected override string BuildHint(string? code, string message)
@@ -121,20 +116,5 @@ public class SqliteStrategy : BaseSqlStrategy
             return "SQL syntax issue. Validate operators and combined query structure.";
 
         return base.BuildHint(code, message);
-    }
-
-    protected override string BuildNextAction(string? code, string message)
-    {
-        if (message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
-            return "Retry with a valid table from get_tables.";
-
-        if (message.Contains("no such column", StringComparison.OrdinalIgnoreCase))
-            return "Retry with valid columns from get_columns.";
-
-        if (message.Contains("syntax error", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("near", StringComparison.OrdinalIgnoreCase))
-            return "Retry with a simpler query first, then add where/group/combine incrementally.";
-
-        return base.BuildNextAction(code, message);
     }
 }

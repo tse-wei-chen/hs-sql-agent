@@ -7,18 +7,14 @@ using SqlKata.Execution;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlKata.Extensions;
+using Microsoft.Extensions.Configuration;
 
 namespace SqlAgent.Service.Strategies;
 
-public abstract class BaseSqlStrategy : ISqlStrategy
+public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : ISqlStrategy
 {
-	private readonly IQueryValueParserService _valueParser;
-
-	protected BaseSqlStrategy(IQueryValueParserService valueParser)
-	{
-		_valueParser = valueParser;
-	}
+	private readonly IQueryValueParserService _valueParser = valueParser;
+	protected readonly IConfiguration _configuration = configuration;
 
 	public abstract SqlAgentToolType DbType { get; }
 
@@ -47,6 +43,10 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			else if (col.CaseWhen?.Count > 0)
 			{
 				columnExpr = MapCaseWhen(col.CaseWhen, col.ElseValue);
+			}
+			else if (col.SubQuery != null)
+			{
+				columnExpr = new QueryColumn { Query = BuildQueryFromDefinition(col.SubQuery) };
 			}
 			else if (!string.IsNullOrWhiteSpace(col.Field))
 			{
@@ -96,9 +96,19 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 
 	private AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
 	{
-		if (arithmetic.Left != null && arithmetic.Operator != null && arithmetic.Right != null)
+		if (arithmetic.Operator != null)
 		{
-			return MapArithmetic(arithmetic.Left).Arithmetic(arithmetic.Operator, MapArithmetic(arithmetic.Right));
+			// If we have an operator, we need two sides. 
+			// If Left/Right are missing, use Constant or FieldName as fallback.
+			var left = arithmetic.Left != null ? MapArithmetic(arithmetic.Left) : (arithmetic.Constant != null ? new NumberColumn { Value = arithmetic.Constant } : new Column { Name = arithmetic.FieldName ?? "" });
+			var right = arithmetic.Right != null ? MapArithmetic(arithmetic.Right) : (arithmetic.Constant != null ? new NumberColumn { Value = arithmetic.Constant } : new Column { Name = arithmetic.FieldName ?? "" });
+
+			return new ArithmeticColumn
+			{
+				Left = left,
+				Right = right,
+				Operator = arithmetic.Operator
+			};
 		}
 
 		if (arithmetic.Constant != null)
@@ -113,28 +123,62 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 	{
 		foreach (var join in joins)
 		{
-			query = join.Type.ToLowerInvariant() switch
+			var joinType = join.Type.ToLowerInvariant().Replace(" ", "").Trim() ?? "inner";
+			var type = joinType switch
 			{
-				"left" => query.LeftJoin(join.Table, join.First, join.Second, join.Operator),
-				"right" => query.RightJoin(join.Table, join.First, join.Second, join.Operator),
-				"cross" => query.CrossJoin(join.Table),
-				_ => query.Join(join.Table, join.First, join.Second, join.Operator),
+				"left" => "left join",
+				"right" => "right join",
+				"full" or "outer" or "fullouter" => "full outer join",
+				"cross" => "cross join",
+				_ => "inner join"
 			};
+
+			Join onCallback(Join j)
+			{
+				if (join.OnConditions?.Count > 0)
+				{
+					ApplyWhereConditions(j, join.OnConditions);
+				}
+				else
+				{
+					j.On(join.First, join.Second, join.Operator);
+				}
+				return j;
+			}
+
+			if (join.SubQuery != null)
+			{
+				var sub = BuildQueryFromDefinition(join.SubQuery);
+				if (!string.IsNullOrWhiteSpace(join.Alias))
+				{
+					sub.As(join.Alias);
+				}
+				query = query.Join(sub, onCallback, type);
+			}
+			else
+			{
+				var tableName = join.Table;
+				if (!string.IsNullOrWhiteSpace(join.Alias))
+				{
+					tableName += " AS " + join.Alias;
+				}
+				query = query.Join(tableName ?? string.Empty, onCallback, type);
+			}
 		}
 
 		return query;
 	}
 
-	private Query ApplyWhereConditions(Query query, IList<WhereCondition> conds)
+	private Q ApplyWhereConditions<Q>(Q query, IList<WhereCondition> conds) where Q : BaseQuery<Q>
 	{
 		foreach (var c in conds)
 		{
-			query = ApplySingleWhere(query, c);
+			ApplySingleWhere(query, c);
 		}
 		return query;
 	}
 
-	private Query ApplySingleWhere(Query query, WhereCondition c)
+	private Q ApplySingleWhere<Q>(Q query, WhereCondition c) where Q : BaseQuery<Q>
 	{
 		if (c.Groups?.Count > 0)
 		{
@@ -154,18 +198,18 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			var sub = BuildQueryFromDefinition(c.SubQuery);
 			return op switch
 			{
-				"exists" => c.IsOr 
-                    ? (c.IsNot ? query.OrWhereNotExists(sub) : query.OrWhereExists(sub)) 
-                    : (c.IsNot ? query.WhereNotExists(sub) : query.WhereExists(sub)),
-				"notexists" => c.IsOr 
-                    ? (c.IsNot ? query.OrWhereExists(sub) : query.OrWhereNotExists(sub)) 
-                    : (c.IsNot ? query.WhereExists(sub) : query.WhereNotExists(sub)),
-				"in" => c.IsOr 
-                    ? (c.IsNot ? query.OrWhereNotIn(c.Field, sub) : query.OrWhereIn(c.Field, sub)) 
-                    : (c.IsNot ? query.WhereNotIn(c.Field, sub) : query.WhereIn(c.Field, sub)),
-				"notin" => c.IsOr 
-                    ? (c.IsNot ? query.OrWhereIn(c.Field, sub) : query.OrWhereNotIn(c.Field, sub)) 
-                    : (c.IsNot ? query.WhereIn(c.Field, sub) : query.WhereNotIn(c.Field, sub)),
+				"exists" => c.IsOr
+					? (c.IsNot ? query.OrWhereNotExists(sub) : query.OrWhereExists(sub))
+					: (c.IsNot ? query.WhereNotExists(sub) : query.WhereExists(sub)),
+				"notexists" => c.IsOr
+					? (c.IsNot ? query.OrWhereExists(sub) : query.OrWhereNotExists(sub))
+					: (c.IsNot ? query.WhereExists(sub) : query.WhereNotExists(sub)),
+				"in" => c.IsOr
+					? (c.IsNot ? query.OrWhereNotIn(c.Field, sub) : query.OrWhereIn(c.Field, sub))
+					: (c.IsNot ? query.WhereNotIn(c.Field, sub) : query.WhereIn(c.Field, sub)),
+				"notin" => c.IsOr
+					? (c.IsNot ? query.OrWhereIn(c.Field, sub) : query.OrWhereNotIn(c.Field, sub))
+					: (c.IsNot ? query.WhereIn(c.Field, sub) : query.WhereNotIn(c.Field, sub)),
 				_ => query
 			};
 		}
@@ -173,11 +217,11 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		// Date handling
 		if (c.IsDate)
 		{
-			var dtVal = _valueParser.TryToDateTime(val, out var dt) ? dt : val;
+			var dtPart = _valueParser.TryToDateTime(val, out var dt) ? (object)dt : val;
 			return op switch
 			{
-				"is" or "isnull" => c.IsOr ? query.OrWhereDate(c.Field, dtVal) : query.WhereDate(c.Field, dtVal),
-				"isnot" or "isnotnull" => c.IsOr ? query.OrWhereNotDate(c.Field, dtVal) : query.WhereNotDate(c.Field, dtVal),
+				"is" or "isnull" => c.IsOr ? query.OrWhereDate(c.Field, dtPart) : query.WhereDate(c.Field, dtPart),
+				"isnot" or "isnotnull" => c.IsOr ? query.OrWhereNotDate(c.Field, dtPart) : query.WhereNotDate(c.Field, dtPart),
 
 				"in" or "notin" when _valueParser.TryGetInValues(val, out var ins)
 					=> ApplyDateIn(query, c, op, ins),
@@ -185,43 +229,64 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 				"between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high)
 					=> ApplyDateBetween(query, c, op, low, high),
 
-				_ => c.IsOr ? query.OrWhereDate(c.Field, op, dtVal) : query.WhereDate(c.Field, op, dtVal)
+				_ => c.IsOr ? query.OrWhereDate(c.Field, op, dtPart) : query.WhereDate(c.Field, op, dtPart)
 			};
 		}
 
 		// Standard handling
-		Func<Query, Query> apply = q =>
+		Action<Q> apply = q =>
 		{
-			return op switch
+			switch (op)
 			{
-				"is" or "isnull" => q.Where(c.Field, val),
-				"isnot" or "isnotnull" => q.WhereNot(c.Field, val),
-
-				"in" or "notin" when _valueParser.TryGetInValues(val, out var ins)
-					=> op == "in" ? q.WhereIn(c.Field, ins) : q.WhereNotIn(c.Field, ins),
-				
-				"in" or "notin" when c.Values != null
-					=> op == "in" ? q.WhereIn(c.Field, c.Values) : q.WhereNotIn(c.Field, c.Values),
-
-				"between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high)
-					=> op == "between" ? q.WhereBetween(c.Field, low, high) : q.WhereNotBetween(c.Field, low, high),
-
-				"like" => q.WhereLike(c.Field, val),
-				"notlike" => q.WhereNotLike(c.Field, val),
-				"starts" => q.WhereStarts(c.Field, val),
-				"ends" => q.WhereEnds(c.Field, val),
-				"contains" => q.WhereContains(c.Field, val),
-
-				_ => q.Where(c.Field, op, val)
-			};
+				case "is":
+				case "isnull":
+					q.Where(c.Field, val);
+					break;
+				case "isnot":
+				case "isnotnull":
+					q.WhereNot(c.Field, val);
+					break;
+				case "in":
+				case "notin":
+					if (_valueParser.TryGetInValues(val, out var ins))
+						_ = op == "in" ? q.WhereIn(c.Field, ins) : q.WhereNotIn(c.Field, ins);
+					else if (c.Values != null)
+						_ = op == "in" ? q.WhereIn(c.Field, c.Values) : q.WhereNotIn(c.Field, c.Values);
+					break;
+				case "between":
+				case "notbetween":
+					if (_valueParser.TryGetRangeValues(val, out var low, out var high))
+						_ = op == "between" ? q.WhereBetween(c.Field, low, high) : q.WhereNotBetween(c.Field, low, high);
+					break;
+				case "like":
+					q.WhereLike(c.Field, val);
+					break;
+				case "notlike":
+					q.WhereNotLike(c.Field, val);
+					break;
+				case "starts":
+					q.WhereStarts(c.Field, val);
+					break;
+				case "ends":
+					q.WhereEnds(c.Field, val);
+					break;
+				case "contains":
+					q.WhereContains(c.Field, val);
+					break;
+				default:
+					q.Where(c.Field, op, val);
+					break;
+			}
 		};
 
-		if (c.IsOr) return query.OrWhere(q => apply(q));
-		if (c.IsNot) return query.Not().Where(q => apply(q));
-		return query.Where(q => apply(q));
+		if (c.IsOr) return query.OrWhere(q => { apply(q); return q; });
+		if (c.IsNot) return query.Not().Where(q => { apply(q); return q; });
+
+		apply(query);
+		return query;
 	}
 
-	private Query ApplyDateIn(Query query, WhereCondition c, string op, IEnumerable<object> ins)
+	private Q ApplyDateIn<Q>(Q query, WhereCondition c, string op, IEnumerable<object> ins) where Q : BaseQuery<Q>
 	{
 		var dtIns = ins.Select(i => _valueParser.TryToDateTime(i, out var d) ? (object)d : i).ToList();
 		return op == "in"
@@ -229,7 +294,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			: (c.IsOr ? query.OrWhereDateNotIn(c.Field, dtIns) : query.WhereDateNotIn(c.Field, dtIns));
 	}
 
-	private Query ApplyDateBetween(Query query, WhereCondition c, string op, object? low, object? high)
+	private Q ApplyDateBetween<Q>(Q query, WhereCondition c, string op, object? low, object? high) where Q : BaseQuery<Q>
 	{
 		var lowDt = _valueParser.TryToDateTime(low, out var d1) ? (object)d1 : low;
 		var highDt = _valueParser.TryToDateTime(high, out var d2) ? (object)d2 : high;
@@ -403,6 +468,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		int? offset = null,
 		List<JoinCondition>? joins = null,
 		QueryDefinition? fromQuery = null,
+		string? alias = null,
 		bool distinct = false,
 		CancellationToken cancellationToken = default)
 	{
@@ -410,6 +476,7 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		{
 			TableName = tableName ?? string.Empty,
 			FromQuery = fromQuery,
+			Alias = alias,
 			Distinct = distinct,
 			SelectColumns = selectColumns,
 			WhereColumnsAndValues = whereConditions,
@@ -437,8 +504,94 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		}
 		catch (Exception ex)
 		{
-			return BuildExecutionErrorMessage(ex);
+			return BuildExecutionErrorMessage(ex, "Query");
 		}
+	}
+
+	public async Task<string> ExecuteDmlAsync(
+		string? connectionString = null,
+		DmlDefinition? dml = null,
+		CancellationToken cancellationToken = default)
+	{
+		if (dml == null) return "No DML definition provided.";
+
+		using var connection = CreateConnection(connectionString);
+		await connection.OpenAsync(cancellationToken);
+
+		var compiler = CreateCompiler();
+		var db = new QueryFactory(connection, compiler);
+		var query = new Query(dml.TableName);
+
+		// Apply where for update/delete
+		if (dml.WhereConditions?.Count > 0)
+		{
+			query = ApplyWhereConditions(query, dml.WhereConditions);
+		}
+
+		using var transaction = connection.BeginTransaction();
+
+		try
+		{
+			// Build the action
+			Query terminalQuery;
+			switch (dml.Operation.ToLowerInvariant())
+			{
+				case "insert":
+					if (dml.FromQuery != null) terminalQuery = query.AsInsert(dml.Columns ?? [], BuildQueryFromDefinition(dml.FromQuery));
+					else if (dml.MultiValues?.Count > 0) terminalQuery = query.AsInsert(dml.Columns ?? [], dml.MultiValues);
+					else if (dml.Values?.Count > 0)
+					{
+						var data = dml.Values.ToDictionary(v => v.Name, v => v.Value is System.Text.Json.JsonElement je ? _valueParser.UnwrapJsonElement(je) : v.Value);
+						terminalQuery = query.AsInsert(data);
+					}
+					else return "Insert operation requires Values or MultiValues or FromQuery.";
+					break;
+				case "update":
+					if (dml.Values?.Count > 0)
+					{
+						var data = dml.Values.ToDictionary(v => v.Name, v => v.Value is System.Text.Json.JsonElement je ? _valueParser.UnwrapJsonElement(je) : v.Value);
+						terminalQuery = query.AsUpdate(data);
+					}
+					else return "Update operation requires Values.";
+					break;
+				case "delete":
+					terminalQuery = query.AsDelete();
+					break;
+				default:
+					return $"Unsupported DML operation: {dml.Operation}";
+			}
+
+			// Execution
+			int affected = await db.ExecuteAsync(terminalQuery, transaction, cancellationToken: cancellationToken);
+
+			// Decide whether to commit or rollback based on token
+			var expectedToken = GenerateConfirmToken(dml.Operation, dml.TableName, affected);
+
+			if (dml.ConfirmToken == expectedToken)
+			{
+				transaction.Commit();
+				return $"Success | affectedRows={affected} | Operation Committed.";
+			}
+			else
+			{
+				transaction.Rollback();
+				return $"Dry Run Result | affectedRows={affected} | TokenRequired={expectedToken} | " +
+					   "Security Note: This operation HAS NOT been committed. To proceed, call me again with the provided Token.";
+			}
+		}
+		catch (Exception ex)
+		{
+			transaction.Rollback();
+			return BuildExecutionErrorMessage(ex, "DML");
+		}
+	}
+
+	private string GenerateConfirmToken(string operation, string table, int affectedRows)
+	{
+		var secret = _configuration["McpKeySettings:HmacSecretKey"] ?? "AgentSafetyFallbackSecret";
+		var input = $"{operation.ToLowerInvariant()}|{table.ToLowerInvariant()}|{affectedRows}|{secret}";
+		var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+		return Convert.ToBase64String(bytes)[..12];
 	}
 	#endregion
 
@@ -446,14 +599,15 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 	private Query BuildQueryFromDefinition(QueryDefinition definition)
 	{
 		// 1. Determine Source (Table or Subquery)
-		var query = definition.FromQuery != null 
-			? new Query().From(BuildQueryFromDefinition(definition.FromQuery), definition.Alias) 
-			: new Query(definition.TableName);
-
-		if (!string.IsNullOrEmpty(definition.Alias) && definition.FromQuery == null)
+		var tableName = definition.TableName;
+		if (!string.IsNullOrEmpty(definition.Alias) && definition.FromQuery == null && !tableName.ToLowerInvariant().Contains(" as "))
 		{
-			query = query.As(definition.Alias);
+			tableName += " AS " + definition.Alias;
 		}
+
+		var query = definition.FromQuery != null
+			? new Query().From(BuildQueryFromDefinition(definition.FromQuery), definition.Alias)
+			: new Query(tableName);
 
 		// 2. Apply CTEs
 		if (definition.CteConditions?.Count > 0)
@@ -495,24 +649,24 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 			if (definition.OrderByColumns?.Count > 0 || (definition.Limit ?? 0) > 0 || (definition.Offset ?? 0) > 0)
 			{
 				var wrapper = new Query().From(query.As("combined_set"));
-				if (definition.OrderByColumns?.Count > 0) 
+				if (definition.OrderByColumns?.Count > 0)
 					wrapper = ApplyOrderByColumns(wrapper, definition.OrderByColumns);
-				if ((definition.Limit ?? 0) > 0) 
+				if ((definition.Limit ?? 0) > 0)
 					wrapper = wrapper.Limit(definition.Limit!.Value);
-				if ((definition.Offset ?? 0) > 0) 
+				if ((definition.Offset ?? 0) > 0)
 					wrapper = wrapper.Offset(definition.Offset!.Value);
-				
+
 				return wrapper;
 			}
 		}
 		else
 		{
 			// Standard No-Combine Operations
-			if (definition.OrderByColumns?.Count > 0) 
+			if (definition.OrderByColumns?.Count > 0)
 				query = ApplyOrderByColumns(query, definition.OrderByColumns);
-			if ((definition.Limit ?? 0) > 0) 
+			if ((definition.Limit ?? 0) > 0)
 				query = query.Limit(definition.Limit!.Value);
-			if ((definition.Offset ?? 0) > 0) 
+			if ((definition.Offset ?? 0) > 0)
 				query = query.Offset(definition.Offset!.Value);
 		}
 
@@ -528,22 +682,9 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return JsonSerializer.Serialize(resultList);
 	}
 
-	protected virtual string BuildExecutionErrorMessage(Exception ex)
+	protected virtual string BuildExecutionErrorMessage(Exception ex, string type)
 	{
-		var code = TryExtractSqlStateCode(ex.Message);
-		var hint = BuildHint(code, ex.Message);
-		var action = BuildNextAction(code, ex.Message);
-
-		return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
-	}
-
-	protected static string? TryExtractSqlStateCode(string message)
-	{
-		var match = Regex.Match(message ?? string.Empty, @"\b(?<code>[0-9A-Z]{5})\b");
-		if (!match.Success) return null;
-
-		var code = match.Groups["code"].Value;
-		return code.Any(char.IsDigit) ? code : null;
+		return $"Error executing query | {ex}";
 	}
 
 	protected virtual string BuildHint(string? code, string message)
@@ -551,10 +692,6 @@ public abstract class BaseSqlStrategy : ISqlStrategy
 		return "Use the SQL and bindings to adjust fields/operators/types, then retry.";
 	}
 
-	protected virtual string BuildNextAction(string? code, string message)
-	{
-		return "Retry after adjusting query fields according to the SQL error.";
-	}
 	#endregion
 
 	#region Abstract Members

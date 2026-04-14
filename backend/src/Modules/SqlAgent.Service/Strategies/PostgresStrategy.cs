@@ -6,16 +6,13 @@ using System.Text.Json;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using Microsoft.Extensions.Configuration;
+using System.Text.RegularExpressions;
 
 namespace SqlAgent.Service.Strategies;
 
-public class PostgresStrategy : BaseSqlStrategy
+public class PostgresStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
-	public PostgresStrategy(IQueryValueParserService valueParser)
-		: base(valueParser)
-	{
-	}
-
 	public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 
 	protected override DbConnection CreateConnection(string? connectionString) => new NpgsqlConnection(connectionString);
@@ -103,7 +100,7 @@ public class PostgresStrategy : BaseSqlStrategy
 			var references = await connection.QueryAsync<TableRefModel>(sql, new { tableName });
 
 			return JsonSerializer.Serialize(references);
-			
+
 		}
 		catch (Exception ex)
 		{
@@ -111,59 +108,66 @@ public class PostgresStrategy : BaseSqlStrategy
 		}
 	}
 
+	protected override string BuildExecutionErrorMessage(Exception ex, string type)
+	{
+		var code = ex is PostgresException pgEx ? pgEx.SqlState : TryExtractSqlStateCode(ex.Message);
+		var hint = BuildHint(code, ex.Message);
+
+		return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
+	}
+
 	protected override string BuildHint(string? code, string message)
 	{
 		if (string.Equals(code, "42883", StringComparison.OrdinalIgnoreCase))
 		{
-			if (message.Contains("date >= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date <= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date < text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date > text", StringComparison.OrdinalIgnoreCase))
+			if (message.Contains("date", StringComparison.OrdinalIgnoreCase) &&
+				message.Contains("text", StringComparison.OrdinalIgnoreCase))
 			{
-				return "Date vs text type mismatch. Retry with .";
+				return "Date vs Text type mismatch. Fix: Set 'IsDate': true in WhereCondition/HavingCondition, or ensure literals are in ISO format.";
 			}
 
-			return "Operator/type mismatch. Retry with a compatible operator and typed values. Migration tip: use inWhereConditions for IN/NOT IN cases.";
+			if (message.Contains("in", StringComparison.OrdinalIgnoreCase))
+			{
+				return "Operator mismatch for IN/NOT IN. Fix: Use the 'Values' list (for constants) or 'SubQuery' (for dynamic sets) instead of the 'Value' field.";
+			}
+
+			return "Operator/type mismatch. Ensure 'Value' matches the field type. For calculations, use the 'Arithmetic' object instead of raw strings.";
 		}
 
 		if (string.Equals(code, "42703", StringComparison.OrdinalIgnoreCase))
-			return "Column/expression not recognized. If using SQL expressions (e.g. date_part(...)), pass the full expression and avoid quoting it as a plain column name.";
+		{
+			return "Column not recognized. Tips: 1. Ensure 'Field' name is correct. 2. For SQL functions or complex logic, use 'Aggregation', 'Arithmetic', or 'CaseWhen' instead of raw strings in 'Field'.";
+		}
 
 		if (string.Equals(code, "42P01", StringComparison.OrdinalIgnoreCase))
-			return "Relation not found. Check table/schema name, and for CTE ensure the CTE name is unqualified (use expensive_products, not public.expensive_products).";
+		{
+			return "Table or CTE not found. Check 'TableName'. For CTEs, use the 'CteConditions' list and refer to them by their 'Name' (unqualified).";
+		}
 
 		if (string.Equals(code, "42702", StringComparison.OrdinalIgnoreCase))
-			return "Ambiguous column reference. Qualify fields with table prefixes, for example order_details.unit_price instead of unit_price.";
+		{
+			return "Ambiguous column. Fix: Use 'TableName.FieldName' in the 'Field' property to qualify which table the column belongs to.";
+		}
 
 		if (string.Equals(code, "22P02", StringComparison.OrdinalIgnoreCase))
-			return "Invalid value format for column type. Retry with correct literal format.";
+		{
+			return "Invalid value format. Ensure the 'Value' (or 'Constant' in Arithmetic) matches the database column type (e.g., UUID, Integer, or Timestamp).";
+		}
+
+		if (string.Equals(code, "42601", StringComparison.OrdinalIgnoreCase))
+		{
+			return "Syntax error. Check if 'SubQuery' is missing a 'TableName', or if 'Arithmetic' operators (+, -, *, /) are used correctly.";
+		}
 
 		return base.BuildHint(code, message);
 	}
 
-	protected override string BuildNextAction(string? code, string message)
+	private static string? TryExtractSqlStateCode(string message)
 	{
-		if (string.Equals(code, "42883", StringComparison.OrdinalIgnoreCase)
-			&& (message.Contains("date >= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date <= text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date < text", StringComparison.OrdinalIgnoreCase)
-				|| message.Contains("date > text", StringComparison.OrdinalIgnoreCase)))
-		{
-			return "Retry and add dateWhereConditions. Example: { field: 'order_date', operator: '>=', value: '1997-01-01' }.";
-		}
+		var match = Regex.Match(message ?? string.Empty, @"\b(?<code>[0-9A-Z]{5})\b");
+		if (!match.Success) return null;
 
-		if (string.Equals(code, "42702", StringComparison.OrdinalIgnoreCase))
-			return "Retry by qualifying ambiguous columns with table names, for example 'order_details.unit_price'.";
-
-		if (string.Equals(code, "42703", StringComparison.OrdinalIgnoreCase))
-			return "Retry with an existing column or pass expression as raw field text, for example date_part('year', order_date).";
-
-		if (string.Equals(code, "42P01", StringComparison.OrdinalIgnoreCase))
-			return "Retry with an existing table/relation name. If this is a CTE query, reference the CTE by unqualified name only.";
-
-		if (string.Equals(code, "22P02", StringComparison.OrdinalIgnoreCase))
-			return "Retry with corrected literal format, for example number without quotes, ISO date string, or boolean true/false.";
-
-		return base.BuildNextAction(code, message);
+		var code = match.Groups["code"].Value;
+		return code.Any(char.IsDigit) ? code : null;
 	}
 }

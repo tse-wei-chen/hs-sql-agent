@@ -16,6 +16,8 @@ public class SelectCondition
     public List<CaseWhenClause>? CaseWhen { get; set; }
     [Description("The default value for ELSE in a CASE expression (Optional).")]
     public object? ElseValue { get; set; }
+    [Description("Subquery to select as a column (Optional). If set, 'Field' and 'Arithmetic' will be ignored.")]
+    public QueryDefinition? SubQuery { get; set; }
 }
 
 public class CaseWhenClause
@@ -70,6 +72,12 @@ public class JoinCondition
     [Description("The table to join with (e.g., 'Orders')")]
     public string Table { get; set; } = string.Empty;
 
+    [Description("The subquery to join with (Optional). If set, 'Table' will be ignored.")]
+    public QueryDefinition? SubQuery { get; set; }
+
+    [Description("Alias for the joined table or subquery (Optional).")]
+    public string? Alias { get; set; }
+
     [Description("First table and field for the ON condition (e.g., 'Users.Id')")]
     public string First { get; set; } = string.Empty;
 
@@ -79,7 +87,10 @@ public class JoinCondition
     [Description("The operator for the ON condition (e.g., '=')")]
     public string Operator { get; set; } = "=";
 
-    [Description("INNER, LEFT, or RIGHT")]
+    [Description("Recursive nested ON conditions. If provided, First/Second/Operator are ignored.")]
+    public List<WhereCondition>? OnConditions { get; set; }
+
+    [Description("INNER, LEFT, RIGHT, or FULL")]
     public string Type { get; set; } = "INNER";
 }
 
@@ -164,4 +175,32 @@ public class CombineCondition
     public string Type { get; set; } = "union";
     [Description("Query definition to combine with.")]
     public QueryDefinition Query { get; set; } = new();
-}
+}
+
+public class NameValuePair
+{
+    [Description("The field or column name.")]
+    public string Name { get; set; } = string.Empty;
+    [Description("The value to assign.")]
+    public object? Value { get; set; }
+}
+
+public class DmlDefinition
+{
+    [Description("The operation to perform: insert, update, or delete.")]
+    public string Operation { get; set; } = "insert";
+    [Description("The table name to operate on.")]
+    public string TableName { get; set; } = string.Empty;
+    [Description("Where conditions for update or delete.")]
+    public List<WhereCondition>? WhereConditions { get; set; }
+    [Description("Values for insert or update.")]
+    public List<NameValuePair>? Values { get; set; }
+    [Description("Columns for bulk insert.")]
+    public List<string>? Columns { get; set; }
+    [Description("Multi-row values for bulk insert.")]
+    public List<List<object>>? MultiValues { get; set; }
+    [Description("Source query for INSERT INTO ... SELECT (Optional).")]
+    public QueryDefinition? FromQuery { get; set; }
+    [Description("A confirmation token required for potentially dangerous operations (Optional).")]
+    public string? ConfirmToken { get; set; }
+}
