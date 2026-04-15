@@ -30,7 +30,7 @@ It lets MCP clients call safe SQL tools while you manage access keys, audit logs
 |------|------|-------------|
 | 🚧 | `allowed Tools` | List allowed tools for the key |
 | ✅ | `Per-key SQL provider/connection` | Override SQL provider/connection settings for a specific API key |
-| ✅ | `global RateLimit` | Get global rate limit settings |
+| ✅ | `global RateLimit` | global rate limit |
 | ✅ | `issue Key` | Issue a new API key with optional SQL override and rate limit override |
 | ✅ | `list Keys` | List all API keys with metadata (excluding secret values) |
 | ✅ | `revoke Key` | Revoke an API key by ID |
