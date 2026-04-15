@@ -5,6 +5,6 @@ namespace ToolBox.Background;
 
 public interface IMcpAccessKeyLastUsedQueue
 {
-    bool TryEnqueue(int keyId);
-    IAsyncEnumerable<int> DequeueAllAsync(CancellationToken cancellationToken);
+	bool TryEnqueue(int keyId);
+	IAsyncEnumerable<int> DequeueAllAsync(CancellationToken cancellationToken);
 }

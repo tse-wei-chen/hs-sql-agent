@@ -5,11 +5,11 @@ namespace Admin.Service.Data;
 
 public class AdminContextFactory : IDesignTimeDbContextFactory<AdminContext>
 {
-    public AdminContext CreateDbContext(string[] args)
-    {
-        var optionsBuilder = new DbContextOptionsBuilder<AdminContext>();
-        optionsBuilder.UseSqlite("Data Source=hsqlagent.db");
+	public AdminContext CreateDbContext(string[] args)
+	{
+		var optionsBuilder = new DbContextOptionsBuilder<AdminContext>();
+		optionsBuilder.UseSqlite("Data Source=hsqlagent.db");
 
-        return new AdminContext(optionsBuilder.Options);
-    }
+		return new AdminContext(optionsBuilder.Options);
+	}
 }

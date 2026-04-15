@@ -12,57 +12,57 @@ namespace Admin.Test.Services;
 
 public class McpAccessKeyServiceTests
 {
-    private readonly Mock<IAdminContext> _contextMock;
-    private readonly Mock<IOptions<McpKeySettings>> _settingsMock;
-    private readonly Mock<ICryptoService> _cryptoServiceMock;
-    private readonly McpAccessKeyService _service;
+	private readonly Mock<IAdminContext> _contextMock;
+	private readonly Mock<IOptions<McpKeySettings>> _settingsMock;
+	private readonly Mock<ICryptoService> _cryptoServiceMock;
+	private readonly McpAccessKeyService _service;
 
-    public McpAccessKeyServiceTests()
-    {
-        _contextMock = new Mock<IAdminContext>();
-        
-        _settingsMock = new Mock<IOptions<McpKeySettings>>();
-        _settingsMock.Setup(s => s.Value).Returns(new McpKeySettings { HmacSecretKey = "12345678901234567890123456789012" });
+	public McpAccessKeyServiceTests()
+	{
+		_contextMock = new Mock<IAdminContext>();
 
-        _cryptoServiceMock = new Mock<ICryptoService>();
-        _cryptoServiceMock.Setup(c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
-            .Returns((string? plain, byte[] key) => plain != null ? $"ENCRYPTED_{plain}" : null);
-        _cryptoServiceMock.Setup(c => c.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
-            .Returns((string? cipher, byte[] key) => cipher?.Replace("ENCRYPTED_", ""));
+		_settingsMock = new Mock<IOptions<McpKeySettings>>();
+		_settingsMock.Setup(s => s.Value).Returns(new McpKeySettings { HmacSecretKey = "12345678901234567890123456789012" });
 
-        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
+		_cryptoServiceMock = new Mock<ICryptoService>();
+		_cryptoServiceMock.Setup(c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
+			.Returns((string? plain, byte[] key) => plain != null ? $"ENCRYPTED_{plain}" : null);
+		_cryptoServiceMock.Setup(c => c.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
+			.Returns((string? cipher, byte[] key) => cipher?.Replace("ENCRYPTED_", ""));
 
-        _service = new McpAccessKeyService(_contextMock.Object, _settingsMock.Object, _cryptoServiceMock.Object);
-    }
+		_contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
 
-    [Fact]
-    public async Task IssueKeyAsync_WithValidRequest_ReturnsResult()
-    {
-        var request = new IssueMcpAccessKeyRequest
-        {
-            Name = "Test Key",
-            SqlProvider = "PostgreSQL",
-            SqlConnectionString = "Host=localhost;Database=test",
-            CorsAllowedOrigins = "http://localhost:3000"
-        };
+		_service = new McpAccessKeyService(_contextMock.Object, _settingsMock.Object, _cryptoServiceMock.Object);
+	}
 
-        var result = await _service.IssueKeyAsync(request, "tester", TestContext.Current.CancellationToken);
+	[Fact]
+	public async Task IssueKeyAsync_WithValidRequest_ReturnsResult()
+	{
+		var request = new IssueMcpAccessKeyRequest
+		{
+			Name = "Test Key",
+			SqlProvider = "PostgreSQL",
+			SqlConnectionString = "Host=localhost;Database=test",
+			CorsAllowedOrigins = "http://localhost:3000"
+		};
 
-        Assert.NotNull(result);
-        Assert.Equal("Test Key", result.Name);
-        Assert.NotNull(result.PlaintextKey);
-        _contextMock.Verify(c => c.McpAccessKeys.Add(It.IsAny<McpAccessKey>()), Times.Once);
-        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
+		var result = await _service.IssueKeyAsync(request, "tester", TestContext.Current.CancellationToken);
 
-    [Fact]
-    public async Task ValidateAsync_WithMissingKey_ReturnsFalse()
-    {
-        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
+		Assert.NotNull(result);
+		Assert.Equal("Test Key", result.Name);
+		Assert.NotNull(result.PlaintextKey);
+		_contextMock.Verify(c => c.McpAccessKeys.Add(It.IsAny<McpAccessKey>()), Times.Once);
+		_contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+	}
 
-        var result = await _service.ValidateAsync("invalid-key", TestContext.Current.CancellationToken);
+	[Fact]
+	public async Task ValidateAsync_WithMissingKey_ReturnsFalse()
+	{
+		_contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
 
-        Assert.False(result.IsValid);
-        Assert.Equal("Key not found.", result.Reason);
-    }
+		var result = await _service.ValidateAsync("invalid-key", TestContext.Current.CancellationToken);
+
+		Assert.False(result.IsValid);
+		Assert.Equal("Key not found.", result.Reason);
+	}
 }

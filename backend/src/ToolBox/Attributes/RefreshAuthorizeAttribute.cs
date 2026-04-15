@@ -4,8 +4,8 @@ namespace ToolBox.Attributes;
 
 public sealed class RefreshAuthorizeAttribute : AuthorizeAttribute
 {
-    public RefreshAuthorizeAttribute()
-    {
-        Policy = "RefreshTokenPolicy";
-    }
+	public RefreshAuthorizeAttribute()
+	{
+		Policy = "RefreshTokenPolicy";
+	}
 }

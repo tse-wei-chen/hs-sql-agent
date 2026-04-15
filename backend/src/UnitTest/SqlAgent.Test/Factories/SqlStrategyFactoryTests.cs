@@ -9,55 +9,55 @@ namespace SqlAgent.Test.Factories;
 
 public class SqlStrategyFactoryTests
 {
-    [Fact]
-    public void Constructor_WithDuplicateStrategies_ThrowsInvalidOperationException()
-    {
-        var mockDb1 = new Mock<ISqlStrategy>();
-        mockDb1.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-        
-        var mockDb2 = new Mock<ISqlStrategy>();
-        mockDb2.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+	[Fact]
+	public void Constructor_WithDuplicateStrategies_ThrowsInvalidOperationException()
+	{
+		var mockDb1 = new Mock<ISqlStrategy>();
+		mockDb1.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
 
-        var strategies = new List<ISqlStrategy> { mockDb1.Object, mockDb2.Object };
+		var mockDb2 = new Mock<ISqlStrategy>();
+		mockDb2.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
 
-        Assert.Throws<InvalidOperationException>(() => new SqlStrategyFactory(strategies));
-    }
+		var strategies = new List<ISqlStrategy> { mockDb1.Object, mockDb2.Object };
 
-    [Fact]
-    public void GetStrategy_WithValidType_ReturnsStrategy()
-    {
-        var mockDb = new Mock<ISqlStrategy>();
-        mockDb.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+		Assert.Throws<InvalidOperationException>(() => new SqlStrategyFactory(strategies));
+	}
 
-        var factory = new SqlStrategyFactory(new[] { mockDb.Object });
+	[Fact]
+	public void GetStrategy_WithValidType_ReturnsStrategy()
+	{
+		var mockDb = new Mock<ISqlStrategy>();
+		mockDb.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
 
-        var result = factory.GetStrategy(SqlAgentToolType.Postgres);
+		var factory = new SqlStrategyFactory(new[] { mockDb.Object });
 
-        Assert.Equal(mockDb.Object, result);
-    }
+		var result = factory.GetStrategy(SqlAgentToolType.Postgres);
 
-    [Fact]
-    public void GetStrategy_WithInvalidType_ThrowsArgumentOutOfRangeException()
-    {
-        var factory = new SqlStrategyFactory(Array.Empty<ISqlStrategy>());
+		Assert.Equal(mockDb.Object, result);
+	}
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => factory.GetStrategy(SqlAgentToolType.Postgres));
-    }
+	[Fact]
+	public void GetStrategy_WithInvalidType_ThrowsArgumentOutOfRangeException()
+	{
+		var factory = new SqlStrategyFactory(Array.Empty<ISqlStrategy>());
 
-    [Fact]
-    public void GetSupportedDatabaseTypes_ReturnsExpectedTypes()
-    {
-        var mockDb1 = new Mock<ISqlStrategy>();
-        mockDb1.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-        var mockDb2 = new Mock<ISqlStrategy>();
-        mockDb2.Setup(x => x.DbType).Returns(SqlAgentToolType.MySQL);
+		Assert.Throws<ArgumentOutOfRangeException>(() => factory.GetStrategy(SqlAgentToolType.Postgres));
+	}
 
-        var factory = new SqlStrategyFactory(new[] { mockDb1.Object, mockDb2.Object });
+	[Fact]
+	public void GetSupportedDatabaseTypes_ReturnsExpectedTypes()
+	{
+		var mockDb1 = new Mock<ISqlStrategy>();
+		mockDb1.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+		var mockDb2 = new Mock<ISqlStrategy>();
+		mockDb2.Setup(x => x.DbType).Returns(SqlAgentToolType.MySQL);
 
-        var types = factory.GetSupportedDatabaseTypes().ToList();
+		var factory = new SqlStrategyFactory(new[] { mockDb1.Object, mockDb2.Object });
 
-        Assert.Contains(SqlAgentToolType.Postgres, types);
-        Assert.Contains(SqlAgentToolType.MySQL, types);
-        Assert.Equal(2, types.Count);
-    }
+		var types = factory.GetSupportedDatabaseTypes().ToList();
+
+		Assert.Contains(SqlAgentToolType.Postgres, types);
+		Assert.Contains(SqlAgentToolType.MySQL, types);
+		Assert.Equal(2, types.Count);
+	}
 }
