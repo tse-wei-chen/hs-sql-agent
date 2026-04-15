@@ -14,7 +14,7 @@ public class SqlStrategyFactoryTests
     {
         var mockDb1 = new Mock<ISqlStrategy>();
         mockDb1.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-        
+
         var mockDb2 = new Mock<ISqlStrategy>();
         mockDb2.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
 

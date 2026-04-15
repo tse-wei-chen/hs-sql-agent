@@ -6,16 +6,12 @@ using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
+using Microsoft.Extensions.Configuration;
 
 namespace SqlAgent.Service.Strategies;
 
-public class SqliteStrategy : BaseSqlStrategy
+public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
-    public SqliteStrategy(IQueryValueParserService valueParser)
-        : base(valueParser)
-    {
-    }
-
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
     protected override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);
@@ -34,7 +30,7 @@ public class SqliteStrategy : BaseSqlStrategy
         {
             using var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            return [.. await connection.QueryAsync<string>("SELECT name FROM sqlite_master WHERE type='table';")];
+            return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT name FROM sqlite_master WHERE type='table';", cancellationToken: cancellationToken))];
         }
         catch (Exception ex)
         {
@@ -45,13 +41,13 @@ public class SqliteStrategy : BaseSqlStrategy
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
             using var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var result = await connection.QueryAsync($"PRAGMA table_info([{tableName}])");
+            var result = await connection.QueryAsync(new CommandDefinition($"PRAGMA table_info([{tableName}])", cancellationToken: cancellationToken));
             return [.. result.Select(r => (string)r.name)];
         }
         catch (Exception ex)
@@ -63,49 +59,12 @@ public class SqliteStrategy : BaseSqlStrategy
         }
     }
 
-    public override async Task<string> GetTableReferenceAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            using var connection = new SqliteConnection(connectionString);
-            await connection.OpenAsync(cancellationToken);
-
-            var fkRows = await connection.QueryAsync($"PRAGMA foreign_key_list([{tableName}])");
-
-            var result = new List<object>();
-            foreach (var fk in fkRows)
-            {
-                var refTable = (string)fk.table;
-                var pkColumns = await connection.QueryAsync($"PRAGMA table_info([{refTable}])");
-                var refPk = pkColumns.FirstOrDefault(c => (long)c.pk > 0);
-
-                result.Add(new
-                {
-                    SourceTable = tableName,
-                    ReferenceTable = refTable,
-                    PrimaryKey = refPk == null ? (string)fk.to : (string)refPk.name,
-                    ForeignKey = (string)fk.from
-                });
-            }
-
-            return JsonSerializer.Serialize(result);
-        }
-        catch (Exception ex)
-        {
-            throw new Exception(@$"
-                Error getting table reference: {ex.Message},
-                please try again !!
-            ");
-        }
-    }
-
-    protected override string BuildExecutionErrorMessage(Exception ex)
+    protected override string BuildExecutionErrorMessage(Exception ex, string type)
     {
         var code = ex is SqliteException sqliteEx ? $"SQLITE_{sqliteEx.SqliteErrorCode}" : null;
         var hint = BuildHint(code, ex.Message);
-        var action = BuildNextAction(code, ex.Message);
 
-        return $"Error executing query | code={code ?? "unknown"} | hint={hint} | nextAction={action}";
+        return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
     }
 
     protected override string BuildHint(string? code, string message)
@@ -121,20 +80,5 @@ public class SqliteStrategy : BaseSqlStrategy
             return "SQL syntax issue. Validate operators and combined query structure.";
 
         return base.BuildHint(code, message);
-    }
-
-    protected override string BuildNextAction(string? code, string message)
-    {
-        if (message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
-            return "Retry with a valid table from get_tables.";
-
-        if (message.Contains("no such column", StringComparison.OrdinalIgnoreCase))
-            return "Retry with valid columns from get_columns.";
-
-        if (message.Contains("syntax error", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("near", StringComparison.OrdinalIgnoreCase))
-            return "Retry with a simpler query first, then add where/group/combine incrementally.";
-
-        return base.BuildNextAction(code, message);
     }
 }

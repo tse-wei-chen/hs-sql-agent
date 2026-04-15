@@ -1,4 +1,5 @@
 namespace Admin.Service.Models;
+
 public class PermissionVM
 {
     public string? UserName { get; set; }

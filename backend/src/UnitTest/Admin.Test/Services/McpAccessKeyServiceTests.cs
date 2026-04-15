@@ -20,7 +20,7 @@ public class McpAccessKeyServiceTests
     public McpAccessKeyServiceTests()
     {
         _contextMock = new Mock<IAdminContext>();
-        
+
         _settingsMock = new Mock<IOptions<McpKeySettings>>();
         _settingsMock.Setup(s => s.Value).Returns(new McpKeySettings { HmacSecretKey = "12345678901234567890123456789012" });
 

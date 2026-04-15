@@ -2,20 +2,20 @@
 import { computed, onMounted, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from '@/components/ui/card'
 import {
-	Select,
-	SelectContent,
-	SelectGroup,
-	SelectItem,
-	SelectLabel,
-	SelectTrigger,
-	SelectValue,
+    Select,
+    SelectContent,
+    SelectGroup,
+    SelectItem,
+    SelectLabel,
+    SelectTrigger,
+    SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
@@ -54,10 +54,10 @@ const toolOptions = [
 	{ label: 'Get Columns', value: 'get_columns' },
 	{ label: 'Get Schemas', value: 'get_schemas' },
 	{ label: 'Get Tables', value: 'get_tables' },
-	{ label: 'Get Table Reference', value: 'get_table_reference' },
+    { label: 'Execute DML', value: 'execute_dml_safe' },
 ]
 
-const providerOptions = ['global', 'Sqlite', 'Postgres', 'MySQL']
+const providerOptions = ['global', 'Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird']
 
 
 const selectedToolLabel = computed(() => {

@@ -20,7 +20,7 @@ public class McpAccessKeyConfig : IEntityTypeConfiguration<McpAccessKey>
         builder.Property(x => x.CreatedBy).HasMaxLength(64);
         builder.Property(x => x.RevokedBy).HasMaxLength(64);
         builder.Property(x => x.CreatedAt).IsRequired();
-		builder.Property(x => x.RevokedAt);
+        builder.Property(x => x.RevokedAt);
 
         builder.HasIndex(x => x.KeyHash).IsUnique();
         builder.HasIndex(x => x.KeyPrefix);

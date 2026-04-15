@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 
 namespace Admin.Service.Models;
+
 public class SignUpRequest
 {
     [Required]

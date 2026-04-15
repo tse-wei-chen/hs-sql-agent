@@ -31,7 +31,7 @@ public class CryptoService : ICryptoService
         if (string.IsNullOrWhiteSpace(cipherText)) return cipherText;
 
         var fullCipher = Convert.FromBase64String(cipherText);
-        
+
         using var aes = Aes.Create();
         aes.Key = SHA256.HashData(secretKey);
 

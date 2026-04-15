@@ -13,17 +13,27 @@ It lets MCP clients call safe SQL tools while you manage access keys, audit logs
 - Audit log and daily summary APIs
 - Per-key SQL provider/connection override
 - Global IP rate limit override
-- Supports `Sqlite`, `Postgres`, and `Mysql`
+- Supports `Sqlite`, `Postgres`, `Mysql`, `SqlServer`, `Oracle`, `FireBird`
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `execute_query_safe` | Execute a query (supports join, where, order by, group by, limit) |
-| `get_columns` | Get column names of a table |
-| `get_schemas` | Get schemas in the database |
-| `get_tables` | Get tables in the database |
-| `get_table_reference` | Get table reference metadata |
+| progress | Tool | Description |
+|------|------|-------------|
+| 🚧 | `execute_query_safe` | Execute a query (supports join, where, order by, group by, limit) |
+| 🚧 | `get_columns` | Get column names of a table |
+| 🚧 | `get_schemas` | Get schemas in the database |
+| 🚧 | `get_tables` | Get tables in the database |
+| 🚧 | `execute_dml_safe` | Execute a DML statement (INSERT, UPDATE, DELETE) |
+
+## Admin Panel API keys
+| progress | Tool | Description |
+|------|------|-------------|
+| 🚧 | `allowed Tools` | List allowed tools for the key |
+| ✅ | `Per-key SQL provider/connection` | Override SQL provider/connection settings for a specific API key |
+| ✅ | `global RateLimit` | Get global rate limit settings |
+| ✅ | `issue Key` | Issue a new API key with optional SQL override and rate limit override |
+| ✅ | `list Keys` | List all API keys with metadata (excluding secret values) |
+| ✅ | `revoke Key` | Revoke an API key by ID |
 
 ## Architecture
 

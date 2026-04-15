@@ -42,9 +42,9 @@ public class AdminServiceTests
     public async Task IsFirstRunAsync_WhenNoUsers_ReturnsTrue()
     {
         _contextMock.Setup(c => c.SuperUsers).ReturnsDbSet(new List<SuperUser>());
-        
+
         var result = await _service.IsFirstRunAsync();
-        
+
         Assert.True(result);
     }
 
@@ -52,9 +52,9 @@ public class AdminServiceTests
     public async Task SignUpAsync_WithValidRequest_ReturnsToken()
     {
         var request = new SignUpRequest { Email = "test@example.com", Password = "password123" };
-        
+
         var result = await _service.SignUpAsync(request);
-        
+
         Assert.NotNull(result);
         Assert.Equal("test", result.UserName);
         Assert.Equal("test@example.com", result.Email);
@@ -74,9 +74,9 @@ public class AdminServiceTests
         _contextMock.Setup(c => c.SuperUsers).ReturnsDbSet(users);
 
         var request = new SignInRequest { Email = "test@example.com", Password = "password123" };
-        
+
         var result = await _service.SignInAsync(request);
-        
+
         Assert.NotNull(result);
         Assert.Equal("test", result.UserName);
     }
@@ -92,9 +92,9 @@ public class AdminServiceTests
         _contextMock.Setup(c => c.SuperUsers).ReturnsDbSet(users);
 
         var request = new ChangePasswordRequest { CurrentPassword = "password123", NewPassword = "newpassword123" };
-        
+
         await _service.ChangePasswordAsync(request, "test@example.com");
-        
+
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
         Assert.True(BCrypt.Net.BCrypt.Verify("newpassword123", users[0].PasswordHash));
     }
