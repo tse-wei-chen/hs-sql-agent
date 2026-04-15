@@ -30,7 +30,7 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         {
             using var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            return [.. await connection.QueryAsync<string>("SELECT name FROM sqlite_master WHERE type='table';")];
+            return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT name FROM sqlite_master WHERE type='table';", cancellationToken: cancellationToken))];
         }
         catch (Exception ex)
         {
@@ -41,55 +41,19 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
             using var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var result = await connection.QueryAsync($"PRAGMA table_info([{tableName}])");
+            var result = await connection.QueryAsync(new CommandDefinition($"PRAGMA table_info([{tableName}])", cancellationToken: cancellationToken));
             return [.. result.Select(r => (string)r.name)];
         }
         catch (Exception ex)
         {
             throw new Exception(@$"
                 Error getting columns: {ex.Message},
-                please try again !!
-            ");
-        }
-    }
-
-    public override async Task<string> GetTableReferenceAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            using var connection = new SqliteConnection(connectionString);
-            await connection.OpenAsync(cancellationToken);
-
-            var fkRows = await connection.QueryAsync($"PRAGMA foreign_key_list([{tableName}])");
-
-            var result = new List<object>();
-            foreach (var fk in fkRows)
-            {
-                var refTable = (string)fk.table;
-                var pkColumns = await connection.QueryAsync($"PRAGMA table_info([{refTable}])");
-                var refPk = pkColumns.FirstOrDefault(c => (long)c.pk > 0);
-
-                result.Add(new
-                {
-                    SourceTable = tableName,
-                    ReferenceTable = refTable,
-                    PrimaryKey = refPk == null ? (string)fk.to : (string)refPk.name,
-                    ForeignKey = (string)fk.from
-                });
-            }
-
-            return JsonSerializer.Serialize(result);
-        }
-        catch (Exception ex)
-        {
-            throw new Exception(@$"
-                Error getting table reference: {ex.Message},
                 please try again !!
             ");
         }

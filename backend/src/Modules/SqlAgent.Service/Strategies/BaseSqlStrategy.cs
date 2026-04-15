@@ -353,7 +353,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
                     "between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high)
                         => ApplyDateBetweenAggregate(query, c, agg, field, op, low, high),
 
-                    _ => (c.IsOr ? query.OrHavingDateAggregate(agg, field, op, dtVal) : query.HavingDateAggregate(agg, field, op, dtVal))
+                    _ => c.IsOr ? query.OrHavingDateAggregate(agg, field, op, dtVal) : query.HavingDateAggregate(agg, field, op, dtVal)
                 }
                 : op switch
                 {
@@ -363,7 +363,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
                     "between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high)
                         => ApplyDateBetweenHaving(query, c, field, op, low, high),
 
-                    _ => (c.IsOr ? query.OrHavingDate(field, op, dtVal) : query.HavingDate(field, op, dtVal))
+                    _ => c.IsOr ? query.OrHavingDate(field, op, dtVal) : query.HavingDate(field, op, dtVal)
                 };
         }
 
@@ -698,8 +698,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     public abstract Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
     public abstract Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default);
-    public abstract Task<List<string>> GetColumnsAsync(string connectionString, string tableName, CancellationToken cancellationToken = default);
-    public abstract Task<string> GetTableReferenceAsync(string connectionString, string tableName, CancellationToken cancellationToken = default);
+    public abstract Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
 
     #endregion
 }

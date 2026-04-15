@@ -93,7 +93,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     }
 
     [McpServerTool, Description("Get column names of a table.")]
-    public async Task<string> GetColumns([Description("The table name")] string tableName)
+    public async Task<string> GetColumns([Description("The schema name")] string schemaName, [Description("The table name")] string tableName)
     {
         try
         {
@@ -107,7 +107,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 return "Table name cannot be empty. please provide a valid table name.";
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-            var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, tableName);
+            var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
             return string.Join(", ", columns);
         }
         catch (Exception ex)
@@ -153,29 +153,6 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         catch (Exception ex)
         {
             return $"Error getting tables: {ex.Message}";
-        }
-    }
-
-    [McpServerTool, Description("Get reference of a table.")]
-    public async Task<string> GetTableReference([Description("The table name")] string tableName)
-    {
-        try
-        {
-            var sqlConfig = await ResolveSqlConfigAsync();
-            if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-            {
-                return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
-            }
-            if (string.IsNullOrEmpty(tableName))
-            {
-                return "Table name cannot be empty. please provide a valid table name.";
-            }
-            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-            return await strategy.GetTableReferenceAsync(sqlConfig.ConnectionString, tableName);
-        }
-        catch (Exception ex)
-        {
-            return $"Error getting table reference: {ex.Message}";
         }
     }
 

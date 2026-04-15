@@ -24,7 +24,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         {
             using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            return [.. await connection.QueryAsync<string>("SELECT schema_name FROM information_schema.schemata;")];
+            return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT schema_name FROM information_schema.schemata;", cancellationToken: cancellationToken))];
         }
         catch (Exception ex)
         {
@@ -41,7 +41,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         {
             using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            return [.. await connection.QueryAsync<string>("SELECT table_name FROM information_schema.tables WHERE table_schema = @schemaName;", new { schemaName })];
+            return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT table_name FROM information_schema.tables WHERE table_schema = @schemaName;", new { schemaName }, cancellationToken: cancellationToken))];
         }
         catch (Exception ex)
         {
@@ -52,13 +52,23 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
+        const string sql = @"
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = @schemaName 
+            AND table_name = @tableName
+            ORDER BY ordinal_position;";
+
         try
         {
             using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            return [.. await connection.QueryAsync<string>("SELECT column_name FROM information_schema.columns WHERE table_name = @tableName;", new { tableName })];
+
+            var columns = await connection.QueryAsync<string>(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
+
+            return [.. columns];
         }
         catch (Exception ex)
         {
@@ -66,45 +76,6 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
 				Error getting columns: {ex.Message},
 				please try again !!
 			");
-        }
-    }
-
-    public override async Task<string> GetTableReferenceAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            using var connection = new NpgsqlConnection(connectionString);
-            await connection.OpenAsync(cancellationToken);
-            const string sql = """
-            SELECT
-                kcu.table_name AS sourcetable,
-                kcu.column_name AS foreignkey,
-                rel_kcu.table_name AS referencetable,
-                rel_kcu.column_name AS primarykey
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-                ON tc.constraint_name = kcu.constraint_name
-                AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.referential_constraints rc
-                ON tc.constraint_name = rc.constraint_name
-            JOIN information_schema.key_column_usage rel_kcu
-                ON rc.unique_constraint_name = rel_kcu.constraint_name
-                AND rc.unique_constraint_schema = rel_kcu.table_schema
-                AND kcu.ordinal_position = rel_kcu.ordinal_position
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-                AND tc.table_name = @tableName
-                AND tc.table_schema = 'public'
-            ORDER BY rel_kcu.table_name, kcu.column_name;
-            """;
-
-            var references = await connection.QueryAsync<TableRefModel>(sql, new { tableName });
-
-            return JsonSerializer.Serialize(references);
-
-        }
-        catch (Exception ex)
-        {
-            throw new Exception($"Error getting table reference: {ex.Message}", ex);
         }
     }
 

@@ -4,5 +4,8 @@ public enum SqlAgentToolType
 {
     Sqlite,
     Postgres,
-    MySQL
+    MySQL,
+    MsSqlServer,
+    Oracle,
+    Firebird,
 }

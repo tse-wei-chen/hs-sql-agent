@@ -24,7 +24,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
         {
             using var connection = new MySqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            return [.. await connection.QueryAsync<string>("SHOW DATABASES;")];
+            return [.. await connection.QueryAsync<string>(new CommandDefinition("SHOW DATABASES;", cancellationToken: cancellationToken))];
         }
         catch (Exception ex)
         {
@@ -47,7 +47,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
             WHERE TABLE_SCHEMA = @schemaName
             AND TABLE_TYPE = 'BASE TABLE';";
 
-            var tables = await connection.QueryAsync<string>(sql, new { schemaName });
+            var tables = await connection.QueryAsync<string>(new CommandDefinition(sql, new { schemaName }, cancellationToken: cancellationToken));
             return [.. tables];
         }
         catch (Exception ex)
@@ -59,21 +59,18 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
             using var connection = new MySqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var processedTableName = tableName.Contains('.')
-                ? tableName.Split('.').Last()
-                : tableName;
             const string sql = @"
-            SELECT COLUMN_NAME 
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = @tableName";
+                SELECT COLUMN_NAME 
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName";
 
-            var columns = await connection.QueryAsync<string>(sql, new { tableName = processedTableName });
+            var columns = await connection.QueryAsync<string>(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
 
             return [.. columns];
         }
@@ -81,52 +78,6 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
         {
             throw new Exception(@$"
 				Error getting columns: {ex.Message},
-				please try again !!
-			");
-        }
-    }
-
-    public override async Task<string> GetTableReferenceAsync(string connectionString, string tableName, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            using var connection = new MySqlConnection(connectionString);
-            await connection.OpenAsync(cancellationToken);
-            var processedTableName = tableName.Contains('.')
-                ? tableName.Split('.').Last()
-                : tableName;
-            const string sql = """
-				SELECT
-					kcu.TABLE_NAME AS SourceTable,
-					kcu.COLUMN_NAME AS ForeignKey,
-					kcu.REFERENCED_TABLE_NAME AS ReferenceTable,
-					kcu.REFERENCED_COLUMN_NAME AS PrimaryKey
-				FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-				INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-					ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
-					AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
-					AND tc.TABLE_NAME = kcu.TABLE_NAME
-				WHERE kcu.TABLE_SCHEMA = DATABASE()
-					AND kcu.TABLE_NAME = @tableName
-					AND tc.CONSTRAINT_TYPE = 'FOREIGN KEY'
-				ORDER BY kcu.REFERENCED_TABLE_NAME, kcu.COLUMN_NAME;
-				""";
-
-            var references = await connection.QueryAsync(sql, new { tableName = processedTableName });
-            var result = references.Select(r => new
-            {
-                SourceTable = (string)r.SourceTable,
-                ReferenceTable = (string)r.ReferenceTable,
-                PrimaryKey = (string)r.PrimaryKey,
-                ForeignKey = (string)r.ForeignKey
-            }).ToList();
-
-            return JsonSerializer.Serialize(result);
-        }
-        catch (Exception ex)
-        {
-            throw new Exception(@$"
-				Error getting table reference: {ex.Message},
 				please try again !!
 			");
         }
