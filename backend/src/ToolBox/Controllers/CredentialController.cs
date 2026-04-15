@@ -7,11 +7,11 @@ namespace ToolBox.Controllers;
 [Route("api/[controller]")]
 public class CredentialController(ILogger<CredentialController> logger) : ControllerBase
 {
-	private readonly ILogger<CredentialController> _logger = logger;
+    private readonly ILogger<CredentialController> _logger = logger;
 
-	[HttpGet("status")]
-	public IActionResult GetStatus()
-	{
-		return Ok(new { status = "Credential API is running." });
-	}
+    [HttpGet("status")]
+    public IActionResult GetStatus()
+    {
+        return Ok(new { status = "Credential API is running." });
+    }
 }

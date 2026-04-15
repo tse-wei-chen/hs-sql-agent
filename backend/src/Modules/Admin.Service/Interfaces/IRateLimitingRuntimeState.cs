@@ -4,6 +4,6 @@ namespace Admin.Service.Interfaces;
 
 public interface IRateLimitingRuntimeState
 {
-	RateLimitingSettings GetCurrent();
-	void SetCurrent(RateLimitingSettings settings);
+    RateLimitingSettings GetCurrent();
+    void SetCurrent(RateLimitingSettings settings);
 }

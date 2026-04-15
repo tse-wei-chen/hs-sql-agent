@@ -5,6 +5,6 @@ namespace SqlAgent.Service.Factories;
 
 public interface ISqlStrategyFactory
 {
-	ISqlStrategy GetStrategy(SqlAgentToolType dbType);
-	IEnumerable<SqlAgentToolType> GetSupportedDatabaseTypes();
+    ISqlStrategy GetStrategy(SqlAgentToolType dbType);
+    IEnumerable<SqlAgentToolType> GetSupportedDatabaseTypes();
 }
