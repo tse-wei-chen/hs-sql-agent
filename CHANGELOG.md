@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.5] - 2026-04-16
+### Fix
+- Fix Where Condition IN/NOTIN
+
 ## [1.3.4] - 2026-04-12
 ### Breaking Change
 - remove `get_table_reference` tool from MCP API: this tool was rarely used and added complexity to the codebase, and its functionality can be achieved through a combination of `get_tables` and `get_columns` calls. Removing it simplifies the API and reduces maintenance overhead without significantly impacting usability.
