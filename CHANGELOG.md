@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.6] - 2026-04-16
+### Feature
+- `allowed Tools`  Manage tool access for the API key : This feature allows administrators to specify which tools or API endpoints an issued API key has access to. By managing tool access at the API key level, you can enforce fine-grained permissions and restrict certain keys to only use specific functionalities of the MCP API, enhancing security and control over how the API is used.
+
 ## [1.3.5] - 2026-04-16
 ### Fix
 - Fix Where Condition IN/NOTIN

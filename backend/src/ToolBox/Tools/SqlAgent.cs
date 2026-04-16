@@ -47,6 +47,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         [Description("Alias for the source table or subquery (Optional).")]
         string? alias = null)
     {
+        ValidateToolAccess("execute_query_safe");
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
         {
@@ -83,13 +84,21 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         [Description("The DML definition (operation, table, values, conditions).")]
         DmlDefinition dml)
     {
-        var sqlConfig = await ResolveSqlConfigAsync();
-        if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
+        try
         {
-            return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+            ValidateToolAccess("execute_dml_safe");
+            var sqlConfig = await ResolveSqlConfigAsync();
+            if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
+            {
+                return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+            }
+            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+            return await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
         }
-        var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-        return await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
+        catch (Exception ex)
+        {
+            return $"Error executing DML: {ex.Message}";
+        }
     }
 
     [McpServerTool, Description("Get column names of a table.")]
@@ -97,6 +106,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     {
         try
         {
+            ValidateToolAccess("get_columns");
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
             {
@@ -121,6 +131,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     {
         try
         {
+            ValidateToolAccess("get_schemas");
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
             {
@@ -141,6 +152,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     {
         try
         {
+            ValidateToolAccess("get_tables");
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
             {
@@ -179,20 +191,12 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         var context = _httpContextAccessor.HttpContext;
         if (context is not null)
         {
-            var provider = context.Items.TryGetValue(McpContextItemKeys.SqlProvider, out var providerObj)
-                ? providerObj?.ToString()
-                : null;
-            var connectionString = context.Items.TryGetValue(McpContextItemKeys.SqlConnectionString, out var connObj)
-                ? connObj?.ToString()
-                : null;
+            var provider = context.Items[McpContextItemKeys.SqlProvider]?.ToString();
+            var connectionString = context.Items[McpContextItemKeys.SqlConnectionString]?.ToString();
 
             if (!string.IsNullOrWhiteSpace(provider) && !string.IsNullOrWhiteSpace(connectionString))
             {
-                return new SqlRuntimeConfig
-                {
-                    Provider = provider,
-                    ConnectionString = connectionString
-                };
+                return new SqlRuntimeConfig { Provider = provider, ConnectionString = connectionString };
             }
         }
 
@@ -201,5 +205,21 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             Provider = _configuration["SqlConfig:Provider"] ?? string.Empty,
             ConnectionString = _configuration["SqlConfig:ConnectionString"] ?? string.Empty
         };
+    }
+
+    private void ValidateToolAccess(string? toolName = null)
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context == null) return;
+
+        var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string ?? "";
+
+        var isAllowed = allowedTools.Split(',')
+            .Any(t => t.Trim().Equals(toolName, StringComparison.OrdinalIgnoreCase));
+
+        if (!isAllowed)
+        {
+            throw new UnauthorizedAccessException($"API key does not have permission to use tool: {toolName}");
+        }
     }
 }
