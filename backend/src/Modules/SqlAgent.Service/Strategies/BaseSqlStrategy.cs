@@ -191,6 +191,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
         var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
         var val = c.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : c.Value;
+        var vals = c.Values?.Select(v => v is JsonElement vje ? _valueParser.UnwrapJsonElement(vje) : v).ToList();
 
         // Subquery handling (EXISTS, IN)
         if (c.SubQuery != null)
@@ -223,7 +224,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
                 "is" or "isnull" => c.IsOr ? query.OrWhereDate(c.Field, dtPart) : query.WhereDate(c.Field, dtPart),
                 "isnot" or "isnotnull" => c.IsOr ? query.OrWhereNotDate(c.Field, dtPart) : query.WhereNotDate(c.Field, dtPart),
 
-                "in" or "notin" when _valueParser.TryGetInValues(val, out var ins)
+                "in" or "notin" when _valueParser.TryGetInValues(val, out var ins) || (vals != null && _valueParser.TryGetInValues(vals, out ins))
                     => ApplyDateIn(query, c, op, ins),
 
                 "between" or "notbetween" when _valueParser.TryGetRangeValues(val, out var low, out var high)
@@ -250,8 +251,8 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
                 case "notin":
                     if (_valueParser.TryGetInValues(val, out var ins))
                         _ = op == "in" ? q.WhereIn(c.Field, ins) : q.WhereNotIn(c.Field, ins);
-                    else if (c.Values != null)
-                        _ = op == "in" ? q.WhereIn(c.Field, c.Values) : q.WhereNotIn(c.Field, c.Values);
+                    else if (vals != null && vals.Count > 0)
+                        _ = op == "in" ? q.WhereIn(c.Field, vals) : q.WhereNotIn(c.Field, vals);
                     break;
                 case "between":
                 case "notbetween":
