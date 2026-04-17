@@ -66,7 +66,7 @@ docker run --rm -p 8080:8080 \
   ghcr.io/tse-wei-chen/hs-sql-agent:latest
 ```
 
-⚠️ For production deployment, replace the example values for `McpKeySettings__HmacSecretKey`, `JwtSettings__SecretKey`, `JwtSettings__Issuer`, and `JwtSettings__Audience` before running the container.
+> ⚠️ For production deployment, replace the example values for `McpKeySettings__HmacSecretKey`, `JwtSettings__SecretKey`, `JwtSettings__Issuer`, and `JwtSettings__Audience` before running the container.
 
 If you want to build locally instead of pulling from GHCR:
 
