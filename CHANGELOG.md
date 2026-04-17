@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [1.3.7] - 2026-04-16
 ### Feature
 - `allowed Tools` For Dynamic Tool List
+- implement database connection testing feature 、 global provider support
 
 ## [1.3.6] - 2026-04-16
 ### Feature

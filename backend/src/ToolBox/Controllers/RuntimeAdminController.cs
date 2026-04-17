@@ -4,6 +4,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using SqlAgent.Service.Models;
+using SqlAgent.Service.Interfaces;
+using SqlAgent.Service.Enums;
 
 namespace ToolBox.Controllers;
 
@@ -12,9 +15,11 @@ namespace ToolBox.Controllers;
 [Route("api/runtime")]
 public class RuntimeAdminController(
     IMcpAccessKeyService keyService,
+    ITestDbConnection testDbConnection,
     IAuditService auditService) : ControllerBase
 {
     private readonly IMcpAccessKeyService _keyService = keyService;
+    private readonly ITestDbConnection _testDbConnection = testDbConnection;
     private readonly IAuditService _auditService = auditService;
 
     [HttpGet("mcp-keys")]
@@ -73,6 +78,19 @@ public class RuntimeAdminController(
             cancellationToken: cancellationToken);
 
         return Ok(new { success = true });
+    }
+
+    [HttpPost("mcp-keys/test-db-connection")]
+    public async Task<IActionResult> TestDbConnection([FromBody] TestDbConnectionRequest request, CancellationToken cancellationToken)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.ConnectionString) || request.SqlProvider == null)
+        {
+            if(request?.SqlProvider != SqlAgentToolType.Global)
+                return BadRequest("Connection string and SQL provider are required.");
+        }
+
+        var result = await _testDbConnection.TestDbConnectionAsync(request, cancellationToken);
+        return Ok(new { success = result.IsSuccess, errorMessage = result.ErrorMessage });
     }
 
     [HttpGet("audit")]

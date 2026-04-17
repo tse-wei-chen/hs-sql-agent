@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { issueMcpKey, listMcpKeys, revokeMcpKey } from '@/api/runtime'
+import { issueMcpKey, listMcpKeys, revokeMcpKey, testDbConnection } from '@/api/runtime'
 
 definePageMeta({
 	layout: 'default',
@@ -39,25 +39,28 @@ interface McpKeyItem {
 const keys = ref<McpKeyItem[]>([])
 const loading = ref(false)
 const issuing = ref(false)
+const testing = ref(false)
 const newKeyName = ref('')
 const expiresMode = ref('never')
 const customExpiresAt = ref('')
 const selectedTools = ref<string[]>([])
 const corsAllowedOrigins = ref('')
-const sqlProvider = ref('global')
+const sqlProvider = ref('Global')
 const sqlConnectionString = ref('')
+
+const connectionTestResult = ref<{ success: boolean; errorMessage: string } | null>(null)
 
 const issuedPlaintextKey = ref('')
 
 const toolOptions = [
-	{ label: 'Execute Query', value: 'execute_query_safe' },
-	{ label: 'Get Columns', value: 'get_columns' },
-	{ label: 'Get Schemas', value: 'get_schemas' },
-	{ label: 'Get Tables', value: 'get_tables' },
-    { label: 'Execute DML', value: 'execute_dml_safe' },
+	{ label: 'Execute Query', value: 'execute_query_safe', risk: 'medium' },
+	{ label: 'Get Columns', value: 'get_columns', risk: 'low' },
+	{ label: 'Get Schemas', value: 'get_schemas', risk: 'low' },
+	{ label: 'Get Tables', value: 'get_tables', risk: 'low' },
+    { label: 'Execute DML', value: 'execute_dml_safe', risk: 'high' },
 ]
 
-const providerOptions = ['global', 'Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird']
+const providerOptions = ['Global', 'Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird']
 
 
 const selectedToolLabel = computed(() => {
@@ -67,8 +70,6 @@ const selectedToolLabel = computed(() => {
 
 	return `${selectedTools.value.length} tools selected`
 })
-
-
 
 const expiresAt = computed(() => {
 	if (expiresMode.value === 'never') {
@@ -107,7 +108,7 @@ const issue = async () => {
 	}
 
 	const normalizedSqlConnectionString = sqlConnectionString.value.trim()
-	const hasSqlProviderOverride = sqlProvider.value !== 'global'
+	const hasSqlProviderOverride = sqlProvider.value !== 'Global'
 	const hasSqlConnectionStringOverride = normalizedSqlConnectionString.length > 0
 
 	if (hasSqlProviderOverride !== hasSqlConnectionStringOverride) {
@@ -124,7 +125,7 @@ const issue = async () => {
 			expiresAt: expiresAt.value,
 			allowedTools: selectedTools.value.length > 0 ? selectedTools.value.join(',') : null,
 			corsAllowedOrigins: corsAllowedOrigins.value.trim() || null,
-			sqlProvider: sqlProvider.value === 'global' ? null : sqlProvider.value,
+			sqlProvider: sqlProvider.value === 'Global' ? null : sqlProvider.value,
 			sqlConnectionString: normalizedSqlConnectionString || null,
 		})
 
@@ -134,13 +135,26 @@ const issue = async () => {
 		customExpiresAt.value = ''
 		selectedTools.value = []
 		corsAllowedOrigins.value = ''
-		sqlProvider.value = 'global'
+		sqlProvider.value = 'Global'
 		sqlConnectionString.value = ''
 		await load()
 	} catch (error: any) {
 		alert(error?.response?.data || 'Failed to issue MCP key.')
 	} finally {
 		issuing.value = false
+	}
+}
+
+const test = async () => {
+	try {
+		testing.value = true
+		connectionTestResult.value = null
+		const result = await testDbConnection(sqlProvider.value ?? undefined, sqlConnectionString.value ?? undefined)
+		connectionTestResult.value = result
+	} catch (error: any) {
+		connectionTestResult.value = { success: false, errorMessage: error?.response?.data || 'Connection failed.' }
+	} finally {
+		testing.value = false
 	}
 }
 
@@ -202,7 +216,7 @@ onMounted(load)
 								</SelectTrigger>
 								<SelectContent>
 									<SelectItem v-for="provider in providerOptions" :key="provider" :value="provider">
-										{{ provider === 'global' ? 'Global default' : provider }}
+										{{ provider === 'Global' ? 'Global default' : provider }}
 									</SelectItem>
 								</SelectContent>
 							</Select>
@@ -220,10 +234,14 @@ onMounted(load)
 								<SelectContent>
 									<SelectGroup>
 										<SelectLabel>Tools</SelectLabel>
-										<SelectItem v-for="tool in toolOptions" :key="tool.value" :value="tool.value">
+										<SelectItem v-for="tool in toolOptions" :key="tool.value" :value="tool.value" >
 											<div class="flex w-full items-center justify-between gap-2">
 												<span>{{ tool.label }}</span>
-												<span class="text-xs text-muted-foreground">{{ tool.value }}</span>
+												<span class="text-xs text-muted-foreground" :class="{
+													'text-red-500': tool.risk === 'high',
+													'text-yellow-500': tool.risk === 'medium',
+													'text-emerald-500': tool.risk === 'low'
+												}">{{ tool.value }}</span>
 											</div>
 										</SelectItem>
 									</SelectGroup>
@@ -251,10 +269,43 @@ onMounted(load)
 
 
 					</FieldGroup>
+					<span class="item-center flex justify-start gap-2">
+						<Button 
+							type="button" 
+							variant="outline" 
+							:disabled="testing" 
+							class="w-full md:w-auto flex items-center gap-2" 
+							@click.prevent="test"
+						>
+							<TooltipProvider>
+								<Tooltip :disabled="!connectionTestResult || connectionTestResult.success">
+									<TooltipTrigger as-child>
+									<Badge 
+										:class="[
+										'h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors',
+										!connectionTestResult ? 'bg-slate-100 text-slate-500' : 
+										connectionTestResult.success ? 'bg-green-100 text-green-700 border-green-200' : 
+										'bg-red-100 text-red-700 border-red-200'
+										]"
+									>
+										<template v-if="connectionTestResult">
+											{{ connectionTestResult.success ? '✓' : '✗' }}
+										</template>
+										<template v-else>?</template>
+									</Badge>
+									</TooltipTrigger>
+									<TooltipContent class="max-w-[300px] bg-red-950 text-white border-none">
+										<p class="font-mono text-xs">{{ connectionTestResult?.errorMessage }}</p>
+									</TooltipContent>
+								</Tooltip>
+							</TooltipProvider>
 
-					<Button type="submit" :disabled="issuing" class="w-full md:w-auto" @click.prevent="issue">
-						{{ issuing ? 'Issuing...' : 'Issue Key' }}
-					</Button>
+							<span>{{ testing ? 'Connecting...' : 'Test DB Connection' }}</span>
+						</Button>
+						<Button type="submit" :disabled="issuing" class="w-full md:w-auto" @click.prevent="issue">
+							{{ issuing ? 'Issuing...' : 'Issue Key' }}
+						</Button>
+					</span>
 				</form>
 
 				<div v-if="issuedPlaintextKey" class="mt-4 rounded border border-border bg-muted/40 p-3 text-sm">
@@ -282,8 +333,8 @@ onMounted(load)
 								'yes' : 'no' }}</div>
 							<div class="text-muted-foreground">Last used: {{ key.lastUsedAt || 'never' }}</div>
 							<div class="text-muted-foreground">CORS: {{ key.corsAllowedOrigins || 'none' }}</div>
-							<div class="text-muted-foreground">SQL: {{ key.sqlProvider || 'global' }} / connection: {{
-								key.hasSqlConnectionStringOverride ? 'override' : 'global' }}</div>
+							<div class="text-muted-foreground">SQL: {{ key.sqlProvider || 'Global' }} / connection: {{
+								key.hasSqlConnectionStringOverride ? 'override' : 'Global' }}</div>
 						</div>
 						<Button variant="destructive" :disabled="!key.isActive" @click="revoke(key.id)">Revoke</Button>
 					</div>

@@ -53,3 +53,11 @@ export const getRuntimeAuditDailySummary = async (days = 7) => {
   })
   return response.data
 }
+
+export const testDbConnection = async (sqlProvider: string, connectionString: string) => {
+  const response = await xiorInstanceToken.post('/runtime/mcp-keys/test-db-connection', {
+    sqlProvider: sqlProvider,
+    connectionString: connectionString,
+  })
+  return response.data
+}

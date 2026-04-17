@@ -14,6 +14,7 @@ public class McpAccessKeyAuthMiddleware(
     IAuditService auditService,
     IMcpAccessKeyLastUsedQueue lastUsedQueue,
     IMemoryCache cache,
+    IConfiguration configuration,
     ILogger<McpAccessKeyAuthMiddleware> logger) : IMiddleware
 {
     private const int StripedLockCount = 64;
@@ -36,6 +37,7 @@ public class McpAccessKeyAuthMiddleware(
     private readonly IAuditService _auditService = auditService;
     private readonly IMcpAccessKeyLastUsedQueue _lastUsedQueue = lastUsedQueue;
     private readonly IMemoryCache _cache = cache;
+    private readonly IConfiguration _configuration = configuration;
     private readonly ILogger<McpAccessKeyAuthMiddleware> _logger = logger;
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
@@ -65,13 +67,20 @@ public class McpAccessKeyAuthMiddleware(
             await AuditFailedAsync(context, validation.Reason ?? "invalid_key", context.RequestAborted);
             return;
         }
-
+        var provider = validation.SqlProvider ?? string.Empty;
+        var connString = validation.SqlConnectionString ?? string.Empty;
+        if (string.Equals(provider, "Global", StringComparison.OrdinalIgnoreCase))
+        {
+            var globalConfig = _configuration.GetSection("SqlConfig");
+            provider = globalConfig["Provider"] ?? "MsSqlServer";
+            connString = globalConfig["ConnectionString"] ?? string.Empty;
+        }
         context.Items[McpContextItemKeys.AccessKeyId] = validation.KeyId.Value;
         context.Items[McpContextItemKeys.AccessKeyName] = validation.Name ?? string.Empty;
         context.Items[McpContextItemKeys.AllowedTools] = validation.AllowedTools ?? string.Empty;
         context.Items[McpContextItemKeys.CorsAllowedOrigins] = validation.CorsAllowedOrigins ?? string.Empty;
-        context.Items[McpContextItemKeys.SqlProvider] = validation.SqlProvider ?? string.Empty;
-        context.Items[McpContextItemKeys.SqlConnectionString] = validation.SqlConnectionString ?? string.Empty;
+        context.Items[McpContextItemKeys.SqlProvider] = provider;
+        context.Items[McpContextItemKeys.SqlConnectionString] = connString;
 
         if (!TryApplyCorsPolicy(context, validation.CorsAllowedOriginsSet, out var corsError))
         {

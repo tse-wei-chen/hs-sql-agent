@@ -212,10 +212,14 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         var context = _httpContextAccessor.HttpContext;
         if (context == null) return;
 
-        var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string ?? "";
+        var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string;
 
-        var isAllowed = allowedTools.Split(',')
-            .Any(t => t.Trim().Equals(toolName, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(allowedTools))
+        {
+            return;
+        }
+        var isAllowed = allowedTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(t => t.Equals(toolName, StringComparison.OrdinalIgnoreCase));
 
         if (!isAllowed)
         {

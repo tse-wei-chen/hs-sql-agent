@@ -21,6 +21,7 @@ using SqlAgent.Service.Strategies;
 using ModelContextProtocol.Server;
 using System.Reflection;
 using ToolBox.Models;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -51,6 +52,7 @@ builder.Services.AddScoped<ISqlStrategy, MySqlStrategy>();
 builder.Services.AddScoped<ISqlStrategy, PostgresStrategy>();
 builder.Services.AddScoped<ISqlStrategy, SqliteStrategy>();
 builder.Services.AddScoped<ISqlStrategyFactory, SqlStrategyFactory>();
+builder.Services.AddScoped<ITestDbConnection, TestDbConnection>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
 builder.Services.Configure<McpKeySettings>(builder.Configuration.GetSection("McpKeySettings"));
 builder.Services.Configure<RateLimitingSettings>(builder.Configuration.GetSection("RateLimiting"));
@@ -186,12 +188,22 @@ builder.Services.AddMcpServer()
                     }
                 }
             }
+            else
+            {
+                mcpOptions.Capabilities = new() { Tools = new() };
+                var toolCollection = mcpOptions.ToolCollection = [];
+                foreach (var tool in allTools)
+                {
+                    toolCollection.Add(tool);
+                }
+            }
         };
     });
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
     options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
     options.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
+    options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
 });
 builder.Services.AddCors(options =>
