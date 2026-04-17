@@ -18,6 +18,9 @@ using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
+using ModelContextProtocol.Server;
+using System.Reflection;
+using ToolBox.Models;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -154,7 +157,37 @@ builder.Services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQu
 builder.Services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
 builder.Services.AddScoped<SqlAgentTool>();
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddMcpServer(_ => { }).WithToolsFromAssembly().WithHttpTransport();
+var tools = GetToolsForType<SqlAgentTool>();
+builder.Services.AddSingleton(tools);
+builder.Services.AddMcpServer()
+    .WithHttpTransport(options =>
+    {
+        // Allow Tools Logic to access HttpContext and DI services, so we can do dynamic tool injection based on the request
+        options.Stateless = false;
+
+        options.ConfigureSessionOptions = async (httpContext, mcpOptions, cancellationToken) =>
+        {
+            var allTools = httpContext.RequestServices.GetRequiredService<McpServerTool[]>();
+            var allowedCsv = httpContext.Items[McpContextItemKeys.AllowedTools]?.ToString();
+
+            if (!string.IsNullOrEmpty(allowedCsv))
+            {
+                var allowedNames = allowedCsv
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                mcpOptions.Capabilities = new() { Tools = new() };
+                var toolCollection = mcpOptions.ToolCollection = [];
+                foreach (var tool in allTools)
+                {
+                    if (allowedNames.Contains(tool.ProtocolTool.Name))
+                    {
+                        toolCollection.Add(tool);
+                    }
+                }
+            }
+        };
+    });
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
     options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -218,3 +251,25 @@ app.MapControllers();
 app.MapFallbackToFile("index.html");
 
 await app.RunAsync();
+
+
+
+static McpServerTool[] GetToolsForType<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
+    System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods)] T>() where T : class
+{
+    var tools = new List<McpServerTool>();
+    var toolType = typeof(T);
+    var methods = toolType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        .Where(m => m.GetCustomAttributes(typeof(McpServerToolAttribute), false).Length != 0);
+
+    foreach (var method in methods)
+    {
+        var tool = McpServerTool.Create(method, (request) =>
+        {
+            return request.Services!.GetRequiredService<T>()!;
+        }, new McpServerToolCreateOptions());
+        tools.Add(tool);
+    }
+
+    return [.. tools];
+}
