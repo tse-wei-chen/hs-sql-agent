@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.9] - 2026-04-19
+### Security Issue Fix
+- Resource injection For ConnectString
+- Clear text storage of sensitive information
+- Exposure of private information
+- Log entries created from user input
+### Breaking Change
+- UI Change: Manual entry of ADO.NET connection strings is disabled in the UI.
+
 ## [1.3.8] - 2026-04-18
 ### Improvement
 - Remove unnecessary middleware to reduce performance consumption
