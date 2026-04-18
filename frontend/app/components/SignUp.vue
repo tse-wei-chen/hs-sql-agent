@@ -3,17 +3,10 @@ import type { HTMLAttributes } from "vue"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card"
-import {
-	Field,
-	FieldDescription,
-	FieldGroup,
-	FieldLabel,
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { checkFirstRun, signUp } from "~/api/admin"
@@ -106,61 +99,46 @@ const submit = async () => {
 
 <template>
   <div :class="cn('flex flex-col gap-6', props.class)">
-    <Card>
-      <CardHeader>
-        <CardTitle>Sign up</CardTitle>
-        <CardDescription>
-          Please Sign up upon your first login.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form @submit.prevent="submit">
-          <FieldGroup>
-            <Field>
-              <FieldLabel for="email">
-                Email
-              </FieldLabel>
-              <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                required
-                v-model="loginData.email"
-                @blur="emailTouched = true"
-              />
-              <FieldDescription
-                v-if="emailError && (emailTouched || hasSubmitted)"
-                class="text-destructive"
-              >
-                {{ emailError }}
-              </FieldDescription>
-            </Field>
-            <Field>
-            <FieldLabel for="password">
-                Password
-            </FieldLabel>
-              <Input
-                v-model="loginData.password"
-                id="password"
-                type="password"
-                required
-                @blur="passwordTouched = true"
-              />
-              <FieldDescription
-                v-if="passwordError && (passwordTouched || hasSubmitted)"
-                class="text-destructive"
-              >
-                {{ passwordError }}
-              </FieldDescription>
-            </Field>
-            <Field>
-              <Button type="submit" :disabled="!canSubmit">
-                Sign Up
-              </Button>
-            </Field>
-          </FieldGroup>
-        </form>
-      </CardContent>
-    </Card>
+    <div class="flex flex-col items-center gap-1 text-center">
+      <h1 class="text-2xl font-bold">
+        Sign up
+      </h1>
+      <p class="text-muted-foreground text-sm text-balance">
+        lease Sign up upon your first login.
+      </p>
+    </div>
+    <form @submit.prevent="submit">
+      <FieldGroup>
+        <Field>
+          <FieldLabel for="email">
+            Email
+          </FieldLabel>
+          <Input id="email" type="email" placeholder="Enter your email" required v-model="loginData.email"
+            @blur="emailTouched = true" />
+          <div class="relative">
+            <FieldDescription v-if="emailError && (emailTouched || hasSubmitted)" class="text-destructive absolute">
+              {{ emailError }}
+            </FieldDescription>
+          </div>
+        </Field>
+        <Field>
+          <FieldLabel for="password">
+            Password
+          </FieldLabel>
+          <Input v-model="loginData.password" id="password" type="password" required @blur="passwordTouched = true" />
+          <div class="relative">
+            <FieldDescription v-if="passwordError && (passwordTouched || hasSubmitted)"
+              class="text-destructive absolute">
+              {{ passwordError }}
+            </FieldDescription>
+          </div>
+        </Field>
+        <Field>
+          <Button type="submit" :disabled="!canSubmit">
+            Sign Up
+          </Button>
+        </Field>
+      </FieldGroup>
+    </form>
   </div>
 </template>
