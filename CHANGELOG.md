@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.8] - 2026-04-18
+### Improvement
+- Remove unnecessary middleware to reduce performance consumption
+### Fix
+- Fix the issue where the dashboard is not displaying
+
 ## [1.3.7] - 2026-04-16
 ### Feature
 - `allowed Tools` For Dynamic Tool List
