@@ -5,44 +5,35 @@ Thank you for your interest in contributing! Please read this guide before submi
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- A supported database (SQLite, PostgreSQL, or MySQL) for local testing
+- A supported database (SQLite, PostgreSQL, or MySQL .......) for local testing
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/your-org/hs-sql-agent.git
+git clone https://github.com/tse-wei-chen/hs-sql-agent.git
 cd hs-sql-agent
 dotnet restore
 ```
 
-Copy `appsettings.Local.json` and configure your local database connection, then run:
+Copy `appsettings.sample.json` and configure your local database connection, then run:
 
 ```bash
-cd src/ToolBox
+cd backend/src/ToolBox
 dotnet run
 ```
 
 ## Project Structure
 
-- `src/Common` — shared models used across modules
-- `src/ToolBox` — MCP server, tools, strategies, middleware
+- `src/Common` — shared models and services used across modules
+- `src/Modules` — core business logic, including database strategies (see SqlAgent.Service)
+- `src/ToolBox` — MCP server, tools, controllers, middleware
 
 ## Adding a New Database Strategy
 
-1. Create a class in `src/ToolBox/Strategies/` that extends `BaseSqlStrategy`
+1. Create a class in `src/Modules/SqlAgent.Service/Strategies/` that extends `BaseSqlStrategy`
 2. Implement `CreateConnection` and `CreateCompiler`
-3. Add the new value to `SqlAgentToolType` enum in `src/ToolBox/Enums/`
-4. Register the strategy in `SqlStrategyFactory`
-
-## Adding a New Service Module
-
-```bash
-cd src/Modules
-dotnet new classlib -n {name}.Service
-cd ../..
-dotnet sln hs-sql-agent.slnx add ./src/Modules/{name}.Service/{name}.Service.csproj
-dotnet add ./src/ToolBox/ToolBox.csproj reference ./src/Modules/{name}.Service/{name}.Service.csproj
-```
+3. Add the new value to `SqlAgentToolType` enum in `src/Modules/SqlAgent.Service/Enums/`
+4. Register the strategy in `SqlStrategyFactory` in `src/Modules/SqlAgent.Service/Factories/`
 
 ## Pull Request Guidelines
 
