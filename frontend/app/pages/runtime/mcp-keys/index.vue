@@ -185,7 +185,7 @@ const test = async () => {
 		testing.value = true
 		connectionTestResult.value = null
 		const result = await testDbConnection(sqlProvider.value ?? undefined, sqlConnectionString.value ?? undefined)
-		connectionTestResult.value = result
+		connectionTestResult.value = { success: result.success, errorMessage: result.errorMessage || 'Connection failed.' }
 	} catch (error: any) {
 		connectionTestResult.value = { success: false, errorMessage: error?.response?.data || 'Connection failed.' }
 	} finally {
@@ -370,18 +370,23 @@ onMounted(load)
 					<span class="item-center flex justify-start gap-2">
 
 						<TooltipProvider>
-							<Tooltip :disabled="!connectionTestResult || connectionTestResult.success">
+							<Tooltip :disabled="!connectionTestResult || connectionTestResult.success === true">
 								<TooltipTrigger as-child>
 									<Button type="button" variant="outline" :disabled="testing"
 										class="w-full md:w-auto flex items-center gap-2" @click.prevent="test">
 										<Badge :class="[
 											'h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors',
 											!connectionTestResult ? 'bg-slate-100 text-slate-500' :
-												connectionTestResult.success ? 'bg-green-100 text-green-700 border-green-200' :
-													'bg-red-100 text-red-700 border-red-200'
-											]">
-											<template v-if="connectionTestResult">
-												{{ connectionTestResult.success ? '✓' : '✗' }}
+												connectionTestResult.success === true ? 'bg-green-100 text-green-700 border-green-200' :
+													connectionTestResult.success === false ? 'bg-red-100 text-red-700 border-red-200' : 'bg-slate-100 text-slate-500'
+										]">
+											<template
+												v-if="connectionTestResult && connectionTestResult.success === true">
+												✓
+											</template>
+											<template
+												v-else-if="connectionTestResult && connectionTestResult.success === false">
+												✗
 											</template>
 											<template v-else>?</template>
 										</Badge>
