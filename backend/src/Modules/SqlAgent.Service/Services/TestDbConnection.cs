@@ -9,12 +9,14 @@ using SqlAgent.Service.Models;
 using SqlAgent.Service.Enums;
 using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Interfaces;
+using SqlAgent.Service.Factories;
 
 namespace SqlAgent.Service.Services
 {
-    public class TestDbConnection(IConfiguration configuration) : ITestDbConnection
+    public class TestDbConnection(IConfiguration configuration, ISqlStrategyFactory strategyFactory) : ITestDbConnection
     {
         private readonly IConfiguration _configuration = configuration;
+        private readonly ISqlStrategyFactory _strategyFactory = strategyFactory;
         public async Task<TestDbConnectionVM> TestDbConnectionAsync(TestDbConnectionRequest request, CancellationToken cancellationToken = default)
         {
             DbConnection? connection = null;
@@ -41,7 +43,12 @@ namespace SqlAgent.Service.Services
                 {
                     return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Connection string is empty." };
                 }
-                connection = CreateConnection(provider, connString);
+                if (provider == null)
+                {
+                    return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is null." };
+                }
+                var strategy = _strategyFactory.GetStrategy(provider.Value);
+                connection = strategy.CreateConnection(connString);
                 await connection.OpenAsync(cancellationToken);
                 await connection.CloseAsync();
                 return new TestDbConnectionVM { IsSuccess = true };
@@ -58,20 +65,6 @@ namespace SqlAgent.Service.Services
                     await connection.DisposeAsync();
                 }
             }
-        }
-
-        static DbConnection CreateConnection(SqlAgentToolType? provider, string? connectionString)
-        {
-            return provider switch
-            {
-                SqlAgentToolType.MsSqlServer => new SqlConnection(connectionString),
-                SqlAgentToolType.Postgres => new NpgsqlConnection(connectionString),
-                SqlAgentToolType.MySQL => new MySqlConnection(connectionString),
-                SqlAgentToolType.Sqlite => new SqliteConnection(connectionString),
-                SqlAgentToolType.Oracle => new OracleConnection(connectionString),
-                SqlAgentToolType.Firebird => new FbConnection(connectionString),
-                _ => throw new ArgumentOutOfRangeException(nameof(provider), $"not supported db type: {provider}")
-            };
         }
     }
 }

@@ -14,7 +14,7 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
-    protected override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);
+    public override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);
     protected override Compiler CreateCompiler() => new SqliteCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)

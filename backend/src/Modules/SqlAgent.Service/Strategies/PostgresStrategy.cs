@@ -15,7 +15,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 
-    protected override DbConnection CreateConnection(string? connectionString) => new NpgsqlConnection(connectionString);
+    public override DbConnection CreateConnection(string? connectionString) => new NpgsqlConnection(connectionString);
     protected override Compiler CreateCompiler() => new PostgresCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)

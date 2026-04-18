@@ -15,7 +15,7 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
 
-    protected override DbConnection CreateConnection(string? connectionString) => new FbConnection(connectionString);
+    public override DbConnection CreateConnection(string? connectionString) => new FbConnection(connectionString);
     protected override Compiler CreateCompiler() => new FirebirdCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)

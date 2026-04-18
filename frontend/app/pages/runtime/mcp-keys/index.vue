@@ -368,31 +368,31 @@ onMounted(load)
 
 					</FieldGroup>
 					<span class="item-center flex justify-start gap-2">
-						<Button type="button" variant="outline" :disabled="testing"
-							class="w-full md:w-auto flex items-center gap-2" @click.prevent="test">
-							<TooltipProvider>
-								<Tooltip :disabled="!connectionTestResult || connectionTestResult.success">
-									<TooltipTrigger as-child>
+
+						<TooltipProvider>
+							<Tooltip :disabled="!connectionTestResult || connectionTestResult.success">
+								<TooltipTrigger as-child>
+									<Button type="button" variant="outline" :disabled="testing"
+										class="w-full md:w-auto flex items-center gap-2" @click.prevent="test">
 										<Badge :class="[
 											'h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors',
 											!connectionTestResult ? 'bg-slate-100 text-slate-500' :
 												connectionTestResult.success ? 'bg-green-100 text-green-700 border-green-200' :
 													'bg-red-100 text-red-700 border-red-200'
-										]">
+											]">
 											<template v-if="connectionTestResult">
 												{{ connectionTestResult.success ? '✓' : '✗' }}
 											</template>
 											<template v-else>?</template>
 										</Badge>
-									</TooltipTrigger>
-									<TooltipContent class="max-w-[300px] bg-red-950 text-white border-none">
-										<p class="font-mono text-xs">{{ connectionTestResult?.errorMessage }}</p>
-									</TooltipContent>
-								</Tooltip>
-							</TooltipProvider>
-
-							<span>{{ testing ? 'Connecting...' : 'Test DB Connection' }}</span>
-						</Button>
+										<span>{{ testing ? 'Connecting...' : 'Test DB Connection' }}</span>
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent class="max-w-[300px] bg-red-950 text-white border-none">
+									<p class="font-mono text-xs">{{ connectionTestResult?.errorMessage }}</p>
+								</TooltipContent>
+							</Tooltip>
+						</TooltipProvider>
 						<Button type="submit" :disabled="issuing" class="w-full md:w-auto" @click.prevent="issue">
 							{{ issuing ? 'Issuing...' : 'Issue Key' }}
 						</Button>

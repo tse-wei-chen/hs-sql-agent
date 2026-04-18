@@ -15,7 +15,7 @@ public class OracleStrategy(IQueryValueParserService valueParser, IConfiguration
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
 
-    protected override DbConnection CreateConnection(string? connectionString) => new OracleConnection(connectionString);
+    public override DbConnection CreateConnection(string? connectionString) => new OracleConnection(connectionString);
     protected override Compiler CreateCompiler() => new OracleCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)

@@ -1,3 +1,4 @@
+using System.Data.Common;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
@@ -6,6 +7,7 @@ namespace SqlAgent.Service.Strategies;
 public interface ISqlStrategy
 {
     SqlAgentToolType DbType { get; }
+    DbConnection CreateConnection(string connectionString);
     Task<string> ExecuteQueryAsync(
         string? connectionString = null,
         string? tableName = null,

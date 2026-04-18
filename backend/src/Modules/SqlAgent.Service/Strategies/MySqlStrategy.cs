@@ -15,7 +15,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
 
-    protected override DbConnection CreateConnection(string? connectionString) => new MySqlConnection(connectionString);
+    public override DbConnection CreateConnection(string? connectionString) => new MySqlConnection(connectionString);
     protected override Compiler CreateCompiler() => new MySqlCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)

@@ -18,11 +18,9 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     public abstract SqlAgentToolType DbType { get; }
 
-    protected abstract DbConnection CreateConnection(string? connectionString);
+    public abstract DbConnection CreateConnection(string? connectionString);
     protected abstract Compiler CreateCompiler();
 
-    #region Security Guards
-    #endregion
     #region Shared Query Builders
 
     private Query ApplySelectColumns(Query query, IList<SelectCondition> cols)

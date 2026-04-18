@@ -15,7 +15,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
-    protected override DbConnection CreateConnection(string? connectionString) => new SqlConnection(connectionString);
+    public override DbConnection CreateConnection(string? connectionString) => new SqlConnection(connectionString);
     protected override Compiler CreateCompiler() => new SqlServerCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
