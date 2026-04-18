@@ -2,25 +2,32 @@
 import { computed, onMounted, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
 } from '@/components/ui/card'
 import {
-    Select,
-    SelectContent,
-    SelectGroup,
-    SelectItem,
-    SelectLabel,
-    SelectTrigger,
-    SelectValue,
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectLabel,
+	SelectTrigger,
+	SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { issueMcpKey, listMcpKeys, revokeMcpKey, testDbConnection } from '@/api/runtime'
-
+import { Edit } from 'lucide-vue-next'
+import {
+	Dialog,
+	DialogContent,
+	DialogFooter,
+	DialogTrigger
+} from '@/components/ui/dialog'
+import PasswordInput from '@/components/PasswordInput.vue'
 definePageMeta({
 	layout: 'default',
 })
@@ -47,7 +54,13 @@ const selectedTools = ref<string[]>([])
 const corsAllowedOrigins = ref('')
 const sqlProvider = ref('Global')
 const sqlConnectionString = ref('')
-
+const sqlConnectionDetails = ref<{ host: string; port: string; username: string; password: string; database: string }>({
+	host: '',
+	port: '',
+	username: '',
+	password: '',
+	database: '',
+})
 const connectionTestResult = ref<{ success: boolean; errorMessage: string } | null>(null)
 
 const issuedPlaintextKey = ref('')
@@ -57,11 +70,18 @@ const toolOptions = [
 	{ label: 'Get Columns', value: 'get_columns', risk: 'low' },
 	{ label: 'Get Schemas', value: 'get_schemas', risk: 'low' },
 	{ label: 'Get Tables', value: 'get_tables', risk: 'low' },
-    { label: 'Execute DML', value: 'execute_dml_safe', risk: 'high' },
+	{ label: 'Execute DML', value: 'execute_dml_safe', risk: 'high' },
 ]
 
 const providerOptions = ['Global', 'Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird']
-
+const connectionTemplates: Record<string, (d: any) => string> = {
+	'Sqlite': (d: { database: any }) => `Data Source=${d.database};`,
+	'Postgres': (d: { host: any; port: any; username: any; password: any; database: any }) => `Host=${d.host};Port=${d.port};Username=${d.username};Password=${d.password};Database=${d.database}`,
+	'MySQL': (d: { host: any; port: any; username: any; password: any; database: any }) => `Server=${d.host};Port=${d.port};Uid=${d.username};Pwd=${d.password};Database=${d.database}`,
+	'MsSqlServer': (d: { host: any; port: string; username: any; password: any; database: any }) => `Server=${d.host}${d.port ? ',' + d.port : ''};User Id=${d.username};Password=${d.password};Database=${d.database}`,
+	'Oracle': (d: { host: any; port: any; database: any; username: any; password: any }) => `Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${d.host})(PORT=${d.port}))(CONNECT_DATA=(SERVICE_NAME=${d.database})));User Id=${d.username};Password=${d.password}`,
+	'Firebird': (d: { username: any; password: any; host: any; database: any; port: any }) => `User=${d.username};Password=${d.password};Database=${d.host}:${d.database};Port=${d.port}`
+};
 
 const selectedToolLabel = computed(() => {
 	if (selectedTools.value.length === 0) {
@@ -145,6 +165,21 @@ const issue = async () => {
 	}
 }
 
+const buildConnectionStringFromDetails = () => {
+	try {
+		const generate = connectionTemplates[sqlProvider.value];
+		if (generate) {
+			sqlConnectionString.value = generate(sqlConnectionDetails.value);
+			sqlConnectionDetails.value = { host: '', port: '', username: '', password: '', database: '' }
+		} else {
+			sqlConnectionString.value = '';
+			sqlConnectionDetails.value = { host: '', port: '', username: '', password: '', database: '' }
+		}
+	} catch (error) {
+		alert('Failed to generate connection string. Please check your inputs.')
+	}
+}
+
 const test = async () => {
 	try {
 		testing.value = true
@@ -166,6 +201,12 @@ const revoke = async (id: number) => {
 		alert(error?.response?.data || 'Failed to revoke key.')
 	}
 }
+
+watch(() => sqlProvider.value, (newVal, oldVal) => {
+	if (newVal !== oldVal) {
+		sqlConnectionString.value = ''
+	}
+})
 
 onMounted(load)
 </script>
@@ -234,7 +275,7 @@ onMounted(load)
 								<SelectContent>
 									<SelectGroup>
 										<SelectLabel>Tools</SelectLabel>
-										<SelectItem v-for="tool in toolOptions" :key="tool.value" :value="tool.value" >
+										<SelectItem v-for="tool in toolOptions" :key="tool.value" :value="tool.value">
 											<div class="flex w-full items-center justify-between gap-2">
 												<span>{{ tool.label }}</span>
 												<span class="text-xs text-muted-foreground" :class="{
@@ -249,9 +290,66 @@ onMounted(load)
 							</Select>
 						</Field>
 
-						<Field>
-							<FieldLabel for="sqlConnectionString">SQL Connection String Override</FieldLabel>
-							<Input id="sqlConnectionString" v-model="sqlConnectionString" type="password" placeholder="Host=..." />
+						<Field v-if="sqlProvider !== 'Global'">
+							<FieldLabel for="sqlConnectionString">SQL Connection String (ADO.NET)</FieldLabel>
+							<span class="flex justify-start gap-4">
+								<PasswordInput id="sqlConnectionString" v-model="sqlConnectionString"
+									placeholder="ADO.NET Connection String" />
+								<Dialog>
+									<DialogTrigger as-child>
+										<Button variant="default">
+											<Edit w={4} h={4} />
+										</Button>
+									</DialogTrigger>
+									<DialogContent class="sm:max-w-[425px]">
+										<form id="sqlConnectionDetailsForm"
+											@submit.prevent="buildConnectionStringFromDetails">
+											<FieldGroup class="grid gap-4 md:grid-cols-2">
+												<Field
+													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
+													<FieldLabel>Host</FieldLabel>
+													<Input v-model="sqlConnectionDetails.host" placeholder="Host" />
+												</Field>
+												<Field
+													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
+													<FieldLabel>Port</FieldLabel>
+													<Input v-model="sqlConnectionDetails.port" placeholder="Port" />
+												</Field>
+												<Field
+													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
+													<FieldLabel>Username</FieldLabel>
+													<Input v-model="sqlConnectionDetails.username"
+														placeholder="Username" />
+												</Field>
+												<Field
+													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
+													<FieldLabel>Password</FieldLabel>
+													<Input v-model="sqlConnectionDetails.password" type="password"
+														placeholder="Password" />
+												</Field>
+												<Field
+													v-if="['Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
+													<FieldLabel>Database</FieldLabel>
+													<Input v-model="sqlConnectionDetails.database"
+														placeholder="Database" />
+												</Field>
+											</FieldGroup>
+										</form>
+										<DialogFooter>
+											<DialogClose asChild>
+												<Button variant="outline">
+													Cancel
+												</Button>
+											</DialogClose>
+											<DialogClose asChild>
+												<Button type="submit" form="sqlConnectionDetailsForm">
+													Save
+												</Button>
+											</DialogClose>
+										</DialogFooter>
+									</DialogContent>
+								</Dialog>
+							</span>
 							<p class="mt-1 text-xs text-muted-foreground">
 								Must be provided together with SQL Provider Override.
 							</p>
@@ -270,29 +368,22 @@ onMounted(load)
 
 					</FieldGroup>
 					<span class="item-center flex justify-start gap-2">
-						<Button 
-							type="button" 
-							variant="outline" 
-							:disabled="testing" 
-							class="w-full md:w-auto flex items-center gap-2" 
-							@click.prevent="test"
-						>
+						<Button type="button" variant="outline" :disabled="testing"
+							class="w-full md:w-auto flex items-center gap-2" @click.prevent="test">
 							<TooltipProvider>
 								<Tooltip :disabled="!connectionTestResult || connectionTestResult.success">
 									<TooltipTrigger as-child>
-									<Badge 
-										:class="[
-										'h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors',
-										!connectionTestResult ? 'bg-slate-100 text-slate-500' : 
-										connectionTestResult.success ? 'bg-green-100 text-green-700 border-green-200' : 
-										'bg-red-100 text-red-700 border-red-200'
-										]"
-									>
-										<template v-if="connectionTestResult">
-											{{ connectionTestResult.success ? '✓' : '✗' }}
-										</template>
-										<template v-else>?</template>
-									</Badge>
+										<Badge :class="[
+											'h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors',
+											!connectionTestResult ? 'bg-slate-100 text-slate-500' :
+												connectionTestResult.success ? 'bg-green-100 text-green-700 border-green-200' :
+													'bg-red-100 text-red-700 border-red-200'
+										]">
+											<template v-if="connectionTestResult">
+												{{ connectionTestResult.success ? '✓' : '✗' }}
+											</template>
+											<template v-else>?</template>
+										</Badge>
 									</TooltipTrigger>
 									<TooltipContent class="max-w-[300px] bg-red-950 text-white border-none">
 										<p class="font-mono text-xs">{{ connectionTestResult?.errorMessage }}</p>

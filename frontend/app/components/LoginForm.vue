@@ -9,6 +9,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import PasswordInput from "@/components/PasswordInput.vue"
 import { checkFirstRun, signIn } from "~/api/admin"
 
 const props = defineProps<{
@@ -122,7 +123,7 @@ const submit = async () => {
           <FieldLabel for="password">
             Password
           </FieldLabel>
-          <Input v-model="loginData.password" id="password" type="password" required @blur="passwordTouched = true" />
+          <PasswordInput v-model="loginData.password" id="password" required @blur="passwordTouched = true" />
           <div class="relative">
             <FieldDescription v-if="passwordError && (passwordTouched || hasSubmitted)"
               class="text-destructive absolute">
