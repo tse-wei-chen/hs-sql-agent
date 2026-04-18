@@ -152,9 +152,7 @@ builder.Services.AddRateLimiter(options =>
 });
 
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:8080");
-builder.Services.AddScoped<McpContextMiddleware>();
 builder.Services.AddScoped<McpAccessKeyAuthMiddleware>();
-builder.Services.AddScoped<McpResponseFlattenerMiddleware>();
 builder.Services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
 builder.Services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
 builder.Services.AddScoped<SqlAgentTool>();
@@ -236,8 +234,6 @@ app.UseWhen(
     {
         branch.UseRateLimiter();
         branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
-        branch.UseMiddleware<McpContextMiddleware>();
-        branch.UseMiddleware<McpResponseFlattenerMiddleware>();
     });
 
 // 4. API pipeline (authentication/authorization)
