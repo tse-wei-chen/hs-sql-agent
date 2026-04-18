@@ -24,6 +24,8 @@ import {
 	componentToString,
 } from '@/components/ui/chart'
 import { VisAxis, VisGroupedBar, VisXYContainer } from '@unovis/vue'
+import { VisDonut, VisSingleContainer } from "@unovis/vue"
+import { Donut } from '@unovis/ts'
 
 definePageMeta({
 	layout: 'default',
@@ -57,47 +59,49 @@ interface AuditItem {
 const loading = ref(false)
 const keys = ref<McpKeyItem[]>([])
 const recentAudits = ref<AuditItem[]>([])
-const auditDailySummary = ref<AuditDailyPoint[]>([])
-
+const dailySummary = ref<AuditDailySummaryItem[]>([])
+type AuditDailySummaryData = typeof dailySummary.value[number]
 const activeKeyCount = computed(() => keys.value.filter((key) => key.isActive).length)
 const revokedKeyCount = computed(() => keys.value.length - activeKeyCount.value)
 const failAuditCount = computed(() => recentAudits.value.filter((item) => item.result.toLowerCase() !== 'success').length)
 const successAuditCount = computed(() => recentAudits.value.length - failAuditCount.value)
 const latestEventAt = computed(() => recentAudits.value[0]?.createdAt || null)
+const keyStatusChartData = computed(() => [
+	{
+		status: 'active',
+		active: activeKeyCount.value,
+	},
+	{
+		status: 'revoked',
+		revoked: revokedKeyCount.value,
+	},
+])
 
 const keyStatusChartConfig = {
-	keys: {
-		label: 'Keys',
-		color: 'var(--chart-2)',
-	},
-} satisfies ChartConfig
-
-const auditTrendChartConfig = {
-	success: {
-		label: 'Success',
+	active: {
+		label: 'Active',
 		color: 'var(--chart-5)',
 	},
-	failed: {
-		label: 'Failed',
+	revoked: {
+		label: 'Revoked',
 		color: 'var(--chart-3)',
 	},
 } satisfies ChartConfig
 
-const keyStatusChartData = computed(() => [
-	{ status: 'Active', keys: activeKeyCount.value },
-	{ status: 'Revoked', keys: revokedKeyCount.value },
-])
-
-interface AuditDailyPoint {
-	dayKey: string
-	dayLabel: string
-	success: number
-	failed: number
-}
-
-const auditTrendChartData = computed(() => {
-	return auditDailySummary.value
-})
+const auditTrendChartConfig = {
+	views: {
+		label: "Page Views",
+		color: undefined,
+	},
+	success: {
+		label: 'Success',
+		color: "var(--chart-5)",
+	},
+	failed: {
+		label: 'Failed',
+		color: "var(--chart-3)",
+	},
+} satisfies ChartConfig
 
 const formatTime = (value?: string | null) => {
 	if (!value) return 'N/A'
@@ -112,18 +116,13 @@ const loadDashboard = async () => {
 			getRuntimeAudit(1, 8),
 			getRuntimeAuditDailySummary(7),
 		])
-
 		keys.value = keyResult || []
 		recentAudits.value = latestAuditResult?.items || []
-		auditDailySummary.value = (dailySummaryResult?.items || []).map((item: AuditDailySummaryItem) => {
-			const date = new Date(item.day)
-			return {
-				dayKey: item.day,
-				dayLabel: `${date.getMonth() + 1}/${date.getDate()}`,
-				success: item.successCount || 0,
-				failed: item.failedCount || 0,
-			}
-		})
+		dailySummary.value = dailySummaryResult?.items.map((item: any) => ({
+			day: new Date(item.day).getTime(),
+			success: item.successCount || 0,
+			failed: item.failedCount || 0,
+		})) || []
 	} finally {
 		loading.value = false
 	}
@@ -160,7 +159,8 @@ onMounted(loadDashboard)
 					<CardDescription>Total Keys</CardDescription>
 					<CardTitle class="text-3xl">{{ keys.length }}</CardTitle>
 				</CardHeader>
-				<CardContent class="text-xs text-muted-foreground">Issued server access keys in current environment</CardContent>
+				<CardContent class="text-xs text-muted-foreground">Issued server access keys in current environment
+				</CardContent>
 			</Card>
 			<Card>
 				<CardHeader class="pb-2">
@@ -181,7 +181,8 @@ onMounted(loadDashboard)
 					<CardDescription>Recent Audit Failures</CardDescription>
 					<CardTitle class="text-3xl text-rose-700">{{ failAuditCount }}</CardTitle>
 				</CardHeader>
-				<CardContent class="text-xs text-muted-foreground">Out of {{ recentAudits.length }} latest events</CardContent>
+				<CardContent class="text-xs text-muted-foreground">Out of {{ recentAudits.length }} latest events
+				</CardContent>
 			</Card>
 		</div>
 
@@ -193,73 +194,65 @@ onMounted(loadDashboard)
 				</CardHeader>
 				<CardContent class="grid gap-4 md:grid-cols-2">
 					<div class="rounded-lg border p-3">
-						<div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Key Status</div>
+						<div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Key Status
+						</div>
 						<ChartContainer :config="keyStatusChartConfig" class="h-[220px] w-full">
-							<VisXYContainer :data="keyStatusChartData" :margin="{ left: 0, right: 0, top: 8, bottom: 24 }">
-								<VisGroupedBar
-									:x="(d: (typeof keyStatusChartData)[number]) => d.status"
-									:y="(d: (typeof keyStatusChartData)[number]) => d.keys"
-									:color="keyStatusChartConfig.keys.color"
-									:rounded-corners="8"
-								/>
-								<VisAxis
-									type="x"
-									:x="(d: (typeof keyStatusChartData)[number]) => d.status"
-									:tick-line="false"
-									:domain-line="false"
-									:grid-line="false"
-								/>
-								<VisAxis
-									type="y"
-									:num-ticks="4"
-									:tick-line="false"
-									:domain-line="false"
-								/>
-								<ChartTooltip />
-								<ChartCrosshair
-									:template="componentToString(keyStatusChartConfig, ChartTooltipContent, { hideLabel: true })"
-									color="#0000"
-								/>
-							</VisXYContainer>
+							<VisSingleContainer :data="keyStatusChartData">
+								<VisDonut :value="(d: any) => d[d.status]" :arc-width="40"
+									:color="(d: any) => keyStatusChartConfig[d.status as keyof typeof keyStatusChartConfig].color"
+									:cornerRadius="5" :padAngle="0.05" />
+
+								<ChartTooltip :triggers="{
+									[Donut.selectors.segment]: componentToString(keyStatusChartConfig, ChartTooltipContent, { hideLabel: true })!,
+								}" />
+							</VisSingleContainer>
 						</ChartContainer>
 					</div>
 
 					<div class="rounded-lg border p-3">
-						<div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">7-Day Daily Outcomes</div>
-						<div v-if="auditTrendChartData.length === 0" class="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
-							No audit data to chart.
+						<div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							7-Day Daily Outcomes
 						</div>
-						<ChartContainer v-else :config="auditTrendChartConfig" class="h-[220px] w-full">
-							<VisXYContainer :data="auditTrendChartData" :margin="{ left: 0, right: 0, top: 8, bottom: 24 }">
-								<VisGroupedBar
-									:x="(d: AuditDailyPoint) => d.dayLabel"
-									:y="[(d: AuditDailyPoint) => d.success, (d: AuditDailyPoint) => d.failed]"
-									:color="[auditTrendChartConfig.success.color, auditTrendChartConfig.failed.color]"
-									:rounded-corners="6"
-									bar-padding="0.2"
-									group-padding="0"
-								/>
-								<VisAxis
-									type="x"
-									:x="(d: AuditDailyPoint) => d.dayLabel"
-									:tick-line="false"
-									:domain-line="false"
-									:grid-line="false"
-								/>
-								<VisAxis
-									type="y"
-									:num-ticks="3"
-									:tick-line="false"
-									:domain-line="false"
-								/>
-								<ChartTooltip />
-								<ChartCrosshair
-									:template="componentToString(auditTrendChartConfig, ChartTooltipContent, { hideLabel: true })"
-									:color="[auditTrendChartConfig.success.color, auditTrendChartConfig.failed.color]"
-								/>
-							</VisXYContainer>
-							<ChartLegendContent />
-						</ChartContainer>
+
+						<div class="relative h-[220px] w-full">
+							<div v-if="loading"
+								class="absolute inset-0 z-10 flex items-center justify-center bg-background/50 text-sm">
+								Loading...
+							</div>
+
+							<ChartContainer :config="auditTrendChartConfig" class="aspect-auto h-[250px] w-full" cursor>
+								<VisXYContainer :data="dailySummary" :margin="{ left: -24 }" :y-domain="[0, undefined]">
+
+									<VisGroupedBar :x="(d: AuditDailySummaryData) => d.day" :y="[
+										(d: AuditDailySummaryData) => d.success,
+										(d: AuditDailySummaryData) => d.failed
+									]" :color="[
+										auditTrendChartConfig.success.color,
+										auditTrendChartConfig.failed.color
+									]" :group-padding="0.2" :bar-padding="0.1" :rounded-corners="4" />
+
+									<VisAxis type="x" :x="(d: AuditDailySummaryData) => d.day" :tick-line="false"
+										:domain-line="false" :grid-line="false"
+										:tick-format="(d: number) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })" />
+
+									<VisAxis type="y" :num-ticks="3" :tick-line="false" :domain-line="false" />
+
+									<ChartTooltip />
+
+									<ChartCrosshair :x="(d: AuditDailySummaryData) => d.day"
+										:y="[(d: AuditDailySummaryData) => d.success, (d: AuditDailySummaryData) => d.failed]"
+										:template="componentToString(auditTrendChartConfig, ChartTooltipContent, {
+											labelFormatter(d) {
+												return new Date(d).toLocaleDateString('en-US', {
+													month: 'short',
+													day: 'numeric',
+													year: 'numeric',
+												})
+											},
+										})" :color="auditTrendChartConfig.success.color" />
+								</VisXYContainer>
+							</ChartContainer>
+						</div>
 					</div>
 				</CardContent>
 			</Card>
@@ -276,19 +269,14 @@ onMounted(loadDashboard)
 				</CardHeader>
 				<CardContent>
 					<div v-if="loading" class="py-6 text-sm text-muted-foreground">Loading dashboard data...</div>
-					<div v-else-if="recentAudits.length === 0" class="py-6 text-sm text-muted-foreground">No audit events yet.</div>
+					<div v-else-if="recentAudits.length === 0" class="py-6 text-sm text-muted-foreground">No audit
+						events yet.</div>
 					<div v-else class="max-h-[420px] space-y-2 overflow-y-auto pr-1">
-						<div
-							v-for="item in recentAudits"
-							:key="item.id"
-							class="rounded-lg border p-3"
-						>
+						<div v-for="item in recentAudits" :key="item.id" class="rounded-lg border p-3">
 							<div class="flex flex-wrap items-center gap-2">
 								<span class="text-sm font-medium">{{ item.action }}</span>
-								<span
-									class="rounded-full px-2 py-0.5 text-xs"
-									:class="item.result.toLowerCase() === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'"
-								>
+								<span class="rounded-full px-2 py-0.5 text-xs"
+									:class="item.result.toLowerCase() === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'">
 									{{ item.result }}
 								</span>
 							</div>
@@ -311,15 +299,13 @@ onMounted(loadDashboard)
 				<CardContent class="space-y-3">
 					<NuxtLink
 						class="block rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm transition hover:bg-sky-100"
-						to="/runtime/mcp-keys"
-					>
+						to="/runtime/mcp-keys">
 						<div class="font-medium text-sky-900">MCP Key Management</div>
 						<div class="text-xs text-sky-700">Issue, revoke, and configure tool restrictions</div>
 					</NuxtLink>
 					<NuxtLink
 						class="block rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100"
-						to="/runtime/audit"
-					>
+						to="/runtime/audit">
 						<div class="font-medium text-emerald-900">Audit Logs</div>
 						<div class="text-xs text-emerald-700">Inspect operation history and security events</div>
 					</NuxtLink>

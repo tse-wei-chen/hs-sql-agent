@@ -13,9 +13,9 @@ export interface IssueMcpKeyRequest {
 }
 
 export interface AuditDailySummaryItem {
-  day: string
-  successCount: number
-  failedCount: number
+  day: Date
+  success: number
+  failed: number
 }
 
 export const listMcpKeys = async () => {

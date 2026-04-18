@@ -25,6 +25,10 @@ namespace SqlAgent.Service.Services
                 var connString = request.ConnectionString;
                 if (provider == SqlAgentToolType.Global)
                 {
+                    if (!string.IsNullOrWhiteSpace(connString))
+                    {
+                        return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is set to Global but connection string is provided in request." };
+                    }
                     var section = _configuration.GetSection("SqlConfig");
                     provider = Enum.Parse<SqlAgentToolType>(section["Provider"] ?? "MsSqlServer");
                     connString = section["ConnectionString"];
