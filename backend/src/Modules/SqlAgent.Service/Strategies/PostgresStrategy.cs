@@ -22,7 +22,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
     {
         try
         {
-            using var connection = new NpgsqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT schema_name FROM information_schema.schemata;", cancellationToken: cancellationToken))];
         }
@@ -39,7 +39,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
     {
         try
         {
-            using var connection = new NpgsqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT table_name FROM information_schema.tables WHERE table_schema = @schemaName;", new { schemaName }, cancellationToken: cancellationToken))];
         }
@@ -63,7 +63,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
 
         try
         {
-            using var connection = new NpgsqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
 
             var columns = await connection.QueryAsync<string>(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));

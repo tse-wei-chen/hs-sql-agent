@@ -30,7 +30,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
     {
         try
         {
-            using var connection = new SqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             var sql = @"
             SELECT TABLE_NAME 
@@ -54,7 +54,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
     {
         try
         {
-            using var connection = new SqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
 
             const string sql = @"

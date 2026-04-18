@@ -28,7 +28,7 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
     {
         try
         {
-            using var connection = new SqliteConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT name FROM sqlite_master WHERE type='table';", cancellationToken: cancellationToken))];
         }
@@ -45,7 +45,7 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
     {
         try
         {
-            using var connection = new SqliteConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             var result = await connection.QueryAsync(new CommandDefinition($"PRAGMA table_info([{tableName}])", cancellationToken: cancellationToken));
             return [.. result.Select(r => (string)r.name)];

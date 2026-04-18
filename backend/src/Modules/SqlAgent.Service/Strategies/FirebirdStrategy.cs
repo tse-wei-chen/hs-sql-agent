@@ -28,7 +28,7 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
     {
         try
         {
-            using var connection = new FbConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             var sql = "SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 AND RDB$VIEW_BLR IS NULL;";
             var tables = await connection.QueryAsync<string>(sql);
@@ -47,7 +47,7 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
     {
         try
         {
-            using var connection = new FbConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
 
             const string sql = @"

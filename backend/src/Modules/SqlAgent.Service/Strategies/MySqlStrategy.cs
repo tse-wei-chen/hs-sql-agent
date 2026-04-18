@@ -22,7 +22,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
     {
         try
         {
-            using var connection = new MySqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             return [.. await connection.QueryAsync<string>(new CommandDefinition("SHOW DATABASES;", cancellationToken: cancellationToken))];
         }
@@ -39,7 +39,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
     {
         try
         {
-            using var connection = new MySqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             var sql = @"
             SELECT TABLE_NAME 
@@ -63,7 +63,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
     {
         try
         {
-            using var connection = new MySqlConnection(connectionString);
+            using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             const string sql = @"
                 SELECT COLUMN_NAME 
