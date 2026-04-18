@@ -8,13 +8,23 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 
 using Microsoft.Extensions.Configuration;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 public class OracleStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
-
+    public override string BuildConnectionString(BuildDbConnectionModelBase model)
+    {
+        var builder = new OracleConnectionStringBuilder
+        {
+            DataSource = $"{model.Host}:{(string.IsNullOrEmpty(model.Port) ? "1521" : model.Port)}/{model.Database}",
+            UserID = model.Username,
+            Password = model.Password
+        };
+        return builder.ConnectionString;
+    }
     public override DbConnection CreateConnection(string? connectionString) => new OracleConnection(connectionString);
     protected override Compiler CreateCompiler() => new OracleCompiler();
 

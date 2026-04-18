@@ -7,13 +7,22 @@ using System.Text.Json;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using Microsoft.Extensions.Configuration;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
-
+    public override string BuildConnectionString(BuildDbConnectionModelBase model)
+    {
+        var builder = new SqliteConnectionStringBuilder
+        {
+            DataSource = model.Database,
+            Password = model.Password
+        };
+        return builder.ConnectionString;
+    }
     public override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);
     protected override Compiler CreateCompiler() => new SqliteCompiler();
 

@@ -30,16 +30,6 @@ export const signUp = async (email: string, password: string) => {
   }
 };
 
-export const changePassword = async (oldPassword: string, newPassword: string) => {
-  try {
-    const response = await xiorInstanceToken.post('/admin/change-password', { oldPassword: oldPassword, newPassword: newPassword });
-    return response.data;
-  } catch (error) {
-    console.error("Error changing password:", error);
-    throw error;
-  }
-};
-
 
 export const refreshToken = async () => {
   try {

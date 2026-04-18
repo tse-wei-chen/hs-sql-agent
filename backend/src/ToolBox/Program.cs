@@ -52,7 +52,7 @@ builder.Services.AddScoped<ISqlStrategy, MySqlStrategy>();
 builder.Services.AddScoped<ISqlStrategy, PostgresStrategy>();
 builder.Services.AddScoped<ISqlStrategy, SqliteStrategy>();
 builder.Services.AddScoped<ISqlStrategyFactory, SqlStrategyFactory>();
-builder.Services.AddScoped<ITestDbConnection, TestDbConnection>();
+builder.Services.AddScoped<IDbSetterService, DbSetterService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
 builder.Services.Configure<McpKeySettings>(builder.Configuration.GetSection("McpKeySettings"));
 builder.Services.Configure<RateLimitingSettings>(builder.Configuration.GetSection("RateLimiting"));

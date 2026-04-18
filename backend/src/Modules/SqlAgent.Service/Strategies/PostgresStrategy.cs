@@ -14,7 +14,18 @@ namespace SqlAgent.Service.Strategies;
 public class PostgresStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
-
+    public override string BuildConnectionString(BuildDbConnectionModelBase model)
+    {
+        var builder = new NpgsqlConnectionStringBuilder
+        {
+            Host = model.Host,
+            Port = string.IsNullOrEmpty(model.Port) ? 5432 : int.Parse(model.Port),
+            Username = model.Username,
+            Password = model.Password,
+            Database = model.Database
+        };
+        return builder.ConnectionString;
+    }
     public override DbConnection CreateConnection(string? connectionString) => new NpgsqlConnection(connectionString);
     protected override Compiler CreateCompiler() => new PostgresCompiler();
 

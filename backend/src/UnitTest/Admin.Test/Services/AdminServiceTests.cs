@@ -80,22 +80,4 @@ public class AdminServiceTests
         Assert.NotNull(result);
         Assert.Equal("test", result.UserName);
     }
-
-    [Fact]
-    public async Task ChangePasswordAsync_WithValidRequest_ChangesPassword()
-    {
-        var passHash = BCrypt.Net.BCrypt.HashPassword("password123");
-        var users = new List<SuperUser>
-        {
-            new() { Id = 1, Mail = "test@example.com", PasswordHash = passHash, Username = "test" }
-        };
-        _contextMock.Setup(c => c.SuperUsers).ReturnsDbSet(users);
-
-        var request = new ChangePasswordRequest { CurrentPassword = "password123", NewPassword = "newpassword123" };
-
-        await _service.ChangePasswordAsync(request, "test@example.com");
-
-        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-        Assert.True(BCrypt.Net.BCrypt.Verify("newpassword123", users[0].PasswordHash));
-    }
 }

@@ -1,13 +1,16 @@
-using System.Text.Json.Serialization;
 using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Models;
-public class TestDbConnectionRequest
+public class BuildDbConnectionModelBase
 {
-    public SqlAgentToolType? SqlProvider { get; set; }
     public string? Host { get; set; }
     public string? Port { get; set; }
     public string? Username { get; set; }
     public string? Password { get; set; }
     public string? Database { get; set; }
+}
+
+public class BuildDbConnectionModel : BuildDbConnectionModelBase
+{
+    public required string Provider { get; set; }
 }

@@ -138,8 +138,7 @@ Minimal example:
     "Issuer": "YourAppIssuer",
     "Audience": "YourAppAudience",
     "AccessTokenExpirationMinutes": 60,
-    "RefreshTokenExpirationDays": 30,
-    "ChangePasswordTokenExpirationMinutes": 5
+    "RefreshTokenExpirationDays": 30
   },
   "RateLimiting": {
     "PermitLimit": 0,

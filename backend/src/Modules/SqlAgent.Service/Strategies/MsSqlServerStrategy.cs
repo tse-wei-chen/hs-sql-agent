@@ -2,18 +2,33 @@ using Dapper;
 using Microsoft.Data.SqlClient;
 using SqlKata.Compilers;
 using System.Data.Common;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-
 using Microsoft.Extensions.Configuration;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
+
+    public override string BuildConnectionString(BuildDbConnectionModelBase model)
+    {
+        var builder = new SqlConnectionStringBuilder
+        {
+            DataSource = model.Host,
+            UserID = model.Username,
+            Password = model.Password,
+            InitialCatalog = model.Database
+        };
+        if (!string.IsNullOrEmpty(model.Port))
+        {
+            builder.DataSource += $",{model.Port}";
+        }
+        return builder.ConnectionString;
+    }
 
     public override DbConnection CreateConnection(string? connectionString) => new SqlConnection(connectionString);
     protected override Compiler CreateCompiler() => new SqlServerCompiler();
