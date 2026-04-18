@@ -63,6 +63,11 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
             _logger.LogWarning(ex, "Invalid sign-up request.");
             return BadRequest(ex.Message);
         }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Sign-up attempt when admin user already exists.");
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpPatch("change-password")]

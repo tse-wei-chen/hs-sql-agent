@@ -76,9 +76,9 @@ public class AdminService : IAdminService
             throw new ArgumentException("Email and password are required.");
         }
 
-        if (await _context.SuperUsers.AnyAsync(x => x.Mail == email))
+        if (await _context.SuperUsers.AnyAsync())
         {
-            throw new ArgumentException("A user with the same email already exists.");
+            throw new InvalidOperationException("Admin user already exists. Sign-up is only allowed on first run.");
         }
 
         var user = new SuperUser
