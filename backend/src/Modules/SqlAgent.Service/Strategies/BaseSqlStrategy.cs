@@ -18,6 +18,8 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     public abstract SqlAgentToolType DbType { get; }
 
+    public abstract string BuildConnectionString(BuildDbConnectionModelBase model);
+
     public abstract DbConnection CreateConnection(string? connectionString);
     protected abstract Compiler CreateCompiler();
 

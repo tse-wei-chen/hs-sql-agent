@@ -100,34 +100,6 @@ public class AdminService : IAdminService
         };
     }
 
-    public async Task ChangePasswordAsync(ChangePasswordRequest request, string userEmail)
-    {
-        if (request is null)
-        {
-            throw new ArgumentException("Request body is required.");
-        }
-
-        var email = userEmail?.Trim();
-        var currentPassword = request.CurrentPassword?.Trim();
-        var newPassword = request.NewPassword?.Trim();
-
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))
-        {
-            throw new ArgumentException("Email, current password, and new password are required.");
-        }
-
-        var user = await _context.SuperUsers
-            .FirstOrDefaultAsync(x => x.Mail == email);
-
-        if (user is null || !BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
-        {
-            throw new UnauthorizedAccessException("Invalid email or current password.");
-        }
-
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
-        await _context.SaveChangesAsync();
-    }
-
     public async Task<PermissionVM> RefreshTokenAsync(string id)
     {
         var userId = id?.Trim();

@@ -5,7 +5,7 @@ namespace Admin.Service.Interfaces;
 public interface IMcpAccessKeyService
 {
     Task<McpAccessKeyIssueResult> IssueKeyAsync(
-        IssueMcpAccessKeyRequest request,
+        IssueMcpAccessKeyModel request,
         string? actorId,
         CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<McpAccessKeyListItem>> ListKeysAsync(CancellationToken cancellationToken = default);

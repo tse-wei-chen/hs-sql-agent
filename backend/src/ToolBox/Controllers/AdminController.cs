@@ -35,7 +35,7 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         }
         catch (UnauthorizedAccessException ex)
         {
-            _logger.LogWarning(ex, "Sign-in failed for user: {Email}", request.Email);
+            _logger.LogWarning(ex, "Sign-in failed for user");
             return Forbid();
         }
         catch (ArgumentException ex)
@@ -66,34 +66,6 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Sign-up attempt when admin user already exists.");
-            return BadRequest(ex.Message);
-        }
-    }
-
-    [HttpPatch("change-password")]
-    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
-    {
-        if (!ModelState.IsValid)
-        {
-            return ValidationProblem(ModelState);
-        }
-        if (User.FindFirstValue(JwtRegisteredClaimNames.Email) is var email && string.IsNullOrWhiteSpace(email))
-        {
-            return Unauthorized("User email is required.");
-        }
-        try
-        {
-            await _adminService.ChangePasswordAsync(request, email);
-            return Ok("Password changed successfully.");
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            _logger.LogWarning(ex, "Change password failed for user: {Email}", email);
-            return Forbid();
-        }
-        catch (ArgumentException ex)
-        {
-            _logger.LogWarning(ex, "Invalid change password request.");
             return BadRequest(ex.Message);
         }
     }

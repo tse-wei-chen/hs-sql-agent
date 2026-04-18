@@ -8,13 +8,25 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 
 using Microsoft.Extensions.Configuration;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
-
+    public override string BuildConnectionString(BuildDbConnectionModelBase model)
+    {
+        var builder = new MySqlConnectionStringBuilder
+        {
+            Server = model.Host,
+            Port = string.IsNullOrEmpty(model.Port) ? 3306 : uint.Parse(model.Port),
+            UserID = model.Username,
+            Password = model.Password,
+            Database = model.Database
+        };
+        return builder.ConnectionString;
+    }
     public override DbConnection CreateConnection(string? connectionString) => new MySqlConnection(connectionString);
     protected override Compiler CreateCompiler() => new MySqlCompiler();
 

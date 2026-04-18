@@ -72,11 +72,6 @@ const submit = async () => {
       loginData.value.password,
     )
 
-    if (response?.changePasswordToken) {
-      localStorage.setItem("changePasswordToken", response.changePasswordToken)
-      return await navigateTo("/change-password")
-    }
-
     if (response?.accessToken && response?.refreshToken) {
       localStorage.setItem("accessToken", response.accessToken)
       localStorage.setItem("refreshToken", response.refreshToken)

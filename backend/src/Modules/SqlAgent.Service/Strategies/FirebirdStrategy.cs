@@ -6,14 +6,27 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-
 using Microsoft.Extensions.Configuration;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 public class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
+
+    public override string BuildConnectionString(BuildDbConnectionModelBase model)
+    {
+        var builder = new FbConnectionStringBuilder
+        {
+            DataSource = model.Host,
+            Port = string.IsNullOrEmpty(model.Port) ? 3050 : int.Parse(model.Port),
+            UserID = model.Username,
+            Password = model.Password,
+            Database = model.Database
+        };
+        return builder.ConnectionString;
+    }
 
     public override DbConnection CreateConnection(string? connectionString) => new FbConnection(connectionString);
     protected override Compiler CreateCompiler() => new FirebirdCompiler();

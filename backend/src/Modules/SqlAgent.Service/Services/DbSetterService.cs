@@ -1,10 +1,4 @@
 using System.Data.Common;
-using Microsoft.Data.SqlClient;
-using Npgsql;
-using MySql.Data.MySqlClient;
-using Microsoft.Data.Sqlite;
-using Oracle.ManagedDataAccess.Client;
-using FirebirdSql.Data.FirebirdClient;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Enums;
 using Microsoft.Extensions.Configuration;
@@ -13,7 +7,7 @@ using SqlAgent.Service.Factories;
 
 namespace SqlAgent.Service.Services
 {
-    public class TestDbConnection(IConfiguration configuration, ISqlStrategyFactory strategyFactory) : ITestDbConnection
+    public class DbSetterService(IConfiguration configuration, ISqlStrategyFactory strategyFactory) : IDbSetterService
     {
         private readonly IConfiguration _configuration = configuration;
         private readonly ISqlStrategyFactory _strategyFactory = strategyFactory;
@@ -24,7 +18,7 @@ namespace SqlAgent.Service.Services
             try
             {
                 var provider = request.SqlProvider;
-                var connString = request.ConnectionString;
+                var connString = string.Empty;
                 if (provider == SqlAgentToolType.Global)
                 {
                     if (!string.IsNullOrWhiteSpace(connString))
@@ -39,15 +33,22 @@ namespace SqlAgent.Service.Services
                         return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Global connection string is not configured." };
                     }
                 }
-                else if (string.IsNullOrWhiteSpace(connString))
-                {
-                    return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Connection string is empty." };
-                }
                 if (provider == null)
                 {
                     return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is null." };
                 }
                 var strategy = _strategyFactory.GetStrategy(provider.Value);
+                if (string.IsNullOrWhiteSpace(connString))
+                {
+                    connString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
+                    {
+                        Host = request.Host,
+                        Port = request.Port,
+                        Username = request.Username,
+                        Password = request.Password,
+                        Database = request.Database
+                    });
+                }
                 connection = strategy.CreateConnection(connString);
                 await connection.OpenAsync(cancellationToken);
                 await connection.CloseAsync();
@@ -65,6 +66,12 @@ namespace SqlAgent.Service.Services
                     await connection.DisposeAsync();
                 }
             }
+        }
+
+        public async Task<string> BuildDbConnectionAsync(BuildDbConnectionModel model, CancellationToken cancellationToken = default)
+        {
+            var strategy = _strategyFactory.GetStrategy(Enum.Parse<SqlAgentToolType>(model.Provider));
+            return strategy.BuildConnectionString(model);
         }
     }
 }

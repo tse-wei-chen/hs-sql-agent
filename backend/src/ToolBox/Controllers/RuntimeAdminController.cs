@@ -15,11 +15,11 @@ namespace ToolBox.Controllers;
 [Route("api/runtime")]
 public class RuntimeAdminController(
     IMcpAccessKeyService keyService,
-    ITestDbConnection testDbConnection,
+    IDbSetterService testDbConnection,
     IAuditService auditService) : ControllerBase
 {
     private readonly IMcpAccessKeyService _keyService = keyService;
-    private readonly ITestDbConnection _testDbConnection = testDbConnection;
+    private readonly IDbSetterService _testDbConnection = testDbConnection;
     private readonly IAuditService _auditService = auditService;
 
     [HttpGet("mcp-keys")]
@@ -36,10 +36,26 @@ public class RuntimeAdminController(
         {
             return BadRequest("Key name is required.");
         }
-
+        var issueMcpAccessKeyModel = new IssueMcpAccessKeyModel
+        {
+            Name = request.Name,
+            ExpiresAt = request.ExpiresAt,
+            AllowedTools = request.AllowedTools,
+            CorsAllowedOrigins = request.CorsAllowedOrigins,
+            SqlProvider = request.SqlProvider,
+            SqlConnectionString = await _testDbConnection.BuildDbConnectionAsync(new BuildDbConnectionModel
+            {
+                Provider = request.SqlProvider ?? SqlAgentToolType.Global.ToString(),
+                Host = request.Host,
+                Port = request.Port,
+                Database = request.Database,
+                Username = request.Username,
+                Password = request.Password
+            }, cancellationToken)
+        };
         var actorId = GetActorId();
         var result = await _keyService.IssueKeyAsync(
-            request,
+            issueMcpAccessKeyModel,
             actorId,
             cancellationToken);
 
@@ -83,12 +99,6 @@ public class RuntimeAdminController(
     [HttpPost("mcp-keys/test-db-connection")]
     public async Task<IActionResult> TestDbConnection([FromBody] TestDbConnectionRequest request, CancellationToken cancellationToken)
     {
-        if (request is null || string.IsNullOrWhiteSpace(request.ConnectionString) || request.SqlProvider == null)
-        {
-            if(request?.SqlProvider != SqlAgentToolType.Global)
-                return BadRequest("Connection string and SQL provider are required.");
-        }
-
         var result = await _testDbConnection.TestDbConnectionAsync(request, cancellationToken);
         return Ok(new { success = result.IsSuccess, errorMessage = result.ErrorMessage });
     }

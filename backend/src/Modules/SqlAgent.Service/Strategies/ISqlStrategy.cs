@@ -7,6 +7,7 @@ namespace SqlAgent.Service.Strategies;
 public interface ISqlStrategy
 {
     SqlAgentToolType DbType { get; }
+    string BuildConnectionString(BuildDbConnectionModelBase model);
     DbConnection CreateConnection(string connectionString);
     Task<string> ExecuteQueryAsync(
         string? connectionString = null,

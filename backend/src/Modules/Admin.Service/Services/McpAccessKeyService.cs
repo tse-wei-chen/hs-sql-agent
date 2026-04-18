@@ -19,7 +19,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
     private readonly ICryptoService _cryptoService = cryptoService;
 
     public async Task<McpAccessKeyIssueResult> IssueKeyAsync(
-        IssueMcpAccessKeyRequest request,
+        IssueMcpAccessKeyModel request,
         string? actorId,
         CancellationToken cancellationToken = default)
     {

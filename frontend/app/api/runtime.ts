@@ -6,10 +6,11 @@ export interface IssueMcpKeyRequest {
   allowedTools?: string | null
   corsAllowedOrigins?: string | null
   sqlProvider?: string | null
-  sqlConnectionString?: string | null
-  permitLimitOverride?: number | null
-  windowSecondsOverride?: number | null
-  queueLimitOverride?: number | null
+  host?: string | null
+  port?: string | null
+  username?: string | null
+  password?: string | null
+  database?: string | null
 }
 
 export interface AuditDailySummaryItem {
@@ -54,10 +55,14 @@ export const getRuntimeAuditDailySummary = async (days = 7) => {
   return response.data
 }
 
-export const testDbConnection = async (sqlProvider: string, connectionString: string) => {
+export const testDbConnection = async (sqlProvider: string, host: string, port: string, username: string, password: string, database: string) => {
   const response = await xiorInstanceToken.post('/runtime/mcp-keys/test-db-connection', {
     sqlProvider: sqlProvider,
-    connectionString: connectionString,
+    host: host,
+    port: port,
+    username: username,
+    password: password,
+    database: database,
   })
   return response.data
 }

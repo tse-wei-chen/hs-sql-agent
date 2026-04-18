@@ -20,14 +20,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { issueMcpKey, listMcpKeys, revokeMcpKey, testDbConnection } from '@/api/runtime'
-import { Edit } from 'lucide-vue-next'
-import {
-	Dialog,
-	DialogContent,
-	DialogFooter,
-	DialogTrigger
-} from '@/components/ui/dialog'
-import PasswordInput from '@/components/PasswordInput.vue'
 definePageMeta({
 	layout: 'default',
 })
@@ -47,14 +39,14 @@ const keys = ref<McpKeyItem[]>([])
 const loading = ref(false)
 const issuing = ref(false)
 const testing = ref(false)
-const newKeyName = ref('')
-const expiresMode = ref('never')
 const customExpiresAt = ref('')
 const selectedTools = ref<string[]>([])
-const corsAllowedOrigins = ref('')
-const sqlProvider = ref('Global')
-const sqlConnectionString = ref('')
-const sqlConnectionDetails = ref<{ host: string; port: string; username: string; password: string; database: string }>({
+const detail = ref<{ name: string; expiresAt: string | null; allowedTools: string[]; corsAllowedOrigins: string; sqlProvider: string; host: string; port: string; username: string; password: string; database: string }>({
+	name: '',
+	expiresAt: null,
+	allowedTools: [],
+	corsAllowedOrigins: '',
+	sqlProvider: 'Global',
 	host: '',
 	port: '',
 	username: '',
@@ -74,14 +66,6 @@ const toolOptions = [
 ]
 
 const providerOptions = ['Global', 'Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird']
-const connectionTemplates: Record<string, (d: any) => string> = {
-	'Sqlite': (d: { database: any }) => `Data Source=${d.database};`,
-	'Postgres': (d: { host: any; port: any; username: any; password: any; database: any }) => `Host=${d.host};Port=${d.port};Username=${d.username};Password=${d.password};Database=${d.database}`,
-	'MySQL': (d: { host: any; port: any; username: any; password: any; database: any }) => `Server=${d.host};Port=${d.port};Uid=${d.username};Pwd=${d.password};Database=${d.database}`,
-	'MsSqlServer': (d: { host: any; port: string; username: any; password: any; database: any }) => `Server=${d.host}${d.port ? ',' + d.port : ''};User Id=${d.username};Password=${d.password};Database=${d.database}`,
-	'Oracle': (d: { host: any; port: any; database: any; username: any; password: any }) => `Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${d.host})(PORT=${d.port}))(CONNECT_DATA=(SERVICE_NAME=${d.database})));User Id=${d.username};Password=${d.password}`,
-	'Firebird': (d: { username: any; password: any; host: any; database: any; port: any }) => `User=${d.username};Password=${d.password};Database=${d.host}:${d.database};Port=${d.port}`
-};
 
 const selectedToolLabel = computed(() => {
 	if (selectedTools.value.length === 0) {
@@ -90,26 +74,6 @@ const selectedToolLabel = computed(() => {
 
 	return `${selectedTools.value.length} tools selected`
 })
-
-const expiresAt = computed(() => {
-	if (expiresMode.value === 'never') {
-		return null
-	}
-
-	if (expiresMode.value === 'custom') {
-		return customExpiresAt.value ? new Date(customExpiresAt.value).toISOString() : null
-	}
-
-	const now = new Date()
-	const days = Number(expiresMode.value)
-	if (!Number.isFinite(days) || days <= 0) {
-		return null
-	}
-
-	now.setDate(now.getDate() + days)
-	return now.toISOString()
-})
-
 
 
 const load = async () => {
@@ -122,41 +86,39 @@ const load = async () => {
 }
 
 const issue = async () => {
-	if (!newKeyName.value.trim()) {
+	if (!detail.value.name.trim()) {
 		alert('Key name is required.')
 		return
 	}
-
-	const normalizedSqlConnectionString = sqlConnectionString.value.trim()
-	const hasSqlProviderOverride = sqlProvider.value !== 'Global'
-	const hasSqlConnectionStringOverride = normalizedSqlConnectionString.length > 0
-
-	if (hasSqlProviderOverride !== hasSqlConnectionStringOverride) {
-		alert('SQL Provider and SQL Connection String must be filled together, or both left empty.')
-		return
-	}
-
-
-
 	issuing.value = true
+	detail.value.expiresAt = detail.value.expiresAt === 'custom' ? customExpiresAt.value : detail.value.expiresAt === null ? null : new Date(detail.value.expiresAt).toISOString();
 	try {
 		const result = await issueMcpKey({
-			name: newKeyName.value.trim(),
-			expiresAt: expiresAt.value,
-			allowedTools: selectedTools.value.length > 0 ? selectedTools.value.join(',') : null,
-			corsAllowedOrigins: corsAllowedOrigins.value.trim() || null,
-			sqlProvider: sqlProvider.value === 'Global' ? null : sqlProvider.value,
-			sqlConnectionString: normalizedSqlConnectionString || null,
+			name: detail.value.name.trim(),
+			expiresAt: detail.value.expiresAt,
+			allowedTools: detail.value.allowedTools?.length > 0 ? detail.value.allowedTools.join(',') : null,
+			corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
+			sqlProvider: detail.value.sqlProvider === 'Global' ? null : detail.value.sqlProvider,
+			host: detail.value.host.trim() || null,
+			port: detail.value.port.trim() || null,
+			username: detail.value.username.trim() || null,
+			password: detail.value.password || null,
+			database: detail.value.database.trim() || null,
 		})
 
 		issuedPlaintextKey.value = result.plaintextKey || ''
-		newKeyName.value = ''
-		expiresMode.value = 'never'
-		customExpiresAt.value = ''
-		selectedTools.value = []
-		corsAllowedOrigins.value = ''
-		sqlProvider.value = 'Global'
-		sqlConnectionString.value = ''
+		detail.value = {
+			name: '',
+			expiresAt: null,
+			allowedTools: [],
+			corsAllowedOrigins: '',
+			sqlProvider: 'Global',
+			host: '',
+			port: '',
+			username: '',
+			password: '',
+			database: '',
+		}
 		await load()
 	} catch (error: any) {
 		alert(error?.response?.data || 'Failed to issue MCP key.')
@@ -165,26 +127,18 @@ const issue = async () => {
 	}
 }
 
-const buildConnectionStringFromDetails = () => {
-	try {
-		const generate = connectionTemplates[sqlProvider.value];
-		if (generate) {
-			sqlConnectionString.value = generate(sqlConnectionDetails.value);
-			sqlConnectionDetails.value = { host: '', port: '', username: '', password: '', database: '' }
-		} else {
-			sqlConnectionString.value = '';
-			sqlConnectionDetails.value = { host: '', port: '', username: '', password: '', database: '' }
-		}
-	} catch (error) {
-		alert('Failed to generate connection string. Please check your inputs.')
-	}
-}
-
 const test = async () => {
 	try {
 		testing.value = true
 		connectionTestResult.value = null
-		const result = await testDbConnection(sqlProvider.value ?? undefined, sqlConnectionString.value ?? undefined)
+		const result = await testDbConnection(
+			detail.value.sqlProvider ?? undefined,
+			detail.value.host ?? undefined,
+			detail.value.port ?? undefined,
+			detail.value.username ?? undefined,
+			detail.value.password ?? undefined,
+			detail.value.database ?? undefined
+		)
 		connectionTestResult.value = { success: result.success, errorMessage: result.errorMessage || 'Connection failed.' }
 	} catch (error: any) {
 		connectionTestResult.value = { success: false, errorMessage: error?.response?.data || 'Connection failed.' }
@@ -202,9 +156,13 @@ const revoke = async (id: number) => {
 	}
 }
 
-watch(() => sqlProvider.value, (newVal, oldVal) => {
+watch(() => detail.value.sqlProvider, (newVal, oldVal) => {
 	if (newVal !== oldVal) {
-		sqlConnectionString.value = ''
+		detail.value.host = ''
+		detail.value.port = ''
+		detail.value.username = ''
+		detail.value.password = ''
+		detail.value.database = ''
 	}
 })
 
@@ -225,33 +183,33 @@ onMounted(load)
 					<FieldGroup class="grid gap-4 md:grid-cols-2">
 						<Field>
 							<FieldLabel for="name">Name</FieldLabel>
-							<Input id="name" v-model="newKeyName" placeholder="Claude Desktop Production" />
+							<Input id="name" v-model="detail.name" placeholder="Claude Desktop Production" />
 						</Field>
 
 						<Field>
 							<FieldLabel for="expiresMode">Expires</FieldLabel>
-							<Select v-model="expiresMode">
+							<Select v-model="detail.expiresAt">
 								<SelectTrigger id="expiresMode" class="w-full">
 									<SelectValue placeholder="Select expiry" />
 								</SelectTrigger>
 								<SelectContent>
-									<SelectItem value="never">Never</SelectItem>
-									<SelectItem value="1">1 day</SelectItem>
-									<SelectItem value="7">7 days</SelectItem>
-									<SelectItem value="30">30 days</SelectItem>
-									<SelectItem value="custom">Custom date/time</SelectItem>
+									<SelectItem :value="null">Never</SelectItem>
+									<SelectItem :value="1">1 day</SelectItem>
+									<SelectItem :value="7">7 days</SelectItem>
+									<SelectItem :value="30">30 days</SelectItem>
+									<SelectItem :value="'custom'">Custom date/time</SelectItem>
 								</SelectContent>
 							</Select>
 						</Field>
 
-						<Field v-if="expiresMode === 'custom'" class="md:col-span-2">
+						<Field v-if="detail.expiresAt === 'custom'" class="md:col-span-2">
 							<FieldLabel for="customExpiresAt">Custom Expires At</FieldLabel>
 							<Input id="customExpiresAt" v-model="customExpiresAt" type="datetime-local" />
 						</Field>
 
 						<Field>
 							<FieldLabel>SQL Provider Override</FieldLabel>
-							<Select v-model="sqlProvider">
+							<Select v-model="detail.sqlProvider">
 								<SelectTrigger class="w-full">
 									<SelectValue placeholder="Select provider" />
 								</SelectTrigger>
@@ -268,7 +226,7 @@ onMounted(load)
 
 						<Field>
 							<FieldLabel>Allowed Tools (multi-select)</FieldLabel>
-							<Select v-model="selectedTools" multiple>
+							<Select v-model="detail.allowedTools" multiple>
 								<SelectTrigger class="w-full">
 									<SelectValue :placeholder="selectedToolLabel" />
 								</SelectTrigger>
@@ -290,74 +248,35 @@ onMounted(load)
 							</Select>
 						</Field>
 
-						<Field v-if="sqlProvider !== 'Global'">
-							<FieldLabel for="sqlConnectionString">SQL Connection String (ADO.NET)</FieldLabel>
-							<span class="flex justify-start gap-4">
-								<PasswordInput id="sqlConnectionString" v-model="sqlConnectionString"
-									placeholder="ADO.NET Connection String" />
-								<Dialog>
-									<DialogTrigger as-child>
-										<Button variant="default">
-											<Edit w={4} h={4} />
-										</Button>
-									</DialogTrigger>
-									<DialogContent class="sm:max-w-[425px]">
-										<form id="sqlConnectionDetailsForm"
-											@submit.prevent="buildConnectionStringFromDetails">
-											<FieldGroup class="grid gap-4 md:grid-cols-2">
-												<Field
-													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
-													<FieldLabel>Host</FieldLabel>
-													<Input v-model="sqlConnectionDetails.host" placeholder="Host" />
-												</Field>
-												<Field
-													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
-													<FieldLabel>Port</FieldLabel>
-													<Input v-model="sqlConnectionDetails.port" placeholder="Port" />
-												</Field>
-												<Field
-													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
-													<FieldLabel>Username</FieldLabel>
-													<Input v-model="sqlConnectionDetails.username"
-														placeholder="Username" />
-												</Field>
-												<Field
-													v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
-													<FieldLabel>Password</FieldLabel>
-													<Input v-model="sqlConnectionDetails.password" type="password"
-														placeholder="Password" />
-												</Field>
-												<Field
-													v-if="['Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(sqlProvider)">
-													<FieldLabel>Database</FieldLabel>
-													<Input v-model="sqlConnectionDetails.database"
-														placeholder="Database" />
-												</Field>
-											</FieldGroup>
-										</form>
-										<DialogFooter>
-											<DialogClose asChild>
-												<Button variant="outline">
-													Cancel
-												</Button>
-											</DialogClose>
-											<DialogClose asChild>
-												<Button type="submit" form="sqlConnectionDetailsForm">
-													Save
-												</Button>
-											</DialogClose>
-										</DialogFooter>
-									</DialogContent>
-								</Dialog>
-							</span>
-							<p class="mt-1 text-xs text-muted-foreground">
-								Must be provided together with SQL Provider Override.
-							</p>
+						<Field
+							v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(detail.sqlProvider)">
+							<FieldLabel>Host</FieldLabel>
+							<Input v-model="detail.host" placeholder="Host" />
+						</Field>
+						<Field
+							v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(detail.sqlProvider)">
+							<FieldLabel>Port</FieldLabel>
+							<Input v-model="detail.port" placeholder="Port" />
+						</Field>
+						<Field
+							v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(detail.sqlProvider)">
+							<FieldLabel>Username</FieldLabel>
+							<Input v-model="detail.username" placeholder="Username" />
+						</Field>
+						<Field
+							v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(detail.sqlProvider)">
+							<FieldLabel>Password</FieldLabel>
+							<Input v-model="detail.password" type="password" placeholder="Password" />
+						</Field>
+						<Field
+							v-if="['Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(detail.sqlProvider)">
+							<FieldLabel>Database</FieldLabel>
+							<Input v-model="detail.database" placeholder="Database" />
 						</Field>
 
 						<Field class="md:col-span-2">
 							<FieldLabel for="corsAllowedOrigins">CORS Allowed Origins</FieldLabel>
-							<Input id="corsAllowedOrigins" v-model="corsAllowedOrigins"
+							<Input id="corsAllowedOrigins" v-model="detail.corsAllowedOrigins"
 								placeholder="https://app.example.com, https://admin.example.com" />
 							<p class="mt-1 text-xs text-muted-foreground">
 								Comma-separated origins. Leave empty to block browser cross-origin requests for this
