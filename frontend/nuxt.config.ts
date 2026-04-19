@@ -28,6 +28,18 @@ export default defineNuxtConfig({
     plugins: [
       tailwindcss(),
     ],
+    optimizeDeps: {
+      include: [
+        '@vueuse/core',
+        '@unovis/vue',
+        '@unovis/ts',
+        'reka-ui',
+        'class-variance-authority',
+        'xior',
+        'clsx',
+        'tailwind-merge',
+      ]
+    }
   },
 
   modules: ['shadcn-nuxt'],

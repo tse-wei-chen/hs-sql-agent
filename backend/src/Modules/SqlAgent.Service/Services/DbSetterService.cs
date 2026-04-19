@@ -68,9 +68,14 @@ namespace SqlAgent.Service.Services
             }
         }
 
-        public async Task<string> BuildDbConnectionAsync(BuildDbConnectionModel model, CancellationToken cancellationToken = default)
+        public async Task<string?> BuildDbConnectionAsync(BuildDbConnectionModel model, CancellationToken cancellationToken = default)
         {
-            var strategy = _strategyFactory.GetStrategy(Enum.Parse<SqlAgentToolType>(model.Provider));
+            var provider = Enum.Parse<SqlAgentToolType>(model.Provider);
+            if (provider == SqlAgentToolType.Global)
+            {
+                return null;
+            }
+            var strategy = _strategyFactory.GetStrategy(provider);
             return strategy.BuildConnectionString(model);
         }
     }

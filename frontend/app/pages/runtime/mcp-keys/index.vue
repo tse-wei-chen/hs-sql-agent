@@ -20,6 +20,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { issueMcpKey, listMcpKeys, revokeMcpKey, testDbConnection } from '@/api/runtime'
+import PasswordInput from '@/components/PasswordInput.vue'
+
 definePageMeta({
 	layout: 'default',
 })
@@ -266,7 +268,7 @@ onMounted(load)
 						<Field
 							v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(detail.sqlProvider)">
 							<FieldLabel>Password</FieldLabel>
-							<Input v-model="detail.password" type="password" placeholder="Password" />
+							<PasswordInput v-model="detail.password" type="password" placeholder="Password" />
 						</Field>
 						<Field
 							v-if="['Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(detail.sqlProvider)">
