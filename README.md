@@ -4,7 +4,7 @@
 
 ![GitHub License](https://img.shields.io/github/license/tse-wei-chen/hs-sql-agent) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml)
 
-### Why "hs"? ⚡
+### Why "hs"?
 
 `hs` stands for **High Speed**. While generic SQL agents are often sluggish, complex to configure, or insecure, `hs-sql-agent` is built for:
 
@@ -14,17 +14,15 @@
 
 `hs-sql-agent` is a robust HTTP MCP server for relational databases that bridges the gap between AI agents and your data. Unlike "black-box" generic SQL agents, `hs-sql-agent` provides a **High-Speed** execution engine with a **Built-in Admin Panel** to ensure every AI-generated query is managed, audited, and secure.
 
----
+## ✨ Key Features
 
-## 🚀 Key Features
-
-### ⚡ High-Speed & Universal Access
+### High-Speed & Universal Access
 
 - **Instant Interaction**: Optimized C# backend ensures ultra-low latency for schema discovery and query execution.
 - **Universal Database Support**: One agent for all — supports `Sqlite`, `Postgres`, `Mysql`, `SqlServer`, `Oracle`, and `FireBird`.
 - **Structured Querying**: Powered by [SqlKata](https://sqlkata.com) for reliable and safe SQL construction.
 
-### 🛡️ Enterprise-Grade Governance
+### Enterprise-Grade Governance
 
 - **Built-in Admin Web UI**: Manage your SQL Agent visually. No more manual JSON configuration files.
 - **Granular Security Control**:
@@ -34,9 +32,8 @@
   - **Global Rate Limiting**: Prevent your database from being overwhelmed by AI loops or excessive traffic.
   - **Comprehensive Audit Logs**: Track every single query with daily summaries and detailed execution history.
 
----
-
-## MCP Tools
+## ⏳ Progress
+### MCP Tools ( Ready for use, but still in the experimental stage.
 
 | progress | Tool                 | Description                                                       |
 | -------- | -------------------- | ----------------------------------------------------------------- |
@@ -46,7 +43,7 @@
 | 🧪       | `get_tables`         | Get tables in the database                                        |
 | 🧪       | `execute_dml_safe`   | Execute a DML statement (INSERT, UPDATE, DELETE)                  |
 
-## Admin Panel API keys
+### Admin Panel API keys
 
 | progress | Feature                           | Description                                                      |
 | -------- | --------------------------------- | ---------------------------------------------------------------- |
@@ -56,69 +53,63 @@
 | ✅       | `list Keys`                       | List all API keys with metadata (excluding secret values)        |
 | ✅       | `revoke Key`                      | Revoke an API key by ID                                          |
 
-## Audit logs
+### Audit logs
 
 | progress | Feature     | Description                                                                                |
 | -------- | ----------- | ------------------------------------------------------------------------------------------ |
 | ✅       | `log Query` | Log each executed query with metadata (timestamp, key ID, execution time, success/failure) |
 | 🚧       | `log`       | General logging feature for various events                                                 |
 
-## Global settings
+### Global settings
 
 | progress | Feature            | Description                        |
 | -------- | ------------------ | ---------------------------------- |
 | ✅       | `global RateLimit` | Get global API rate limit settings |
 
-## Architecture
+### Architecture
 
 - Backend: ASP.NET Core (`net10.0`) in `backend/src/ToolBox`
 - Admin data store: SQLite via `AppConnectionString`
 - Frontend: Nuxt 4 in `frontend`
 - MCP endpoint: `http://localhost:8080/mcp`
 
-## Quick Start (Docker)
+## 🚀 Quick Start (Docker Compose)
 
-Pull from GHCR and run:
+The easiest way to run **HS SQL Agent** is using Docker Compose. This ensures your configuration is saved and your data persists across restarts.
 
+### 1. Setup Configuration
+
+Ensure a `docker-compose.yml` file in your project directory:
+
+Copy the example env file:
 ```bash
-docker pull ghcr.io/tse-wei-chen/hs-sql-agent:latest
-docker run --rm -p 8080:8080 \
-  -e AppConnectionString="Data Source=hsqlagent.db" \
-  -e McpKeySettings__HmacSecretKey="YourMcpHmacSecretKeyHere-AtLeast32Chars!" \
-  -e JwtSettings__SecretKey="YourSuperSecretKeyHere-AtLeast32Chars!" \
-  -e JwtSettings__Issuer="YourAppIssuer" \
-  -e JwtSettings__Audience="YourAppAudience" \
-  -e JwtSettings__AccessTokenExpirationMinutes="60" \
-  -e JwtSettings__RefreshTokenExpirationDays="1" \
-  -e RateLimiting__PermitLimit="0" \
-  -e RateLimiting__WindowSeconds="0" \
-  -e RateLimiting__QueueLimit="0" \
-  ghcr.io/tse-wei-chen/hs-sql-agent:latest
+cp .env.example .env
 ```
 
-> ⚠️ For production deployment, replace the example values for `McpKeySettings__HmacSecretKey`, `JwtSettings__SecretKey`, `JwtSettings__Issuer`, and `JwtSettings__Audience` before running the container.
+Then edit the `.env` file to set your secret keys:
 
-If you want to build locally instead of pulling from GHCR:
-
-```bash
-docker build -t hs-sql-agent .
-docker run --rm -p 8080:8080 \
-  -e AppConnectionString="Data Source=hsqlagent.db" \
-  -e McpKeySettings__HmacSecretKey="YourMcpHmacSecretKeyHere-AtLeast32Chars!" \
-  -e JwtSettings__SecretKey="YourSuperSecretKeyHere-AtLeast32Chars!" \
-  -e JwtSettings__Issuer="YourAppIssuer" \
-  -e JwtSettings__Audience="YourAppAudience" \
-  -e JwtSettings__AccessTokenExpirationMinutes="60" \
-  -e JwtSettings__RefreshTokenExpirationDays="1" \
-  -e RateLimiting__PermitLimit="0" \
-  -e RateLimiting__WindowSeconds="0" \
-  -e RateLimiting__QueueLimit="0" \
-  hs-sql-agent
+```env
+HMAC_KEY=YourMcpHmacSecretKeyHere-AtLeast32Bytes!
+JWT_KEY=YourSuperSecretKeyHere-AtLeast32Bytes!
 ```
 
-[![How to Use](https://img.shields.io/badge/How%20to%20Use-Jump-0f766e)](#how-to-use)
+> ⚠️ **Important Security Notes** Never use the example keys in production. Replace `McpKeySettings__HmacSecretKey` and `JwtSettings__SecretKey` with unique, 32+ byte strings. You can generate secure random keys using tools like `openssl rand -base64 32` or online generators.
 
-## Quick Start (Local Development)
+### 2. Launch the Application
+
+Run the following command in your terminal:
+
+```bash
+docker-compose up -d
+```
+
+### 3. Access the Service
+
+Once the container is running, the services will be available at:
+- **Admin Panel:** `http://localhost:8080` (for managing API keys and viewing logs)
+- **MCP Endpoint:** `http://localhost:8080/mcp`
+
+## 🏠 Local Development
 
 ### Prerequisites
 
@@ -148,11 +139,11 @@ Required settings:
 - `JwtSettings.SecretKey` (at least 32 bytes)
 - `JwtSettings.Issuer`
 - `JwtSettings.Audience`
+- `RateLimiting` (global fallback rate limit. 0 means no limit)
 
 Optional settings:
 
 - `SqlConfig` (global SQL fallback if key override is not provided)
-- `RateLimiting` (global fallback rate limit)
 
 Minimal example:
 
@@ -161,10 +152,10 @@ Minimal example:
 	"ASPNETCORE_URLS": "http://localhost:8080",
 	"AppConnectionString": "Data Source=hsqlagent.db",
 	"McpKeySettings": {
-		"HmacSecretKey": "YourMcpHmacSecretKeyHere-AtLeast32Chars!"
+		"HmacSecretKey": "YourMcpHmacSecretKeyHere-AtLeast32Bytes!"
 	},
 	"JwtSettings": {
-		"SecretKey": "YourSuperSecretKeyHere-AtLeast32Chars!",
+		"SecretKey": "YourSuperSecretKeyHere-AtLeast32Bytes!",
 		"Issuer": "YourAppIssuer",
 		"Audience": "YourAppAudience",
 		"AccessTokenExpirationMinutes": 60,
@@ -216,7 +207,7 @@ pnpm dev
 
 Frontend runs on `http://localhost:3000`.
 
-## How to Use
+## 📒 How to Use
 
 ### First-time setup flow
 
@@ -270,7 +261,7 @@ Frontend runs on `http://localhost:3000`.
 }
 ```
 
-## Project Structure
+## 🖧 Project Structure
 
 ```text
 backend/
@@ -282,7 +273,8 @@ frontend/
   app/           Nuxt app (admin panel)
 ```
 
-## Detailed information about the skills
+## 🛠️ Detailed information about the skills
+
 <details>
 <summary><b>DQL</b></summary>
 

@@ -1,0 +1,20 @@
+services:
+  hs-sql-agent:
+    image: ghcr.io/tse-wei-chen/hs-sql-agent:latest
+    container_name: hs-sql-agent
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - AppConnectionString=Data Source=/app/data/hsqlagent.db
+      - McpKeySettings__HmacSecretKey=${HMAC_KEY}
+      - JwtSettings__SecretKey=${JWT_KEY}
+      - JwtSettings__Issuer=HS-Agent
+      - JwtSettings__Audience=HS-Users
+      - JwtSettings__AccessTokenExpirationMinutes=60
+      - JwtSettings__RefreshTokenExpirationDays=1
+      - RateLimiting__PermitLimit=0
+      - RateLimiting__WindowSeconds=0
+      - RateLimiting__QueueLimit=0
+    restart: unless-stopped
