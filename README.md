@@ -1,43 +1,73 @@
-# hs-sql-agent
+# ⚡ hs-sql-agent (High-Speed SQL Agent)
+
+> **The high-performance MCP server designed for instant SQL interaction and secure enterprise governance.**
+
 ![GitHub License](https://img.shields.io/github/license/tse-wei-chen/hs-sql-agent) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml)
 
-`hs-sql-agent` is an HTTP MCP server for relational databases with an integrated admin panel.
-It lets MCP clients call safe SQL tools while you manage access keys, audit logs, per-key database mapping, and global rate limits.
+### Why "hs"? ⚡
 
-## Features
+`hs` stands for **High Speed**. While generic SQL agents are often sluggish, complex to configure, or insecure, `hs-sql-agent` is built for:
 
-- MCP over HTTP at `/mcp`
-- SQL tools powered by [SqlKata](https://sqlkata.com/) (structured query building)
-- Built-in admin APIs and web UI
-- API key lifecycle management (issue, list, revoke)
-- Audit log and daily summary APIs
-- Per-key SQL provider/connection override
-- Global IP rate limit override
-- Supports `Sqlite`, `Postgres`, `Mysql`, `SqlServer`, `Oracle`, `FireBird`
+- **High-Speed Execution**: Optimized C# backend for ultra-low latency.
+- **High-Speed Deployment**: Docker-ready, up and running in 30 seconds.
+- **High-Speed Governance**: Instantly manage keys and audit logs via a built-in UI.
+
+`hs-sql-agent` is a robust HTTP MCP server for relational databases that bridges the gap between AI agents and your data. Unlike "black-box" generic SQL agents, `hs-sql-agent` provides a **High-Speed** execution engine with a **Built-in Admin Panel** to ensure every AI-generated query is managed, audited, and secure.
+
+---
+
+## 🚀 Key Features
+
+### ⚡ High-Speed & Universal Access
+
+- **Instant Interaction**: Optimized C# backend ensures ultra-low latency for schema discovery and query execution.
+- **Universal Database Support**: One agent for all — supports `Sqlite`, `Postgres`, `Mysql`, `SqlServer`, `Oracle`, and `FireBird`.
+- **Structured Querying**: Powered by [SqlKata](https://sqlkata.com) for reliable and safe SQL construction.
+
+### 🛡️ Enterprise-Grade Governance
+
+- **Built-in Admin Web UI**: Manage your SQL Agent visually. No more manual JSON configuration files.
+- **Granular Security Control**:
+  - **Key-Level Mapping**: Assign specific database connections to individual API keys.
+  - **Lifecycle Management**: Effortlessly issue, list, or revoke access keys in real-time.
+- **Guardrails & Safety**:
+  - **Global Rate Limiting**: Prevent your database from being overwhelmed by AI loops or excessive traffic.
+  - **Comprehensive Audit Logs**: Track every single query with daily summaries and detailed execution history.
+
+---
 
 ## MCP Tools
 
-| progress | Tool | Description |
-|------|------|-------------|
-| 🧪 | `execute_query_safe` | Execute a query (supports join, where, order by, group by, limit) |
-| 🧪 | `get_columns` | Get column names of a table |
-| 🧪 | `get_schemas` | Get schemas in the database |
-| 🧪 | `get_tables` | Get tables in the database |
-| 🧪 | `execute_dml_safe` | Execute a DML statement (INSERT, UPDATE, DELETE) |
+| progress | Tool                 | Description                                                       |
+| -------- | -------------------- | ----------------------------------------------------------------- |
+| 🧪       | `execute_query_safe` | Execute a query (supports join, where, order by, group by, limit) |
+| 🧪       | `get_columns`        | Get column names of a table                                       |
+| 🧪       | `get_schemas`        | Get schemas in the database                                       |
+| 🧪       | `get_tables`         | Get tables in the database                                        |
+| 🧪       | `execute_dml_safe`   | Execute a DML statement (INSERT, UPDATE, DELETE)                  |
 
 ## Admin Panel API keys
-| progress | Feature | Description |
-|------|------|-------------|
-| ✅ | `allowed Tools` | Manage tool access for the API key |
-| ✅ | `Per-key SQL provider/connection` | Override SQL provider/connection settings for a specific API key |
-| ✅ | `issue Key` | Issue a new API key with optional SQL override and allowed Tools |
-| ✅ | `list Keys` | List all API keys with metadata (excluding secret values) |
-| ✅ | `revoke Key` | Revoke an API key by ID |
+
+| progress | Feature                           | Description                                                      |
+| -------- | --------------------------------- | ---------------------------------------------------------------- |
+| ✅       | `allowed Tools`                   | Manage tool access for the API key                               |
+| ✅       | `Per-key SQL provider/connection` | Override SQL provider/connection settings for a specific API key |
+| ✅       | `issue Key`                       | Issue a new API key with optional SQL override and allowed Tools |
+| ✅       | `list Keys`                       | List all API keys with metadata (excluding secret values)        |
+| ✅       | `revoke Key`                      | Revoke an API key by ID                                          |
+
+## Audit logs
+
+| progress | Feature     | Description                                                                                |
+| -------- | ----------- | ------------------------------------------------------------------------------------------ |
+| ✅       | `log Query` | Log each executed query with metadata (timestamp, key ID, execution time, success/failure) |
+| 🚧       | `log`       | General logging feature for various events                                                 |
 
 ## Global settings
-| progress | Feature | Description |
-|------|------|-------------|
-| ✅ | `global RateLimit` | Get global API rate limit settings |
+
+| progress | Feature            | Description                        |
+| -------- | ------------------ | ---------------------------------- |
+| ✅       | `global RateLimit` | Get global API rate limit settings |
 
 ## Architecture
 
@@ -85,8 +115,8 @@ docker run --rm -p 8080:8080 \
   -e RateLimiting__QueueLimit="0" \
   hs-sql-agent
 ```
-[![How to Use](https://img.shields.io/badge/How%20to%20Use-Jump-0f766e)](#how-to-use)
 
+[![How to Use](https://img.shields.io/badge/How%20to%20Use-Jump-0f766e)](#how-to-use)
 
 ## Quick Start (Local Development)
 
@@ -128,23 +158,23 @@ Minimal example:
 
 ```json
 {
-  "ASPNETCORE_URLS": "http://localhost:8080",
-  "AppConnectionString": "Data Source=hsqlagent.db",
-  "McpKeySettings": {
-    "HmacSecretKey": "YourMcpHmacSecretKeyHere-AtLeast32Chars!"
-  },
-  "JwtSettings": {
-    "SecretKey": "YourSuperSecretKeyHere-AtLeast32Chars!",
-    "Issuer": "YourAppIssuer",
-    "Audience": "YourAppAudience",
-    "AccessTokenExpirationMinutes": 60,
-    "RefreshTokenExpirationDays": 30
-  },
-  "RateLimiting": {
-    "PermitLimit": 0,
-    "WindowSeconds": 0,
-    "QueueLimit": 0
-  }
+	"ASPNETCORE_URLS": "http://localhost:8080",
+	"AppConnectionString": "Data Source=hsqlagent.db",
+	"McpKeySettings": {
+		"HmacSecretKey": "YourMcpHmacSecretKeyHere-AtLeast32Chars!"
+	},
+	"JwtSettings": {
+		"SecretKey": "YourSuperSecretKeyHere-AtLeast32Chars!",
+		"Issuer": "YourAppIssuer",
+		"Audience": "YourAppAudience",
+		"AccessTokenExpirationMinutes": 60,
+		"RefreshTokenExpirationDays": 30
+	},
+	"RateLimiting": {
+		"PermitLimit": 0,
+		"WindowSeconds": 0,
+		"QueueLimit": 0
+	}
 }
 ```
 
@@ -152,10 +182,10 @@ Optional SQL:
 
 ```json
 {
-  "SqlConfig": {
-    "Provider": "Postgres",
-    "ConnectionString": "Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypassword"
-  }
+	"SqlConfig": {
+		"Provider": "Postgres",
+		"ConnectionString": "Host=localhost;Port=5432;Database=mydb;Username=myuser;Password=mypassword"
+	}
 }
 ```
 
@@ -203,12 +233,12 @@ Frontend runs on `http://localhost:3000`.
 
 ```json
 {
-  "mcpServers": {
-    "hs-sql-agent": {
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
-    }
-  }
+	"mcpServers": {
+		"hs-sql-agent": {
+			"url": "http://localhost:8080/mcp",
+			"headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
+		}
+	}
 }
 ```
 
@@ -216,13 +246,13 @@ Frontend runs on `http://localhost:3000`.
 
 ```json
 {
-  "servers": {
-    "hs-sql-agent": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
-    }
-  }
+	"servers": {
+		"hs-sql-agent": {
+			"type": "http",
+			"url": "http://localhost:8080/mcp",
+			"headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
+		}
+	}
 }
 ```
 
@@ -230,13 +260,13 @@ Frontend runs on `http://localhost:3000`.
 
 ```json
 {
-  "mcpServers": {
-    "hs-sql-agent": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
-    }
-  }
+	"mcpServers": {
+		"hs-sql-agent": {
+			"type": "http",
+			"url": "http://localhost:8080/mcp",
+			"headers": { "X-MCP-Server-Key": "<YOUR_MCP_KEY>" }
+		}
+	}
 }
 ```
 
@@ -251,6 +281,65 @@ backend/
 frontend/
   app/           Nuxt app (admin panel)
 ```
+
+## Detailed information about the skills
+<details>
+<summary><b>DQL</b></summary>
+
+- **execute_query_safe**
+  - Title: Execute query safely
+  - Description: Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries).
+- Parameters:
+  - `tableName` (string, optional): The main table name for the query (use schema-qualified name if needed). Can be null if `fromQuery` is provided.
+  - `selectColumns` (array, optional): List of columns to select.
+  - `whereConditions` (array, optional): List of where conditions.
+  - `orderByColumns` (array, optional): List of columns to order by. Each item can include `Field`, `Aggregation` (e.g., COUNT, SUM), and `Direction` (ASC or DESC).
+  - `limit` (integer, optional): Limit the number of results returned.
+  - `offset` (integer, optional): Offset the number of results returned.
+  - `joins` (array, optional): List of joins. Each join is a dictionary with keys: `Table`, `On`, and optional `Type` (default `INNER`).
+  - `groupByConditions` (array, optional): List of group by conditions. Each condition includes `Table`, `Field`.
+  - `havingConditions` (array, optional): List of having conditions.
+  - `combineConditions` (array, optional): List of combine conditions (`union`, `union all`, `intersect`, `except`).
+  - `cteConditions` (array, optional): List of CTE definitions.
+  - `distinct` (boolean, optional): Whether to use `SELECT DISTINCT`.
+  - `fromQuery` (object, optional): Source subquery definition. If provided, `tableName` is ignored.
+  - `alias` (string, optional): Alias for the source table or subquery.
+  - Read-only: **true**
+
+- **get_columns**
+  - Title: Get columns
+  - Description: Get column names of a table.
+  - Parameters:
+    - `schemaName` (string): The schema name.
+    - `tableName` (string): The table name.
+  - Read-only: **true**
+
+- **get_schemas**
+  - Title: Get schemas
+  - Description: Get list of schemas in the database.
+  - Parameters: none
+  - Read-only: **true**
+
+- **get_tables**
+  - Title: Get tables
+  - Description: Get list of tables in a schema.
+  - Parameters:
+    - `schemaName` (string): The schema name.
+  - Read-only: **true**
+
+</details>
+<details>
+<summary><b>DML</b></summary>
+
+- **execute_dml_safe**
+  - Title: Execute DML safely
+  - Description: Execute a DML operation (INSERT, UPDATE, DELETE). This tool uses a mandatory two-step safety mechanism:
+    1. First call (without `ConfirmToken`): Performs a dry run, returns affected rows and a unique `ConfirmToken`.
+    2. Second call (with `ConfirmToken`): Commits the operation if the token matches.
+  - Parameters: - `dmlDefinition` (object): The DML definition, including operation type, table, values, and conditions. - `ConfirmToken` (string, optional): The confirmation token returned from the dry run (required for commit).
+  - Read-only: **false**
+
+</details>
 
 ## License
 
