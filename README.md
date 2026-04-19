@@ -126,10 +126,10 @@ cd hs-sql-agent
 
 ### 2. Configure backend settings
 
-Copy the sample file:
+Copy the Example appsettings file:
 
 ```bash
-cp backend/src/ToolBox/appsettings.Sample.json backend/src/ToolBox/appsettings.json
+cp backend/src/ToolBox/appsettings.Example.json backend/src/ToolBox/appsettings.json
 ```
 
 Required settings:
