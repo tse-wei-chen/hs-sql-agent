@@ -139,6 +139,62 @@ public class SqliteStrategyTests : IDisposable
         Assert.Single(resultSub);
     }
 
+    [Fact]
+    public async Task GetSchemasAsync_ShouldReturnMessage()
+    {
+        // SQLite does not support schemas; expects a single informational message
+        var result = await _strategy.GetSchemasAsync(_connectionString, TestContext.Current.CancellationToken);
+        Assert.Single(result);
+        Assert.Contains("sqlite", result[0], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetTablesAsync_ShouldReturnCreatedTables()
+    {
+        var result = await _strategy.GetTablesAsync(_connectionString, string.Empty, TestContext.Current.CancellationToken);
+        Assert.Contains("Users", result, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("Orders", result, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetColumnsAsync_Users_ShouldReturnColumnsWithTypes()
+    {
+        var result = await _strategy.GetColumnsAsync(_connectionString, string.Empty, "Users", TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(result);
+        var colNames = result.Select(c => c.Column).ToList();
+        Assert.Contains("Id", colNames);
+        Assert.Contains("Name", colNames);
+        Assert.Contains("Age", colNames);
+        Assert.Contains("Active", colNames);
+
+        var id = result.First(c => c.Column == "Id");
+        Assert.Equal("INTEGER", id.Type, ignoreCase: true);
+
+        var name = result.First(c => c.Column == "Name");
+        Assert.Equal("TEXT", name.Type, ignoreCase: true);
+    }
+
+    [Fact]
+    public async Task GetColumnsAsync_Orders_ShouldReturnColumnsInOrder()
+    {
+        var result = await _strategy.GetColumnsAsync(_connectionString, string.Empty, "Orders", TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, result.Count);
+        Assert.Equal("Id", result[0].Column);
+        Assert.Equal("UserId", result[1].Column);
+        Assert.Equal("Amount", result[2].Column);
+        Assert.Equal("OrderDate", result[3].Column);
+    }
+
+    [Fact]
+    public async Task GetColumnsAsync_NonExistentTable_ShouldReturnEmpty()
+    {
+        // SQLite's pragma_table_info returns empty rows (not an exception) for a non-existent table
+        var result = await _strategy.GetColumnsAsync(_connectionString, string.Empty, "NonExistentTable", TestContext.Current.CancellationToken);
+        Assert.Empty(result);
+    }
+
     private string ExtractToken(string result)
     {
         var marker = "TokenRequired=";

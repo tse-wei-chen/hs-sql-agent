@@ -66,6 +66,10 @@ const data = ref({
           title: "Audit",
           url: "/runtime/audit",
         },
+        {
+          title: "Custom Tools",
+          url: "/runtime/custom-tools",
+        },
       ],
     },
   ],

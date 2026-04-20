@@ -8,6 +8,7 @@ public class AdminContext(DbContextOptions<AdminContext> options) : DbContext(op
     public DbSet<SuperUser> SuperUsers { get; set; } = null!;
     public DbSet<AuditLog> AuditLogs { get; set; } = null!;
     public DbSet<McpAccessKey> McpAccessKeys { get; set; } = null!;
+    public DbSet<CustomSqlTool> CustomSqlTools { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

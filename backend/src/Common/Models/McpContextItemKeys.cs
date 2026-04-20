@@ -1,4 +1,4 @@
-namespace ToolBox.Models;
+namespace Common.Models;
 
 public static class McpContextItemKeys
 {
@@ -9,4 +9,3 @@ public static class McpContextItemKeys
     public const string SqlProvider = "McpSqlProvider";
     public const string SqlConnectionString = "McpSqlConnectionString";
 }
-

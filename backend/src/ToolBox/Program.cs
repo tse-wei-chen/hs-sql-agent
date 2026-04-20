@@ -20,8 +20,9 @@ using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using ModelContextProtocol.Server;
 using System.Reflection;
-using ToolBox.Models;
+using Common.Models;
 using System.Text.Json.Serialization;
+using System.Diagnostics.CodeAnalysis;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -46,11 +47,15 @@ builder.Services.AddScoped<IAdminService, AdminService>();
 builder.Services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
 builder.Services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<ICustomSqlToolService, CustomSqlToolService>();
 builder.Services.AddSingleton<ICryptoService, CryptoService>();
 builder.Services.AddSingleton<IQueryValueParserService, QueryValueParserService>();
 builder.Services.AddScoped<ISqlStrategy, MySqlStrategy>();
 builder.Services.AddScoped<ISqlStrategy, PostgresStrategy>();
 builder.Services.AddScoped<ISqlStrategy, SqliteStrategy>();
+builder.Services.AddScoped<ISqlStrategy, MsSqlServerStrategy>();
+builder.Services.AddScoped<ISqlStrategy, OracleStrategy>();
+builder.Services.AddScoped<ISqlStrategy, FirebirdStrategy>();
 builder.Services.AddScoped<ISqlStrategyFactory, SqlStrategyFactory>();
 builder.Services.AddScoped<IDbSetterService, DbSetterService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
@@ -170,14 +175,15 @@ builder.Services.AddMcpServer()
             var allTools = httpContext.RequestServices.GetRequiredService<McpServerTool[]>();
             var allowedCsv = httpContext.Items[McpContextItemKeys.AllowedTools]?.ToString();
 
+            var toolCollection = mcpOptions.ToolCollection = [];
+            mcpOptions.Capabilities = new() { Tools = new() };
+
             if (!string.IsNullOrEmpty(allowedCsv))
             {
                 var allowedNames = allowedCsv
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                mcpOptions.Capabilities = new() { Tools = new() };
-                var toolCollection = mcpOptions.ToolCollection = [];
                 foreach (var tool in allTools)
                 {
                     if (allowedNames.Contains(tool.ProtocolTool.Name))
@@ -188,11 +194,37 @@ builder.Services.AddMcpServer()
             }
             else
             {
-                mcpOptions.Capabilities = new() { Tools = new() };
-                var toolCollection = mcpOptions.ToolCollection = [];
                 foreach (var tool in allTools)
                 {
                     toolCollection.Add(tool);
+                }
+            }
+
+            // 3. Add Custom Dynamic Tools
+            var customToolService = httpContext.RequestServices.GetRequiredService<ICustomSqlToolService>();
+            var customTools = await customToolService.GetAllToolsAsync();
+            var executeMethod = typeof(CustomToolProxy).GetMethod(nameof(CustomToolProxy.Execute));
+
+            if (executeMethod != null)
+            {
+                foreach (var ct in customTools)
+                {
+                    var toolName = ct.Name;
+                    var toolDescription = ct.Description;
+                    
+                    var dynamicTool = McpServerTool.Create(executeMethod, (request) => 
+                    {
+                        var svc = request.Services!.GetRequiredService<ICustomSqlToolService>();
+                        var acc = request.Services!.GetRequiredService<IHttpContextAccessor>();
+                        var cfg = request.Services!.GetRequiredService<IConfiguration>();
+                        var ssf = request.Services!.GetRequiredService<ISqlStrategyFactory>();
+                        return new CustomToolProxy(toolName, svc, acc, cfg, ssf);
+                    }, new McpServerToolCreateOptions 
+                    { 
+                        Name = toolName, 
+                        Description = toolDescription
+                    });
+                    toolCollection.Add(dynamicTool);
                 }
             }
         };
@@ -262,8 +294,8 @@ await app.RunAsync();
 
 
 
-static McpServerTool[] GetToolsForType<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
-    System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods)] T>() where T : class
+static McpServerTool[] GetToolsForType<[DynamicallyAccessedMembers(
+    DynamicallyAccessedMemberTypes.PublicMethods)] T>() where T : class
 {
     var tools = new List<McpServerTool>();
     var toolType = typeof(T);

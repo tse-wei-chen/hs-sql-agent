@@ -8,5 +8,6 @@ public interface IAdminContext
     DbSet<SuperUser> SuperUsers { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<McpAccessKey> McpAccessKeys { get; }
+    DbSet<CustomSqlTool> CustomSqlTools { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

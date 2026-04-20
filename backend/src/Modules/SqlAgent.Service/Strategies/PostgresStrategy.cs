@@ -63,10 +63,10 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         const string sql = @"
-            SELECT column_name 
+            SELECT column_name, data_type
             FROM information_schema.columns 
             WHERE table_schema = @schemaName 
             AND table_name = @tableName
@@ -77,9 +77,9 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
 
-            var columns = await connection.QueryAsync<string>(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
+            var rows = await connection.QueryAsync(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
 
-            return [.. columns];
+            return [.. rows.Select(r => new ColumnInfo((string)r.column_name, (string)r.data_type))];
         }
         catch (Exception ex)
         {
