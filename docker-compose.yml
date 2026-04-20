@@ -10,11 +10,11 @@ services:
       - AppConnectionString=Data Source=/app/data/hsqlagent.db
       - McpKeySettings__HmacSecretKey=${HMAC_KEY}
       - JwtSettings__SecretKey=${JWT_KEY}
-      - JwtSettings__Issuer=HS-Agent
-      - JwtSettings__Audience=HS-Users
-      - JwtSettings__AccessTokenExpirationMinutes=60
-      - JwtSettings__RefreshTokenExpirationDays=1
-      - RateLimiting__PermitLimit=0
-      - RateLimiting__WindowSeconds=0
-      - RateLimiting__QueueLimit=0
+      - JwtSettings__Issuer=${JWT_ISS}
+      - JwtSettings__Audience=${JWT_AUD}
+      - JwtSettings__AccessTokenExpirationMinutes=${JWT_ACCESS_TOKEN_EXPIRATION_MINUTES}
+      - JwtSettings__RefreshTokenExpirationDays=${JWT_REFRESH_TOKEN_EXPIRATION_DAYS}
+      - RateLimiting__PermitLimit=${RATE_LIMITING_PERMIT_LIMIT}
+      - RateLimiting__WindowSeconds=${RATE_LIMITING_WINDOW_SECONDS}
+      - RateLimiting__QueueLimit=${RATE_LIMITING_QUEUE_LIMIT}
     restart: unless-stopped

@@ -33,6 +33,7 @@
   - **Comprehensive Audit Logs**: Track every single query with daily summaries and detailed execution history.
 
 ## ⏳ Progress
+
 ### MCP Tools ( Ready for use, but still in the experimental stage.
 
 | progress | Tool                 | Description                                                       |
@@ -82,6 +83,7 @@ The easiest way to run **HS SQL Agent** is using Docker Compose. This ensures yo
 Ensure a `docker-compose.yml` file in your project directory:
 
 Copy the example env file:
+
 ```bash
 cp .env.example .env
 ```
@@ -91,6 +93,13 @@ Then edit the `.env` file to set your secret keys:
 ```env
 HMAC_KEY=YourMcpHmacSecretKeyHere-AtLeast32Bytes!
 JWT_KEY=YourSuperSecretKeyHere-AtLeast32Bytes!
+JWT_ISS=HS-Agent
+JWT_AUD=HS-Agent-Users
+JWT_ACCESS_TOKEN_EXPIRATION_MINUTES=1
+JWT_REFRESH_TOKEN_EXPIRATION_DAYS=30
+RATE_LIMITING_PERMIT_LIMIT=0
+RATE_LIMITING_WINDOW_SECONDS=0
+RATE_LIMITING_QUEUE_LIMIT=0
 ```
 
 > ⚠️ **Important Security Notes** Never use the example keys in production. Replace `McpKeySettings__HmacSecretKey` and `JwtSettings__SecretKey` with unique, 32+ byte strings. You can generate secure random keys using tools like `openssl rand -base64 32` or online generators.
@@ -106,6 +115,7 @@ docker-compose up -d
 ### 3. Access the Service
 
 Once the container is running, the services will be available at:
+
 - **Admin Panel:** `http://localhost:8080` (for managing API keys and viewing logs)
 - **MCP Endpoint:** `http://localhost:8080/mcp`
 
