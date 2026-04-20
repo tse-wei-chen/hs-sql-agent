@@ -1,29 +1,29 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from '@/components/ui/card'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { 
-  listCustomSqlTools, 
-  createCustomSqlTool, 
-  updateCustomSqlTool, 
-  deleteCustomSqlTool, 
-  type CustomSqlTool 
+import {
+    listCustomSqlTools,
+    createCustomSqlTool,
+    updateCustomSqlTool,
+    deleteCustomSqlTool,
+    type CustomSqlTool
 } from '@/api/custom-tools'
 import { Plus, Trash2, Edit2, Save, X } from 'lucide-vue-next'
 
@@ -180,7 +180,7 @@ onMounted(load)
                 <Textarea id="definition" v-model="form.definitionJson" 
                   class="font-mono text-xs h-[150px]"
                   placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }' />
-                <p class="text-[0.7rem] text-muted-foreground">
+                <p class="text-[0.7rem] text-muted-foreground" v-pre>
                   Use {{parameterName}} as placeholders in values. 
                 </p>
               </div>
