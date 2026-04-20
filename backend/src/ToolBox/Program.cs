@@ -22,6 +22,7 @@ using ModelContextProtocol.Server;
 using System.Reflection;
 using ToolBox.Models;
 using System.Text.Json.Serialization;
+using System.Diagnostics.CodeAnalysis;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -262,8 +263,8 @@ await app.RunAsync();
 
 
 
-static McpServerTool[] GetToolsForType<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
-    System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods)] T>() where T : class
+static McpServerTool[] GetToolsForType<[DynamicallyAccessedMembers(
+    DynamicallyAccessedMemberTypes.PublicMethods)] T>() where T : class
 {
     var tools = new List<McpServerTool>();
     var toolType = typeof(T);
