@@ -38,11 +38,11 @@ public class McpAccessKeyServiceTests
     [Fact]
     public async Task IssueKeyAsync_WithValidRequest_ReturnsResult()
     {
-        var request = new IssueMcpAccessKeyRequest
+        var request = new IssueMcpAccessKeyModel
         {
             Name = "Test Key",
             SqlProvider = "PostgreSQL",
-            SqlConnectionString = "Host=localhost;Database=test",
+            SqlConnectionString = "Host=localhost;Port=5432;Username=test;Password=test;Database=testdb",
             CorsAllowedOrigins = "http://localhost:3000"
         };
 

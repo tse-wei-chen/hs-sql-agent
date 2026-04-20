@@ -50,14 +50,18 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var result = await connection.QueryAsync(new CommandDefinition($"PRAGMA table_info([{tableName}])", cancellationToken: cancellationToken));
-            return [.. result.Select(r => (string)r.name)];
+            string safeTableName = tableName.Replace("'", "''");
+            var result = await connection.QueryAsync(new CommandDefinition($@"
+                SELECT name AS COLUMN_NAME, type AS DATA_TYPE 
+                FROM pragma_table_info('{safeTableName}')
+                ORDER BY cid", cancellationToken: cancellationToken));
+            return [.. result.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
         }
         catch (Exception ex)
         {

@@ -6,6 +6,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using ToolBox.Models;
 using SqlAgent.Service.Models;
+using System.Text.Json;
 
 namespace ToolBox.Tools;
 
@@ -101,7 +102,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
     }
 
-    [McpServerTool, Description("Get column names of a table.")]
+    [McpServerTool, Description("Get column names and types of a table.")]
     public async Task<string> GetColumns([Description("The schema name")] string schemaName, [Description("The table name")] string tableName)
     {
         try
@@ -118,7 +119,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
-            return string.Join(", ", columns);
+            return JsonSerializer.Serialize(columns);
         }
         catch (Exception ex)
         {

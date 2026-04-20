@@ -56,7 +56,7 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -64,13 +64,30 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
             await connection.OpenAsync(cancellationToken);
 
             const string sql = @"
-            SELECT TRIM(RDB$FIELD_NAME) 
-            FROM RDB$RELATION_FIELDS 
-            WHERE RDB$RELATION_NAME = UPPER(@tableName)
-            ORDER BY RDB$FIELD_POSITION;";
+            SELECT TRIM(f.RDB$FIELD_NAME) AS COLUMN_NAME,
+                   CASE t.RDB$TYPE_NAME
+                       WHEN 'SHORT'      THEN 'SMALLINT'
+                       WHEN 'LONG'       THEN 'INTEGER'
+                       WHEN 'INT64'      THEN 'BIGINT'
+                       WHEN 'FLOAT'      THEN 'FLOAT'
+                       WHEN 'DOUBLE'     THEN 'DOUBLE PRECISION'
+                       WHEN 'VARYING'    THEN 'VARCHAR'
+                       WHEN 'TEXT'       THEN 'CHAR'
+                       WHEN 'BLOB'       THEN 'BLOB'
+                       WHEN 'TIMESTAMP'  THEN 'TIMESTAMP'
+                       WHEN 'SQL_DATE'   THEN 'DATE'
+                       WHEN 'SQL_TIME'   THEN 'TIME'
+                       WHEN 'BOOLEAN'    THEN 'BOOLEAN'
+                       ELSE TRIM(t.RDB$TYPE_NAME)
+                   END AS DATA_TYPE
+            FROM RDB$RELATION_FIELDS f
+            JOIN RDB$FIELDS fs ON fs.RDB$FIELD_NAME = f.RDB$FIELD_SOURCE
+            JOIN RDB$TYPES t   ON t.RDB$TYPE = fs.RDB$FIELD_TYPE AND t.RDB$FIELD_NAME = 'RDB$FIELD_TYPE'
+            WHERE f.RDB$RELATION_NAME = UPPER(@tableName)
+            ORDER BY f.RDB$FIELD_POSITION;";
 
-            var columns = await connection.QueryAsync<string>(sql, new { tableName });
-            return [.. columns];
+            var rows = await connection.QueryAsync(sql, new { tableName });
+            return [.. rows.Select(r => new ColumnInfo(((string)r.COLUMN_NAME).TrimEnd(), ((string)r.DATA_TYPE).TrimEnd()))];
         }
         catch (Exception ex)
         {

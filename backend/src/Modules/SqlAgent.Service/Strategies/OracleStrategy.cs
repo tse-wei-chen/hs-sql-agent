@@ -64,20 +64,20 @@ public class OracleStrategy(IQueryValueParserService valueParser, IConfiguration
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
 
-            var sql = "SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS WHERE OWNER = :schemaName AND TABLE_NAME = :tableName ORDER BY COLUMN_ID";
-            var columns = await connection.QueryAsync<string>(sql, new
+            var sql = "SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS WHERE OWNER = :schemaName AND TABLE_NAME = :tableName ORDER BY COLUMN_ID";
+            var rows = await connection.QueryAsync(sql, new
             {
                 schemaName = schemaName.ToUpper(),
                 tableName = tableName.ToUpper()
             });
-            return [.. columns];
+            return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
         }
         catch (Exception ex)
         {

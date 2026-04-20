@@ -71,20 +71,21 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             const string sql = @"
-                SELECT COLUMN_NAME 
+                SELECT COLUMN_NAME, DATA_TYPE
                 FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName";
+                WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName
+                ORDER BY ORDINAL_POSITION";
 
-            var columns = await connection.QueryAsync<string>(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
+            var rows = await connection.QueryAsync(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
 
-            return [.. columns];
+            return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
         }
         catch (Exception ex)
         {

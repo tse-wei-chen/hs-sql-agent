@@ -65,7 +65,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
         }
     }
 
-    public override async Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
+    public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -73,12 +73,13 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
             await connection.OpenAsync(cancellationToken);
 
             const string sql = @"
-            SELECT COLUMN_NAME 
+            SELECT COLUMN_NAME, DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName";
+            WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName
+            ORDER BY ORDINAL_POSITION";
             var command = new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken);
-            var columns = await connection.QueryAsync<string>(command);
-            return [.. columns];
+            var rows = await connection.QueryAsync(command);
+            return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
         }
         catch (Exception ex)
         {

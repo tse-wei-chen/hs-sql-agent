@@ -29,7 +29,7 @@ public interface ISqlStrategy
     );
     Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
     Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default);
-    Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
+    Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
     Task<string> ExecuteDmlAsync(
         string? connectionString = null,
         DmlDefinition? dml = null,

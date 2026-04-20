@@ -699,7 +699,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     public abstract Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
     public abstract Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default);
-    public abstract Task<List<string>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
+    public abstract Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
 
     #endregion
 }
