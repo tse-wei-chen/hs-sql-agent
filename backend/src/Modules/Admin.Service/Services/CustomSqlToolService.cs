@@ -3,9 +3,6 @@ using Admin.Service.Data;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Microsoft.EntityFrameworkCore;
-// using SqlAgent.Service.Factories;
-// using SqlAgent.Service.Models;
-// using SqlAgent.Service.Enums;
 using Microsoft.Extensions.Configuration;
 using Admin.Service.Models;
 
