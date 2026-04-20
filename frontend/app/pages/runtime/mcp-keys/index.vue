@@ -20,6 +20,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { issueMcpKey, listMcpKeys, revokeMcpKey, testDbConnection } from '@/api/runtime'
+import { listCustomSqlTools, type CustomSqlTool } from '@/api/custom-tools'
 import PasswordInput from '@/components/PasswordInput.vue'
 
 definePageMeta({
@@ -38,6 +39,7 @@ interface McpKeyItem {
 }
 
 const keys = ref<McpKeyItem[]>([])
+const customTools = ref<CustomSqlTool[]>([])
 const loading = ref(false)
 const issuing = ref(false)
 const testing = ref(false)
@@ -59,13 +61,22 @@ const connectionTestResult = ref<{ success: boolean; errorMessage: string } | nu
 
 const issuedPlaintextKey = ref('')
 
-const toolOptions = [
+const baseToolOptions = [
 	{ label: 'Execute Query', value: 'execute_query_safe', risk: 'medium' },
 	{ label: 'Get Columns', value: 'get_columns', risk: 'low' },
 	{ label: 'Get Schemas', value: 'get_schemas', risk: 'low' },
 	{ label: 'Get Tables', value: 'get_tables', risk: 'low' },
 	{ label: 'Execute DML', value: 'execute_dml_safe', risk: 'high' },
 ]
+
+const toolOptions = computed(() => {
+	const customOptions = customTools.value.map(t => ({
+		label: `Tool: ${t.name}`,
+		value: t.name,
+		risk: t.type === 'DML' ? 'high' : 'medium'
+	}))
+	return [...baseToolOptions, ...customOptions]
+})
 
 const providerOptions = ['Global', 'Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird']
 
@@ -81,7 +92,12 @@ const selectedToolLabel = computed(() => {
 const load = async () => {
 	loading.value = true
 	try {
-		keys.value = await listMcpKeys()
+		const [keysResult, customToolsResult] = await Promise.all([
+			listMcpKeys(),
+			listCustomSqlTools()
+		])
+		keys.value = keysResult
+		customTools.value = customToolsResult
 	} finally {
 		loading.value = false
 	}

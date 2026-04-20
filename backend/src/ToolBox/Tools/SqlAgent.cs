@@ -1,12 +1,11 @@
-
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Admin.Service.Models;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
-using ToolBox.Models;
 using SqlAgent.Service.Models;
 using System.Text.Json;
+using Common.Models;
 
 namespace ToolBox.Tools;
 
