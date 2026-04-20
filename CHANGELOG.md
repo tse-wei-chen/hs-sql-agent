@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.10] - 2026-04-20
+### Feature
+- **Custom SQL Tools (Low-Code Tool Plugin System)**: Administrators can now define domain-specific SQL operations (Query or DML) directly from the Admin Panel, exposing them as new MCP tools to the AI agent.
+- **Dynamic Parameter Injection**: Introduced `{{parameterName}}` syntax for custom tools, allowing the AI to pass context-aware arguments into pre-defined SQL statements.
+- **Admin UI Enhancements**: Added a dedicated management interface for creating, testing, and managing Custom SQL Tools.
+- **Documentation Refactoring**: Major overhaul of `README.md` with a high-speed aesthetic, improved information architecture, and integrated Admin Panel snapshots.
 
 ## [1.3.9] - 2026-04-19
 ### Security Issue Fix
