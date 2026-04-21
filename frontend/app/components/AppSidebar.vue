@@ -70,6 +70,10 @@ const data = ref({
           title: "Custom Tools",
           url: "/runtime/custom-tools",
         },
+        {
+          title: "DB Management",
+          url: "/runtime/db-management",
+        },
       ],
     },
   ],
