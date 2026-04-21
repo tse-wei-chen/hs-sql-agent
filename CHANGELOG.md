@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.11] - 2026-04-21
+### Breaking Change
+- replace AES encryption with AesGcm for improved security and performance in connection string encryption. This change requires existing encrypted connection strings to be re-encrypted using the new AesGcm-based CryptoService implementation, as the encryption format and key management have been updated for enhanced security.
+
 ## [1.3.10] - 2026-04-20
 ### Feature
 - **Custom SQL Tools (Low-Code Tool Plugin System)**: Administrators can now define domain-specific SQL operations (Query or DML) directly from the Admin Panel, exposing them as new MCP tools to the AI agent.
