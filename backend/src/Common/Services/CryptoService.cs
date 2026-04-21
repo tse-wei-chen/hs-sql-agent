@@ -1,54 +1,64 @@
 using System.Security.Cryptography;
+using System.Text;
 using Common.Interfaces;
 
 namespace Common.Services;
 
 public class CryptoService : ICryptoService
 {
+    private const int NonceSize = 12; 
+    private const int TagSize = 16; 
+
     public string? EncryptText(string? plainText, byte[] secretKey)
     {
         if (string.IsNullOrWhiteSpace(plainText)) return plainText;
 
-        using var aes = Aes.Create();
-        aes.Key = SHA256.HashData(secretKey);
-        aes.GenerateIV();
+        byte[] key = SHA256.HashData(secretKey);
+        byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
+        
+        byte[] nonce = new byte[NonceSize];
+        RandomNumberGenerator.Fill(nonce);
 
-        using var ms = new MemoryStream();
-        ms.Write(aes.IV, 0, aes.IV.Length);
+        byte[] tag = new byte[TagSize];
+        byte[] cipherText = new byte[plainBytes.Length];
 
-        using (var encryptor = aes.CreateEncryptor(aes.Key, aes.IV))
-        using (var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write))
-        using (var sw = new StreamWriter(cs))
+        using (var aesGcm = new AesGcm(key, TagSize))
         {
-            sw.Write(plainText);
+            aesGcm.Encrypt(nonce, plainBytes, cipherText, tag);
         }
 
-        return Convert.ToBase64String(ms.ToArray());
+        byte[] result = new byte[NonceSize + TagSize + cipherText.Length];
+        Buffer.BlockCopy(nonce, 0, result, 0, NonceSize);
+        Buffer.BlockCopy(tag, 0, result, NonceSize, TagSize);
+        Buffer.BlockCopy(cipherText, 0, result, NonceSize + TagSize, cipherText.Length);
+
+        return Convert.ToBase64String(result);
     }
 
     public string? DecryptText(string? cipherText, byte[] secretKey)
     {
         if (string.IsNullOrWhiteSpace(cipherText)) return cipherText;
 
-        var fullCipher = Convert.FromBase64String(cipherText);
+        byte[] fullCipher = Convert.FromBase64String(cipherText);
 
-        using var aes = Aes.Create();
-        aes.Key = SHA256.HashData(secretKey);
-
-        int ivLength = aes.BlockSize / 8;
-        if (fullCipher.Length < ivLength)
+        if (fullCipher.Length < NonceSize + TagSize)
         {
             throw new CryptographicException("Invalid cipher text.");
         }
 
-        var iv = fullCipher.AsSpan(0, ivLength);
-        aes.IV = iv.ToArray();
+        byte[] key = SHA256.HashData(secretKey);
 
-        using var decryptor = aes.CreateDecryptor(aes.Key, aes.IV);
-        using var msDecrypt = new MemoryStream(fullCipher, ivLength, fullCipher.Length - ivLength);
-        using var csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read);
-        using var srDecrypt = new StreamReader(csDecrypt);
+        var nonce = fullCipher.AsSpan(0, NonceSize);
+        var tag = fullCipher.AsSpan(NonceSize, TagSize);
+        var cipherBytes = fullCipher.AsSpan(NonceSize + TagSize);
+        
+        byte[] decryptedBytes = new byte[cipherBytes.Length];
 
-        return srDecrypt.ReadToEnd();
+        using (var aesGcm = new AesGcm(key, TagSize))
+        {
+            aesGcm.Decrypt(nonce, cipherBytes, tag, decryptedBytes);
+        }
+
+        return Encoding.UTF8.GetString(decryptedBytes);
     }
 }
