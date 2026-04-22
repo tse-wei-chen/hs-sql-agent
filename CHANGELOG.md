@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.12] - 2026-04-22
+
+### Features
+- Added **Database Management** page.
+- Enabled direct association with existing databases when issuing **MCP API Keys**.
 
 ## [1.3.11] - 2026-04-21
 
