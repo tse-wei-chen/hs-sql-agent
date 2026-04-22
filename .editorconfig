@@ -26,3 +26,11 @@ indent_size = 4
 
 [*.yml]
 indent_style = space
+
+[*.vue]
+indent_style = space
+indent_size = 2
+
+[*.ts]
+indent_style = space
+indent_size = 2

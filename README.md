@@ -193,16 +193,21 @@ _Works with **Claude Desktop**, **VS Code (Cline/Roo)**, and **Cursor**._
 
 ### Setup
 
-1. **Clone**: 
+1. **Clone**:
+
 ```bash
 git clone https://github.com/tse-wei-chen/hs-sql-agent.git
 ```
+
 2. **Backend**:
+
 ```bash
 cp backend/src/ToolBox/appsettings.Example.json backend/src/ToolBox/appsettings.json
 dotnet run --project backend/src/ToolBox
 ```
+
 3. **Frontend**:
+
 ```bash
 cd frontend && pnpm install && pnpm dev
 ```
