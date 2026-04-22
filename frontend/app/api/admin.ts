@@ -1,18 +1,25 @@
-import { xiorInstance, xiorInstanceRefreshToken, xiorInstanceToken } from "./xiorInstance";
+import {
+  xiorInstance,
+  xiorInstanceRefreshToken,
+  xiorInstanceToken,
+} from "./xiorInstance";
 
 export const checkFirstRun = async () => {
-    try {
-        const response = await xiorInstance.get('/admin/first-run');
-        return response.data;
-    } catch (error) {
-        console.error("Error checking first run:", error);
-        throw error;
-    }
+  try {
+    const response = await xiorInstance.get("/admin/first-run");
+    return response.data;
+  } catch (error) {
+    console.error("Error checking first run:", error);
+    throw error;
+  }
 };
 
 export const signIn = async (email: string, password: string) => {
   try {
-    const response = await xiorInstance.post('/admin/sign-in', { email: email, password: password });
+    const response = await xiorInstance.post("/admin/sign-in", {
+      email: email,
+      password: password,
+    });
     return response.data;
   } catch (error) {
     console.error("Error signing in:", error);
@@ -22,7 +29,10 @@ export const signIn = async (email: string, password: string) => {
 
 export const signUp = async (email: string, password: string) => {
   try {
-    const response = await xiorInstance.post('/admin/sign-up', { email: email, password: password });
+    const response = await xiorInstance.post("/admin/sign-up", {
+      email: email,
+      password: password,
+    });
     return response.data;
   } catch (error) {
     console.error("Error signing up:", error);
@@ -30,13 +40,14 @@ export const signUp = async (email: string, password: string) => {
   }
 };
 
-
 export const refreshToken = async () => {
   try {
-    const response = await xiorInstanceRefreshToken.post('/admin/refresh-token');
+    const response = await xiorInstanceRefreshToken.post(
+      "/admin/refresh-token",
+    );
     return response.data;
   } catch (error) {
     console.error("Error refreshing token:", error);
     throw error;
-  };
-}
+  }
+};

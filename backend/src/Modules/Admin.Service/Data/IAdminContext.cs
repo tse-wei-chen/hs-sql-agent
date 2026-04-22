@@ -9,5 +9,6 @@ public interface IAdminContext
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<McpAccessKey> McpAccessKeys { get; }
     DbSet<CustomSqlTool> CustomSqlTools { get; }
+    DbSet<DbManagement> DbManagement { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -45,6 +45,7 @@ dotnet run
 ## Reporting Issues
 
 Please include:
+
 - Database provider and version
 - Steps to reproduce
 - Expected vs actual behaviour

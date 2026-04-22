@@ -1,0 +1,56 @@
+import { xiorInstanceToken } from "./xiorInstance";
+
+export interface DbManagement {
+  id: number;
+  name: string;
+  sqlProvider?: string | null;
+  host?: string | null;
+  port?: string | null;
+  username?: string | null;
+  passwordHash?: string | null;
+  database?: string | null;
+  createdAt: string;
+  createdBy?: string | null;
+  updatedAt: string;
+  updatedBy?: string | null;
+}
+
+export interface DbManagementRequest {
+  name: string;
+  sqlProvider: string;
+  host: string;
+  port: string;
+  username: string;
+  password?: string;
+  database: string;
+  createdBy?: string;
+  updatedBy?: string;
+}
+
+export const listDbManagements = async (): Promise<DbManagement[]> => {
+  const response = await xiorInstanceToken.get("/DbManagement");
+  return response.data;
+};
+
+export const getDbManagement = async (id: number): Promise<DbManagement> => {
+  const response = await xiorInstanceToken.get(`/DbManagement/${id}`);
+  return response.data;
+};
+
+export const createDbManagement = async (
+  payload: DbManagementRequest,
+): Promise<DbManagement> => {
+  const response = await xiorInstanceToken.post("/DbManagement", payload);
+  return response.data;
+};
+
+export const updateDbManagement = async (
+  id: number,
+  payload: DbManagementRequest,
+): Promise<void> => {
+  await xiorInstanceToken.put(`/DbManagement/${id}`, payload);
+};
+
+export const deleteDbManagement = async (id: number): Promise<void> => {
+  await xiorInstanceToken.delete(`/DbManagement/${id}`);
+};

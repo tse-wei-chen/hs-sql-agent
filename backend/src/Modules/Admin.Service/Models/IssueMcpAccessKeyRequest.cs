@@ -6,6 +6,8 @@ public class IssueMcpAccessKeyRequest
     public DateTime? ExpiresAt { get; set; }
     public string? AllowedTools { get; set; }
     public string? CorsAllowedOrigins { get; set; }
+    public int DbSettingMode { get; set; }
+    public int? DbManagementId { get; set; }
     public string? SqlProvider { get; set; }
     public string? Host { get; set; }
     public string? Port { get; set; }
