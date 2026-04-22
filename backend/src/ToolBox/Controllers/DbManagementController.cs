@@ -44,7 +44,7 @@ public class DbManagementController(
     [HttpGet("{id}")]
     public async Task<IActionResult> GetDbById(int id, CancellationToken cancellationToken)
     {
-        var result = await _dbManagementService.GetDbByIdAsync(id, cancellationToken);
+        var result = await _dbManagementService.GetDbByIdAsync(id, false, cancellationToken);
         if (result == null)
         {
             return NotFound();

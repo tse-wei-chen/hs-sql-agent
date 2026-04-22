@@ -5,6 +5,8 @@ export interface IssueMcpKeyRequest {
   expiresAt?: string | null;
   allowedTools?: string | null;
   corsAllowedOrigins?: string | null;
+  dbSettingMode?: 0 | 1;
+  dbManagementId?: number | null;
   sqlProvider?: string | null;
   host?: string | null;
   port?: string | null;
@@ -63,6 +65,8 @@ export const getRuntimeAuditDailySummary = async (days = 7) => {
 };
 
 export const testDbConnection = async (
+  dbSettingMode: 0 | 1,
+  dbManagementId: number | undefined,
   sqlProvider: string,
   host: string,
   port: string,
@@ -73,6 +77,8 @@ export const testDbConnection = async (
   const response = await xiorInstanceToken.post(
     "/runtime/mcp-keys/test-db-connection",
     {
+      dbSettingMode: dbSettingMode,
+      dbManagementId: dbManagementId,
       sqlProvider: sqlProvider,
       host: host,
       port: port,

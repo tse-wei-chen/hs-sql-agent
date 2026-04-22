@@ -11,7 +11,7 @@ namespace SqlAgent.Service.Services
     {
         private readonly IConfiguration _configuration = configuration;
         private readonly ISqlStrategyFactory _strategyFactory = strategyFactory;
-        public async Task<TestDbConnectionVM> TestDbConnectionAsync(TestDbConnectionRequest request, CancellationToken cancellationToken = default)
+        public async Task<TestDbConnectionVM> TestDbConnectionAsync(TestDbConnectionBase request, CancellationToken cancellationToken = default)
         {
             DbConnection? connection = null;
 

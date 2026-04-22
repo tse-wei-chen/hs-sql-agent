@@ -25,6 +25,7 @@ import {
   type DbManagement,
 } from "@/api/db-management";
 import { Database, Trash2, Edit2, Save } from "lucide-vue-next";
+import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 
 definePageMeta({
   layout: "default",
@@ -34,14 +35,6 @@ const dbs = ref<DbManagement[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
-const providerOptions = [
-  "Sqlite",
-  "Postgres",
-  "MySQL",
-  "MsSqlServer",
-  "Oracle",
-  "Firebird",
-];
 // Form state
 const form = ref({
   name: "",
@@ -164,7 +157,7 @@ onMounted(load);
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem
-                    v-for="provider in providerOptions"
+                    v-for="provider in PROVIDER_OPTIONS"
                     :key="provider"
                     :value="provider"
                   >

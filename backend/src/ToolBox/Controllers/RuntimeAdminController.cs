@@ -7,6 +7,9 @@ using Admin.Service.Models;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Enums;
+using Common.Interfaces;
+using Microsoft.Extensions.Options;
+using System.Text;
 
 namespace ToolBox.Controllers;
 
@@ -16,11 +19,17 @@ namespace ToolBox.Controllers;
 public class RuntimeAdminController(
     IMcpAccessKeyService keyService,
     IDbSetterService testDbConnection,
-    IAuditService auditService) : ControllerBase
+    IAuditService auditService,
+    IDbManagementService dbManagementService,
+    ICryptoService cryptoService,
+    IOptions<McpKeySettings> mcpKeySettings) : ControllerBase
 {
     private readonly IMcpAccessKeyService _keyService = keyService;
     private readonly IDbSetterService _testDbConnection = testDbConnection;
     private readonly IAuditService _auditService = auditService;
+    private readonly IDbManagementService _dbManagementService = dbManagementService;
+    private readonly ICryptoService _cryptoService = cryptoService;
+    private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
     [HttpGet("mcp-keys")]
     public async Task<IActionResult> ListKeys(CancellationToken cancellationToken)
@@ -36,6 +45,42 @@ public class RuntimeAdminController(
         {
             return BadRequest("Key name is required.");
         }
+        var conn = "";
+
+        switch (request.DbSettingMode)
+        {
+            case 0:
+                var dbc = await _dbManagementService.GetDbByIdAsync(request.DbManagementId ?? 0, true, cancellationToken);
+                if (dbc is DbManagementPwdVM pwdDbc)
+                {
+                    request.SqlProvider = pwdDbc.SqlProvider;
+                    conn = await _testDbConnection.BuildDbConnectionAsync(new BuildDbConnectionModel
+                    {
+                        Provider = pwdDbc.SqlProvider ?? SqlAgentToolType.Global.ToString(),
+                        Host = pwdDbc.Host,
+                        Port = pwdDbc.Port,
+                        Database = pwdDbc.Database,
+                        Username = pwdDbc.Username,
+                        Password = _cryptoService.DecryptText(pwdDbc.PasswordHash, _hmacSecret)
+                    }, cancellationToken);
+                }
+                break;
+            case 1:
+                conn = await _testDbConnection.BuildDbConnectionAsync(new BuildDbConnectionModel
+                {
+                    Provider = request.SqlProvider ?? SqlAgentToolType.Global.ToString(),
+                    Host = request.Host,
+                    Port = request.Port,
+                    Database = request.Database,
+                    Username = request.Username,
+                    Password = request.Password
+                }, cancellationToken);
+                break;
+
+            default:
+                conn = null;
+                break;
+        }
         var issueMcpAccessKeyModel = new IssueMcpAccessKeyModel
         {
             Name = request.Name,
@@ -43,15 +88,7 @@ public class RuntimeAdminController(
             AllowedTools = request.AllowedTools,
             CorsAllowedOrigins = request.CorsAllowedOrigins,
             SqlProvider = request.SqlProvider,
-            SqlConnectionString = await _testDbConnection.BuildDbConnectionAsync(new BuildDbConnectionModel
-            {
-                Provider = request.SqlProvider ?? SqlAgentToolType.Global.ToString(),
-                Host = request.Host,
-                Port = request.Port,
-                Database = request.Database,
-                Username = request.Username,
-                Password = request.Password
-            }, cancellationToken)
+            SqlConnectionString = conn
         };
         var actorId = GetActorId();
         var result = await _keyService.IssueKeyAsync(
@@ -99,6 +136,27 @@ public class RuntimeAdminController(
     [HttpPost("mcp-keys/test-db-connection")]
     public async Task<IActionResult> TestDbConnection([FromBody] TestDbConnectionRequest request, CancellationToken cancellationToken)
     {
+        if (request.DbSettingMode == 0)
+        {
+            if (request.DbManagementId == null)
+            {
+                return BadRequest("DbManagementId is required when DbSettingMode is Use Existing Connection.");
+            }
+            else
+            {
+                var dbc = await _dbManagementService.GetDbByIdAsync(request.DbManagementId.Value, true, cancellationToken);
+                if (dbc == null)
+                {
+                    return BadRequest($"No DB management entry found for ID {request.DbManagementId.Value}.");
+                }
+                request.SqlProvider = Enum.TryParse<SqlAgentToolType>(dbc.SqlProvider, out var providerEnum) ? providerEnum : null;
+                request.Host = dbc.Host;
+                request.Port = dbc.Port;
+                request.Username = dbc.Username;
+                request.Password = _cryptoService.DecryptText(((DbManagementPwdVM)dbc).PasswordHash, _hmacSecret);
+                request.Database = dbc.Database;
+            }
+        }
         var result = await _testDbConnection.TestDbConnectionAsync(request, cancellationToken);
         return Ok(new { success = result.IsSuccess, errorMessage = result.ErrorMessage });
     }

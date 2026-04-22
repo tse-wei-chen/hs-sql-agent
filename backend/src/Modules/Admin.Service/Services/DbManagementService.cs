@@ -37,12 +37,22 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
         return DbManagementVM.Projection.Compile().Invoke(entity);
     }
 
-    public async Task<DbManagementVM?> GetDbByIdAsync(int id, CancellationToken cancellationToken = default)
+    public async Task<DbManagementBase?> GetDbByIdAsync(int id, bool isPwd, CancellationToken cancellationToken = default)
     {
-        return await _context.DbManagement
-            .Where(db => db.Id == id)
-            .Select(DbManagementVM.Projection)
-            .FirstOrDefaultAsync(cancellationToken);
+        var query = _context.DbManagement.Where(db => db.Id == id);
+
+        if (isPwd)
+        {
+            return await query
+                .Select(DbManagementPwdVM.Projection)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+        else
+        {
+            return await query
+                .Select(DbManagementVM.Projection)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
     }
 
     public async Task<List<DbManagementVM>> GetAllDbsAsync(CancellationToken cancellationToken = default)

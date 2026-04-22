@@ -27,6 +27,9 @@ import {
 } from "@/api/runtime";
 import { listCustomSqlTools, type CustomSqlTool } from "@/api/custom-tools";
 import PasswordInput from "@/components/PasswordInput.vue";
+import { listDbManagements, type DbManagement } from "~/api/db-management";
+import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
+import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 
 definePageMeta({
   layout: "default",
@@ -45,6 +48,7 @@ interface McpKeyItem {
 
 const keys = ref<McpKeyItem[]>([]);
 const customTools = ref<CustomSqlTool[]>([]);
+const dbManagements = ref<DbManagement[]>([]);
 const loading = ref(false);
 const issuing = ref(false);
 const testing = ref(false);
@@ -55,6 +59,8 @@ const detail = ref<{
   expiresAt: string | null;
   allowedTools: string[];
   corsAllowedOrigins: string;
+  dbSettingMode: 0 | 1;
+  dbManagementId: number | null;
   sqlProvider: string;
   host: string;
   port: string;
@@ -66,6 +72,8 @@ const detail = ref<{
   expiresAt: null,
   allowedTools: [],
   corsAllowedOrigins: "",
+  dbSettingMode: 0,
+  dbManagementId: null,
   sqlProvider: "Global",
   host: "",
   port: "",
@@ -97,16 +105,6 @@ const toolOptions = computed(() => {
   return [...baseToolOptions, ...customOptions];
 });
 
-const providerOptions = [
-  "Global",
-  "Sqlite",
-  "Postgres",
-  "MySQL",
-  "MsSqlServer",
-  "Oracle",
-  "Firebird",
-];
-
 const selectedToolLabel = computed(() => {
   if (selectedTools.value.length === 0) {
     return "Global (no restriction)";
@@ -118,12 +116,15 @@ const selectedToolLabel = computed(() => {
 const load = async () => {
   loading.value = true;
   try {
-    const [keysResult, customToolsResult] = await Promise.all([
-      listMcpKeys(),
-      listCustomSqlTools(),
-    ]);
+    const [keysResult, customToolsResult, dbManagementsResult] =
+      await Promise.all([
+        listMcpKeys(),
+        listCustomSqlTools(),
+        listDbManagements(),
+      ]);
     keys.value = keysResult;
     customTools.value = customToolsResult;
+    dbManagements.value = dbManagementsResult;
   } finally {
     loading.value = false;
   }
@@ -150,6 +151,8 @@ const issue = async () => {
           ? detail.value.allowedTools.join(",")
           : null,
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
+      dbSettingMode: detail.value.dbSettingMode,
+      dbManagementId: detail.value.dbManagementId || null,
       sqlProvider:
         detail.value.sqlProvider === "Global" ? null : detail.value.sqlProvider,
       host: detail.value.host.trim() || null,
@@ -165,6 +168,8 @@ const issue = async () => {
       expiresAt: null,
       allowedTools: [],
       corsAllowedOrigins: "",
+      dbSettingMode: 0,
+      dbManagementId: null,
       sqlProvider: "Global",
       host: "",
       port: "",
@@ -185,6 +190,8 @@ const test = async () => {
     testing.value = true;
     connectionTestResult.value = null;
     const result = await testDbConnection(
+      detail.value.dbSettingMode,
+      detail.value.dbManagementId ?? undefined,
       detail.value.sqlProvider ?? undefined,
       detail.value.host ?? undefined,
       detail.value.port ?? undefined,
@@ -219,6 +226,21 @@ watch(
   () => detail.value.sqlProvider,
   (newVal, oldVal) => {
     if (newVal !== oldVal) {
+      detail.value.host = "";
+      detail.value.port = "";
+      detail.value.username = "";
+      detail.value.password = "";
+      detail.value.database = "";
+    }
+  },
+);
+
+watch(
+  () => detail.value.dbSettingMode,
+  (newVal, oldVal) => {
+    if (newVal !== oldVal) {
+      detail.value.dbManagementId = null;
+      detail.value.sqlProvider = "Global";
       detail.value.host = "";
       detail.value.port = "";
       detail.value.username = "";
@@ -267,7 +289,9 @@ onMounted(load);
                 </SelectContent>
               </Select>
             </Field>
-
+            <span class="md:col-span-2">
+              <hr />
+            </span>
             <Field v-if="detail.expiresAt === 'custom'" class="md:col-span-2">
               <FieldLabel for="customExpiresAt">Custom Expires At</FieldLabel>
               <Input
@@ -276,8 +300,37 @@ onMounted(load);
                 type="datetime-local"
               />
             </Field>
-
             <Field>
+              <FieldLabel>Db Setting</FieldLabel>
+              <RadioGroup v-model="detail.dbSettingMode" class="flex flex-col">
+                <div class="flex items-center space-x-2">
+                  <RadioGroupItem id="r1" :value="0" />
+                  <Label for="r1">Use Existing Connection</Label>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <RadioGroupItem id="r2" :value="1" />
+                  <Label for="r2">Configure Manually</Label>
+                </div>
+              </RadioGroup>
+            </Field>
+            <Field v-if="detail.dbSettingMode === 0">
+              <FieldLabel>Database Connection</FieldLabel>
+              <Select v-model="detail.dbManagementId">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="Select database connection" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="db in dbManagements"
+                    :key="db.id"
+                    :value="db.id"
+                  >
+                    {{ db.name }} ({{ db.sqlProvider }})
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field v-if="detail.dbSettingMode === 1">
               <FieldLabel>SQL Provider Override</FieldLabel>
               <Select v-model="detail.sqlProvider">
                 <SelectTrigger class="w-full">
@@ -285,7 +338,7 @@ onMounted(load);
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem
-                    v-for="provider in providerOptions"
+                    v-for="provider in PROVIDER_OPTIONS"
                     :key="provider"
                     :value="provider"
                   >
@@ -299,6 +352,84 @@ onMounted(load);
               </p>
             </Field>
 
+            <Field
+              v-if="
+                [
+                  'Postgres',
+                  'MySQL',
+                  'MsSqlServer',
+                  'Oracle',
+                  'Firebird',
+                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
+              "
+            >
+              <FieldLabel>Host</FieldLabel>
+              <Input v-model="detail.host" placeholder="Host" />
+            </Field>
+            <Field
+              v-if="
+                [
+                  'Postgres',
+                  'MySQL',
+                  'MsSqlServer',
+                  'Oracle',
+                  'Firebird',
+                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
+              "
+            >
+              <FieldLabel>Port</FieldLabel>
+              <Input v-model="detail.port" placeholder="Port" />
+            </Field>
+            <Field
+              v-if="
+                [
+                  'Postgres',
+                  'MySQL',
+                  'MsSqlServer',
+                  'Oracle',
+                  'Firebird',
+                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
+              "
+            >
+              <FieldLabel>Username</FieldLabel>
+              <Input v-model="detail.username" placeholder="Username" />
+            </Field>
+            <Field
+              v-if="
+                [
+                  'Postgres',
+                  'MySQL',
+                  'MsSqlServer',
+                  'Oracle',
+                  'Firebird',
+                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
+              "
+            >
+              <FieldLabel>Password</FieldLabel>
+              <PasswordInput
+                v-model="detail.password"
+                type="password"
+                placeholder="Password"
+              />
+            </Field>
+            <Field
+              v-if="
+                [
+                  'Sqlite',
+                  'Postgres',
+                  'MySQL',
+                  'MsSqlServer',
+                  'Oracle',
+                  'Firebird',
+                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
+              "
+            >
+              <FieldLabel>Database</FieldLabel>
+              <Input v-model="detail.database" placeholder="Database" />
+            </Field>
+            <span class="md:col-span-2">
+              <hr />
+            </span>
             <Field>
               <FieldLabel>Allowed Tools (multi-select)</FieldLabel>
               <Select v-model="detail.allowedTools" multiple>
@@ -332,83 +463,6 @@ onMounted(load);
                 </SelectContent>
               </Select>
             </Field>
-
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider)
-              "
-            >
-              <FieldLabel>Host</FieldLabel>
-              <Input v-model="detail.host" placeholder="Host" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider)
-              "
-            >
-              <FieldLabel>Port</FieldLabel>
-              <Input v-model="detail.port" placeholder="Port" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider)
-              "
-            >
-              <FieldLabel>Username</FieldLabel>
-              <Input v-model="detail.username" placeholder="Username" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider)
-              "
-            >
-              <FieldLabel>Password</FieldLabel>
-              <PasswordInput
-                v-model="detail.password"
-                type="password"
-                placeholder="Password"
-              />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Sqlite',
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider)
-              "
-            >
-              <FieldLabel>Database</FieldLabel>
-              <Input v-model="detail.database" placeholder="Database" />
-            </Field>
-
             <Field class="md:col-span-2">
               <FieldLabel for="corsAllowedOrigins"
                 >CORS Allowed Origins</FieldLabel
@@ -424,7 +478,7 @@ onMounted(load);
               </p>
             </Field>
           </FieldGroup>
-          <span class="item-center flex justify-start gap-2">
+          <span class="item-center flex justify-end gap-2">
             <TooltipProvider>
               <Tooltip
                 :disabled="
