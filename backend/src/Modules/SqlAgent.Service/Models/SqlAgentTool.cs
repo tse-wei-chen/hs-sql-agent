@@ -131,7 +131,7 @@ public class HavingCondition
 
 public class QueryDefinition
 {
-    [Description("The table name for this query definition.")]
+    [Description("The table name for this query definition. (use schema-qualified table name)")]
     public string TableName { get; set; } = string.Empty;
     [Description("The subquery to select from (Optional). If set, its results will be treated as the source table.")]
     public QueryDefinition? FromQuery { get; set; }
@@ -189,7 +189,7 @@ public class DmlDefinition
 {
     [Description("The operation to perform: insert, update, or delete.")]
     public string Operation { get; set; } = "insert";
-    [Description("The table name to operate on.")]
+    [Description("The table name to operate on. (use schema-qualified table name)")]
     public string TableName { get; set; } = string.Empty;
     [Description("Where conditions for update or delete.")]
     public List<WhereCondition>? WhereConditions { get; set; }
