@@ -199,6 +199,8 @@ _Works with **Claude Desktop**, **VS Code (Cline/Roo)**, and **Cursor**._
 
 ```bash
 git clone https://github.com/tse-wei-chen/hs-sql-agent.git
+
+git submodule update --init --recursive
 ```
 
 2. **Backend**:
