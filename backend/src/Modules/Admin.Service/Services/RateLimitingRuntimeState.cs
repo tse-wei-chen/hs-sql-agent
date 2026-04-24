@@ -1,12 +1,12 @@
-using Microsoft.Extensions.Configuration;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Microsoft.Extensions.Configuration;
 
 namespace Admin.Service.Services;
 
 public class RateLimitingRuntimeState(IConfiguration configuration) : IRateLimitingRuntimeState
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private RateLimitingSettings _current = new()
     {
         PermitLimit = ParseInt(configuration["RateLimiting:PermitLimit"], 0),

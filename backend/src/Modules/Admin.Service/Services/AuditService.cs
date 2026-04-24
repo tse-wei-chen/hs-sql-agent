@@ -1,8 +1,8 @@
-using Microsoft.EntityFrameworkCore;
 using Admin.Service.Data;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace Admin.Service.Services;
 
@@ -145,9 +145,8 @@ public class AuditService(IAdminContext context) : IAuditService
             }
         }
 
-        return bucket
+        return [.. bucket
             .OrderBy(x => x.Key)
-            .Select(x => x.Value)
-            .ToList();
+            .Select(x => x.Value)];
     }
 }

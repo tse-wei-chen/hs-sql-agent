@@ -175,7 +175,7 @@ const apply = () => {
         </div>
 
         <!-- Tab Content -->
-        <div class="min-h-[200px]">
+        <div class="min-h-50">
           <!-- Columns Tab -->
           <SqlBuilderTabColumns
             v-if="activeTab === 'columns'"
