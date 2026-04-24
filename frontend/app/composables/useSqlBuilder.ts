@@ -10,7 +10,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const dbId = ref<number | null>(null);
   const schema = ref("_default_");
   const table = ref("");
-  const mainAlias = ref("");
 
   const availableSchemas = ref<string[]>([]);
   const availableTables = ref<string[]>([]);
@@ -31,7 +30,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const joins = ref<
     {
       table: string;
-      alias: string;
       type: string;
       first: string;
       operator: string;
@@ -61,7 +59,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const addJoin = () =>
     joins.value.push({
       table: "",
-      alias: "",
       type: "INNER",
       first: "",
       operator: "=",
@@ -77,7 +74,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const onDbChange = async () => {
     schema.value = "_default_";
     table.value = "";
-    mainAlias.value = "";
     availableSchemas.value = [];
     availableTables.value = [];
     availableColumns.value = [];
@@ -148,7 +144,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const joinColumnOptions = (join: any) => {
     const fullTable = join.table.split(" ")[0];
     const cols = joinTableColumns.value[fullTable] || [];
-    let prefix = join.alias;
+    let prefix = "";
     if (!prefix && join.table) {
       const parts = join.table.split(".");
       prefix = parts[parts.length - 1];
@@ -158,7 +154,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
 
   const mainTableColumnNames = computed(() => {
     const cols = availableColumns.value.map((c) => c.name);
-    let prefix = mainAlias.value;
+    let prefix = "";
     if (!prefix && table.value) {
       const parts = table.value.split(".");
       prefix = parts[parts.length - 1] || "";
@@ -180,53 +176,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       )
       : availableTables.value;
   });
-
-  // --- Prefix Update Reactivity ---
-  const updateAllFieldsPrefix = (oldPrefix: string, newPrefix: string) => {
-    if (!oldPrefix || !newPrefix || oldPrefix === newPrefix) return;
-    const oldDot = oldPrefix + ".";
-    const newDot = newPrefix + ".";
-    const replace = (s: string) =>
-      s.startsWith(oldDot) ? newDot + s.substring(oldDot.length) : s;
-
-    selectColumns.value.forEach((c) => (c.field = replace(c.field)));
-    whereConditions.value.forEach((w) => (w.field = replace(w.field)));
-    orderBys.value.forEach((o) => (o.field = replace(o.field)));
-    joins.value.forEach((j) => {
-      j.first = replace(j.first);
-      j.second = replace(j.second);
-    });
-  };
-
-  watch(mainAlias, (newVal, oldVal) => {
-    const oldPrefix = oldVal || table.value;
-    const newPrefix = newVal || table.value;
-    updateAllFieldsPrefix(oldPrefix, newPrefix);
-  });
-
-  const prevJoins = ref<{ table: string; alias: string }[]>([]);
-  watch(
-    joins,
-    (newVal) => {
-      newVal.forEach((j, i) => {
-        const prev = prevJoins.value[i];
-        if (prev) {
-          const oldPrefix = prev.alias || prev.table.split(" ")[0];
-          const newPrefix = j.alias || j.table.split(" ")[0];
-          if (
-            oldPrefix &&
-            newPrefix &&
-            oldPrefix !== newPrefix &&
-            oldPrefix !== (mainAlias.value || table.value)
-          ) {
-            updateAllFieldsPrefix(oldPrefix, newPrefix);
-          }
-        }
-      });
-      prevJoins.value = newVal.map((j) => ({ table: j.table, alias: j.alias }));
-    },
-    { deep: true },
-  );
 
   // --- Autofill ---
   const autofillColumns = () => {
@@ -256,7 +205,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       return JSON.stringify(
         {
           tableName: targetTableName,
-          alias: mainAlias.value,
           distinct: distinct.value,
           selectColumns:
             selectColumns.value.length > 0
@@ -280,7 +228,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
           havingConditions: [],
           joins: joins.value.map((j) => ({
             table: j.table,
-            alias: j.alias,
             type: j.type,
             first: j.first,
             operator: j.operator,
@@ -318,7 +265,6 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     dbId,
     schema,
     table,
-    mainAlias,
     availableSchemas,
     availableTables,
     availableColumns,

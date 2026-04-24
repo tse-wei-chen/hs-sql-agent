@@ -15,7 +15,6 @@ const props = defineProps<{
   dbId: number | null;
   schema: string;
   table: string;
-  mainAlias: string;
   availableSchemas: string[];
   availableTables: string[];
 }>();
@@ -24,7 +23,6 @@ const emit = defineEmits<{
   (e: "update:dbId", val: number | null): void;
   (e: "update:schema", val: string): void;
   (e: "update:table", val: string): void;
-  (e: "update:mainAlias", val: string): void;
   (e: "dbChange"): void;
   (e: "schemaChange"): void;
   (e: "tableChange"): void;
@@ -33,7 +31,7 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="grid grid-cols-1 sm:grid-cols-4 gap-4 border p-4 rounded-lg bg-muted/10"
+    class="grid grid-cols-1 sm:grid-cols-3 gap-4 border p-4 rounded-lg bg-muted/10"
   >
     <Field>
       <FieldLabel class="text-xs">Database</FieldLabel>
@@ -103,15 +101,6 @@ const emit = defineEmits<{
           }}</SelectItem>
         </SelectContent>
       </Select>
-    </Field>
-    <Field>
-      <FieldLabel class="text-xs">Alias</FieldLabel>
-      <Input
-        :model-value="mainAlias"
-        @update:model-value="(val) => emit('update:mainAlias', val as string)"
-        placeholder="Alias (e.g. u)"
-        class="h-8 text-xs"
-      />
     </Field>
   </div>
 </template>

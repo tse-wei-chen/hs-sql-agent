@@ -15,7 +15,6 @@ import SqlBuilderSection from "./SqlBuilderSection.vue";
 const props = defineProps<{
   joins: {
     table: string;
-    alias: string;
     type: string;
     first: string;
     operator: string;
@@ -72,11 +71,6 @@ const emit = defineEmits<{
           placeholder="Target Table"
           class="flex-1"
           @update:model-value="emit('fetchColumns', i)"
-        />
-        <Input
-          v-model="j.alias"
-          placeholder="Alias (e.g. o)"
-          class="h-8 text-xs w-24"
         />
         <Button
           variant="ghost"

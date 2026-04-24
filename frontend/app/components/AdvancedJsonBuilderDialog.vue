@@ -45,7 +45,6 @@ const {
   dbId,
   schema,
   table,
-  mainAlias,
   availableSchemas,
   availableTables,
   availableColumns,
@@ -134,7 +133,6 @@ const apply = () => {
           v-model:db-id="dbId"
           v-model:schema="schema"
           v-model:table="table"
-          v-model:main-alias="mainAlias"
           :dbs="dbs"
           :available-schemas="availableSchemas"
           :available-tables="availableTables"
