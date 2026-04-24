@@ -40,7 +40,7 @@ export default defineNuxtConfig({
     },
   },
 
-  modules: ["shadcn-nuxt"],
+  modules: ["shadcn-nuxt", "nuxt-codemirror"],
   shadcn: {
     prefix: "",
     componentDir: "@/components/ui",

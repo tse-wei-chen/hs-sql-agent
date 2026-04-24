@@ -30,6 +30,7 @@ import PasswordInput from "@/components/PasswordInput.vue";
 import { listDbManagements, type DbManagement } from "~/api/db-management";
 import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
 import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
+import { KeyRound } from "lucide-vue-next";
 
 definePageMeta({
   layout: "default",
@@ -543,6 +544,7 @@ onMounted(load);
               class="w-full md:w-auto"
               @click.prevent="issue"
             >
+              <KeyRound />
               {{ issuing ? "Issuing..." : "Issue Key" }}
             </Button>
           </span>

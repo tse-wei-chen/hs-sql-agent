@@ -54,3 +54,29 @@ export const updateDbManagement = async (
 export const deleteDbManagement = async (id: number): Promise<void> => {
   await xiorInstanceToken.delete(`/DbManagement/${id}`);
 };
+
+export const getSchemas = async (id: number): Promise<string[]> => {
+  const response = await xiorInstanceToken.get(`/DbManagement/${id}/schemas`);
+  return response.data;
+};
+
+export const getTables = async (
+  id: number,
+  schema: string = "",
+): Promise<string[]> => {
+  const response = await xiorInstanceToken.get(`/DbManagement/${id}/tables`, {
+    params: { schema },
+  });
+  return response.data;
+};
+
+export const getColumns = async (
+  id: number,
+  table: string,
+  schema: string = "",
+): Promise<{ Name: string; DataType: string }[]> => {
+  const response = await xiorInstanceToken.get(`/DbManagement/${id}/columns`, {
+    params: { schema, table },
+  });
+  return response.data;
+};
