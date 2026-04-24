@@ -1,11 +1,11 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Admin.Service.Interfaces;
-using ToolBox.Background;
 using Admin.Service.Models;
 using Common.Models;
 using Microsoft.Extensions.Caching.Memory;
-using System.Security.Cryptography;
-using System.Text.Json;
-using System.Text;
+using ToolBox.Background;
 
 namespace ToolBox.Middleware;
 
@@ -18,7 +18,7 @@ public class McpAccessKeyAuthMiddleware(
     ILogger<McpAccessKeyAuthMiddleware> logger) : IMiddleware
 {
     private const int StripedLockCount = 64;
-    private static readonly SemaphoreSlim[] StripedLocks = Enumerable.Range(0, StripedLockCount).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+    private static readonly SemaphoreSlim[] StripedLocks = [.. Enumerable.Range(0, StripedLockCount).Select(_ => new SemaphoreSlim(1, 1))];
     private static readonly TimeSpan CacheExpiry = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NegativeCacheExpiry = TimeSpan.FromMinutes(1);
     private static readonly byte[] UnauthorizedResponseBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { error = "Invalid MCP access key." }));
@@ -81,8 +81,7 @@ public class McpAccessKeyAuthMiddleware(
         context.Items[McpContextItemKeys.CorsAllowedOrigins] = validation.CorsAllowedOrigins ?? string.Empty;
         context.Items[McpContextItemKeys.SqlProvider] = provider;
         context.Items[McpContextItemKeys.SqlConnectionString] = connString;
-
-        if (!TryApplyCorsPolicy(context, validation.CorsAllowedOriginsSet, out var corsError))
+        if (!TryApplyCorsPolicy(context, validation.CorsAllowedOriginsSet, out _))
         {
             await WriteForbiddenAsync(context, ForbiddenResponseBytes);
             await AuditFailedAsync(context, "cors_origin_not_allowed", context.RequestAborted);
@@ -91,7 +90,10 @@ public class McpAccessKeyAuthMiddleware(
 
         if (!_lastUsedQueue.TryEnqueue(validation.KeyId.Value))
         {
-            _logger.LogWarning("Skipping MCP key last-used update because queue is full. keyId={KeyId}", validation.KeyId.Value);
+            if (_logger.IsEnabled(LogLevel.Warning))
+            {
+                _logger.LogWarning("Skipping MCP key last-used update because queue is full. keyId={KeyId}", validation.KeyId.Value);
+            }
         }
 
 

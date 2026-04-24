@@ -1,29 +1,22 @@
-using Admin.Service.Data;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
-using Admin.Service.Models;
-using Admin.Service.Interfaces;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using Microsoft.Extensions.Configuration;
+using Admin.Service.Data;
 using Admin.Service.Data.Entites;
+using Admin.Service.Interfaces;
+using Admin.Service.Models;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 
 namespace Admin.Service.Services;
 
-public class AdminService : IAdminService
+public class AdminService(IAdminContext context, IOptions<JwtSettings> jwtSettings, IConfiguration configuration) : IAdminService
 {
-    private readonly IAdminContext _context;
-    private readonly JwtSettings _jwtSettings;
-    private readonly IConfiguration _configuration;
-
-    public AdminService(IAdminContext context, IOptions<JwtSettings> jwtSettings, IConfiguration configuration)
-    {
-        _context = context;
-        _jwtSettings = jwtSettings.Value;
-        _configuration = configuration;
-    }
+    private readonly IAdminContext _context = context;
+    private readonly JwtSettings _jwtSettings = jwtSettings.Value;
+    private readonly IConfiguration _configuration = configuration;
 
     public async Task<bool> IsFirstRunAsync()
     {
@@ -112,18 +105,15 @@ public class AdminService : IAdminService
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id.ToString() == userId);
 
-        if (user is null)
-        {
-            throw new UnauthorizedAccessException("User not found.");
-        }
-
-        return new PermissionVM
-        {
-            UserName = user.Username,
-            Email = user.Mail,
-            AccessToken = GenerateAccessToken(user.Id, user.Username, user.Mail),
-            RefreshToken = GenerateRefreshToken(user.Id, user.Username, user.Mail)
-        };
+        return user is null
+            ? throw new UnauthorizedAccessException("User not found.")
+            : new PermissionVM
+            {
+                UserName = user.Username,
+                Email = user.Mail,
+                AccessToken = GenerateAccessToken(user.Id, user.Username, user.Mail),
+                RefreshToken = GenerateRefreshToken(user.Id, user.Username, user.Mail)
+            };
     }
 
     private string GenerateAccessToken(int userId, string userName, string email)

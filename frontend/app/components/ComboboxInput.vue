@@ -67,7 +67,7 @@ watch(open, (isOpen) => {
       </Button>
     </PopoverTrigger>
     <!-- We use SameWidth as trigger for PopoverContent if possible, but w-[200px] or dynamic -->
-    <PopoverContent class="p-0 min-w-[200px]" align="start">
+    <PopoverContent class="p-0 min-w-50" align="start">
       <Command>
         <CommandInput
           placeholder="Search or type custom value..."

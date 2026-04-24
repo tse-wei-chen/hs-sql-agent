@@ -1,12 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Admin.Service.Data;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Admin.Service.Services;
 
@@ -227,7 +227,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
         return $"{parsed.Scheme.ToLowerInvariant()}://{parsed.Host.ToLowerInvariant()}{portPart}";
     }
 
-    private static IReadOnlySet<string>? ParseCorsAllowedOrigins(string? corsAllowedOrigins)
+    private static HashSet<string>? ParseCorsAllowedOrigins(string? corsAllowedOrigins)
     {
         if (string.IsNullOrWhiteSpace(corsAllowedOrigins))
         {
