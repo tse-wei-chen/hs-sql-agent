@@ -1,52 +1,36 @@
-# Contributing to hs-sql-agent
+# Contribution Guidelines
 
-Thank you for your interest in contributing! Please read this guide before submitting issues or pull requests.
+Thank you for your interest in this project! We welcome any suggestions and contributions regarding code, documentation, testing, or design. The following instructions are intended to make the participation process clear, simple, and traceable.
 
-## Prerequisites
+## Overview
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- A supported database (SQLite, PostgreSQL, or MySQL .......) for local testing
+This project is a collaborative effort. All changes are reviewed and merged into the `main` branch through GitHub **Pull Requests (PRs)**. Before submitting, please ensure your modifications have been tested locally and are clearly described.
 
-## Development Setup
+## How to Contribute (Quick Flow)
 
-```bash
-git clone https://github.com/tse-wei-chen/hs-sql-agent.git
-cd hs-sql-agent
-dotnet restore
-```
+1. **Fork** this project on GitHub.
+2. **Implement** your changes directly in your fork and include necessary tests or documentation updates.
+3. **Run** the project locally to verify all tests pass.
+4. **Open a Pull Request**, clearly explaining the changes, your motivation, and how you tested the code in the PR description.
 
-Copy `appsettings.sample.json` and configure your local database connection, then run:
+*Tip: Keeping a single PR focused on one specific task makes it easier to review and merge.*
 
-```bash
-cd backend/src/ToolBox
-dotnet run
-```
+## Issues (Bug Reports & Suggestions)
 
-## Project Structure
+To report a bug or start a discussion, please create an **Issue** on GitHub. We recommend providing the following:
 
-- `src/Common` — shared models and services used across modules
-- `src/Modules` — core business logic, including database strategies (see SqlAgent.Service)
-- `src/ToolBox` — MCP server, tools, controllers, middleware
+- **Title**: A concise summary of the problem.
+- **Background**: Context or use cases where the issue occurs.
+- **Reproduction Steps**: Minimal steps or code snippets to reproduce the issue.
+- **Expected vs. Actual Behavior**: A description of the discrepancy.
+- **Environment Info**: Version, OS, input data, and any relevant error messages.
 
-## Adding a New Database Strategy
+Detailed yet concise reports help accelerate the resolution process.
 
-1. Create a class in `src/Modules/SqlAgent.Service/Strategies/` that extends `BaseSqlStrategy`
-2. Implement `CreateConnection` and `CreateCompiler`
-3. Add the new value to `SqlAgentToolType` enum in `src/Modules/SqlAgent.Service/Enums/`
-4. Register the strategy in `SqlStrategyFactory` in `src/Modules/SqlAgent.Service/Factories/`
+## Code Style and Testing
 
-## Pull Request Guidelines
+Please adhere to the project's existing coding styles and naming conventions. If you introduce third-party packages or perform significant refactoring, please explain the reasoning and any alternatives considered in your PR.
 
-- Keep changes focused — one feature or fix per PR
-- Follow existing code style (C# nullable enabled, implicit usings)
-- Add or update tests where applicable
-- Ensure `dotnet build` succeeds before submitting
+## License
 
-## Reporting Issues
-
-Please include:
-
-- Database provider and version
-- Steps to reproduce
-- Expected vs actual behaviour
-- Any relevant MCP tool input/output
+By contributing, you agree that your contributions will be licensed under the project's **Apache License 2.0**. For more details, please refer to the `LICENSE` file in the root directory. If you have questions regarding licensing, please contact the maintainers beforehand.

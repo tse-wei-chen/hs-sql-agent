@@ -23,6 +23,10 @@ using System.Reflection;
 using Common.Models;
 using System.Text.Json.Serialization;
 using System.Diagnostics.CodeAnalysis;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using Admin.Service.Validators;
+
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -237,6 +241,9 @@ builder.Services.AddControllers().AddJsonOptions(options =>
     options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
 });
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddValidatorsFromAssemblyContaining<SignInRequestValidator>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("DevCors", policy =>

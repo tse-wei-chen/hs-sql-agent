@@ -25,17 +25,8 @@ public class AdminService(IAdminContext context, IOptions<JwtSettings> jwtSettin
 
     public async Task<PermissionVM> SignInAsync(SignInRequest request)
     {
-        if (request is null)
-        {
-            throw new ArgumentException("Request body is required.");
-        }
-
-        var email = request.Email?.Trim();
-        var password = request.Password?.Trim();
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-        {
-            throw new ArgumentException("Email and password are required.");
-        }
+        var email = request.Email.Trim();
+        var password = request.Password.Trim();
 
         var user = await _context.SuperUsers
             .AsNoTracking()
@@ -57,17 +48,8 @@ public class AdminService(IAdminContext context, IOptions<JwtSettings> jwtSettin
 
     public async Task<PermissionVM> SignUpAsync(SignUpRequest request)
     {
-        if (request is null)
-        {
-            throw new ArgumentException("Request body is required.");
-        }
-
-        var email = request.Email?.Trim();
-        var password = request.Password?.Trim();
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-        {
-            throw new ArgumentException("Email and password are required.");
-        }
+        var email = request.Email.Trim();
+        var password = request.Password.Trim();
 
         if (await _context.SuperUsers.AnyAsync())
         {
