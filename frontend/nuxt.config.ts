@@ -40,7 +40,7 @@ export default defineNuxtConfig({
     },
   },
 
-  modules: ["shadcn-nuxt", '@vee-validate/nuxt'],
+  modules: ["shadcn-nuxt", '@vee-validate/nuxt', "nuxt-codemirror"],
   veeValidate: {
     autoImports: true,
     componentNames: {

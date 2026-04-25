@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.13] - 2026-04-24
+
+### Features
+
+- **Visual SQL Builder**: Introduced a comprehensive GUI for building SQL Query JSON definitions, allowing users to visually construct complex tools
+
+### Refactor
+
+- **SQL Builder Simplification**: Removed mandatory table alias (`mainAlias`) logic from the SQL builder to simplify the user interface and generated JSON structure.
+
 ## [1.3.12] - 2026-04-22
 
 ### Features
@@ -20,7 +30,7 @@ All notable changes to this project will be documented in this file.
 - **Custom SQL Tools (Low-Code Tool Plugin System)**: Administrators can now define domain-specific SQL operations (Query or DML) directly from the Admin Panel, exposing them as new MCP tools to the AI agent.
 - **Dynamic Parameter Injection**: Introduced `{{parameterName}}` syntax for custom tools, allowing the AI to pass context-aware arguments into pre-defined SQL statements.
 - **Admin UI Enhancements**: Added a dedicated management interface for creating, testing, and managing Custom SQL Tools.
-- **Documentation Refactoring**: Major overhaul of `README.md` with a high-speed aesthetic, improved information architecture, and integrated Admin Panel snapshots.
+- **Documentation Refactoring**: Major overhaul of `README.md` with a high-speed aesthetic, improed information architecture, and integrated Admin Panel snapshots.
 
 ## [1.3.9] - 2026-04-19
 

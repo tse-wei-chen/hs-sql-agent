@@ -10,6 +10,7 @@
 		"postinstall": "nuxt prepare"
 	},
 	"dependencies": {
+		"@codemirror/lang-json": "^6.0.2",
 		"@unovis/ts": "^1.6.4",
 		"@unovis/vue": "^1.6.4",
 		"@vee-validate/nuxt": "^4.15.1",
@@ -23,6 +24,7 @@
 		"clsx": "^2.1.1",
 		"lucide-vue-next": "^0.554.0",
 		"nuxt": "^4.4.2",
+		"nuxt-codemirror": "^0.0.20",
 		"reka-ui": "^2.9.6",
 		"shadcn-nuxt": "2.3.3",
 		"tailwind-merge": "^3.5.0",

@@ -43,7 +43,7 @@ public class QueryValueParserService : IQueryValueParserService
 
         if (value is JsonElement je && je.ValueKind == JsonValueKind.Array)
         {
-            values = je.EnumerateArray().Select(UnwrapJsonElement).Cast<object>().ToArray();
+            values = [.. je.EnumerateArray().Select(UnwrapJsonElement).Cast<object>()];
             return values.Any();
         }
 
@@ -61,8 +61,8 @@ public class QueryValueParserService : IQueryValueParserService
         if (value is string str)
         {
             var trimmed = str.Trim();
-            if (trimmed.StartsWith("(") && trimmed.EndsWith(")")) trimmed = trimmed[1..^1];
-            if (trimmed.StartsWith("[") && trimmed.EndsWith("]")) trimmed = trimmed[1..^1];
+            if (trimmed.StartsWith('(') && trimmed.EndsWith(')')) trimmed = trimmed[1..^1];
+            if (trimmed.StartsWith('[') && trimmed.EndsWith(']')) trimmed = trimmed[1..^1];
 
             var parts = trimmed
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

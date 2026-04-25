@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, computed } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -25,12 +25,18 @@ import {
   deleteCustomSqlTool,
   type CustomSqlTool,
 } from "@/api/custom-tools";
-import { Plus, Trash2, Edit2, Save, X } from "lucide-vue-next";
-
+import {
+  listDbManagements,
+  getSchemas,
+  getTables,
+  getColumns,
+  type DbManagement,
+} from "@/api/db-management";
+import { Plus, Trash2, Edit2, Save, X, Wand2 } from "lucide-vue-next";
+import { json } from "@codemirror/lang-json";
 definePageMeta({
   layout: "default",
 });
-
 const tools = ref<CustomSqlTool[]>([]);
 const loading = ref(false);
 const saving = ref(false);
@@ -44,6 +50,44 @@ const form = ref({
   definitionJson: "",
   parameters: [] as { name: string; type: string; description: string }[],
 });
+
+// Assistant State
+const dbs = ref<DbManagement[]>([]);
+
+const loadDbs = async () => {
+  try {
+    dbs.value = await listDbManagements();
+  } catch (e) {
+    console.error("Failed to load DBs", e);
+  }
+};
+
+const isAdvancedBuilderOpen = ref(false);
+
+const onAdvancedBuilderApply = (json: string) => {
+  form.value.definitionJson = json;
+  // Trigger format
+  formatJson();
+};
+
+const isJsonValid = computed(() => {
+  if (!form.value.definitionJson) return true;
+  try {
+    JSON.parse(form.value.definitionJson);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+const formatJson = () => {
+  if (isJsonValid.value && form.value.definitionJson) {
+    try {
+      const parsed = JSON.parse(form.value.definitionJson);
+      form.value.definitionJson = JSON.stringify(parsed, null, 2);
+    } catch {}
+  }
+};
 
 const load = async () => {
   loading.value = true;
@@ -140,7 +184,21 @@ const remove = async (id: number) => {
   }
 };
 
-onMounted(load);
+watch(
+  () => form.value.type,
+  (newVal, oldVal) => {
+    if (newVal !== oldVal) {
+      form.value.definitionJson = "";
+      form.value.parameters = [];
+      isAdvancedBuilderOpen.value = false;
+    }
+  },
+);
+
+onMounted(async () => {
+  await load();
+  await loadDbs();
+});
 </script>
 
 <template>
@@ -195,17 +253,64 @@ onMounted(load);
             </Field>
 
             <Field class="md:col-span-2">
-              <FieldLabel for="definition">SQL Definition (JSON)</FieldLabel>
+              <div class="flex items-center justify-between mb-2">
+                <FieldLabel for="definition" class="mb-0"
+                  >SQL Definition (JSON)</FieldLabel
+                >
+                <div class="flex items-center gap-2">
+                  <Button
+                    v-if="form.type === 'Query'"
+                    variant="default"
+                    size="sm"
+                    class="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
+                    @click="isAdvancedBuilderOpen = true"
+                    type="button"
+                  >
+                    <Wand2 class="size-3 mr-1" /> Open Advanced Builder
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="h-7 text-[0.65rem] px-2"
+                    @click="formatJson"
+                    type="button"
+                    :disabled="!isJsonValid || !form.definitionJson"
+                  >
+                    Format JSON
+                  </Button>
+                </div>
+              </div>
+
               <div class="space-y-2">
-                <Textarea
-                  id="definition"
-                  v-model="form.definitionJson"
-                  class="font-mono text-xs h-[150px]"
-                  placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }'
-                />
-                <p class="text-[0.7rem] text-muted-foreground" v-pre>
-                  Use {{ parameterName }} as placeholders in values.
-                </p>
+                <div
+                  class="border rounded-md overflow-hidden bg-background focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-shadow"
+                >
+                  <NuxtCodeMirror
+                    id="definition"
+                    :editable="true"
+                    :extensions="[json()]"
+                    :basic-setup="true"
+                    :indent-with-tab="true"
+                    v-model="form.definitionJson"
+                    :style="{
+                      minHeight: '150px',
+                      maxHeight: '400px',
+                      overflowY: 'auto',
+                    }"
+                    placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }'
+                  />
+                </div>
+                <div class="flex justify-between items-start">
+                  <p class="text-[0.7rem] text-muted-foreground" v-pre>
+                    Use {{ parameterName }} as placeholders in values.
+                  </p>
+                  <p
+                    v-if="!isJsonValid"
+                    class="text-[0.7rem] text-destructive font-semibold"
+                  >
+                    Invalid JSON format
+                  </p>
+                </div>
               </div>
             </Field>
           </FieldGroup>
@@ -213,7 +318,9 @@ onMounted(load);
           <!-- Parameters Section -->
           <div class="space-y-4">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-medium">Parameters</h3>
+              <h3 class="text-sm font-medium">
+                Parameters (dynamic parameters decided by your AI)
+              </h3>
               <Button
                 type="button"
                 variant="outline"
@@ -382,5 +489,12 @@ onMounted(load);
         </div>
       </CardContent>
     </Card>
+
+    <AdvancedJsonBuilderDialog
+      v-model:open="isAdvancedBuilderOpen"
+      :type="form.type as any"
+      :dbs="dbs"
+      @apply="onAdvancedBuilderApply"
+    />
   </div>
 </template>

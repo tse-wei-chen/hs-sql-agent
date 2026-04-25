@@ -1,13 +1,13 @@
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using SqlKata;
-using SqlKata.Compilers;
-using SqlKata.Execution;
+using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using Microsoft.Extensions.Configuration;
+using SqlKata;
+using SqlKata.Compilers;
+using SqlKata.Execution;
 
 namespace SqlAgent.Service.Strategies;
 
@@ -25,7 +25,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     #region Shared Query Builders
 
-    private Query ApplySelectColumns(Query query, IList<SelectCondition> cols)
+    private Query ApplySelectColumns(Query query, List<SelectCondition> cols)
     {
         if (cols == null || cols.Count == 0) return query.Select("*");
 
@@ -77,7 +77,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
         return query;
     }
 
-    private AbstractColumn MapCaseWhen(List<SqlAgent.Service.Models.CaseWhenClause> cases, object? elseValue)
+    private CaseColumn MapCaseWhen(List<SqlAgent.Service.Models.CaseWhenClause> cases, object? elseValue)
     {
         var caseCol = new CaseColumn();
         foreach (var c in cases)
@@ -94,7 +94,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
         return caseCol;
     }
 
-    private AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
+    private static AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
     {
         if (arithmetic.Operator != null)
         {
@@ -235,7 +235,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
         }
 
         // Standard handling
-        Action<Q> apply = q =>
+        void apply(Q q)
         {
             switch (op)
             {
@@ -278,7 +278,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
                     q.Where(c.Field, op, val);
                     break;
             }
-        };
+        }
 
         if (c.IsOr) return query.OrWhere(q => { apply(q); return q; });
         if (c.IsNot) return query.Not().Where(q => { apply(q); return q; });
@@ -305,7 +305,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
     }
 
 
-    private Query ApplyGroupByConditions(Query query, IList<GroupByCondition> conds)
+    private static Query ApplyGroupByConditions(Query query, IList<GroupByCondition> conds)
     {
         foreach (var gf in conds)
         {
@@ -368,7 +368,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
                 };
         }
 
-        Func<Query, Query> apply = q =>
+        Query apply(Query q)
         {
             return op switch
             {
@@ -392,7 +392,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
                 _ => isAgg ? q.HavingAggregate(agg, field, op, val) : q.Having(field, op, val)
             };
-        };
+        }
 
         if (c.IsOr) return query.OrHaving(q => apply(q));
         if (c.IsNot) return query.Not().Having(q => apply(q));
@@ -434,7 +434,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
     }
 
 
-    private Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
+    private static Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
     {
         if (cols == null || !cols.Any()) return query;
 
@@ -601,7 +601,7 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
     {
         // 1. Determine Source (Table or Subquery)
         var tableName = definition.TableName;
-        if (!string.IsNullOrEmpty(definition.Alias) && definition.FromQuery == null && !tableName.ToLowerInvariant().Contains(" as "))
+        if (!string.IsNullOrEmpty(definition.Alias) && definition.FromQuery == null && !tableName.Contains(" as ", StringComparison.InvariantCultureIgnoreCase))
         {
             tableName += " AS " + definition.Alias;
         }

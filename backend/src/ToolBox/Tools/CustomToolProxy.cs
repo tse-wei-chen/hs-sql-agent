@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Admin.Service.Interfaces;
-using Common.Models;
 using Admin.Service.Models;
+using Common.Models;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Enums;
 
 namespace ToolBox.Tools;
 
@@ -15,6 +15,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly IConfiguration _configuration = configuration;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
+    private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public async Task<string> Execute(JsonElement arguments)
     {
@@ -50,10 +51,10 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
 
         // 3. Execute based on type
         var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-        
+
         if (string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase))
         {
-            var queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
             if (queryDef == null) return "Error: Failed to deserialize QueryDefinition.";
 
             return await strategy.ExecuteQueryAsync(
@@ -76,7 +77,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         }
         else if (string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase))
         {
-            var dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
             if (dmlDef == null) return "Error: Failed to deserialize DmlDefinition.";
 
             return await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dmlDef);
@@ -106,7 +107,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         };
     }
 
-    private string ReplaceParameters(string json, Dictionary<string, object> parameters)
+    private static string ReplaceParameters(string json, Dictionary<string, object> parameters)
     {
         if (parameters == null || parameters.Count == 0) return json;
 

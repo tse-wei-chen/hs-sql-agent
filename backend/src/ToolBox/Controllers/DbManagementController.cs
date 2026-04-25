@@ -4,6 +4,12 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SqlAgent.Service.Enums;
+using SqlAgent.Service.Factories;
+using SqlAgent.Service.Models;
+using Common.Interfaces;
+using Microsoft.Extensions.Options;
+using System.Text;
 
 namespace ToolBox.Controllers;
 
@@ -100,6 +106,105 @@ public class DbManagementController(
             cancellationToken: cancellationToken);
 
         return NoContent();
+    }
+
+    [HttpGet("{id}/schemas")]
+    public async Task<IActionResult> GetSchemas(
+        int id,
+        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ICryptoService cryptoService,
+        [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
+        CancellationToken cancellationToken)
+    {
+        var db = await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) as DbManagementPwdVM;
+        if (db == null) return NotFound();
+
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
+            return BadRequest("Invalid SqlProvider");
+
+        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
+        var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
+
+        var strategy = sqlStrategyFactory.GetStrategy(dbType);
+        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
+        {
+            Host = db.Host,
+            Port = db.Port,
+            Username = db.Username,
+            Password = password,
+            Database = db.Database
+        });
+
+        var schemas = await strategy.GetSchemasAsync(connectionString, cancellationToken);
+        return Ok(schemas);
+    }
+
+    [HttpGet("{id}/tables")]
+    public async Task<IActionResult> GetTables(
+        int id,
+        [FromQuery] string? schema,
+        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ICryptoService cryptoService,
+        [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
+        CancellationToken cancellationToken)
+    {
+        var db = await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) as DbManagementPwdVM;
+        if (db == null) return NotFound();
+
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
+            return BadRequest("Invalid SqlProvider");
+
+        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
+        var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
+
+        var strategy = sqlStrategyFactory.GetStrategy(dbType);
+        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
+        {
+            Host = db.Host,
+            Port = db.Port,
+            Username = db.Username,
+            Password = password,
+            Database = db.Database
+        });
+
+        var tables = await strategy.GetTablesAsync(connectionString, schema ?? string.Empty, cancellationToken);
+        return Ok(tables);
+    }
+
+    [HttpGet("{id}/columns")]
+    public async Task<IActionResult> GetColumns(
+        int id,
+        [FromQuery] string? schema,
+        [FromQuery] string table,
+        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ICryptoService cryptoService,
+        [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(table))
+            return BadRequest("Table name is required.");
+
+        var db = await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) as DbManagementPwdVM;
+        if (db == null) return NotFound();
+
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
+            return BadRequest("Invalid SqlProvider");
+
+        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
+        var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
+
+        var strategy = sqlStrategyFactory.GetStrategy(dbType);
+        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
+        {
+            Host = db.Host,
+            Port = db.Port,
+            Username = db.Username,
+            Password = password,
+            Database = db.Database
+        });
+
+        var columns = await strategy.GetColumnsAsync(connectionString, schema ?? string.Empty, table, cancellationToken);
+        return Ok(columns);
     }
 
     private string? GetActorId()
