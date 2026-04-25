@@ -1,0 +1,35 @@
+name: Good First Issue
+description: Propose a task that is suitable for first-time contributors
+title: "[Good First Issue]: "
+labels: ["good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your interest in contributing! This issue is specifically curated for new contributors.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the task is.
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Expected Outcome
+      description: What should the final result look like?
+    validations:
+      required: true
+  - type: textarea
+    id: implementation-hints
+    attributes:
+      label: Implementation Hints
+      description: Any tips or pointers to relevant files to help the contributor get started.
+  - type: checkboxes
+    id: checkpoints
+    attributes:
+      label: Checkpoints
+      options:
+        - label: I have read the [CONTRIBUTING.md](https://github.com/your-repo/CONTRIBUTING.md) guide.
+          required: true
