@@ -40,7 +40,16 @@ export default defineNuxtConfig({
     },
   },
 
-  modules: ["shadcn-nuxt"],
+  modules: ["shadcn-nuxt", '@vee-validate/nuxt'],
+  veeValidate: {
+    autoImports: true,
+    componentNames: {
+      Form: 'VeeForm',
+      Field: 'VeeField',
+      FieldArray: 'VeeFieldArray',
+      ErrorMessage: 'VeeErrorMessage',
+    }
+  },
   shadcn: {
     prefix: "",
     componentDir: "@/components/ui",

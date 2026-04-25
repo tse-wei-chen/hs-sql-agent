@@ -3,10 +3,10 @@ import type { HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
-  Field,
-  FieldDescription,
+  Field as UIField,
   FieldGroup,
   FieldLabel,
+  FieldError,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
@@ -15,38 +15,8 @@ import { checkFirstRun, signIn } from "~/api/admin";
 const props = defineProps<{
   class?: HTMLAttributes["class"];
 }>();
-let loginData: Ref<{ email: string; password: string }> = ref({
-  email: "",
-  password: "",
-});
-const emailTouched = ref(false);
-const passwordTouched = ref(false);
-const hasSubmitted = ref(false);
+
 const submitting = ref(false);
-
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const emailError = computed(() => {
-  const email = loginData.value.email.trim();
-  if (!email) {
-    return "Email is required.";
-  }
-  if (!emailPattern.test(email)) {
-    return "Please enter a valid email address.";
-  }
-  return "";
-});
-
-const passwordError = computed(() => {
-  if (!loginData.value.password.trim()) {
-    return "Password is required.";
-  }
-  return "";
-});
-
-const canSubmit = computed(() => {
-  return !submitting.value && !emailError.value && !passwordError.value;
-});
 
 onMounted(async () => {
   try {
@@ -59,17 +29,12 @@ onMounted(async () => {
   }
 });
 
-const submit = async () => {
-  hasSubmitted.value = true;
-  if (!canSubmit.value) {
-    return;
-  }
-
+const submit = async (values: any) => {
   submitting.value = true;
   try {
     const response = await signIn(
-      loginData.value.email.trim(),
-      loginData.value.password,
+      values.email.trim(),
+      values.password,
     );
 
     if (response?.accessToken && response?.refreshToken) {
@@ -91,7 +56,7 @@ const submit = async () => {
 
 <template>
   <div :class="cn('flex flex-col gap-6', props.class)">
-    <form @submit.prevent="submit">
+    <VeeForm v-slot="{ meta, errors, submitCount }" @submit="submit">
       <FieldGroup>
         <div class="flex flex-col items-center gap-1 text-center">
           <h1 class="text-2xl font-bold">HS Admin Panel</h1>
@@ -99,46 +64,45 @@ const submit = async () => {
             Enter your email below to login to your account
           </p>
         </div>
-        <Field class="relative">
-          <FieldLabel for="email"> Email </FieldLabel>
-          <Input
-            id="email"
-            type="email"
-            placeholder="m@example.com"
-            required
-            v-model="loginData.email"
-            @blur="emailTouched = true"
-          />
-          <div class="relative">
-            <FieldError
-              v-if="emailError && (emailTouched || hasSubmitted)"
-              class="text-destructive absolute"
-            >
-              {{ emailError }}
-            </FieldError>
-          </div>
-        </Field>
-        <Field class="relative">
-          <FieldLabel for="password"> Password </FieldLabel>
-          <PasswordInput
-            v-model="loginData.password"
-            id="password"
-            required
-            @blur="passwordTouched = true"
-          />
-          <div class="relative">
-            <FieldDescription
-              v-if="passwordError && (passwordTouched || hasSubmitted)"
-              class="text-destructive absolute"
-            >
-              {{ passwordError }}
-            </FieldDescription>
-          </div>
-        </Field>
-        <Field>
-          <Button type="submit" :disabled="!canSubmit"> Login </Button>
-        </Field>
+        
+        <VeeField name="email" rules="required|email" v-slot="{ field, errorMessage, meta: fieldMeta }">
+          <UIField class="relative">
+            <FieldLabel for="email"> Email </FieldLabel>
+            <Input
+              v-bind="field"
+              id="email"
+              type="email"
+              placeholder="m@example.com"
+            />
+            <div class="relative">
+              <FieldError v-if="errorMessage && (fieldMeta.touched || submitCount > 0)" class="text-destructive absolute">
+                {{ errorMessage }}
+              </FieldError>
+            </div>
+          </UIField>
+        </VeeField>
+
+        <VeeField name="password" rules="required" v-slot="{ field, errorMessage, meta: fieldMeta }">
+          <UIField class="relative">
+            <FieldLabel for="password"> Password </FieldLabel>
+            <PasswordInput
+              v-bind="field"
+              id="password"
+            />
+            <div class="relative">
+              <FieldError v-if="errorMessage && (fieldMeta.touched || submitCount > 0)" class="text-destructive absolute">
+                {{ errorMessage }}
+              </FieldError>
+            </div>
+          </UIField>
+        </VeeField>
+
+        <UIField>
+          <Button type="submit" :disabled="!meta.valid || submitting">
+            {{ submitting ? 'Logging in...' : 'Login' }}
+          </Button>
+        </UIField>
       </FieldGroup>
-    </form>
+    </VeeForm>
   </div>
 </template>
