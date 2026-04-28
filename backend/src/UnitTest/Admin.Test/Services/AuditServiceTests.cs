@@ -15,54 +15,163 @@ public class AuditServiceTests
     public AuditServiceTests()
     {
         _contextMock = new Mock<IAdminContext>();
-        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(new List<AuditLog>());
         _service = new AuditService(_contextMock.Object);
     }
 
-    [Fact]
-    public async Task WriteAsync_ShouldAddAuditLogAndSaveChanges()
-    {
-        await _service.WriteAsync("auth", "user1", "success", cancellationToken: TestContext.Current.CancellationToken);
+    #region WriteAsync Tests
 
-        _contextMock.Verify(c => c.AuditLogs.Add(It.IsAny<AuditLog>()), Times.Once);
+    [Fact]
+    public async Task WriteAsync_ShouldSetDefaultActorTypeToSystem_WhenActorTypeIsNullOrWhitespace()
+    {
+        // Arrange
+        var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<AuditLog>>();
+        _contextMock.Setup(c => c.AuditLogs).Returns(mockDbSet.Object);
+
+        // Act
+        await _service.WriteAsync("login", "target_user", "success", null, "   ", null, null, null, TestContext.Current.CancellationToken);
+
+        // Assert
+        mockDbSet.Verify(m => m.Add(It.Is<AuditLog>(a => 
+            a.Action == "login" &&
+            a.Target == "target_user" &&
+            a.Result == "success" &&
+            a.ActorType == "system" // Default fallback
+        )), Times.Once);
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task QueryAsync_ShouldReturnPagedResults()
+    public async Task WriteAsync_ShouldMapAllPropertiesCorrectly_WhenAllProvided()
     {
-        var logs = new List<AuditLog>
-        {
-            new() { Id = 1, Action = "login", CreatedAt = DateTime.UtcNow },
-            new() { Id = 2, Action = "logout", CreatedAt = DateTime.UtcNow }
-        };
-        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(logs);
+        // Arrange
+        var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<AuditLog>>();
+        _contextMock.Setup(c => c.AuditLogs).Returns(mockDbSet.Object);
 
-        var result = await _service.QueryAsync(1, 10, cancellationToken: TestContext.Current.CancellationToken);
+        // Act
+        await _service.WriteAsync("query", "db1", "failed", "details", "user", "u1", "127.0.0.1", "Mozilla", TestContext.Current.CancellationToken);
 
-        Assert.NotNull(result);
-        Assert.Equal(1, result.Page);
-        Assert.Equal(10, result.PageSize);
-        Assert.Equal(2, result.TotalCount);
-        Assert.Equal(2, result.Items.Count());
+        // Assert
+        mockDbSet.Verify(m => m.Add(It.Is<AuditLog>(a => 
+            a.Action == "query" &&
+            a.Target == "db1" &&
+            a.Result == "failed" &&
+            a.Detail == "details" &&
+            a.ActorType == "user" &&
+            a.ActorId == "u1" &&
+            a.IpAddress == "127.0.0.1" &&
+            a.UserAgent == "Mozilla" &&
+            a.CreatedAt != default
+        )), Times.Once);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region QueryAsync Tests
+
+    [Theory]
+    [InlineData(0, 0, 1, 20)] // Zero mapping
+    [InlineData(-5, -10, 1, 20)] // Negative mapping
+    [InlineData(5, 500, 5, 200)] // Upper bound pageSize mapping
+    public async Task QueryAsync_ShouldNormalizePageAndPageSize(int inputPage, int inputPageSize, int expectedPage, int expectedPageSize)
+    {
+        // Arrange
+        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(new List<AuditLog>());
+
+        // Act
+        var result = await _service.QueryAsync(inputPage, inputPageSize, cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(expectedPage, result.Page);
+        Assert.Equal(expectedPageSize, result.PageSize);
     }
 
     [Fact]
-    public async Task QueryDailySummaryAsync_ShouldReturnBuckets()
+    public async Task QueryAsync_ShouldFilterByActionAndKeyword_WhenProvided()
     {
+        // Arrange
         var logs = new List<AuditLog>
         {
-            new() { Id = 1, Result = "success", CreatedAt = DateTime.UtcNow },
-            new() { Id = 2, Result = "failed", CreatedAt = DateTime.UtcNow }
+            new() { Id = 1, Action = "login", Target = "user1" },
+            new() { Id = 2, Action = "query", Target = "db1", Detail = "select * from test" },
+            new() { Id = 3, Action = "query", ActorId = "db-admin" },
         };
         _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(logs);
 
-        var result = await _service.QueryDailySummaryAsync(7, cancellationToken: TestContext.Current.CancellationToken);
+        // Act - filter by action "query" and keyword "db"
+        var result = await _service.QueryAsync(1, 10, action: "query", keyword: "db", cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.NotNull(result);
-        Assert.Equal(7, result.Count);
-        var today = result.Last();
-        Assert.Equal(1, today.SuccessCount);
-        Assert.Equal(1, today.FailedCount);
+        // Assert
+        Assert.Equal(2, result.TotalCount); // Should match id 2 (Target="db1") and id 3 (ActorId="db-admin")
+        Assert.Contains(result.Items, x => x.Id == 2);
+        Assert.Contains(result.Items, x => x.Id == 3);
     }
+
+    #endregion
+
+    #region QueryDailySummaryAsync Tests
+
+    [Theory]
+    [InlineData(0, 7)]
+    [InlineData(-5, 7)]
+    [InlineData(100, 30)] // Max cap is 30 days
+    public async Task QueryDailySummaryAsync_ShouldNormalizeDays(int inputDays, int expectedDays)
+    {
+        // Arrange
+        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(new List<AuditLog>());
+
+        // Act
+        var result = await _service.QueryDailySummaryAsync(inputDays, cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(expectedDays, result.Count);
+    }
+
+    [Fact]
+    public async Task QueryDailySummaryAsync_ShouldAggregateSuccessAndFailedCaseInsensitive()
+    {
+        // Arrange
+        var today = DateTime.UtcNow.Date;
+        var logs = new List<AuditLog>
+        {
+            new() { Id = 1, Result = "SUCCESS", CreatedAt = today.AddHours(1) },
+            new() { Id = 2, Result = "success", CreatedAt = today.AddHours(2) },
+            new() { Id = 3, Result = "FAILED", CreatedAt = today.AddHours(3) },
+            new() { Id = 4, Result = "Unknown", CreatedAt = today.AddHours(4) }, // Falls into failed category
+        };
+        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(logs);
+
+        // Act
+        var result = await _service.QueryDailySummaryAsync(1, cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        var summary = Assert.Single(result);
+        Assert.Equal(today, summary.Day);
+        Assert.Equal(2, summary.SuccessCount); // "SUCCESS" and "success"
+        Assert.Equal(2, summary.FailedCount); // "FAILED" and "Unknown"
+    }
+
+    [Fact]
+    public async Task QueryDailySummaryAsync_ShouldApplyActionAndKeywordFilters()
+    {
+        // Arrange
+        var today = DateTime.UtcNow.Date;
+        var logs = new List<AuditLog>
+        {
+            new() { Id = 1, Action = "query", Target = "t1", Result = "success", CreatedAt = today },
+            new() { Id = 2, Action = "query", Target = "match", Result = "success", CreatedAt = today },
+            new() { Id = 3, Action = "login", Target = "match", Result = "success", CreatedAt = today },
+        };
+        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(logs);
+
+        // Act
+        var result = await _service.QueryDailySummaryAsync(1, action: "query", keyword: "match", cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        var summary = Assert.Single(result);
+        Assert.Equal(1, summary.SuccessCount); // Only Id 2 matches both action="query" and keyword="match"
+        Assert.Equal(0, summary.FailedCount);
+    }
+
+    #endregion
 }

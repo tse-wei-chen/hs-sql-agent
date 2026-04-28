@@ -1,15 +1,15 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Text;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
-using Common.Interfaces;
-using Microsoft.Extensions.Options;
-using System.Text;
 
 namespace ToolBox.Controllers;
 
@@ -116,8 +116,7 @@ public class DbManagementController(
         [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
     {
-        var db = await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) as DbManagementPwdVM;
-        if (db == null) return NotFound();
+        if (await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
 
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
             return BadRequest("Invalid SqlProvider");
@@ -148,8 +147,7 @@ public class DbManagementController(
         [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
     {
-        var db = await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) as DbManagementPwdVM;
-        if (db == null) return NotFound();
+        if (await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
 
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
             return BadRequest("Invalid SqlProvider");
@@ -184,8 +182,7 @@ public class DbManagementController(
         if (string.IsNullOrWhiteSpace(table))
             return BadRequest("Table name is required.");
 
-        var db = await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) as DbManagementPwdVM;
-        if (db == null) return NotFound();
+        if (await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
 
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
             return BadRequest("Invalid SqlProvider");

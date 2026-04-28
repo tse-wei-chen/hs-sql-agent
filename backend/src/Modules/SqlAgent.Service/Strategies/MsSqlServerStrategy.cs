@@ -1,12 +1,12 @@
-using Dapper;
-using Microsoft.Data.SqlClient;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.RegularExpressions;
+using Dapper;
+using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Models;
+using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
@@ -18,7 +18,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
     {
         var builder = new SqlConnectionStringBuilder
         {
-            DataSource = model.Host,
+            DataSource = $"{model.Host},{model.Port}",
             UserID = model.Username,
             Password = model.Password,
             InitialCatalog = model.Database

@@ -1,9 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using ToolBox.Attributes;
 
 namespace ToolBox.Controllers;
@@ -85,7 +85,7 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         }
         catch (UnauthorizedAccessException ex)
         {
-            _logger.LogWarning(ex, "Token refresh failed for user ID: {UserId}", id);
+            _logger.LogWarning(ex, "Token refresh failed");
             return Forbid();
         }
         catch (ArgumentException ex)
