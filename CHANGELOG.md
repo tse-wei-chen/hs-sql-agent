@@ -1,6 +1,28 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [1.3.14] - 2026-04-30
+
+### Features
+
+- **Testing Infrastructure**: Added comprehensive unit and integration test suites for all database strategies (**PostgreSQL**, **MySQL**, **SQLite**, **SQL Server**, **Oracle**) using **Testcontainers**, ensuring reliability across different database engines.
+- **Database Management**: Introduced `DbManagementService` and corresponding API controllers to manage database connections and metadata more efficiently.
+- **Validation Layers**: Integrated **FluentValidation** on the backend and **VeeValidate** on the frontend to provide robust data validation and improved user feedback.
+- **Frontend Enhancements**: Initialized **Vitest** for frontend unit testing and added **MCP configuration** logic to support dynamic tool discovery.
+- **Oracle & SQL Server Support**: Fully implemented and validated strategies for Oracle and SQL Server, including container-based integration tests.
+
+### Fix
+
+- **SqlKata Query Builder**: Fixed regressions in the SQL compiler related to subquery alias generation and side effects in column alias handling.
+- **Error Mapping**: Improved database error code handling in `BaseStrategy` to provide more accurate troubleshooting hints (e.g., column/table not found).
+- **MySQL Compatibility**: Fixed a bug where certain MySQL truncation errors (e.g., Error 1292) were not being correctly intercepted.
+
+### Refactor
+
+- **Code Cleanup**: Streamlined `using` directives and improved general code readability and maintainability across the backend modules.
+- **Contribution Guidelines**: Updated `CONTRIBUTING.md` and added issue templates to improve the development workflow.
+
 ## [1.3.13] - 2026-04-24
 
 ### Features
