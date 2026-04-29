@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
@@ -9,8 +10,7 @@ using Xunit;
 
 namespace SqlAgent.Test.Strategies;
 
-// Step 1: Create a Fixture to share the container across all tests in the class
-public class PostgresFixture : IAsyncLifetime
+public class PostgresFixture : IDbFixture
 {
     public PostgreSqlContainer Container { get; }
     public string ConnectionString => Container.GetConnectionString();
@@ -29,10 +29,8 @@ public class PostgresFixture : IAsyncLifetime
     {
         await Container.StartAsync();
 
-        // Seed data once
         var parser = new QueryValueParserService();
-        var configMock = new Mock<IConfiguration>();
-        var strategy = new PostgresStrategy(parser, configMock.Object);
+        var strategy = new PostgresStrategy(parser, new Mock<IConfiguration>().Object);
 
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
@@ -47,7 +45,6 @@ public class PostgresFixture : IAsyncLifetime
                 active BOOLEAN,
                 created_date TIMESTAMP
             );
-            DELETE FROM public.users;
             INSERT INTO public.users (name, age, active, created_date) VALUES 
             ('Alice', 30, true, '2023-01-01 10:00:00'),
             ('Bob', 25, true, '2023-02-01 10:00:00'),
@@ -59,7 +56,6 @@ public class PostgresFixture : IAsyncLifetime
                 amount DECIMAL(10, 2),
                 order_date DATE
             );
-            DELETE FROM public.orders;
             INSERT INTO public.orders (user_id, amount, order_date) VALUES 
             (1, 150.0, '2023-01-10'),
             (1, 200.0, '2023-02-15'),
@@ -68,30 +64,48 @@ public class PostgresFixture : IAsyncLifetime
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await Container.DisposeAsync();
-    }
+    public async ValueTask DisposeAsync() => await Container.DisposeAsync();
 }
 
 
-public class PostgresStrategyTests : IClassFixture<PostgresFixture>
+public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<PostgresStrategy, PostgresFixture>(fixture)
 {
-    private readonly PostgresFixture _fixture;
-    private readonly PostgresStrategy _strategy;
+    protected override PostgresStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
+        => new PostgresStrategy(parser, configuration);
 
-    public PostgresStrategyTests(PostgresFixture fixture)
+    protected override string TestTableName => "users";
+    protected override string TestSchemaName => "public";
+
+    protected override string TableNotFoundErrorCode => "42P01";
+    protected override string ColumnNotFoundErrorCode => "42703";
+
+    [Fact]
+    public override async Task GetSchemasAsync_ShouldReturnAvailableSchemas()
     {
-        _fixture = fixture;
-
-        var configMock = new Mock<IConfiguration>();
-        configMock.Setup(c => c["McpKeySettings:HmacSecretKey"]).Returns("TestSecretKey12345678901234567890");
-
-        var parser = new QueryValueParserService();
-        _strategy = new PostgresStrategy(parser, configMock.Object);
+        var schemas = await Strategy.GetSchemasAsync(Fixture.ConnectionString, TestContext.Current.CancellationToken);
+        Assert.Contains("public", schemas);
+        Assert.Contains("custom_schema", schemas);
     }
 
-    #region Schema & Metadata Tests
+    [Fact]
+    public override async Task GetColumnsAsync_ShouldReturnColumnTypes()
+    {
+        await base.GetColumnsAsync_ShouldReturnColumnTypes();
+        var columns = await Strategy.GetColumnsAsync(Fixture.ConnectionString, TestSchemaName, TestTableName, TestContext.Current.CancellationToken);
+        Assert.Equal("integer", columns.First(c => c.Column == "id").Type, ignoreCase: true);
+        Assert.Equal("boolean", columns.First(c => c.Column == "active").Type, ignoreCase: true);
+    }
+
+    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    {
+        Operation = "insert",
+        TableName = TestTableName,
+        Values = [
+            new NameValuePair { Name = "name", Value = "David" },
+            new NameValuePair { Name = "age", Value = 40 },
+            new NameValuePair { Name = "active", Value = true }
+        ]
+    };
 
     [Fact]
     public void BuildConnectionString_ShouldGenerateValidPostgresFormat()
@@ -105,148 +119,41 @@ public class PostgresStrategyTests : IClassFixture<PostgresFixture>
             Username = "user",
             Password = "pw"
         };
-        var connStr = _strategy.BuildConnectionString(model);
+        var connStr = Strategy.BuildConnectionString(model);
 
         Assert.Contains("Host=localhost", connStr);
         Assert.Contains("Port=5432", connStr);
     }
 
     [Fact]
-    public async Task GetSchemasAsync_ShouldReturnAvailableSchemas()
-    {
-        var schemas = await _strategy.GetSchemasAsync(_fixture.ConnectionString, TestContext.Current.CancellationToken);
-        Assert.Contains("public", schemas);
-        Assert.Contains("custom_schema", schemas);
-    }
-
-    [Fact]
-    public async Task GetTablesAsync_ShouldReturnTablesInSchema()
-    {
-        var tables = await _strategy.GetTablesAsync(_fixture.ConnectionString, "public", TestContext.Current.CancellationToken);
-        Assert.Contains("users", tables);
-        Assert.Contains("orders", tables);
-    }
-
-    [Fact]
-    public async Task GetColumnsAsync_ShouldReturnColumnTypes()
-    {
-        var columns = await _strategy.GetColumnsAsync(_fixture.ConnectionString, "public", "users", TestContext.Current.CancellationToken);
-        Assert.Equal("integer", columns.First(c => c.Column == "id").Type, ignoreCase: true);
-        Assert.Equal("boolean", columns.First(c => c.Column == "active").Type, ignoreCase: true);
-    }
-
-    #endregion
-
-    #region Execution & Error Hint Tests
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldReturnValidJson()
-    {
-        var json = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
-            whereConditions: [new WhereCondition { Field = "age", Operator = ">", Value = 20 }],
-            orderByColumns: [new OrderByCondition { Field = "age", Direction = "asc" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(res);
-        Assert.True(res.Count >= 3);
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger42P01Hint_WhenTableNotFound()
-    {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "non_existent_table", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains("code=42P01", res);
-        Assert.Contains("Table or CTE not found", res);
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger42703Hint_WhenColumnNotFound()
-    {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
-            selectColumns: [new SelectCondition { Field = "fake_column" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains("code=42703", res);
-    }
-
-    [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger22P02Hint_WhenValueFormatIsInvalid()
     {
-        // To trigger 22P02 (Invalid Text Representation) in Postgres, 
-        // we should try to cast an invalid string to a strict type like TIMESTAMP or UUID.
-        // age = 'abc' might trigger 42883 (operator mismatch) instead of 22P02 depending on the engine version.
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
+        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
             whereConditions: [new WhereCondition { Field = "created_date", Operator = "=", Value = "this-is-not-a-date" }],
             cancellationToken: TestContext.Current.CancellationToken);
 
-        // Assert it's either 22P02 or 42883 (as some versions treat mismatch as operator failure)
-        // But the requirement is specifically testing the hint for 22P02.
-        Assert.True(res.Contains("code=22P02") || res.Contains("code=42883"), $"Expected error code 22P02 or 42883 but got: {res}");
+        Assert.True(res.Contains("code=22P02") || res.Contains("code=42883"), $"Result was: {res}");
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger42883Hint_WhenOperatorOrTypeMismatch()
     {
-        // Try to compare Boolean with Integer (active > 1)
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
+        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
             whereConditions: [new WhereCondition { Field = "active", Operator = ">", Value = 1 }],
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("code=42883", res);
-        Assert.Contains("Operator", res); // Just verify it starts the correct hint
+        Assert.Contains("Operator", res);
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger42702Hint_WhenColumnIsAmbiguous()
     {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
+        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
             joins: [new JoinCondition { Table = "orders", First = "users.id", Second = "orders.user_id" }],
-            selectColumns: [new SelectCondition { Field = "id" }], // Ambiguous
+            selectColumns: [new SelectCondition { Field = "id" }],
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.Contains("code=42702", res);
         Assert.Contains("Ambiguous column", res);
     }
-
-    #endregion
-
-    #region Postgres Advanced Functionality Tests
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldHandlePostgresDistinctAndLimit()
-    {
-        var json = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "orders",
-            selectColumns: [new SelectCondition { Field = "user_id" }],
-            distinct: true,
-            limit: 1,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(res);
-        Assert.Single(res);
-    }
-
-    [Fact]
-    public async Task ExecuteDmlAsync_ShouldPerformValidInsert()
-    {
-        var dml = new DmlDefinition
-        {
-            Operation = "insert",
-            TableName = "users",
-            Values = [
-                new NameValuePair { Name = "name", Value = "David" },
-                new NameValuePair { Name = "age", Value = 40 },
-                new NameValuePair { Name = "active", Value = true }
-            ]
-        };
-
-        var dryRun = await _strategy.ExecuteDmlAsync(_fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        var start = dryRun.IndexOf("TokenRequired=") + 14;
-        var end = dryRun.IndexOf(" |", start);
-        dml.ConfirmToken = dryRun[start..end];
-
-        var final = await _strategy.ExecuteDmlAsync(_fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        Assert.Contains("Success", final);
-    }
-
-    #endregion
 }

@@ -3,6 +3,7 @@ using DotNet.Testcontainers.Builders;
 using FirebirdSql.Data.FirebirdClient;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
@@ -11,7 +12,7 @@ using Xunit;
 
 namespace SqlAgent.Test.Strategies;
 
-public class FirebirdFixture : IAsyncLifetime
+public class FirebirdFixture : IDbFixture
 {
     public FirebirdSqlContainer Container { get; }
     public string ConnectionString => Container.GetConnectionString();
@@ -53,41 +54,56 @@ public class FirebirdFixture : IAsyncLifetime
 }
 
 
-public class FirebirdStrategyTests : IClassFixture<FirebirdFixture>
+public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<FirebirdStrategy, FirebirdFixture>(fixture)
 {
-    private readonly FirebirdFixture _fixture;
-    private readonly FirebirdStrategy _strategy;
+    protected override FirebirdStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
+        => new FirebirdStrategy(parser, configuration);
 
-    public FirebirdStrategyTests(FirebirdFixture fixture)
-    {
-        _fixture = fixture;
-        var configMock = new Mock<IConfiguration>();
-        configMock.Setup(c => c["McpKeySettings:HmacSecretKey"]).Returns("TestSecretKey12345678901234567890");
-        _strategy = new FirebirdStrategy(new QueryValueParserService(), configMock.Object);
-    }
+    protected override string TestTableName => "USERS";
+    protected override string TestSchemaName => "Default";
 
-    [Fact]
-    public async Task GetTablesAsync_ShouldReturnTables()
-    {
-        var tables = await _strategy.GetTablesAsync(_fixture.ConnectionString, "Default", TestContext.Current.CancellationToken);
-        Assert.Contains("USERS", tables);
-    }
+    // Firebird error codes are not as simple as numeric codes in hints, 
+    // but the strategy currently uses string matching for hints.
+    // However, the base class expects TableNotFoundErrorCode and ColumnNotFoundErrorCode.
+    // I will use strings that appear in the error message if the strategy uses them.
+    protected override string TableNotFoundErrorCode => "unknown"; // Firebird strategy might not use numeric codes in hints yet
+    protected override string ColumnNotFoundErrorCode => "unknown";
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTriggerTableUnknownHint_WhenTableNotFound()
+    public override async Task ExecuteQueryAsync_ShouldTriggerHint_WhenTableNotFound()
     {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "NON_EXISTENT", cancellationToken: TestContext.Current.CancellationToken);
+        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "NON_EXISTENT", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Contains("Table does not exist", res);
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTriggerColumnUnknownHint_WhenColumnNotFound()
+    public override async Task ExecuteQueryAsync_ShouldTriggerHint_WhenColumnNotFound()
     {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "USERS",
+        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
             selectColumns: [new SelectCondition { Field = "FAKE_COL" }],
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.Contains("Invalid column name", res);
     }
+
+    [Fact]
+    public override async Task GetColumnsAsync_ShouldReturnColumnTypes()
+    {
+        await base.GetColumnsAsync_ShouldReturnColumnTypes();
+        var columns = await Strategy.GetColumnsAsync(Fixture.ConnectionString, TestSchemaName, TestTableName, TestContext.Current.CancellationToken);
+        Assert.Contains(columns, c => c.Column == "ID" && c.Type.Contains("INTEGER", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(columns, c => c.Column == "NAME" && c.Type.Contains("VARCHAR", StringComparison.OrdinalIgnoreCase));
+    }
+
+    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    {
+        Operation = "insert",
+        TableName = TestTableName,
+        Values = [
+            new NameValuePair { Name = "ID", Value = 2 },
+            new NameValuePair { Name = "NAME", Value = "David" },
+            new NameValuePair { Name = "AGE", Value = 40 }
+        ]
+    };
 
     [Fact]
     public void BuildConnectionString_ShouldGenerateValidFirebirdFormat()
@@ -101,68 +117,10 @@ public class FirebirdStrategyTests : IClassFixture<FirebirdFixture>
             Username = "sysdba",
             Password = "pw"
         };
-        var connStr = _strategy.BuildConnectionString(model);
+        var connStr = Strategy.BuildConnectionString(model);
 
         Assert.Contains("data source=localhost", connStr, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("port number=3050", connStr, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("user id=sysdba", connStr, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task GetColumnsAsync_ShouldReturnColumnTypes()
-    {
-        var columns = await _strategy.GetColumnsAsync(_fixture.ConnectionString, "Default", "USERS", TestContext.Current.CancellationToken);
-        Assert.Contains(columns, c => c.Column == "ID" && c.Type.Contains("INTEGER", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(columns, c => c.Column == "NAME" && c.Type.Contains("VARCHAR", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldReturnValidJson()
-    {
-        var json = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "USERS",
-            whereConditions: [new WhereCondition { Field = "AGE", Operator = ">", Value = 20 }],
-            orderByColumns: [new OrderByCondition { Field = "AGE", Direction = "asc" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(res);
-        Assert.True(res.Count >= 1);
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldHandleDistinctAndLimit()
-    {
-        var json = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "USERS",
-            selectColumns: [new SelectCondition { Field = "AGE" }],
-            distinct: true,
-            limit: 1,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(res);
-        Assert.Single(res);
-    }
-
-    [Fact]
-    public async Task ExecuteDmlAsync_ShouldPerformValidInsert()
-    {
-        var dml = new DmlDefinition
-        {
-            Operation = "insert",
-            TableName = "USERS",
-            Values = [
-                new NameValuePair { Name = "ID", Value = 2 },
-                new NameValuePair { Name = "NAME", Value = "David" },
-                new NameValuePair { Name = "AGE", Value = 40 }
-            ]
-        };
-
-        var dryRun = await _strategy.ExecuteDmlAsync(_fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        var start = dryRun.IndexOf("TokenRequired=") + 14;
-        var end = dryRun.IndexOf(" |", start);
-        dml.ConfirmToken = dryRun[start..end];
-
-        var final = await _strategy.ExecuteDmlAsync(_fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        Assert.Contains("Success", final);
     }
 }

@@ -3,6 +3,7 @@ using DotNet.Testcontainers.Builders;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using MySql.Data.MySqlClient;
+using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
@@ -11,7 +12,7 @@ using Xunit;
 
 namespace SqlAgent.Test.Strategies;
 
-public class MySqlFixture : IAsyncLifetime
+public class MySqlFixture : IDbFixture
 {
     public MySqlContainer Container { get; }
     public string ConnectionString => Container.GetConnectionString();
@@ -55,66 +56,36 @@ public class MySqlFixture : IAsyncLifetime
 }
 
 
-public class MySqlStrategyTests : IClassFixture<MySqlFixture>
+public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlStrategy, MySqlFixture>(fixture)
 {
-    private readonly MySqlFixture _fixture;
-    private readonly MySqlStrategy _strategy;
+    protected override MySqlStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
+        => new MySqlStrategy(parser, configuration);
 
-    public MySqlStrategyTests(MySqlFixture fixture)
-    {
-        _fixture = fixture;
-        var configMock = new Mock<IConfiguration>();
-        configMock.Setup(c => c["McpKeySettings:HmacSecretKey"]).Returns("TestSecretKey12345678901234567890");
-        _strategy = new MySqlStrategy(new QueryValueParserService(), configMock.Object);
-    }
+    protected override string TestTableName => "users";
+    protected override string TestSchemaName => "test_db";
+
+    protected override string TableNotFoundErrorCode => "1146";
+    protected override string ColumnNotFoundErrorCode => "1054";
 
     [Fact]
-    public async Task GetTablesAsync_ShouldReturnTables()
+    public override async Task GetColumnsAsync_ShouldReturnColumnTypes()
     {
-        var tables = await _strategy.GetTablesAsync(_fixture.ConnectionString, "test_db", TestContext.Current.CancellationToken);
-        Assert.Contains("users", tables);
+        await base.GetColumnsAsync_ShouldReturnColumnTypes();
+        var columns = await Strategy.GetColumnsAsync(Fixture.ConnectionString, TestSchemaName, TestTableName, TestContext.Current.CancellationToken);
+        Assert.Contains(columns, c => c.Column == "id" && c.Type.Contains("int", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(columns, c => c.Column == "active" && c.Type.Contains("tinyint", StringComparison.OrdinalIgnoreCase));
     }
 
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger1146Hint_WhenTableNotFound()
+    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
     {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "non_existent", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains("code=1146", res);
-        Assert.Contains("Table or CTE not found", res);
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger1054Hint_WhenColumnNotFound()
-    {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
-            selectColumns: [new SelectCondition { Field = "fake_col" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains("code=1054", res); // Unknown column
-        Assert.Contains("Column not found", res);
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger1292Hint_WhenValueFormatIsIncorrect()
-    {
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
-            whereConditions: [new WhereCondition { Field = "created_date", Operator = "=", Value = "not-a-date" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        // MySQL might return 1292 or just warning depending on mode, but usually 1292 in strict mode
-        Assert.True(res.Contains("code=1292") || res.Contains("Error"), $"Result was: {res}");
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger1064Hint_WhenSyntaxIsInvalid()
-    {
-        // Try to use a reserved word or invalid arithmetic
-        var res = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
-            selectColumns: [new SelectCondition { Arithmetic = new SelectArithmeticCondition { FieldName = "name", Operator = "INVALID", Constant = 1 } }],
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        Assert.Contains("code=1064", res);
-        Assert.Contains("SQL syntax error", res);
-    }
+        Operation = "insert",
+        TableName = TestTableName,
+        Values = [
+            new NameValuePair { Name = "name", Value = "David" },
+            new NameValuePair { Name = "age", Value = 40 },
+            new NameValuePair { Name = "active", Value = true }
+        ]
+    };
 
     [Fact]
     public void BuildConnectionString_ShouldGenerateValidMySqlFormat()
@@ -128,7 +99,7 @@ public class MySqlStrategyTests : IClassFixture<MySqlFixture>
             Username = "user",
             Password = "pw"
         };
-        var connStr = _strategy.BuildConnectionString(model);
+        var connStr = Strategy.BuildConnectionString(model);
         var builder = new MySqlConnectionStringBuilder(connStr);
         Assert.Equal("localhost", builder.Server);
         Assert.Equal("mydb", builder.Database);
@@ -138,67 +109,23 @@ public class MySqlStrategyTests : IClassFixture<MySqlFixture>
     }
 
     [Fact]
-    public async Task GetSchemasAsync_ShouldReturnAvailableSchemas()
+    public async Task ExecuteQueryAsync_ShouldTrigger1292Hint_WhenValueFormatIsIncorrect()
     {
-        var schemas = await _strategy.GetSchemasAsync(_fixture.ConnectionString, TestContext.Current.CancellationToken);
-        Assert.Contains("test_db", schemas);
-    }
-
-    [Fact]
-    public async Task GetColumnsAsync_ShouldReturnColumnTypes()
-    {
-        var columns = await _strategy.GetColumnsAsync(_fixture.ConnectionString, "test_db", "users", TestContext.Current.CancellationToken);
-        Assert.Contains(columns, c => c.Column == "id" && c.Type.Contains("int", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(columns, c => c.Column == "active" && c.Type.Contains("tinyint", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public async Task ExecuteQueryAsync_ShouldReturnValidJson()
-    {
-        var json = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
-            whereConditions: [new WhereCondition { Field = "age", Operator = ">", Value = 20 }],
-            orderByColumns: [new OrderByCondition { Field = "age", Direction = "asc" }],
+        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
+            whereConditions: [new WhereCondition { Field = "created_date", Operator = "=", Value = "not-a-date" }],
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(res);
-        Assert.True(res.Count >= 2);
+        Assert.True(res.Contains("code=1292") || res.Contains("Error"), $"Result was: {res}");
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldHandleDistinctAndLimit()
+    public async Task ExecuteQueryAsync_ShouldTrigger1064Hint_WhenSyntaxIsInvalid()
     {
-        var json = await _strategy.ExecuteQueryAsync(_fixture.ConnectionString, "users",
-            selectColumns: [new SelectCondition { Field = "active" }],
-            distinct: true,
-            limit: 1,
+        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
+            selectColumns: [new SelectCondition { Arithmetic = new SelectArithmeticCondition { FieldName = "name", Operator = "INVALID", Constant = 1 } }],
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(res);
-        Assert.Single(res);
-    }
-
-    [Fact]
-    public async Task ExecuteDmlAsync_ShouldPerformValidInsert()
-    {
-        var dml = new DmlDefinition
-        {
-            Operation = "insert",
-            TableName = "users",
-            Values = [
-                new NameValuePair { Name = "name", Value = "David" },
-                new NameValuePair { Name = "age", Value = 40 },
-                new NameValuePair { Name = "active", Value = true }
-            ]
-        };
-
-        var dryRun = await _strategy.ExecuteDmlAsync(_fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        var start = dryRun.IndexOf("TokenRequired=") + 14;
-        var end = dryRun.IndexOf(" |", start);
-        dml.ConfirmToken = dryRun[start..end];
-
-        var final = await _strategy.ExecuteDmlAsync(_fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        Assert.Contains("Success", final);
+        Assert.Contains("code=1064", res);
+        Assert.Contains("SQL syntax error", res);
     }
 }
