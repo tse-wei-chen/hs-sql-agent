@@ -18,7 +18,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
     {
         var builder = new SqlConnectionStringBuilder
         {
-            DataSource = $"{model.Host},{model.Port}",
+            DataSource = model.Host,
             UserID = model.Username,
             Password = model.Password,
             InitialCatalog = model.Database
@@ -31,7 +31,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
     }
 
     public override DbConnection CreateConnection(string? connectionString) => new SqlConnection(connectionString);
-    protected override Compiler CreateCompiler() => new SqlServerCompiler();
+    protected override Compiler CreateCompiler() => new SqlServerCompiler { UseLegacyPagination = true };
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {
