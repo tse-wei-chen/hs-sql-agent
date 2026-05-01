@@ -6,15 +6,17 @@ using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
 using System.Text.Json;
 using Common.Models;
+using Admin.Service.Interfaces;
 
 namespace ToolBox.Tools;
 
 [McpServerToolType]
-public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory)
+public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService)
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
+    private readonly IAuditService _auditService = auditService;
 
     [McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries).")]
     public async Task<string> ExecuteQuerySafe(
@@ -54,24 +56,43 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
         }
         var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-        var result = await strategy.ExecuteQueryAsync(
-            connectionString: sqlConfig.ConnectionString,
-            tableName: tableName,
-            selectColumns: selectColumns,
-            whereConditions: whereConditions,
-            orderByColumns: orderByColumns,
-            groupByConditions: groupByConditions,
-            havingConditions: havingConditions,
-            combineConditions: combineConditions,
-            cteConditions: cteConditions,
-            limit: limit > 0 ? limit : null,
-            offset: offset > 0 ? offset : null,
-            joins: joins,
-            fromQuery: fromQuery,
-            alias: alias,
-            distinct: distinct
-        );
-        return result;
+        try
+        {
+            var result = await strategy.ExecuteQueryAsync(
+                connectionString: sqlConfig.ConnectionString,
+                tableName: tableName,
+                selectColumns: selectColumns,
+                whereConditions: whereConditions,
+                orderByColumns: orderByColumns,
+                groupByConditions: groupByConditions,
+                havingConditions: havingConditions,
+                combineConditions: combineConditions,
+                cteConditions: cteConditions,
+                limit: limit > 0 ? limit : null,
+                offset: offset > 0 ? offset : null,
+                joins: joins,
+                fromQuery: fromQuery,
+                alias: alias,
+                distinct: distinct
+            );
+
+            await _auditService.WriteLogAsync(
+                action: "mcp.query.executed",
+                target: tableName ?? "subquery",
+                result: "success",
+                detail: $"Provider: {dbType}");
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            await _auditService.WriteLogAsync(
+                action: "mcp.query.executed",
+                target: tableName ?? "subquery",
+                result: "failed",
+                detail: ex.Message);
+            throw;
+        }
     }
 
     [McpServerTool, Description(@"
@@ -93,10 +114,23 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-            return await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
+            var result = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
+
+            await _auditService.WriteLogAsync(
+                action: "mcp.dml.executed",
+                target: dml.TableName,
+                result: "success",
+                detail: $"Operation: {dml.Operation}");
+
+            return result;
         }
         catch (Exception ex)
         {
+            await _auditService.WriteLogAsync(
+                action: "mcp.dml.executed",
+                target: dml?.TableName ?? "unknown",
+                result: "failed",
+                detail: ex.Message);
             return $"Error executing DML: {ex.Message}";
         }
     }
@@ -118,10 +152,21 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
+            
+            await _auditService.WriteLogAsync(
+                action: "mcp.get_columns",
+                target: $"{schemaName}.{tableName}",
+                result: "success");
+
             return JsonSerializer.Serialize(columns);
         }
         catch (Exception ex)
         {
+            await _auditService.WriteLogAsync(
+                action: "mcp.get_columns",
+                target: $"{schemaName}.{tableName}",
+                result: "failed",
+                detail: ex.Message);
             return $"Error getting columns: {ex.Message}";
         }
     }
@@ -139,10 +184,21 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var schemas = await strategy.GetSchemasAsync(sqlConfig.ConnectionString);
+
+            await _auditService.WriteLogAsync(
+                action: "mcp.get_schemas",
+                target: "database",
+                result: "success");
+
             return string.Join(", ", schemas);
         }
         catch (Exception ex)
         {
+            await _auditService.WriteLogAsync(
+                action: "mcp.get_schemas",
+                target: "database",
+                result: "failed",
+                detail: ex.Message);
             return $"Error getting schemas: {ex.Message}";
         }
     }
@@ -160,10 +216,21 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
+
+            await _auditService.WriteLogAsync(
+                action: "mcp.get_tables",
+                target: schemaName,
+                result: "success");
+
             return string.Join(", ", tables);
         }
         catch (Exception ex)
         {
+            await _auditService.WriteLogAsync(
+                action: "mcp.get_tables",
+                target: schemaName,
+                result: "failed",
+                detail: ex.Message);
             return $"Error getting tables: {ex.Message}";
         }
     }

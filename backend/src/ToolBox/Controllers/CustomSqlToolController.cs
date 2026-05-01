@@ -8,9 +8,10 @@ namespace ToolBox.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class CustomSqlToolController(ICustomSqlToolService toolService) : ControllerBase
+public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditService auditService) : ControllerBase
 {
     private readonly ICustomSqlToolService _toolService = toolService;
+    private readonly IAuditService _auditService = auditService;
 
     [HttpGet]
     public async Task<IActionResult> GetAllTools()
@@ -32,6 +33,13 @@ public class CustomSqlToolController(ICustomSqlToolService toolService) : Contro
         if (!ModelState.IsValid) return BadRequest(ModelState);
         
         var created = await _toolService.CreateToolAsync(tool);
+
+        await _auditService.WriteLogAsync(
+            action: "tool.custom.created",
+            target: created.Id.ToString(),
+            result: "success",
+            detail: $"Name: {created.Name}");
+
         return CreatedAtAction(nameof(GetTool), new { id = created.Id }, created);
     }
 
@@ -42,6 +50,13 @@ public class CustomSqlToolController(ICustomSqlToolService toolService) : Contro
         if (!ModelState.IsValid) return BadRequest(ModelState);
 
         var updated = await _toolService.UpdateToolAsync(tool);
+
+        await _auditService.WriteLogAsync(
+            action: "tool.custom.updated",
+            target: id.ToString(),
+            result: "success",
+            detail: $"Name: {updated.Name}");
+
         return Ok(updated);
     }
 
@@ -50,6 +65,12 @@ public class CustomSqlToolController(ICustomSqlToolService toolService) : Contro
     {
         var deleted = await _toolService.DeleteToolAsync(id);
         if (!deleted) return NotFound();
+
+        await _auditService.WriteLogAsync(
+            action: "tool.custom.deleted",
+            target: id.ToString(),
+            result: "success");
+
         return NoContent();
     }
 }

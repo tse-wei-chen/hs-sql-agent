@@ -164,7 +164,9 @@ builder.Services.AddRateLimiter(options =>
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:8080");
 builder.Services.AddScoped<McpAccessKeyAuthMiddleware>();
 builder.Services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
+builder.Services.AddSingleton<IAuditQueue, AuditQueue>();
 builder.Services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
+builder.Services.AddHostedService<AuditBackgroundService>();
 builder.Services.AddScoped<SqlAgentTool>();
 builder.Services.AddHttpContextAccessor();
 var tools = GetToolsForType<SqlAgentTool>();

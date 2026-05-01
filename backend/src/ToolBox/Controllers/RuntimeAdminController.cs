@@ -90,21 +90,16 @@ public class RuntimeAdminController(
             SqlProvider = request.SqlProvider,
             SqlConnectionString = conn
         };
-        var actorId = GetActorId();
         var result = await _keyService.IssueKeyAsync(
             issueMcpAccessKeyModel,
-            actorId,
+            User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? User.FindFirstValue(ClaimTypes.NameIdentifier),
             cancellationToken);
 
-        await _auditService.WriteAsync(
+        await _auditService.WriteLogAsync(
             action: "mcp.key.issued",
             target: result.Name,
             result: "success",
             detail: result.KeyPrefix,
-            actorType: "admin",
-            actorId: actorId,
-            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
-            userAgent: HttpContext.Request.Headers.UserAgent.ToString(),
             cancellationToken: cancellationToken);
 
         return Ok(result);
@@ -113,21 +108,16 @@ public class RuntimeAdminController(
     [HttpPost("mcp-keys/{id:int}/revoke")]
     public async Task<IActionResult> RevokeKey(int id, CancellationToken cancellationToken)
     {
-        var actorId = GetActorId();
-        var success = await _keyService.RevokeKeyAsync(id, actorId, cancellationToken);
+        var success = await _keyService.RevokeKeyAsync(id, User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? User.FindFirstValue(ClaimTypes.NameIdentifier), cancellationToken);
         if (!success)
         {
             return NotFound("MCP key not found.");
         }
 
-        await _auditService.WriteAsync(
+        await _auditService.WriteLogAsync(
             action: "mcp.key.revoked",
             target: id.ToString(),
             result: "success",
-            actorType: "admin",
-            actorId: actorId,
-            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
-            userAgent: HttpContext.Request.Headers.UserAgent.ToString(),
             cancellationToken: cancellationToken);
 
         return Ok(new { success = true });
@@ -186,9 +176,4 @@ public class RuntimeAdminController(
         });
     }
 
-    private string? GetActorId()
-    {
-        return User.FindFirstValue(JwtRegisteredClaimNames.Sub)
-            ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
-    }
 }

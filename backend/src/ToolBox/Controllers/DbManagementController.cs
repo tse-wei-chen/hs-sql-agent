@@ -32,18 +32,7 @@ public class DbManagementController(
         }
 
         var result = await _dbManagementService.CreateDbAsync(request, cancellationToken);
-
-        await _auditService.WriteAsync(
-            action: "db.management.created",
-            target: result.Id.ToString(),
-            result: "success",
-            detail: $"Created DB management entry with ID {result.Id}",
-            actorType: "admin",
-            actorId: GetActorId(),
-            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
-            userAgent: HttpContext.Request.Headers.UserAgent.ToString(),
-            cancellationToken: cancellationToken);
-
+        await _auditService.WriteLogAsync("db.management.created", result.Id.ToString(), "success", $"Name: {result.Name}", cancellationToken);
         return Ok(result);
     }
 
@@ -74,18 +63,7 @@ public class DbManagementController(
         }
 
         await _dbManagementService.UpdateDbAsync(id, request, cancellationToken);
-
-        await _auditService.WriteAsync(
-            action: "db.management.updated",
-            target: id.ToString(),
-            result: "success",
-            detail: $"Updated DB management entry with ID {id}",
-            actorType: "admin",
-            actorId: GetActorId(),
-            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
-            userAgent: HttpContext.Request.Headers.UserAgent.ToString(),
-            cancellationToken: cancellationToken);
-
+        await _auditService.WriteLogAsync("db.management.updated", id.ToString(), "success", $"Name: {request.Name}", cancellationToken);
         return NoContent();
     }
 
@@ -93,18 +71,7 @@ public class DbManagementController(
     public async Task<IActionResult> DeleteDb(int id, CancellationToken cancellationToken)
     {
         await _dbManagementService.DeleteDbAsync(id, cancellationToken);
-
-        await _auditService.WriteAsync(
-            action: "db.management.deleted",
-            target: id.ToString(),
-            result: "success",
-            detail: $"Deleted DB management entry with ID {id}",
-            actorType: "admin",
-            actorId: GetActorId(),
-            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
-            userAgent: HttpContext.Request.Headers.UserAgent.ToString(),
-            cancellationToken: cancellationToken);
-
+        await _auditService.WriteLogAsync("db.management.deleted", id.ToString(), "success", null, cancellationToken);
         return NoContent();
     }
 
@@ -202,11 +169,5 @@ public class DbManagementController(
 
         var columns = await strategy.GetColumnsAsync(connectionString, schema ?? string.Empty, table, cancellationToken);
         return Ok(columns);
-    }
-
-    private string? GetActorId()
-    {
-        return User.FindFirstValue(JwtRegisteredClaimNames.Sub)
-            ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
     }
 }
