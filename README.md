@@ -118,8 +118,9 @@ Ready for use (Experimental Stage). You can also define your own tools in the Ad
 | ✅       | `Allowed Tools`      | Manage tool access for each API key           |
 | ✅       | `Per-key Connection` | Override database settings for specific keys  |
 | ✅       | `Key Management`     | Issue, list, and revoke keys in real-time     |
-| 🚧       | `Audit Logging`      | Detailed query execution history and metadata |
-| ✅       | `Rate Limiting`      | Global and per-key rate limiting              |
+| ✅       | `Audit Logging`      | Detailed query execution history and metadata |
+| ✅       | `Rate Limiting`      | Global rate limiting                          |
+| 🔜       | `Table WhiteList`    | Configure table whitelisting per API key      |
 
 ---
 
