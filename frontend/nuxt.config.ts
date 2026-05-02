@@ -8,6 +8,12 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   srcDir: "app/",
 
+  colorMode: {
+    preference: 'system',
+    fallback: 'dark',
+    classSuffix: ''
+  },
+
   css: ["~/assets/css/tailwind.css"],
 
   // 2.
@@ -44,12 +50,19 @@ export default defineNuxtConfig({
         "@codemirror/search",
         "@codemirror/autocomplete",
         "@codemirror/language",
-        "@codemirror/lint"
+        "@codemirror/lint",
+        "@codemirror/theme-one-dark",
+        "lucide-vue-next"
       ],
     },
   },
 
-  modules: ["shadcn-nuxt", '@vee-validate/nuxt', "nuxt-codemirror"],
+  modules: [
+    "shadcn-nuxt",
+    '@vee-validate/nuxt',
+    "nuxt-codemirror",
+    "@nuxtjs/color-mode",
+  ],
   veeValidate: {
     autoImports: true,
     componentNames: {

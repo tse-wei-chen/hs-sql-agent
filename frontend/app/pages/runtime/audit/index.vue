@@ -68,11 +68,9 @@ onMounted(load);
 <template>
   <div class="space-y-4">
     <Card>
-      <CardHeader class="border-b bg-muted/40">
+      <CardHeader class="border-b ">
         <CardTitle>Audit Logs</CardTitle>
-        <CardDescription
-          >Runtime settings and MCP key operation history.</CardDescription
-        >
+        <CardDescription>Runtime settings and MCP key operation history.</CardDescription>
       </CardHeader>
       <CardContent>
         <div class="mb-4 flex flex-col gap-2 md:flex-row">
@@ -83,12 +81,14 @@ onMounted(load);
 
         <div v-if="loading">Loading audit logs...</div>
         <div v-else class="space-y-2">
-          <div
-            v-for="item in items"
-            :key="item.id"
-            class="rounded border bg-card p-3 text-sm"
-          >
-            <div class="font-medium">{{ item.action }} ({{ item.result }})</div>
+          <div v-for="item in items" :key="item.id" class="rounded border bg-card p-3 text-sm">
+            <div class="font-medium">{{ item.action }} <span class="rounded-full px-2 py-0.5 text-xs" :class="item.result.toLowerCase() === 'success'
+              ? 'bg-emerald-100 text-emerald-700'
+              : 'bg-rose-100 text-rose-700'
+              ">
+                {{ item.result }}
+              </span>
+            </div>
             <div class="text-muted-foreground">
               target: {{ item.target }} | actor: {{ item.actorType }}
               {{ item.actorId || "" }}
@@ -99,19 +99,10 @@ onMounted(load);
         </div>
 
         <div class="mt-4 flex items-center gap-2">
-          <Button variant="outline" @click="prevPage" :disabled="page <= 1"
-            >Previous</Button
-          >
+          <Button variant="outline" @click="prevPage" :disabled="page <= 1">Previous</Button>
           <span class="text-sm">Page {{ page }}</span>
-          <Button
-            variant="outline"
-            @click="nextPage"
-            :disabled="page * pageSize >= totalCount"
-            >Next</Button
-          >
-          <span class="text-sm text-muted-foreground"
-            >Total {{ totalCount }}</span
-          >
+          <Button variant="outline" @click="nextPage" :disabled="page * pageSize >= totalCount">Next</Button>
+          <span class="text-sm text-muted-foreground">Total {{ totalCount }}</span>
         </div>
       </CardContent>
     </Card>

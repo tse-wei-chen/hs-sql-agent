@@ -19,6 +19,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import ToggleTheme from "@/components/ToggleTheme.vue";
 </script>
 
 <template>
@@ -28,10 +29,7 @@ import {
       <header class="flex h-16 shrink-0 items-center gap-2">
         <div class="flex items-center gap-2 px-4">
           <SidebarTrigger class="-ml-1" />
-          <Separator
-            orientation="vertical"
-            class="mr-2 data-[orientation=vertical]:h-4"
-          />
+          <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem class="hidden md:block">
@@ -45,6 +43,9 @@ import {
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
+        </div>
+        <div className="ml-auto flex items-center gap-2 mr-2">
+          <ToggleTheme />
         </div>
       </header>
       <div class="flex flex-1 flex-col gap-4 p-4 pt-0">

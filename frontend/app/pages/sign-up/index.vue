@@ -22,7 +22,7 @@ definePageMeta({
           >
             <GalleryVerticalEnd class="size-4" />
           </div>
-          Acme Inc.
+          hs-sql-agent.
         </a>
       </div>
       <div class="flex flex-1 items-center justify-center">

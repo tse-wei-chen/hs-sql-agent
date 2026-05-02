@@ -257,7 +257,7 @@ onMounted(load);
 <template>
   <div class="space-y-4">
     <Card>
-      <CardHeader class="border-b bg-muted/40">
+      <CardHeader class="border-b">
         <CardTitle>Issue MCP Access Key</CardTitle>
         <CardDescription>
           New keys are shown only once. Save the value immediately.
@@ -561,7 +561,7 @@ onMounted(load);
     </Card>
 
     <Card>
-      <CardHeader class="border-b bg-muted/40">
+      <CardHeader class="border-b">
         <CardTitle>Issued Keys</CardTitle>
       </CardHeader>
       <CardContent>

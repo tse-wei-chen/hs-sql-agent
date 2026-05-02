@@ -34,6 +34,7 @@ import {
 } from "@/api/db-management";
 import { Plus, Trash2, Edit2, Save, X, Wand2 } from "lucide-vue-next";
 import { json } from "@codemirror/lang-json";
+import { oneDark } from '@codemirror/theme-one-dark';
 definePageMeta({
   layout: "default",
 });
@@ -41,7 +42,7 @@ const tools = ref<CustomSqlTool[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
-
+const colorMode = useColorMode()
 // Form state
 const form = ref({
   name: "",
@@ -85,7 +86,7 @@ const formatJson = () => {
     try {
       const parsed = JSON.parse(form.value.definitionJson);
       form.value.definitionJson = JSON.stringify(parsed, null, 2);
-    } catch {}
+    } catch { }
   }
 };
 
@@ -205,7 +206,7 @@ onMounted(async () => {
   <div class="space-y-6">
     <!-- Tool Editor -->
     <Card>
-      <CardHeader class="border-b bg-muted/40">
+      <CardHeader class="border-b ">
         <CardTitle>{{
           editingId ? "Edit Custom Tool" : "Create Custom Tool"
         }}</CardTitle>
@@ -218,11 +219,7 @@ onMounted(async () => {
           <FieldGroup class="grid gap-4 md:grid-cols-2">
             <Field>
               <FieldLabel for="name">Tool Name</FieldLabel>
-              <Input
-                id="name"
-                v-model="form.name"
-                placeholder="e.g., get_vip_customers"
-              />
+              <Input id="name" v-model="form.name" placeholder="e.g., get_vip_customers" />
               <p class="text-[0.7rem] text-muted-foreground mt-1">
                 Snake case recommended. This is how the LLM will see it.
               </p>
@@ -236,46 +233,28 @@ onMounted(async () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Query">Query (SELECT)</SelectItem>
-                  <SelectItem value="DML"
-                    >DML (INSERT/UPDATE/DELETE)</SelectItem
-                  >
+                  <SelectItem value="DML">DML (INSERT/UPDATE/DELETE)</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
 
             <Field class="md:col-span-2">
               <FieldLabel for="description">Description (for LLM)</FieldLabel>
-              <Textarea
-                id="description"
-                v-model="form.description"
-                placeholder="Describe what this tool does and when to use it..."
-              />
+              <Textarea id="description" v-model="form.description"
+                placeholder="Describe what this tool does and when to use it..." />
             </Field>
 
             <Field class="md:col-span-2">
               <div class="flex items-center justify-between mb-2">
-                <FieldLabel for="definition" class="mb-0"
-                  >SQL Definition (JSON)</FieldLabel
-                >
+                <FieldLabel for="definition" class="mb-0">SQL Definition (JSON)</FieldLabel>
                 <div class="flex items-center gap-2">
-                  <Button
-                    v-if="form.type === 'Query'"
-                    variant="default"
-                    size="sm"
+                  <Button v-if="form.type === 'Query'" variant="default" size="sm"
                     class="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
-                    @click="isAdvancedBuilderOpen = true"
-                    type="button"
-                  >
+                    @click="isAdvancedBuilderOpen = true" type="button">
                     <Wand2 class="size-3 mr-1" /> Open Advanced Builder
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="h-7 text-[0.65rem] px-2"
-                    @click="formatJson"
-                    type="button"
-                    :disabled="!isJsonValid || !form.definitionJson"
-                  >
+                  <Button variant="outline" size="sm" class="h-7 text-[0.65rem] px-2" @click="formatJson" type="button"
+                    :disabled="!isJsonValid || !form.definitionJson">
                     Format JSON
                   </Button>
                 </div>
@@ -283,31 +262,20 @@ onMounted(async () => {
 
               <div class="space-y-2">
                 <div
-                  class="border rounded-md overflow-hidden bg-background focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-shadow"
-                >
-                  <NuxtCodeMirror
-                    id="definition"
-                    :editable="true"
-                    :extensions="[json()]"
-                    :basic-setup="true"
-                    :indent-with-tab="true"
-                    v-model="form.definitionJson"
-                    :style="{
+                  class="border rounded-md overflow-hidden focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-shadow">
+                  <NuxtCodeMirror :key="colorMode.value" id="definition" :editable="true" :extensions="[json()]"
+                    :theme="colorMode.value === 'dark' ? oneDark : undefined" :basic-setup="true"
+                    :indent-with-tab="true" v-model="form.definitionJson" :style="{
                       minHeight: '150px',
                       maxHeight: '400px',
                       overflowY: 'auto',
-                    }"
-                    placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }'
-                  />
+                    }" placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }' />
                 </div>
                 <div class="flex justify-between items-start">
                   <p class="text-[0.7rem] text-muted-foreground" v-pre>
                     Use {{ parameterName }} as placeholders in values.
                   </p>
-                  <p
-                    v-if="!isJsonValid"
-                    class="text-[0.7rem] text-destructive font-semibold"
-                  >
+                  <p v-if="!isJsonValid" class="text-[0.7rem] text-destructive font-semibold">
                     Invalid JSON format
                   </p>
                 </div>
@@ -321,28 +289,18 @@ onMounted(async () => {
               <h3 class="text-sm font-medium">
                 Parameters (dynamic parameters decided by your AI)
               </h3>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                @click="addParameter"
-              >
+              <Button type="button" variant="outline" size="sm" @click="addParameter">
                 <Plus class="size-4 mr-1" /> Add Parameter
               </Button>
             </div>
 
-            <div
-              v-if="form.parameters.length === 0"
-              class="text-xs text-muted-foreground border rounded-lg p-4 bg-muted/20 text-center"
-            >
+            <div v-if="form.parameters.length === 0"
+              class="text-xs text-muted-foreground border rounded-lg p-4 bg-muted/20 text-center">
               No parameters defined yet.
             </div>
 
-            <div
-              v-for="(p, index) in form.parameters"
-              :key="index"
-              class="grid grid-cols-[1fr,1fr,2fr,auto] gap-2 items-end border p-3 rounded-lg bg-muted/10"
-            >
+            <div v-for="(p, index) in form.parameters" :key="index"
+              class="grid grid-cols-[1fr,1fr,2fr,auto] gap-2 items-end border p-3 rounded-lg bg-muted/10">
               <Field>
                 <FieldLabel class="text-[0.65rem]">Name</FieldLabel>
                 <Input v-model="p.name" placeholder="id" class="h-8 text-xs" />
@@ -362,31 +320,17 @@ onMounted(async () => {
               </Field>
               <Field>
                 <FieldLabel class="text-[0.65rem]">Description</FieldLabel>
-                <Input
-                  v-model="p.description"
-                  placeholder="User unique ID"
-                  class="h-8 text-xs"
-                />
+                <Input v-model="p.description" placeholder="User unique ID" class="h-8 text-xs" />
               </Field>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                @click="removeParameter(index)"
-                class="h-8 w-8 text-destructive"
-              >
+              <Button type="button" variant="ghost" size="icon" @click="removeParameter(index)"
+                class="h-8 w-8 text-destructive">
                 <X class="size-4" />
               </Button>
             </div>
           </div>
 
           <div class="flex justify-end gap-2 pt-4">
-            <Button
-              v-if="editingId"
-              type="button"
-              variant="ghost"
-              @click="resetForm"
-            >
+            <Button v-if="editingId" type="button" variant="ghost" @click="resetForm">
               Cancel
             </Button>
             <Button type="submit" :disabled="saving">
@@ -402,40 +346,27 @@ onMounted(async () => {
 
     <!-- Tools List -->
     <Card>
-      <CardHeader class="border-b bg-muted/40">
+      <CardHeader class="border-b ">
         <CardTitle>Registered Custom Tools</CardTitle>
       </CardHeader>
       <CardContent class="pt-6">
-        <div
-          v-if="loading"
-          class="py-8 text-sm text-muted-foreground text-center"
-        >
+        <div v-if="loading" class="py-8 text-sm text-muted-foreground text-center">
           Loading tools...
         </div>
-        <div
-          v-else-if="tools.length === 0"
-          class="py-8 text-sm text-muted-foreground text-center"
-        >
+        <div v-else-if="tools.length === 0" class="py-8 text-sm text-muted-foreground text-center">
           No custom tools defined yet.
         </div>
         <div v-else class="grid gap-4 md:grid-cols-2">
-          <div
-            v-for="tool in tools"
-            :key="tool.id"
-            class="flex flex-col rounded-lg border bg-card p-4 shadow-sm group hover:border-primary/50 transition-colors"
-          >
+          <div v-for="tool in tools" :key="tool.id"
+            class="flex flex-col rounded-lg border bg-card p-4 shadow-sm group hover:border-primary/50 transition-colors">
             <div class="flex items-start justify-between mb-2">
               <div>
                 <div class="flex items-center gap-2">
                   <span class="font-bold text-sm">{{ tool.name }}</span>
-                  <span
-                    class="px-1.5 py-0.5 rounded text-[0.6rem] font-bold uppercase tracking-wider"
-                    :class="
-                      tool.type === 'DML'
-                        ? 'bg-red-100 text-red-700'
-                        : 'bg-blue-100 text-blue-700'
-                    "
-                  >
+                  <span class="px-1.5 py-0.5 rounded text-[0.6rem] font-bold uppercase tracking-wider" :class="tool.type === 'DML'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-blue-100 text-blue-700'
+                    ">
                     {{ tool.type }}
                   </span>
                 </div>
@@ -443,58 +374,36 @@ onMounted(async () => {
                   {{ tool.description }}
                 </p>
               </div>
-              <div
-                class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="h-8 w-8"
-                  @click="startEdit(tool)"
-                >
+              <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(tool)">
                   <Edit2 class="size-4" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="h-8 w-8 text-destructive"
-                  @click="remove(tool.id)"
-                >
+                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(tool.id)">
                   <Trash2 class="size-4" />
                 </Button>
               </div>
             </div>
 
-            <div
-              class="mt-auto pt-3 border-t flex items-center justify-between text-[0.65rem] text-muted-foreground"
-            >
-              <span
-                >{{
-                  tool.parametersJson
-                    ? JSON.parse(tool.parametersJson).length
-                    : 0
-                }}
-                parameters</span
-              >
-              <span
-                >Updated:
+            <div class="mt-auto pt-3 border-t flex items-center justify-between text-[0.65rem] text-muted-foreground">
+              <span>{{
+                tool.parametersJson
+                  ? JSON.parse(tool.parametersJson).length
+                  : 0
+              }}
+                parameters</span>
+              <span>Updated:
                 {{
                   new Date(
                     tool.lastModifiedAt || tool.createdAt,
                   ).toLocaleString()
-                }}</span
-              >
+                }}</span>
             </div>
           </div>
         </div>
       </CardContent>
     </Card>
 
-    <AdvancedJsonBuilderDialog
-      v-model:open="isAdvancedBuilderOpen"
-      :type="form.type as any"
-      :dbs="dbs"
-      @apply="onAdvancedBuilderApply"
-    />
+    <AdvancedJsonBuilderDialog v-model:open="isAdvancedBuilderOpen" :type="form.type as any" :dbs="dbs"
+      @apply="onAdvancedBuilderApply" />
   </div>
 </template>
