@@ -1,21 +1,29 @@
 using Admin.Service.Data;
 using Admin.Service.Data.Entites;
+using Admin.Service.Interfaces;
 using Admin.Service.Services;
+using Microsoft.AspNetCore.Http;
 using Moq;
 using Moq.EntityFrameworkCore;
 using Xunit;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 
 namespace Admin.Test.Services;
 
 public class AuditServiceTests
 {
     private readonly Mock<IAdminContext> _contextMock;
+    private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
+    private readonly Mock<IAuditQueue> _auditQueueMock;
     private readonly AuditService _service;
 
     public AuditServiceTests()
     {
         _contextMock = new Mock<IAdminContext>();
-        _service = new AuditService(_contextMock.Object);
+        _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
+        _auditQueueMock = new Mock<IAuditQueue>();
+        _service = new AuditService(_contextMock.Object, _httpContextAccessorMock.Object, _auditQueueMock.Object);
     }
 
     #region WriteAsync Tests
@@ -23,35 +31,27 @@ public class AuditServiceTests
     [Fact]
     public async Task WriteAsync_ShouldSetDefaultActorTypeToSystem_WhenActorTypeIsNullOrWhitespace()
     {
-        // Arrange
-        var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<AuditLog>>();
-        _contextMock.Setup(c => c.AuditLogs).Returns(mockDbSet.Object);
-
         // Act
-        await _service.WriteAsync("login", "target_user", "success", null, "   ", null, null, null, TestContext.Current.CancellationToken);
+        await _service.WriteAsync("login", "target_user", "success", null, "   ", null, null, null, CancellationToken.None);
 
         // Assert
-        mockDbSet.Verify(m => m.Add(It.Is<AuditLog>(a => 
+        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a => 
             a.Action == "login" &&
             a.Target == "target_user" &&
             a.Result == "success" &&
             a.ActorType == "system" // Default fallback
         )), Times.Once);
-        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task WriteAsync_ShouldMapAllPropertiesCorrectly_WhenAllProvided()
     {
-        // Arrange
-        var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<AuditLog>>();
-        _contextMock.Setup(c => c.AuditLogs).Returns(mockDbSet.Object);
-
         // Act
-        await _service.WriteAsync("query", "db1", "failed", "details", "user", "u1", "127.0.0.1", "Mozilla", TestContext.Current.CancellationToken);
+        await _service.WriteAsync("query", "db1", "failed", "details", "user", "u1", "127.0.0.1", "Mozilla", CancellationToken.None);
 
         // Assert
-        mockDbSet.Verify(m => m.Add(It.Is<AuditLog>(a => 
+        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a => 
             a.Action == "query" &&
             a.Target == "db1" &&
             a.Result == "failed" &&
@@ -62,7 +62,59 @@ public class AuditServiceTests
             a.UserAgent == "Mozilla" &&
             a.CreatedAt != default
         )), Times.Once);
-        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    #endregion
+
+    #region WriteLogAsync Tests
+
+    [Fact]
+    public async Task WriteLogAsync_ShouldCaptureContextInfo_WhenHttpContextIsAvailable()
+    {
+        // Arrange
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("192.168.1.1");
+        context.Request.Headers.UserAgent = "TestAgent";
+        
+        var claims = new List<Claim> { new(JwtRegisteredClaimNames.Sub, "user-123") };
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(claims));
+        
+        _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
+
+        // Act
+        await _service.WriteLogAsync("test.action", "test.target", "success", "test.detail", TestContext.Current.CancellationToken);
+
+        // Assert
+        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
+            a.Action == "test.action" &&
+            a.Target == "test.target" &&
+            a.Result == "success" &&
+            a.Detail == "test.detail" &&
+            a.ActorType == "admin" &&
+            a.ActorId == "user-123" &&
+            a.IpAddress == "192.168.1.1" &&
+            a.UserAgent == "TestAgent"
+        )), Times.Once);
+    }
+
+    [Fact]
+    public async Task WriteLogAsync_ShouldFallbackToMcpKey_WhenUserIsMissingButItemsHaveKeyId()
+    {
+        // Arrange
+        var context = new DefaultHttpContext();
+        context.Items["AccessKeyId"] = 42;
+        _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
+
+        // Act
+        await _service.WriteLogAsync("mcp.action", "mcp.target", "success", cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
+            a.Action == "mcp.action" &&
+            a.ActorType == "mcp-key" &&
+            a.ActorId == "42"
+        )), Times.Once);
     }
 
     #endregion

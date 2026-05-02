@@ -45,6 +45,7 @@ const {
   dbId,
   schema,
   table,
+  alias,
   availableSchemas,
   availableTables,
   availableColumns,
@@ -60,6 +61,7 @@ const {
   mainTableColumnNames,
   allAvailableColumnNames,
   qualifiedAvailableTables,
+  nowValidTables,
   onDbChange,
   onSchemaChange,
   onTableChange,
@@ -75,7 +77,7 @@ const {
   addInsertValue,
   removeInsertValue,
   autofillColumns,
-  joinColumnOptions,
+  filterColumnOptionsByTable,
   generateJson,
 } = useSqlBuilder({ type: props.type });
 
@@ -133,6 +135,7 @@ const apply = () => {
           v-model:db-id="dbId"
           v-model:schema="schema"
           v-model:table="table"
+          v-model:alias="alias"
           :dbs="dbs"
           :available-schemas="availableSchemas"
           :available-tables="availableTables"
@@ -181,7 +184,8 @@ const apply = () => {
             v-if="activeTab === 'columns'"
             v-model:distinct="distinct"
             :select-columns="selectColumns"
-            :options="allAvailableColumnNames"
+            :now-valid-tables="nowValidTables"
+            :options="filterColumnOptionsByTable"
             :can-autofill="!!availableColumns.length"
             @add="addColumn"
             @remove="removeColumn"
@@ -192,8 +196,9 @@ const apply = () => {
           <SqlBuilderTabWhere
             v-if="activeTab === 'where'"
             :where-conditions="whereConditions"
-            :options="allAvailableColumnNames"
+            :options="filterColumnOptionsByTable"
             :type="type"
+            :now-valid-tables="nowValidTables"
             @add="addWhere"
             @remove="removeWhere"
           />
@@ -203,8 +208,9 @@ const apply = () => {
             v-if="activeTab === 'joins'"
             :joins="joins"
             :qualified-tables="qualifiedAvailableTables"
+            :now-valid-tables="nowValidTables"
             :main-column-options="mainTableColumnNames"
-            :get-join-column-options="joinColumnOptions"
+            :get-join-column-options="filterColumnOptionsByTable"
             @add="addJoin"
             @remove="removeJoin"
             @fetch-columns="fetchJoinColumns"
@@ -216,7 +222,8 @@ const apply = () => {
             v-model:limit="limit"
             v-model:offset="offset"
             :order-bys="orderBys"
-            :options="allAvailableColumnNames"
+            :options="filterColumnOptionsByTable"
+            :now-valid-tables="nowValidTables"
             @add="addOrderBy"
             @remove="removeOrderBy"
           />

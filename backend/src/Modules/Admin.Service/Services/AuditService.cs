@@ -2,13 +2,18 @@ using Admin.Service.Data;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 
 namespace Admin.Service.Services;
 
-public class AuditService(IAdminContext context) : IAuditService
+public class AuditService(IAdminContext context, IHttpContextAccessor httpContextAccessor, IAuditQueue auditQueue) : IAuditService
 {
     private readonly IAdminContext _context = context;
+    private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
+    private readonly IAuditQueue _auditQueue = auditQueue;
 
     public async Task WriteAsync(
         string action,
@@ -34,8 +39,58 @@ public class AuditService(IAdminContext context) : IAuditService
             CreatedAt = DateTime.UtcNow
         };
 
-        _context.AuditLogs.Add(item);
-        await _context.SaveChangesAsync(cancellationToken);
+        // Offload to background queue instead of waiting for DB save
+        _auditQueue.TryEnqueue(item);
+        await Task.CompletedTask;
+    }
+
+    public async Task WriteLogAsync(
+        string action,
+        string target,
+        string result,
+        string? detail = null,
+        CancellationToken cancellationToken = default)
+    {
+        var httpContext = _httpContextAccessor.HttpContext;
+        string? actorId = null;
+        string? actorType = "system";
+        string? ipAddress = null;
+        string? userAgent = null;
+
+        if (httpContext != null)
+        {
+            // Try to get ActorId from JWT
+            actorId = httpContext.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                      ?? httpContext.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            
+            if (actorId != null)
+            {
+                actorType = "admin";
+            }
+            else
+            {
+                // Try to get ActorId from MCP context
+                if (httpContext.Items.TryGetValue("AccessKeyId", out var keyIdObj) && keyIdObj != null)
+                {
+                    actorId = keyIdObj.ToString();
+                    actorType = "mcp-key";
+                }
+            }
+
+            ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+            userAgent = httpContext.Request.Headers.UserAgent.ToString();
+        }
+
+        await WriteAsync(
+            action: action,
+            target: target,
+            result: result,
+            detail: detail,
+            actorType: actorType,
+            actorId: actorId,
+            ipAddress: ipAddress,
+            userAgent: userAgent,
+            cancellationToken: cancellationToken);
     }
 
     public async Task<AuditLogQueryResult> QueryAsync(int page, int pageSize, string? action = null, string? keyword = null, CancellationToken cancellationToken = default)

@@ -10,10 +10,11 @@ namespace ToolBox.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AdminController(ILogger<AdminController> logger, IAdminService adminService) : ControllerBase
+public class AdminController(ILogger<AdminController> logger, IAdminService adminService, IAuditService auditService) : ControllerBase
 {
     private readonly ILogger<AdminController> _logger = logger;
     private readonly IAdminService _adminService = adminService;
+    private readonly IAuditService _auditService = auditService;
 
     [HttpGet("first-run")]
     [AllowAnonymous]
@@ -31,16 +32,19 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         try
         {
             var result = await _adminService.SignInAsync(request);
+            await _auditService.WriteLogAsync("admin.signin", request.Email, "success");
             return Ok(result);
         }
         catch (UnauthorizedAccessException ex)
         {
             _logger.LogWarning(ex, "Sign-in failed for user");
+            await _auditService.WriteLogAsync("admin.signin", request.Email, "failed", "Invalid credentials");
             return Forbid();
         }
         catch (ArgumentException ex)
         {
             _logger.LogWarning(ex, "Invalid sign-in request.");
+            await _auditService.WriteLogAsync("admin.signin", request.Email, "failed", ex.Message);
             return BadRequest(ex.Message);
         }
     }
@@ -56,16 +60,19 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         try
         {
             var result = await _adminService.SignUpAsync(request);
+            await _auditService.WriteLogAsync("admin.signup", request.Email, "success");
             return Ok(result);
         }
         catch (ArgumentException ex)
         {
             _logger.LogWarning(ex, "Invalid sign-up request.");
+            await _auditService.WriteLogAsync("admin.signup", request.Email, "failed", ex.Message);
             return BadRequest(ex.Message);
         }
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Sign-up attempt when admin user already exists.");
+            await _auditService.WriteLogAsync("admin.signup", request.Email, "failed", ex.Message);
             return BadRequest(ex.Message);
         }
     }

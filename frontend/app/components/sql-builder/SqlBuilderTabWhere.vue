@@ -12,8 +12,10 @@ defineProps<{
     value: string;
     isOr: boolean;
     isNot: boolean;
+    table: string;
   }[];
-  options: string[];
+  nowValidTables: string[];
+  options : (table: string) => string[];
   type: "Query" | "DML";
 }>();
 
@@ -64,10 +66,15 @@ const emit = defineEmits<{
           />
         </label>
       </template>
-
+      <ComboboxInput
+        v-model="w.table"
+        :options="nowValidTables"
+        placeholder="Target Table"
+        class="flex-1"
+      />
       <ComboboxInput
         v-model="w.field"
-        :options="options"
+        :options="options(w.table)"
         placeholder="Field"
         class="flex-1"
       />

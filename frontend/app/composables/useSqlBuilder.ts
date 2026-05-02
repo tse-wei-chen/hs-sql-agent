@@ -10,14 +10,28 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const dbId = ref<number | null>(null);
   const schema = ref("_default_");
   const table = ref("");
+  const alias = ref("");
 
   const availableSchemas = ref<string[]>([]);
   const availableTables = ref<string[]>([]);
   const availableColumns = ref<{ name: string; dataType: string }[]>([]);
 
+  const allTableAliasMap = computed(() => {
+    const map: Record<string, string> = {};
+    if (table.value) {
+      map[table.value] = alias.value;
+    }
+    joins.value.forEach((j) => {
+      if (j.table) {
+        map[j.table] = j.alias;
+      }
+    })
+    console.log(allTableAliasMap.value);
+    return map;
+  });
   // --- Query Builder State ---
   const distinct = ref(false);
-  const selectColumns = ref<{ field: string; alias: string }[]>([]);
+  const selectColumns = ref<{ table: string; field: string; alias: string }[]>([]);
   const whereConditions = ref<
     {
       field: string;
@@ -25,18 +39,22 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       value: string;
       isOr: boolean;
       isNot: boolean;
+      table: string;
     }[]
   >([]);
   const joins = ref<
     {
       table: string;
+      alias: string;
       type: string;
+      firstTable: string;
       first: string;
       operator: string;
+      secondTable: string;
       second: string;
     }[]
   >([]);
-  const orderBys = ref<{ field: string; direction: string }[]>([]);
+  const orderBys = ref<{ table: string; field: string; direction: string }[]>([]);
   const limit = ref<number | null>(100);
   const offset = ref<number | null>(0);
 
@@ -45,7 +63,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const insertValues = ref<{ name: string; value: string }[]>([]);
 
   // --- Logic Helpers ---
-  const addColumn = () => selectColumns.value.push({ field: "", alias: "" });
+  const addColumn = () => selectColumns.value.push({ table: "", field: "", alias: "" });
   const removeColumn = (i: number) => selectColumns.value.splice(i, 1);
   const addWhere = () =>
     whereConditions.value.push({
@@ -54,18 +72,22 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       value: "",
       isOr: false,
       isNot: false,
+      table: "",
     });
   const removeWhere = (i: number) => whereConditions.value.splice(i, 1);
   const addJoin = () =>
     joins.value.push({
       table: "",
+      alias: "",
       type: "INNER",
+      firstTable: "",
       first: "",
       operator: "=",
+      secondTable: "",
       second: "",
     });
   const removeJoin = (i: number) => joins.value.splice(i, 1);
-  const addOrderBy = () => orderBys.value.push({ field: "", direction: "asc" });
+  const addOrderBy = () => orderBys.value.push({ table: "", field: "", direction: "asc" });
   const removeOrderBy = (i: number) => orderBys.value.splice(i, 1);
   const addInsertValue = () => insertValues.value.push({ name: "", value: "" });
   const removeInsertValue = (i: number) => insertValues.value.splice(i, 1);
@@ -108,8 +130,8 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     try {
       const rawColumns = await getColumns(dbId.value, table.value, s);
       availableColumns.value = rawColumns.map((c: any) => ({
-        name: c.column || c.Column || c.name || c.Name,
-        dataType: c.type || c.Type || c.dataType || c.DataType,
+        name: c.column,
+        dataType: c.type,
       }));
     } catch (e) { }
   };
@@ -135,52 +157,43 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     try {
       const rawColumns = await getColumns(dbId.value, t, s);
       joinTableColumns.value[fullTable] = rawColumns.map(
-        (c: any) => c.column || c.Column || c.name || c.Name,
+        (c: any) => c.column,
       );
     } catch (e) { }
   };
 
   // --- Column / Alias Logic ---
-  const joinColumnOptions = (join: any) => {
-    const fullTable = join.table.split(" ")[0];
-    const cols = joinTableColumns.value[fullTable] || [];
-    let prefix = "";
-    if (!prefix && join.table) {
-      const parts = join.table.split(".");
-      prefix = parts[parts.length - 1];
+  const filterColumnOptionsByTable = (t: string) => {
+    if (t === table.value) {
+      return mainTableColumnNames.value;
     }
-    return prefix ? cols.map((c) => `${prefix}.${c}`) : cols;
+    return joinTableColumns.value[t] || [];
   };
 
   const mainTableColumnNames = computed(() => {
-    const cols = availableColumns.value.map((c) => c.name);
-    let prefix = "";
-    if (!prefix && table.value) {
-      const parts = table.value.split(".");
-      prefix = parts[parts.length - 1] || "";
-    }
-    return prefix ? cols.map((c) => `${prefix}.${c}`) : cols;
+    return availableColumns.value.map((c) => c.name);
   });
 
   const allAvailableColumnNames = computed(() => {
     const all = [...mainTableColumnNames.value];
-    joins.value.forEach((j) => all.push(...joinColumnOptions(j)));
+    joins.value.forEach((j) => all.push(...(joinTableColumns.value[j.table] || [])));
     return all;
   });
 
   const qualifiedAvailableTables = computed(() => {
-    const s = schema.value === "_default_" ? "" : schema.value;
-    return s
-      ? availableTables.value.map((t) =>
-        t.startsWith(`${s}.`) ? t : `${s}.${t}`,
-      )
-      : availableTables.value;
+    return availableTables.value;
+  });
+
+  const nowValidTables = computed(() => {
+    var mainAndJoinTables = [table.value, ...joins.value.map((j) => j.table)];
+    return availableTables.value.filter((t) => mainAndJoinTables.includes(t));
   });
 
   // --- Autofill ---
   const autofillColumns = () => {
     if (options.type === "Query") {
       selectColumns.value = mainTableColumnNames.value.map((name) => ({
+        table: table.value,
         field: name,
         alias: "",
       }));
@@ -199,39 +212,39 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       return s && tbl && !tbl.startsWith(`${s}.`) ? `${s}.${tbl}` : tbl;
     };
 
-    const targetTableName = getQualifiedTableName(table.value);
-
     if (options.type === "Query") {
       return JSON.stringify(
         {
-          tableName: targetTableName,
+          tableName: getQualifiedTableName(table.value),
+          alias: alias.value || undefined,
           distinct: distinct.value,
           selectColumns:
             selectColumns.value.length > 0
               ? selectColumns.value.map((c) => ({
-                field: c.field,
+                field: `${allTableAliasMap.value[c.table]}.${c.field}`,
                 ...(c.alias ? { alias: c.alias } : {}),
               }))
               : [{ field: "*" }],
           whereColumnsAndValues: whereConditions.value.map((w) => ({
-            field: w.field,
+            field: `${allTableAliasMap.value[w.table]}.${w.field}`,
             operator: w.operator,
             value: w.value,
             isOr: w.isOr,
             isNot: w.isNot,
           })),
           orderByColumns: orderBys.value.map((o) => ({
-            field: o.field,
+            field: `${allTableAliasMap.value[o.table]}.${o.field}`,
             direction: o.direction,
           })),
           groupByConditions: [],
           havingConditions: [],
           joins: joins.value.map((j) => ({
-            table: j.table,
+            alias: j.alias || undefined,
+            table: getQualifiedTableName(j.table),
             type: j.type,
-            first: j.first,
+            first: `${allTableAliasMap.value[j.firstTable]}.${j.first}`,
             operator: j.operator,
-            second: j.second,
+            second: `${allTableAliasMap.value[j.secondTable]}.${j.second}`,
           })),
           limit: limit.value,
           offset: offset.value,
@@ -243,13 +256,13 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       return JSON.stringify(
         {
           operation: dmlOperation.value,
-          tableName: targetTableName,
+          tableName: getQualifiedTableName(table.value),
           values: insertValues.value.map((v) => ({
             name: v.name,
             value: v.value,
           })),
           whereConditions: whereConditions.value.map((w) => ({
-            field: w.field,
+            field: `${allTableAliasMap.value[w.table]}.${w.field}`,
             operator: w.operator,
             value: w.value,
           })),
@@ -265,6 +278,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     dbId,
     schema,
     table,
+    alias,
     availableSchemas,
     availableTables,
     availableColumns,
@@ -283,6 +297,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     mainTableColumnNames,
     allAvailableColumnNames,
     qualifiedAvailableTables,
+    nowValidTables,
 
     // Actions
     onDbChange,
@@ -300,7 +315,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     addInsertValue,
     removeInsertValue,
     autofillColumns,
-    joinColumnOptions,
+    filterColumnOptionsByTable,
     generateJson,
   };
 }

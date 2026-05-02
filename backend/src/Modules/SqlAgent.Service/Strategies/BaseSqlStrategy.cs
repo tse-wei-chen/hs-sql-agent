@@ -505,7 +505,8 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
         }
         catch (Exception ex)
         {
-            return BuildExecutionErrorMessage(ex, "Query");
+            var message = BuildExecutionErrorMessage(ex, "Query");
+            throw new Exception(message, ex);
         }
     }
 
@@ -583,7 +584,8 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
         catch (Exception ex)
         {
             transaction.Rollback();
-            return BuildExecutionErrorMessage(ex, "DML");
+            var message = BuildExecutionErrorMessage(ex, "DML");
+            throw new Exception(message, ex);
         }
     }
 

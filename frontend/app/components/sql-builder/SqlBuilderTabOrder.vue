@@ -14,10 +14,11 @@ import ComboboxInput from "@/components/ComboboxInput.vue";
 import SqlBuilderSection from "./SqlBuilderSection.vue";
 
 const props = defineProps<{
-  orderBys: { field: string; direction: string }[];
+  orderBys: { table: string; field: string; direction: string }[];
   limit: number | null;
   offset: number | null;
-  options: string[];
+  nowValidTables: string[];
+  options: (table: string) => string[];
 }>();
 
 const emit = defineEmits<{
@@ -45,8 +46,14 @@ const emit = defineEmits<{
 
       <div v-for="(o, i) in orderBys" :key="i" class="flex items-center gap-2">
         <ComboboxInput
+          v-model="o.table"
+          :options="nowValidTables"
+          placeholder="Target Table"
+          class="flex-1"
+        />
+        <ComboboxInput
           v-model="o.field"
-          :options="options"
+          :options="options(o.table)"
           placeholder="Field Name"
           class="flex-1"
         />

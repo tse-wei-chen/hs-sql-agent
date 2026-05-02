@@ -6,10 +6,11 @@ import ComboboxInput from "@/components/ComboboxInput.vue";
 import SqlBuilderSection from "./SqlBuilderSection.vue";
 
 const props = defineProps<{
-  selectColumns: { field: string; alias: string }[];
+  selectColumns: { table: string; field: string; alias: string }[];
   distinct: boolean;
-  options: string[];
+  options: (table: string) => string[];
   canAutofill: boolean;
+  nowValidTables: string[];
 }>();
 
 const emit = defineEmits<{
@@ -66,8 +67,14 @@ const emit = defineEmits<{
       class="flex items-center gap-2"
     >
       <ComboboxInput
+          v-model="col.table"
+          :options="nowValidTables"
+          placeholder="Target Table"
+          class="flex-1"
+       />
+      <ComboboxInput
         v-model="col.field"
-        :options="options"
+        :options="options(col.table)"
         placeholder="Field Name (e.g. u.id)"
         class="flex-1"
       />
