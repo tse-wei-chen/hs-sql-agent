@@ -34,15 +34,16 @@
 
 The built-in Admin Panel allows you to monitor operations and manage access without touching a single configuration file.
 
-<img width="1919" height="889" alt="admin dashboard page picture" src="https://github.com/user-attachments/assets/93189333-e6d9-46eb-a8c2-92254010c2df" />
+<img width="1919" height="1007" alt="Screenshot 2026-05-02 234836" src="https://github.com/user-attachments/assets/521be5e0-9589-49e6-90a3-3bf216618eed" />
 
 _Operational Dashboard: Monitor keys and audit events in real-time._
 
-<img width="1919" height="889" alt="custom tool creation page picture" src="https://github.com/user-attachments/assets/751be78a-44ad-4b12-8b72-f778d062d829" />
+<img width="1919" height="1009" alt="Screenshot 2026-05-02 234907" src="https://github.com/user-attachments/assets/487d9a03-93e4-4451-aed9-95512a9c44c4" />
 
 _Granular Control: Assign specific database connections and tool subsets to each API key._
 
-<img width="1919" height="889" alt="mcp key management page picture" src="https://github.com/user-attachments/assets/420c46fe-f370-4a80-b813-04e86dff2e53" />
+<img width="1919" height="1007" alt="Screenshot 2026-05-02 234920" src="https://github.com/user-attachments/assets/a779bf60-6c88-49c9-94f2-4fbc9d554ba6" />
+
 _Low-Code Tools: Define custom SQL operations (e.g., `calculate_churn_rate`) for the AI agent._
 
 ---
