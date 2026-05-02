@@ -18,6 +18,7 @@ using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
+using Microsoft.Extensions.AI;
 using ModelContextProtocol.Server;
 using System.Reflection;
 using Common.Models;
@@ -26,6 +27,8 @@ using System.Diagnostics.CodeAnalysis;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Admin.Service.Validators;
+using Dapper;
+using static Dapper.SqlMapper;
 
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -210,29 +213,69 @@ builder.Services.AddMcpServer()
             // 3. Add Custom Dynamic Tools
             var customToolService = httpContext.RequestServices.GetRequiredService<ICustomSqlToolService>();
             var customTools = await customToolService.GetAllToolsAsync();
-            var executeMethod = typeof(CustomToolProxy).GetMethod(nameof(CustomToolProxy.Execute));
 
-            if (executeMethod != null)
+            foreach (var ct in customTools)
             {
-                foreach (var ct in customTools)
+                var toolName = ct.Name;
+                var toolDescription = ct.Description;
+                var rawParams = ct.ParametersJson;
+
+                var properties = new Dictionary<string, object>();
+                if (!string.IsNullOrWhiteSpace(rawParams))
                 {
-                    var toolName = ct.Name;
-                    var toolDescription = ct.Description;
-                    
-                    var dynamicTool = McpServerTool.Create(executeMethod, (request) => 
+                    try
                     {
-                        var svc = request.Services!.GetRequiredService<ICustomSqlToolService>();
-                        var acc = request.Services!.GetRequiredService<IHttpContextAccessor>();
-                        var cfg = request.Services!.GetRequiredService<IConfiguration>();
-                        var ssf = request.Services!.GetRequiredService<ISqlStrategyFactory>();
-                        return new CustomToolProxy(toolName, svc, acc, cfg, ssf);
-                    }, new McpServerToolCreateOptions 
-                    { 
-                        Name = toolName, 
-                        Description = toolDescription
-                    });
-                    toolCollection.Add(dynamicTool);
+                        using var doc = JsonDocument.Parse(rawParams);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var item in doc.RootElement.EnumerateArray())
+                            {
+                                var n = item.TryGetProperty("name", out var pName) ? pName.GetString() : null;
+                                if (!string.IsNullOrEmpty(n))
+                                {
+                                    var t = item.TryGetProperty("type", out var pType) ? pType.GetString() : "string";
+                                    var d = item.TryGetProperty("description", out var pDesc) ? pDesc.GetString() : null;
+                                    var propObj = new Dictionary<string, object> { ["type"] = t ?? "string" };
+                                    if (d != null) propObj["description"] = d;
+                                    properties[n] = propObj;
+                                }
+                            }
+                        }
+                    }
+                    catch { }
                 }
+                var schemaObj = new { type = "object", properties = properties };
+                var jsonSchema = JsonSerializer.SerializeToElement(schemaObj);
+
+                var scopeFactory = httpContext.RequestServices.GetRequiredService<IServiceScopeFactory>();
+                var aiFunc = new CustomAIFunction(
+                    toolName,
+                    toolDescription ?? string.Empty,
+                    jsonSchema,
+                    async (AIFunctionArguments args, CancellationToken ct) =>
+                    {
+                        using var scope = scopeFactory.CreateScope();
+                        var sp = scope.ServiceProvider;
+                        
+                        var svc = sp.GetRequiredService<ICustomSqlToolService>();
+                        var acc = sp.GetRequiredService<IHttpContextAccessor>();
+                        var cfg = sp.GetRequiredService<IConfiguration>();
+                        var ssf = sp.GetRequiredService<ISqlStrategyFactory>();
+                        var aud = sp.GetRequiredService<IAuditService>();
+                        var qvp = sp.GetRequiredService<IQueryValueParserService>();
+                        var proxy = new CustomToolProxy(toolName, svc, acc, cfg, ssf, aud, qvp);
+                        var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
+                        return await proxy.Execute(json);
+                    }
+                );
+
+                var dynamicTool = McpServerTool.Create(aiFunc, new McpServerToolCreateOptions
+                {
+                    Name = toolName,
+                    Description = toolDescription
+                });
+
+                toolCollection.Add(dynamicTool);
             }
         };
     });
@@ -322,4 +365,26 @@ static McpServerTool[] GetToolsForType<[DynamicallyAccessedMembers(
     }
 
     return [.. tools];
+}
+
+class CustomAIFunction : AIFunction
+{
+    private readonly Func<AIFunctionArguments, CancellationToken, Task<object?>> _handler;
+
+    public CustomAIFunction(string name, string description, JsonElement jsonSchema, Func<AIFunctionArguments, CancellationToken, Task<object?>> handler)
+    {
+        Name = name;
+        Description = description;
+        JsonSchema = jsonSchema;
+        _handler = handler;
+    }
+
+    public override string Name { get; }
+    public override string Description { get; }
+    public override JsonElement JsonSchema { get; }
+
+    protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+    {
+        return await _handler(arguments, cancellationToken);
+    }
 }
