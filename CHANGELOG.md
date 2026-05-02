@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.15] - 2026-05-02
+
+### Added
+- **Database Management Controller**: Implemented a centralized controller for managing database operations and instances.
+- **Asynchronous Audit Logging**: Introduced a high-performance, non-blocking audit system to track system activities without impacting latency.
+- **BaseSqlStrategy**: Implemented a foundational SQL strategy class to standardize query generation logic across the application.
+- **MCP Support**: Added Model Context Protocol (MCP) configuration files to enhance interoperability with AI-driven toolsets.
+
+### Changed
+- **CustomToolProxy Enhancement**: 
+    - Integrated audit logging capabilities to monitor tool execution.
+    - Improved query value parsing for more robust handling of dynamic inputs.
+- **SQL Builder Refinement**:
+    - Added support for **Table Aliases**, enabling more complex and readable JOIN queries.
+    - Refactored **Column Options** to provide a more flexible and scalable configuration structure.
+
+### Fixed
+- **Sql Definition Json Builder**: Resolved an issue where the JSON builder incorrectly mapped schema definitions.
+- **Custom Tool Param Issue**: Fixed a bug where custom tool parameters failed to pass through the proxy, ensuring correct argument delivery to underlying services.
+
 ## [1.3.14] - 2026-04-30
 
 ### Features
