@@ -15,14 +15,18 @@ import SqlBuilderSection from "./SqlBuilderSection.vue";
 const props = defineProps<{
   joins: {
     table: string;
+    alias: string;
     type: string;
+    firstTable: string;
     first: string;
     operator: string;
+    secondTable: string;
     second: string;
   }[];
   qualifiedTables: string[];
+  nowValidTables: string[];
   mainColumnOptions: string[];
-  getJoinColumnOptions: (join: any) => string[];
+  getJoinColumnOptions: (table: string) => string[];
 }>();
 
 const emit = defineEmits<{
@@ -72,6 +76,11 @@ const emit = defineEmits<{
           class="flex-1"
           @update:model-value="emit('fetchColumns', i)"
         />
+        <Input
+          v-model="j.alias"
+          placeholder="Alias (optional)"
+          class="h-8 text-xs w-40"
+        />
         <Button
           variant="ghost"
           size="icon"
@@ -83,9 +92,15 @@ const emit = defineEmits<{
       <div class="flex items-center gap-2">
         <span class="text-xs font-semibold px-2">ON</span>
         <ComboboxInput
+          v-model="j.firstTable"
+          :options="nowValidTables"
+          placeholder="Source Table"
+          class="flex-1"
+        />
+        <ComboboxInput
           v-model="j.first"
-          :options="mainColumnOptions"
-          placeholder="Source Field (e.g. u.id)"
+          :options="getJoinColumnOptions(j.firstTable)"
+          placeholder="Source Field"
           class="flex-1"
         />
         <Input
@@ -94,9 +109,15 @@ const emit = defineEmits<{
           class="h-8 text-xs w-16 text-center"
         />
         <ComboboxInput
+          v-model="j.secondTable"
+          :options="nowValidTables"
+          placeholder="Target Table"
+          class="flex-1"
+        />
+        <ComboboxInput
           v-model="j.second"
-          :options="getJoinColumnOptions(j)"
-          placeholder="Target Field (e.g. o.user_id)"
+          :options="getJoinColumnOptions(j.secondTable)"
+          placeholder="Target Field)"
           class="flex-1"
         />
       </div>

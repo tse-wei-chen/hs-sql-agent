@@ -74,7 +74,7 @@ export const getColumns = async (
   id: number,
   table: string,
   schema: string = "",
-): Promise<{ Name: string; DataType: string }[]> => {
+): Promise<{ column: string; type: string }[]> => {
   const response = await xiorInstanceToken.get(`/DbManagement/${id}/columns`, {
     params: { schema, table },
   });
