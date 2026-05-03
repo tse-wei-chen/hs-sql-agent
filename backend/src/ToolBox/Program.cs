@@ -1,34 +1,32 @@
-using System.Threading.RateLimiting;
+using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Text;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Admin.Service.Data;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
-using ToolBox.Background;
-using ToolBox.Tools;
-using ToolBox.Middleware;
-using System.Text.Json;
+using Admin.Service.Validators;
 using Common.Interfaces;
+using Common.Models;
 using Common.Services;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
+using Microsoft.IdentityModel.Tokens;
+using ModelContextProtocol.Server;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
-using Microsoft.Extensions.AI;
-using ModelContextProtocol.Server;
-using System.Reflection;
-using Common.Models;
-using System.Text.Json.Serialization;
-using System.Diagnostics.CodeAnalysis;
-using FluentValidation;
-using FluentValidation.AspNetCore;
-using Admin.Service.Validators;
-using Dapper;
-using static Dapper.SqlMapper;
+using ToolBox.Background;
+using ToolBox.Middleware;
+using ToolBox.Tools;
 
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -188,23 +186,15 @@ builder.Services.AddMcpServer()
             var toolCollection = mcpOptions.ToolCollection = [];
             mcpOptions.Capabilities = new() { Tools = new() };
 
-            if (!string.IsNullOrEmpty(allowedCsv))
-            {
-                var allowedNames = allowedCsv
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var allowedNames = !string.IsNullOrEmpty(allowedCsv)
+                ? allowedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
 
-                foreach (var tool in allTools)
-                {
-                    if (allowedNames.Contains(tool.ProtocolTool.Name))
-                    {
-                        toolCollection.Add(tool);
-                    }
-                }
-            }
-            else
+            foreach (var tool in allTools)
             {
-                foreach (var tool in allTools)
+                // allownames is null means all tools are allowed, if not null, check if the tool is in the allowed names
+                if (allowedNames == null || allowedNames.Contains(tool.ProtocolTool.Name))
                 {
                     toolCollection.Add(tool);
                 }
@@ -217,6 +207,12 @@ builder.Services.AddMcpServer()
             foreach (var ct in customTools)
             {
                 var toolName = ct.Name;
+                // allownames is null means all tools are allowed, if not null, check if the tool is in the allowed names
+                if (allowedNames != null && !allowedNames.Contains(toolName))
+                {
+                    continue;
+                }
+
                 var toolDescription = ct.Description;
                 var rawParams = ct.ParametersJson;
 
@@ -256,7 +252,7 @@ builder.Services.AddMcpServer()
                     {
                         using var scope = scopeFactory.CreateScope();
                         var sp = scope.ServiceProvider;
-                        
+
                         var svc = sp.GetRequiredService<ICustomSqlToolService>();
                         var acc = sp.GetRequiredService<IHttpContextAccessor>();
                         var cfg = sp.GetRequiredService<IConfiguration>();
