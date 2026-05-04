@@ -17,7 +17,7 @@
 - **Structured Querying**: Powered by [SqlKata](https://sqlkata.com) for reliable and safe SQL construction.
 
 ### 🛡️ Enterprise-Grade Governance
-
+- **Defending Against LLM-driven SQL Injection**: Powered by SqlKata, our agent enforces automatic parameterization of all inputs to neutralize SQL injection risks at the source.
 - **Built-in Admin Web UI**: Manage your SQL Agent visually. No more manual JSON configuration files.
 - **Granular Security Control**:
   - **Key-Level Mapping**: Assign specific database connections to individual API keys.
