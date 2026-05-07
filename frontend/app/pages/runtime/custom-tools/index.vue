@@ -300,30 +300,36 @@ onMounted(async () => {
             </div>
 
             <div v-for="(p, index) in form.parameters" :key="index"
-              class="grid grid-cols-[1fr,1fr,2fr,auto] gap-2 items-end border p-3 rounded-lg bg-muted/10">
-              <Field>
-                <FieldLabel class="text-[0.65rem]">Name</FieldLabel>
-                <Input v-model="p.name" placeholder="id" class="h-8 text-xs" />
-              </Field>
-              <Field>
-                <FieldLabel class="text-[0.65rem]">Type</FieldLabel>
-                <Select v-model="p.type">
-                  <SelectTrigger class="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="string">string</SelectItem>
-                    <SelectItem value="number">number</SelectItem>
-                    <SelectItem value="boolean">boolean</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel class="text-[0.65rem]">Description</FieldLabel>
-                <Input v-model="p.description" placeholder="User unique ID" class="h-8 text-xs" />
-              </Field>
-              <Button type="button" variant="ghost" size="icon" @click="removeParameter(index)"
-                class="h-8 w-8 text-destructive">
+              class="flex items-start gap-3 p-3 border rounded-lg bg-muted/5 group">
+              
+              <div class="grid grid-cols-12 gap-3 flex-1">
+                <Field class="col-span-3">
+                  <FieldLabel class="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Name</FieldLabel>
+                  <Input v-model="p.name" placeholder="eg. id"  />
+                </Field>
+
+                <Field class="col-span-3">
+                  <FieldLabel class="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Type</FieldLabel>
+                  <Select v-model="p.type">
+                    <SelectTrigger >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="string">string</SelectItem>
+                      <SelectItem value="number">number</SelectItem>
+                      <SelectItem value="boolean">boolean</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+
+                <Field class="col-span-6">
+                  <FieldLabel class="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Description</FieldLabel>
+                  <Input v-model="p.description" placeholder="eg. User unique ID"/>
+                </Field>
+              </div>
+
+              <Button type="button" variant="outline" size="icon" @click="removeParameter(index)"
+                class="mt-7 text-destructive">
                 <X class="size-4" />
               </Button>
             </div>

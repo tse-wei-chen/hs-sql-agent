@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
@@ -30,10 +31,13 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                 parameters[prop.Name] = _queryValueParserService.UnwrapJsonElement(prop.Value);
             }
         }
+        CustomSqlTool? tool = null;
+        QueryDefinition? queryDef = null;
+        DmlDefinition? dmlDef = null;
         try
         {
             var sqlConfig = ResolveSqlConfig();
-            var tool = await _customSqlToolService.GetToolByNameAsync(_name);
+            tool = await _customSqlToolService.GetToolByNameAsync(_name);
             if (tool == null)
             {
                 var error = $"Error: Tool '{_name}' not found.";
@@ -42,7 +46,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
             }
 
             // 1. Validate SQL Config
-            if (string.IsNullOrEmpty(sqlConfig.Provider) || string.IsNullOrEmpty(sqlConfig.ConnectionString))
+            if (string.IsNullOrWhiteSpace(sqlConfig.Provider) || string.IsNullOrWhiteSpace(sqlConfig.ConnectionString))
             {
                 var error = "Error: SQL configuration (provider/connection string) is missing.";
                 await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
@@ -63,9 +67,12 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 
             string result;
-            if (string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase))
+            bool isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);
+            bool isDml = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
+
+            if (isQuery)
             {
-                var queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
+                queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
                 if (queryDef == null)
                 {
                     result = "Error: Failed to deserialize QueryDefinition.";
@@ -91,9 +98,9 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     queryDef.Distinct
                 );
             }
-            else if (string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase))
+            else if (isDml)
             {
-                var dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
+                dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
                 if (dmlDef == null)
                 {
                     result = "Error: Failed to deserialize DmlDefinition.";
@@ -116,7 +123,17 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         catch (Exception ex)
         {
             await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", ex.Message);
-            throw;
+
+            var toolType = tool?.Type ?? "Unknown";
+            bool isQueryError = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase);
+            var paramsJson = JsonSerializer.Serialize(parameters, _jsonOptions);
+            var defJson = isQueryError ? JsonSerializer.Serialize(queryDef, _jsonOptions) : JsonSerializer.Serialize(dmlDef, _jsonOptions);
+            var suggestedTool = isQueryError ? "execute_query_safe" : "execute_dml_safe";
+
+            return $"Error: {ex.Message}\n" +
+                   $"error parameters: {paramsJson}\n" +
+                   $"error definition: {defJson}\n" +
+                   $"please fix the parameters or definition and use '{suggestedTool}' tools to try again.";
         }
     }
 

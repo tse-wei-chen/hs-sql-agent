@@ -27,6 +27,7 @@ import {
 import { Eye, EyeOff, Database, Trash2, Edit2, Save } from "lucide-vue-next";
 import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 import PasswordInput from "@/components/PasswordInput.vue";
+import { testDbConnection } from "~/api/runtime";
 
 definePageMeta({
   layout: "default",
@@ -36,6 +37,7 @@ const dbs = ref<DbManagement[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
+const testing = ref(false);
 // Form state
 const form = ref({
   name: "",
@@ -46,6 +48,11 @@ const form = ref({
   password: "",
   database: "",
 });
+
+const connectionTestResult = ref<{
+  success: boolean;
+  errorMessage: string;
+} | null>(null);
 
 const load = async () => {
   loading.value = true;
@@ -122,6 +129,34 @@ const remove = async (id: number) => {
     await load();
   } catch (error: any) {
     alert(error?.response?.data || "Failed to delete DB connection.");
+  }
+};
+
+const test = async () => {
+  try {
+    testing.value = true;
+    connectionTestResult.value = null;
+    const result = await testDbConnection(
+      1,
+      undefined,
+      form.value.sqlProvider ?? undefined,
+      form.value.host ?? undefined,
+      form.value.port ?? undefined,
+      form.value.username ?? undefined,
+      form.value.password ?? undefined,
+      form.value.database ?? undefined,
+    );
+    connectionTestResult.value = {
+      success: result.success,
+      errorMessage: result.errorMessage || "Connection failed.",
+    };
+  } catch (error: any) {
+    connectionTestResult.value = {
+      success: false,
+      errorMessage: error?.response?.data || "Connection failed.",
+    };
+  } finally {
+    testing.value = false;
   }
 };
 
@@ -283,6 +318,64 @@ onMounted(load);
             >
               Cancel
             </Button>
+            <TooltipProvider>
+              <Tooltip
+                :disabled="
+                  !connectionTestResult || connectionTestResult.success === true
+                "
+              >
+                <TooltipTrigger as-child>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    :disabled="testing"
+                    class="w-full md:w-auto flex items-center gap-2"
+                    @click.prevent="test"
+                  >
+                    <Badge
+                      :class="[
+                        'h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors',
+                        !connectionTestResult
+                          ? 'bg-slate-100 text-slate-500'
+                          : connectionTestResult.success === true
+                            ? 'bg-green-100 text-green-700 border-green-200'
+                            : connectionTestResult.success === false
+                              ? 'bg-red-100 text-red-700 border-red-200'
+                              : 'bg-slate-100 text-slate-500',
+                      ]"
+                    >
+                      <template
+                        v-if="
+                          connectionTestResult &&
+                          connectionTestResult.success === true
+                        "
+                      >
+                        ✓
+                      </template>
+                      <template
+                        v-else-if="
+                          connectionTestResult &&
+                          connectionTestResult.success === false
+                        "
+                      >
+                        ✗
+                      </template>
+                      <template v-else>?</template>
+                    </Badge>
+                    <span>{{
+                      testing ? "Connecting..." : "Test DB Connection"
+                    }}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent
+                  class="max-w-[300px] bg-red-950 text-white border-none"
+                >
+                  <p class="font-mono text-xs">
+                    {{ connectionTestResult?.errorMessage }}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Button type="submit" :disabled="saving">
               <Save v-if="!saving" class="size-4 mr-2" />
               {{

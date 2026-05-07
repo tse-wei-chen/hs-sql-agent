@@ -99,7 +99,7 @@ const baseToolOptions = [
 
 const toolOptions = computed(() => {
   const customOptions = customTools.value.map((t) => ({
-    label: `Tool: ${t.name}`,
+    label: `Custom: ${t.name}`,
     value: t.name,
     risk: t.type === "DML" ? "high" : "medium",
   }));
@@ -450,7 +450,7 @@ onMounted(load);
                       >
                         <span>{{ tool.label }}</span>
                         <span
-                          class="text-xs text-muted-foreground"
+                          class="text-xs"
                           :class="{
                             'text-red-500': tool.risk === 'high',
                             'text-yellow-500': tool.risk === 'medium',

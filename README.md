@@ -111,6 +111,7 @@ Ready for use (Experimental Stage). You can also define your own tools in the Ad
 | 🧪       | `get_schemas`        | Get schemas in the database                                               |
 | 🧪       | `get_tables`         | Get tables in the database                                                |
 | 🧪       | `execute_dml_safe`   | Execute a DML statement (INSERT, UPDATE, DELETE) with safety confirmation |
+| 🔜       | `save_query`         | Save query for AI agent                                                   |
 
 ### Admin & Security
 
@@ -122,6 +123,7 @@ Ready for use (Experimental Stage). You can also define your own tools in the Ad
 | ✅       | `Audit Logging`      | Detailed query execution history and metadata |
 | ✅       | `Rate Limiting`      | Global rate limiting                          |
 | 🔜       | `Table WhiteList`    | Configure table whitelisting per API key      |
+| 🔜       | `Semantic Layer`     | Define DB semantic layer for AI agent.        |
 
 ---
 
