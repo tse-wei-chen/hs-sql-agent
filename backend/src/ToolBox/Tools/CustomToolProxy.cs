@@ -32,8 +32,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
             }
         }
         CustomSqlTool? tool = null;
-        QueryDefinition? queryDef = null;
-        DmlDefinition? dmlDef = null;
+        string finalDefinitionJson = "";
         try
         {
             var sqlConfig = ResolveSqlConfig();
@@ -61,7 +60,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
             }
 
             // 2. Prepare Definition with parameter replacement
-            string finalDefinitionJson = ReplaceParameters(tool.DefinitionJson, parameters);
+            finalDefinitionJson = ReplaceParameters(tool.DefinitionJson, parameters);
             Console.WriteLine($"Final JSON: {finalDefinitionJson}\n");
             // 3. Execute based on type
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
@@ -72,7 +71,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
 
             if (isQuery)
             {
-                queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
+                var queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
                 if (queryDef == null)
                 {
                     result = "Error: Failed to deserialize QueryDefinition.";
@@ -100,7 +99,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
             }
             else if (isDml)
             {
-                dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
+                var dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
                 if (dmlDef == null)
                 {
                     result = "Error: Failed to deserialize DmlDefinition.";
@@ -126,13 +125,10 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
 
             var toolType = tool?.Type ?? "Unknown";
             bool isQueryError = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase);
-            var paramsJson = JsonSerializer.Serialize(parameters, _jsonOptions);
-            var defJson = isQueryError ? JsonSerializer.Serialize(queryDef, _jsonOptions) : JsonSerializer.Serialize(dmlDef, _jsonOptions);
             var suggestedTool = isQueryError ? "execute_query_safe" : "execute_dml_safe";
 
             return $"Error: {ex.Message}\n" +
-                   $"error parameters: {paramsJson}\n" +
-                   $"error definition: {defJson}\n" +
+                   $"error definition: {finalDefinitionJson}\n" +
                    $"please fix the parameters or definition and use '{suggestedTool}' tools to try again.";
         }
     }
