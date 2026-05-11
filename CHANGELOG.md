@@ -2,17 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.16] - 2026-05-12
+
+### Feature
+
+- **SQL Server**: Add support `TrustedServerCertificate` and `Encrypt` options in the connection string when testing or using the database connection.
+
 ## [1.3.15] - 2026-05-02
 
 ### Changed
-- **CustomToolProxy Enhancement**: 
-    - Integrated audit logging capabilities to monitor tool execution.
-    - Improved query value parsing for more robust handling of dynamic inputs.
+
+- **CustomToolProxy Enhancement**:
+  - Integrated audit logging capabilities to monitor tool execution.
+  - Improved query value parsing for more robust handling of dynamic inputs.
 - **SQL Builder Refinement**:
-    - Added support for **Table Aliases**, enabling more complex and readable JOIN queries.
-    - Refactored **Column Options** to provide a more flexible and scalable configuration structure.
+  - Added support for **Table Aliases**, enabling more complex and readable JOIN queries.
+  - Refactored **Column Options** to provide a more flexible and scalable configuration structure.
 
 ### Fixed
+
 - **Sql Definition Json Builder**: Resolved an issue where the JSON builder incorrectly mapped schema definitions.
 - **Custom Tool Param Issue**: Fixed a bug where custom tool parameters failed to pass through the proxy, ensuring correct argument delivery to underlying services.
 
@@ -50,6 +58,7 @@ All notable changes to this project will be documented in this file.
 ## [1.3.12] - 2026-04-22
 
 ### Features
+
 - Added **Database Management** page.
 - Enabled direct association with existing databases when issuing **MCP API Keys**.
 
