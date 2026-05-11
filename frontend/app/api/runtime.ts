@@ -13,6 +13,7 @@ export interface IssueMcpKeyRequest {
   username?: string | null;
   password?: string | null;
   database?: string | null;
+  extraSettings?: string | null;
 }
 
 export interface AuditDailySummaryItem {
@@ -73,6 +74,7 @@ export const testDbConnection = async (
   username: string,
   password: string,
   database: string,
+  extraSettings?: string,
 ) => {
   const response = await xiorInstanceToken.post(
     "/runtime/mcp-keys/test-db-connection",
@@ -85,6 +87,7 @@ export const testDbConnection = async (
       username: username,
       password: password,
       database: database,
+      extraSettings: extraSettings,
     },
   );
   return response.data;

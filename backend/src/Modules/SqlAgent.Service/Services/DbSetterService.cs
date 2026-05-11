@@ -46,7 +46,8 @@ namespace SqlAgent.Service.Services
                         Port = request.Port,
                         Username = request.Username,
                         Password = request.Password,
-                        Database = request.Database
+                        Database = request.Database,
+                        ExtraSettings = request.ExtraSettings
                     });
                 }
                 connection = strategy.CreateConnection(connString);

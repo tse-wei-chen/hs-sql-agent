@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   issueMcpKey,
   listMcpKeys,
@@ -81,6 +83,10 @@ const detail = ref<{
   username: "",
   password: "",
   database: "",
+  extraSettings: {
+    TrustServerCertificate: false,
+    Encrypt: false,
+  },
 });
 const connectionTestResult = ref<{
   success: boolean;
@@ -161,6 +167,7 @@ const issue = async () => {
       username: detail.value.username.trim() || null,
       password: detail.value.password || null,
       database: detail.value.database.trim() || null,
+      extraSettings: JSON.stringify(detail.value.extraSettings),
     });
 
     issuedPlaintextKey.value = result.plaintextKey || "";
@@ -177,6 +184,10 @@ const issue = async () => {
       username: "",
       password: "",
       database: "",
+      extraSettings: {
+        TrustServerCertificate: false,
+        Encrypt: false,
+      },
     };
     await load();
   } catch (error: any) {
@@ -199,6 +210,9 @@ const test = async () => {
       detail.value.username ?? undefined,
       detail.value.password ?? undefined,
       detail.value.database ?? undefined,
+      !detail.value.dbManagementId
+        ? JSON.stringify(detail.value.extraSettings)
+        : undefined,
     );
     connectionTestResult.value = {
       success: result.success,
@@ -427,6 +441,42 @@ onMounted(load);
             >
               <FieldLabel>Database</FieldLabel>
               <Input v-model="detail.database" placeholder="Database" />
+            </Field>
+
+            <Field
+              v-if="
+                detail.sqlProvider === 'MsSqlServer' &&
+                detail.dbSettingMode === 1
+              "
+              class="md:col-span-2"
+            >
+              <FieldLabel>Extra Settings</FieldLabel>
+              <div class="flex flex-wrap gap-6 border rounded-md p-4">
+                <div class="flex items-center space-x-2">
+                  <Checkbox
+                    id="trustServerCertificateKey"
+                    v-model="detail.extraSettings.TrustServerCertificate"
+                  />
+                  <Label
+                    for="trustServerCertificateKey"
+                    class="text-sm font-medium leading-none cursor-pointer"
+                  >
+                    Trust Server Certificate
+                  </Label>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <Checkbox
+                    id="encryptKey"
+                    v-model="detail.extraSettings.Encrypt"
+                  />
+                  <Label
+                    for="encryptKey"
+                    class="text-sm font-medium leading-none cursor-pointer"
+                  >
+                    Encrypt Connection
+                  </Label>
+                </div>
+              </div>
             </Field>
             <span class="md:col-span-2">
               <hr />

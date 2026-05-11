@@ -26,6 +26,7 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
             Username = dbManagement.Username,
             PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret),
             Database = dbManagement.Database,
+            ExtraSettings = dbManagement.ExtraSettings,
             CreatedBy = dbManagement.CreatedBy,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
@@ -74,6 +75,7 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
             existingDbManagement.Username = dbManagement.Username;
             existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
             existingDbManagement.Database = dbManagement.Database;
+            existingDbManagement.ExtraSettings = dbManagement.ExtraSettings;
             existingDbManagement.UpdatedAt = DateTime.UtcNow;
             existingDbManagement.UpdatedBy = dbManagement.UpdatedBy;
 

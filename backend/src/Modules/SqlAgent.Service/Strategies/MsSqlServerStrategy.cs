@@ -27,6 +27,37 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
         {
             builder.DataSource += $",{model.Port}";
         }
+
+        if (!string.IsNullOrEmpty(model.ExtraSettings))
+        {
+            try
+            {
+                var settings = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(model.ExtraSettings);
+                if (settings != null)
+                {
+                    if (settings.TryGetValue("TrustServerCertificate", out var trust))
+                    {
+                        if (bool.TryParse(trust.ToString(), out bool trustValue))
+                        {
+                            builder.TrustServerCertificate = trustValue;
+                        }
+                    }
+
+                    if (settings.TryGetValue("Encrypt", out var encrypt))
+                    {
+                        if (bool.TryParse(encrypt.ToString(), out bool encryptValue))
+                        {
+                            builder.Encrypt = encryptValue;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore invalid JSON
+            }
+        }
+
         return builder.ConnectionString;
     }
 

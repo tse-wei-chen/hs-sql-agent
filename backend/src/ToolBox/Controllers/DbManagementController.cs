@@ -98,7 +98,8 @@ public class DbManagementController(
             Port = db.Port,
             Username = db.Username,
             Password = password,
-            Database = db.Database
+            Database = db.Database,
+            ExtraSettings = db.ExtraSettings
         });
 
         var schemas = await strategy.GetSchemasAsync(connectionString, cancellationToken);
@@ -129,7 +130,8 @@ public class DbManagementController(
             Port = db.Port,
             Username = db.Username,
             Password = password,
-            Database = db.Database
+            Database = db.Database,
+            ExtraSettings = db.ExtraSettings
         });
 
         var tables = await strategy.GetTablesAsync(connectionString, schema ?? string.Empty, cancellationToken);
@@ -164,7 +166,8 @@ public class DbManagementController(
             Port = db.Port,
             Username = db.Username,
             Password = password,
-            Database = db.Database
+            Database = db.Database,
+            ExtraSettings = db.ExtraSettings
         });
 
         var columns = await strategy.GetColumnsAsync(connectionString, schema ?? string.Empty, table, cancellationToken);

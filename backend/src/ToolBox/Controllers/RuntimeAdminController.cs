@@ -61,7 +61,8 @@ public class RuntimeAdminController(
                         Port = pwdDbc.Port,
                         Database = pwdDbc.Database,
                         Username = pwdDbc.Username,
-                        Password = _cryptoService.DecryptText(pwdDbc.PasswordHash, _hmacSecret)
+                        Password = _cryptoService.DecryptText(pwdDbc.PasswordHash, _hmacSecret),
+                        ExtraSettings = pwdDbc.ExtraSettings
                     }, cancellationToken);
                 }
                 break;
@@ -73,7 +74,8 @@ public class RuntimeAdminController(
                     Port = request.Port,
                     Database = request.Database,
                     Username = request.Username,
-                    Password = request.Password
+                    Password = request.Password,
+                    ExtraSettings = request.ExtraSettings
                 }, cancellationToken);
                 break;
 
@@ -145,6 +147,7 @@ public class RuntimeAdminController(
                 request.Username = dbc.Username;
                 request.Password = _cryptoService.DecryptText(((DbManagementPwdVM)dbc).PasswordHash, _hmacSecret);
                 request.Database = dbc.Database;
+                request.ExtraSettings = dbc.ExtraSettings;
             }
         }
         var result = await _testDbConnection.TestDbConnectionAsync(request, cancellationToken);

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <Exclude>[*]*.Models.*</Exclude>
+    <ExcludeByFile>**/Modules/SqlKata.Service/**/*</ExcludeByFile>
+  </PropertyGroup>
+</Project>

@@ -10,6 +10,7 @@ public class DbManagement
     public string? Username { get; set; }
     public string? PasswordHash { get; set; }
     public string? Database { get; set; }
+    public string? ExtraSettings { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime UpdatedAt { get; set; }

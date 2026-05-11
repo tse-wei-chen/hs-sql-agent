@@ -12,6 +12,7 @@ public class DbManagementBase
     public string Port { get; init; } = string.Empty;
     public string Username { get; init; } = string.Empty;
     public string Database { get; init; } = string.Empty;
+    public string? ExtraSettings { get; init; }
     public string CreatedAt { get; init; } = string.Empty;
     public string CreatedBy { get; init; } = string.Empty;
     public string UpdatedAt { get; init; } = string.Empty;
@@ -29,6 +30,7 @@ public class DbManagementVM : DbManagementBase
         Port = db.Port ?? string.Empty,
         Username = db.Username ?? string.Empty,
         Database = db.Database ?? string.Empty,
+        ExtraSettings = db.ExtraSettings,
         CreatedAt = db.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
         CreatedBy = db.CreatedBy ?? string.Empty,
         UpdatedAt = db.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
@@ -49,6 +51,7 @@ public class DbManagementPwdVM : DbManagementBase
         Username = db.Username ?? string.Empty,
         PasswordHash = db.PasswordHash ?? string.Empty,
         Database = db.Database ?? string.Empty,
+        ExtraSettings = db.ExtraSettings,
         CreatedAt = db.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
         CreatedBy = db.CreatedBy ?? string.Empty,
         UpdatedAt = db.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss"),

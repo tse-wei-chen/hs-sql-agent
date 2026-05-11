@@ -9,6 +9,7 @@ export interface DbManagement {
   username?: string | null;
   passwordHash?: string | null;
   database?: string | null;
+  extraSettings?: string | null;
   createdAt: string;
   createdBy?: string | null;
   updatedAt: string;
@@ -25,6 +26,7 @@ export interface DbManagementRequest {
   username: string;
   password?: string;
   database: string;
+  extraSettings?: string;
   createdBy?: string;
   updatedBy?: string;
 }

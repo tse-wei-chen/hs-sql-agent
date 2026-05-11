@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   listDbManagements,
   createDbManagement,
@@ -47,6 +49,10 @@ const form = ref({
   username: "",
   password: "",
   database: "",
+  extraSettings: {
+    TrustServerCertificate: false,
+    Encrypt: false,
+  },
 });
 
 const connectionTestResult = ref<{
@@ -75,6 +81,10 @@ const resetForm = () => {
     username: "",
     password: "",
     database: "",
+    extraSettings: {
+      TrustServerCertificate: false,
+      Encrypt: false,
+    },
   };
   editingId.value = null;
 };
@@ -89,6 +99,9 @@ const startEdit = (db: DbManagement) => {
     username: db.username || "",
     password: "", // do not fill password on edit for security, let them supply new if changed
     database: db.database || "",
+    extraSettings: db.extraSettings
+      ? JSON.parse(db.extraSettings)
+      : { TrustServerCertificate: false, Encrypt: false },
   };
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
@@ -101,7 +114,10 @@ const save = async () => {
 
   saving.value = true;
   try {
-    const payload = { ...form.value };
+    const payload = {
+      ...form.value,
+      extraSettings: JSON.stringify(form.value.extraSettings),
+    };
     // Clean up empty strings just in case
 
     if (editingId.value) {
@@ -145,6 +161,7 @@ const test = async () => {
       form.value.username ?? undefined,
       form.value.password ?? undefined,
       form.value.database ?? undefined,
+      JSON.stringify(form.value.extraSettings),
     );
     connectionTestResult.value = {
       success: result.success,
@@ -307,6 +324,36 @@ onMounted(load);
                 placeholder="e.g., my_app_db"
               />
             </Field>
+
+            <Field
+              v-if="form.sqlProvider === 'MsSqlServer'"
+              class="md:col-span-2"
+            >
+              <FieldLabel>Extra Settings</FieldLabel>
+              <div class="flex flex-wrap gap-6 border rounded-md p-4">
+                <div class="flex items-center space-x-2">
+                  <Checkbox
+                    id="trustServerCertificate"
+                    v-model="form.extraSettings.TrustServerCertificate"
+                  />
+                  <Label
+                    for="trustServerCertificate"
+                    class="text-sm font-medium leading-none cursor-pointer"
+                  >
+                    Trust Server Certificate
+                  </Label>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <Checkbox id="encrypt" v-model="form.extraSettings.Encrypt" />
+                  <Label
+                    for="encrypt"
+                    class="text-sm font-medium leading-none cursor-pointer"
+                  >
+                    Encrypt Connection
+                  </Label>
+                </div>
+              </div>
+            </Field>
           </FieldGroup>
 
           <div class="flex justify-end gap-2 pt-4">
@@ -428,7 +475,9 @@ onMounted(load);
                     </span>
                   </div>
 
-                  <p class="text-xs text-muted-foreground mt-1 font-mono items-center flex gap-1">
+                  <p
+                    class="text-xs text-muted-foreground mt-1 font-mono items-center flex gap-1"
+                  >
                     <template v-if="db.visible">
                       {{
                         db.host
@@ -437,9 +486,7 @@ onMounted(load);
                       }}
                       <span v-if="db.database"> | {{ db.database }}</span>
                     </template>
-                    <template v-else>
-                      ∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗
-                    </template>
+                    <template v-else> ∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗∗ </template>
                     <button
                       @click="db.visible = !db.visible"
                       class="p-1 hover:bg-muted rounded-md transition-colors text-muted-foreground"

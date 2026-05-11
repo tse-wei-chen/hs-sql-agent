@@ -31,7 +31,8 @@ using ToolBox.Tools;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
-    Args = args
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
 });
 
 builder.Configuration
