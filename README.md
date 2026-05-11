@@ -13,10 +13,11 @@
 ### 🚀 High-Speed & Universal Access
 
 - **Instant Interaction**: Optimized C# backend ensures ultra-low latency for schema discovery and query execution.
-- **Universal Database Support**: One agent for all — supports `Sqlite`, `Postgres`, `Mysql`, `SqlServer`, `Oracle`, and `FireBird`.
+- **Universal Database Support**: One agent for all — supports `Sqlite`, `PostgreSQL`, `MySQL`, `SQLServer`, `Oracle`, and `FireBird`.
 - **Structured Querying**: Powered by [SqlKata](https://sqlkata.com) for reliable and safe SQL construction.
 
 ### 🛡️ Enterprise-Grade Governance
+
 - **Defending Against LLM-driven SQL Injection**: Powered by SqlKata, our agent enforces automatic parameterization of all inputs to neutralize SQL injection risks at the source.
 - **Built-in Admin Web UI**: Manage your SQL Agent visually. No more manual JSON configuration files.
 - **Granular Security Control**:

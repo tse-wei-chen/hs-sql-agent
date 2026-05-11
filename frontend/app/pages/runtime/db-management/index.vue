@@ -213,11 +213,11 @@ onMounted(load);
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem
-                    v-for="provider in PROVIDER_OPTIONS"
-                    :key="provider"
-                    :value="provider"
+                    v-for="[key, value] of PROVIDER_OPTIONS"
+                    :key="key"
+                    :value="key"
                   >
-                    {{ provider }}
+                    {{ value }}
                   </SelectItem>
                 </SelectContent>
               </Select>
