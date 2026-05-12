@@ -47,6 +47,12 @@ const selectedItems = computed(() =>
   props.options.filter((opt) => props.modelValue.includes(opt.value)),
 );
 
+const riskColorMap = {
+  low: "text-green-500",
+  medium: "text-yellow-500",
+  high: "text-red-500",
+};
+
 function toggleOption(val: string) {
   const newValues = props.modelValue.includes(val)
     ? props.modelValue.filter((v) => v !== val)
@@ -76,7 +82,10 @@ function toggleOption(val: string) {
               v-for="item in selectedItems"
               :key="item.value"
               variant="outline"
-              class="flex items-center gap-1 max-w-full"
+              :class="[
+                { [(riskColorMap as any)[item.risk]]: !!item.risk },
+                'flex items-center gap-1 max-w-full',
+              ]"
             >
               <span class="truncate">{{ item.label }}</span>
               <button @mousedown.prevent @click.stop="toggleOption(item.value)">

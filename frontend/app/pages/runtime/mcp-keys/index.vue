@@ -78,7 +78,12 @@ const detail = ref<{
 }>({
   name: "",
   expiresAt: null,
-  allowedTools: [],
+  allowedTools: [
+    "get_columns",
+    "get_schemas",
+    "get_tables",
+    "execute_query_safe",
+  ],
   corsAllowedOrigins: "",
   dbSettingMode: 0,
   dbManagementId: null,
@@ -179,7 +184,12 @@ const issue = async () => {
     detail.value = {
       name: "",
       expiresAt: null,
-      allowedTools: [],
+      allowedTools: [
+        "get_columns",
+        "get_schemas",
+        "get_tables",
+        "execute_query_safe",
+      ],
       corsAllowedOrigins: "",
       dbSettingMode: 0,
       dbManagementId: null,
