@@ -33,6 +33,7 @@ import { listDbManagements, type DbManagement } from "~/api/db-management";
 import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
 import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 import { KeyRound } from "lucide-vue-next";
+import MultiSelect from "~/components/MultiSelect.vue";
 
 definePageMeta({
   layout: "default",
@@ -70,6 +71,10 @@ const detail = ref<{
   username: string;
   password: string;
   database: string;
+  extraSettings: {
+    TrustServerCertificate?: boolean;
+    Encrypt?: boolean;
+  };
 }>({
   name: "",
   expiresAt: null,
@@ -483,36 +488,27 @@ onMounted(load);
             </span>
             <Field>
               <FieldLabel>Allowed Tools (multi-select)</FieldLabel>
-              <Select v-model="detail.allowedTools" multiple>
-                <SelectTrigger class="w-full">
-                  <SelectValue :placeholder="selectedToolLabel" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel>Tools</SelectLabel>
-                    <SelectItem
-                      v-for="tool in toolOptions"
-                      :key="tool.value"
-                      :value="tool.value"
+              <MultiSelect
+                v-model="detail.allowedTools"
+                :options="toolOptions"
+                :placeholder="selectedToolLabel"
+              >
+                <template #option="{ option }">
+                  <div class="flex items-center justify-between w-full">
+                    <span class="truncate pr-2">{{ option.label }}</span>
+                    <span
+                      class="text-xs font-mono shrink-0"
+                      :class="{
+                        'text-red-500': option.risk === 'high',
+                        'text-yellow-500': option.risk === 'medium',
+                        'text-emerald-500': option.risk === 'low',
+                      }"
                     >
-                      <div
-                        class="flex w-full items-center justify-between gap-2"
-                      >
-                        <span>{{ tool.label }}</span>
-                        <span
-                          class="text-xs"
-                          :class="{
-                            'text-red-500': tool.risk === 'high',
-                            'text-yellow-500': tool.risk === 'medium',
-                            'text-emerald-500': tool.risk === 'low',
-                          }"
-                          >{{ tool.value }}</span
-                        >
-                      </div>
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+                      {{ option.value }}
+                    </span>
+                  </div>
+                </template>
+              </MultiSelect>
             </Field>
             <Field class="md:col-span-2">
               <FieldLabel for="corsAllowedOrigins"
