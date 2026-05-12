@@ -218,7 +218,11 @@ dotnet run --project backend/src/ToolBox
 3. **Frontend**:
 
 ```bash
-cd frontend && pnpm install && pnpm dev
+cd frontend
+
+pnpm install
+
+pnpm dev
 ```
 
 ---
