@@ -60,6 +60,23 @@ function toggleOption(val: string) {
 
   emit("update:modelValue", newValues);
 }
+
+const isAllSelected = computed(
+  () =>
+    props.options.length > 0 &&
+    props.modelValue.length === props.options.length,
+);
+
+function toggleAll() {
+  if (isAllSelected.value) {
+    emit("update:modelValue", []);
+  } else {
+    emit(
+      "update:modelValue",
+      props.options.map((opt) => opt.value),
+    );
+  }
+}
 </script>
 
 <template>
@@ -71,7 +88,7 @@ function toggleOption(val: string) {
         :aria-expanded="open"
         :class="
           cn(
-            'w-full justify-between h-auto min-h-10 px-3 py-2 text-left',
+            'w-full justify-between h-auto min-h-10 px-2 py-1 text-left',
             props.class,
           )
         "
@@ -84,7 +101,7 @@ function toggleOption(val: string) {
               variant="outline"
               :class="[
                 { [(riskColorMap as any)[item.risk]]: !!item.risk },
-                'flex items-center gap-1 max-w-full',
+                'flex items-center gap-1.5 max-w-full h-7 px-2 text-sm font-medium',
               ]"
             >
               <span class="truncate">{{ item.label }}</span>
@@ -125,6 +142,29 @@ function toggleOption(val: string) {
           <CommandEmpty>{{ emptyMessage }}</CommandEmpty>
           <CommandGroup>
             <CommandItem
+              value="all"
+              class="cursor-pointer border-b mb-1 pb-2"
+              @select="toggleAll"
+            >
+              <div class="flex items-center w-full">
+                <div
+                  :class="
+                    cn(
+                      'mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary',
+                      isAllSelected
+                        ? 'bg-primary text-primary-foreground'
+                        : 'opacity-50',
+                    )
+                  "
+                >
+                  <CheckIcon v-if="isAllSelected" class="h-3 w-3" />
+                </div>
+                <span class="font-medium">Select All</span>
+              </div>
+            </CommandItem>
+          </CommandGroup>
+          <CommandGroup>
+            <CommandItem
               v-for="option in options"
               :key="option.value"
               :value="option.value"
@@ -132,16 +172,21 @@ function toggleOption(val: string) {
               @select="toggleOption(option.value)"
             >
               <div class="flex items-center w-full min-w-0">
-                <CheckIcon
+                <div
                   :class="
                     cn(
-                      'mr-2 h-4 w-4 shrink-0',
+                      'mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary',
                       modelValue.includes(option.value)
-                        ? 'opacity-100'
-                        : 'opacity-0',
+                        ? 'bg-primary text-primary-foreground'
+                        : 'opacity-50',
                     )
                   "
-                />
+                >
+                  <CheckIcon
+                    v-if="modelValue.includes(option.value)"
+                    class="h-3 w-3"
+                  />
+                </div>
                 <div class="flex-1 w-full min-w-0">
                   <slot name="option" :option="option">
                     {{ option.label }}

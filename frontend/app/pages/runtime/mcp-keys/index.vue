@@ -496,7 +496,7 @@ onMounted(load);
             <span class="md:col-span-2">
               <hr />
             </span>
-            <Field>
+            <Field class="md:col-span-2">
               <FieldLabel>Allowed Tools (multi-select)</FieldLabel>
               <MultiSelect
                 v-model="detail.allowedTools"
