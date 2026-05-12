@@ -222,7 +222,7 @@ cd frontend
 
 pnpm install
 
-pnpm dev
+pnpm run dev
 ```
 
 ---
