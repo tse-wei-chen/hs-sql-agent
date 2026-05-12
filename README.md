@@ -81,7 +81,7 @@ RATE_LIMITING_QUEUE_LIMIT=0
 ### 2. Launch the Application
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 3. Access the Service
