@@ -2,13 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.3.16] - 2026-05-11
+## [1.3.17-alpha] - 2026-05-13
+
+### Feature
+
+- UI improve for sql multi select and display.
+
+## [1.3.16-alpha] - 2026-05-11
 
 ### Feature
 
 - **SQL Server**: Add support `TrustedServerCertificate` and `Encrypt` options in the connection string when testing or using the database connection.
 
-## [1.3.15] - 2026-05-02
+## [1.3.15-alpha] - 2026-05-02
 
 ### Changed
 
@@ -24,7 +30,7 @@ All notable changes to this project will be documented in this file.
 - **Sql Definition Json Builder**: Resolved an issue where the JSON builder incorrectly mapped schema definitions.
 - **Custom Tool Param Issue**: Fixed a bug where custom tool parameters failed to pass through the proxy, ensuring correct argument delivery to underlying services.
 
-## [1.3.14] - 2026-04-30
+## [1.3.14-alpha] - 2026-04-30
 
 ### Features
 
@@ -45,7 +51,7 @@ All notable changes to this project will be documented in this file.
 - **Code Cleanup**: Streamlined `using` directives and improved general code readability and maintainability across the backend modules.
 - **Contribution Guidelines**: Updated `CONTRIBUTING.md` and added issue templates to improve the development workflow.
 
-## [1.3.13] - 2026-04-24
+## [1.3.13-alpha] - 2026-04-24
 
 ### Features
 
@@ -55,20 +61,20 @@ All notable changes to this project will be documented in this file.
 
 - **SQL Builder Simplification**: Removed mandatory table alias (`mainAlias`) logic from the SQL builder to simplify the user interface and generated JSON structure.
 
-## [1.3.12] - 2026-04-22
+## [1.3.12-alpha] - 2026-04-22
 
 ### Features
 
 - Added **Database Management** page.
 - Enabled direct association with existing databases when issuing **MCP API Keys**.
 
-## [1.3.11] - 2026-04-21
+## [1.3.11-alpha] - 2026-04-21
 
 ### Breaking Change
 
 - replace AES encryption with AesGcm for improved security and performance in connection string encryption. This change requires existing encrypted connection strings to be re-encrypted using the new AesGcm-based CryptoService implementation, as the encryption format and key management have been updated for enhanced security.
 
-## [1.3.10] - 2026-04-20
+## [1.3.10-alpha] - 2026-04-20
 
 ### Feature
 
@@ -77,7 +83,7 @@ All notable changes to this project will be documented in this file.
 - **Admin UI Enhancements**: Added a dedicated management interface for creating, testing, and managing Custom SQL Tools.
 - **Documentation Refactoring**: Major overhaul of `README.md` with a high-speed aesthetic, improed information architecture, and integrated Admin Panel snapshots.
 
-## [1.3.9] - 2026-04-19
+## [1.3.9-alpha] - 2026-04-19
 
 ### Security Issue Fix
 
@@ -90,7 +96,7 @@ All notable changes to this project will be documented in this file.
 
 - UI Change: Manual entry of ADO.NET connection strings is disabled in the UI.
 
-## [1.3.8] - 2026-04-18
+## [1.3.8-alpha] - 2026-04-18
 
 ### Improvement
 
@@ -100,26 +106,26 @@ All notable changes to this project will be documented in this file.
 
 - Fix the issue where the dashboard is not displaying
 
-## [1.3.7] - 2026-04-16
+## [1.3.7-alpha] - 2026-04-16
 
 ### Feature
 
 - `allowed Tools` For Dynamic Tool List
 - implement database connection testing feature 、 global provider support
 
-## [1.3.6] - 2026-04-16
+## [1.3.6-alpha] - 2026-04-16
 
 ### Feature
 
 - `allowed Tools` Manage tool access for the API key : This feature allows administrators to specify which tools or API endpoints an issued API key has access to. By managing tool access at the API key level, you can enforce fine-grained permissions and restrict certain keys to only use specific functionalities of the MCP API, enhancing security and control over how the API is used.
 
-## [1.3.5] - 2026-04-16
+## [1.3.5-alpha] - 2026-04-16
 
 ### Fix
 
 - Fix Where Condition IN/NOTIN
 
-## [1.3.4] - 2026-04-12
+## [1.3.4-alpha] - 2026-04-12
 
 ### Breaking Change
 
@@ -130,13 +136,13 @@ All notable changes to this project will be documented in this file.
 - Added support some new database providers: `SqlServer`, `Oracle`, and `FireBird`. The MCP API can now handle connections to these additional database types, expanding the range of supported databases for SQL query execution and metadata retrieval.
 - Added `execute_dml_safe` tool to MCP API: this new tool allows clients to execute DML statements (INSERT, UPDATE, DELETE) safely through the MCP API, with the same security guards and validation mechanisms as `execute_query_safe`. This expands the capabilities of the MCP API to support data modification operations in addition to query execution.
 
-## [1.3.3] - 2026-04-11
+## [1.3.3-alpha] - 2026-04-11
 
 ### Refactor
 
 - Refactor SQL strategy classes and improve query handling
 
-## [1.3.2] - 2026-04-09
+## [1.3.2-alpha] - 2026-04-09
 
 ### Bug Fix
 
@@ -145,19 +151,19 @@ All notable changes to this project will be documented in this file.
 - Improved query error output strategy by database type, including PostgreSQL-specific guidance for `42P01` (relation/CTE reference not found).
 - Updated `get_tables` flow to require an explicit schema name so table discovery is deterministic across database providers.
 
-## [1.3.1] - 2026-04-08
+## [1.3.1-alpha] - 2026-04-08
 
 ### Feature
 
 - form validation login and register
 
-## [1.3.0] - 2026-04-08
+## [1.3.0-alpha] - 2026-04-08
 
 ### Breaking Change
 
 - implement ICryptoService for db connection string encryption and decryption : this is a breaking change that requires existing encrypted connection strings in the database to be re-encrypted using the new CryptoService implementation.
 
-## [1.2.0] - 2026-04-07
+## [1.2.0-alpha] - 2026-04-07
 
 ### Refactor
 
@@ -167,13 +173,13 @@ All notable changes to this project will be documented in this file.
 
 - enhance SQL query execution with security guards and aggregation validation
 
-## [1.1.1] - 2026-04-07
+## [1.1.1-alpha] - 2026-04-07
 
 ### Bug Fix
 
 - Fixed a key-validation mapping issue where `SqlConnectionString` was not returned in `McpAccessKeyValidationResult`, which could cause MCP runtime database connection resolution to fail for valid keys.
 
-## [1.1.0] - 2026-04-06
+## [1.1.0-alpha] - 2026-04-06
 
 ### Performance & Security
 
@@ -187,7 +193,7 @@ All notable changes to this project will be documented in this file.
 - Reordered ASP.NET Core middleware in the `/mcp` pipeline to execute rate limiting prior to identity validation.
 - Cleaned up the frontend UI (`index.vue`) by safely removing unused rate limiting fields and logic during API key issuance.
 
-## [1.0.0] - 2026-04-05
+## [1.0.0-alpha] - 2026-04-05
 
 ### Feature
 
