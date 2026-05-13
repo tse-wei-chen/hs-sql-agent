@@ -11,12 +11,13 @@ using Admin.Service.Interfaces;
 namespace ToolBox.Tools;
 
 [McpServerToolType]
-public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService)
+public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IDbSemanticService semanticService)
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
     private readonly IAuditService _auditService = auditService;
+    private readonly IDbSemanticService _semanticService = semanticService;
 
     [McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries).")]
     public async Task<string> ExecuteQuerySafe(
@@ -152,7 +153,33 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
-            
+
+            // Merge Semantic Data
+            var dbId = ResolveDbManagementId();
+            if (dbId.HasValue)
+            {
+                var semantics = await _semanticService.GetSemanticsByDbIdAsync(dbId.Value);
+                var tableSemantics = semantics.Where(s =>
+                    string.Equals(s.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(s.TableName, tableName, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                foreach (var col in columns)
+                {
+                    var semantic = tableSemantics.FirstOrDefault(s => string.Equals(s.ColumnName, col.Name, StringComparison.OrdinalIgnoreCase));
+                    if (semantic != null)
+                    {
+                        var parts = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(semantic.DisplayName)) parts.Add($"Display Name: {semantic.DisplayName}");
+                        if (!string.IsNullOrWhiteSpace(semantic.Description)) parts.Add(semantic.Description);
+                        
+                        if (parts.Count > 0)
+                        {
+                            col.Description = string.Join(". ", parts);
+                        }
+                    }
+                }
+            }
+
             await _auditService.WriteLogAsync(
                 action: "mcp.get_columns",
                 target: $"{schemaName}.{tableName}",
@@ -216,6 +243,38 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
+
+            // Merge Semantic Data
+            var dbId = ResolveDbManagementId();
+            if (dbId.HasValue)
+            {
+                var semantics = await _semanticService.GetSemanticsByDbIdAsync(dbId.Value);
+                
+                // To keep it simple and compatible with LLM expectations of "list of tables", 
+                // I'll append descriptions in parentheses if they exist.
+                var tablesWithDesc = tables.Select(t =>
+                {
+                    var s = semantics.FirstOrDefault(item =>
+                            string.Equals(item.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(item.TableName, t, StringComparison.OrdinalIgnoreCase) &&
+                            string.IsNullOrEmpty(item.ColumnName));
+                    
+                    if (s == null) return t;
+                    
+                    var parts = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(s.DisplayName)) parts.Add($"Display Name: {s.DisplayName}");
+                    if (!string.IsNullOrWhiteSpace(s.Description)) parts.Add(s.Description);
+                    
+                    return parts.Count > 0 ? $"{t} ({string.Join(". ", parts)})" : t;
+                });
+
+                await _auditService.WriteLogAsync(
+                    action: "mcp.get_tables",
+                    target: schemaName,
+                    result: "success");
+
+                return string.Join(", ", tablesWithDesc);
+            }
 
             await _auditService.WriteLogAsync(
                 action: "mcp.get_tables",
@@ -292,5 +351,15 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             throw new UnauthorizedAccessException($"API key does not have permission to use tool: {toolName}");
         }
+    }
+
+    private int? ResolveDbManagementId()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context != null && context.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var idObj) && idObj is int id)
+        {
+            return id;
+        }
+        return null;
     }
 }

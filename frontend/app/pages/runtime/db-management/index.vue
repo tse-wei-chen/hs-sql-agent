@@ -26,7 +26,7 @@ import {
   deleteDbManagement,
   type DbManagement,
 } from "@/api/db-management";
-import { Eye, EyeOff, Database, Trash2, Edit2, Save } from "lucide-vue-next";
+import { Eye, EyeOff, Database, Trash2, Edit2, Save, Library } from "lucide-vue-next";
 import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 import PasswordInput from "@/components/PasswordInput.vue";
 import { testDbConnection } from "~/api/runtime";
@@ -501,6 +501,17 @@ onMounted(load);
               <div
                 class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
               >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8 text-blue-600"
+                  title="Semantic Layer"
+                  as-child
+                >
+                  <NuxtLink :to="`/runtime/db-management/${db.id}/semantic`"
+                    ><Library class="size-4"
+                  /></NuxtLink>
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

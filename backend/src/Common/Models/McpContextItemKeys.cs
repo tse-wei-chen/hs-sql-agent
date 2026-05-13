@@ -8,4 +8,5 @@ public static class McpContextItemKeys
     public const string CorsAllowedOrigins = "McpCorsAllowedOrigins";
     public const string SqlProvider = "McpSqlProvider";
     public const string SqlConnectionString = "McpSqlConnectionString";
+    public const string DbManagementId = "McpDbManagementId";
 }

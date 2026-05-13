@@ -10,5 +10,6 @@ public interface IAdminContext
     DbSet<McpAccessKey> McpAccessKeys { get; }
     DbSet<CustomSqlTool> CustomSqlTools { get; }
     DbSet<DbManagement> DbManagement { get; }
+    DbSet<DbSemantic> DbSemantics { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
