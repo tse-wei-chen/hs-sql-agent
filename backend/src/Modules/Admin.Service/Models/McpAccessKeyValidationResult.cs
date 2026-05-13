@@ -9,6 +9,6 @@ public class McpAccessKeyValidationResult
     public string? CorsAllowedOrigins { get; set; }
     public IReadOnlySet<string>? CorsAllowedOriginsSet { get; set; }
     public string? SqlProvider { get; set; }
-    public string? SqlConnectionString { get; set; }
+    public int? DbManagementId { get; set; }
     public string? Reason { get; set; }
 }

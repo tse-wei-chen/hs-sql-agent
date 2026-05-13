@@ -45,53 +45,16 @@ public class RuntimeAdminController(
         {
             return BadRequest("Key name is required.");
         }
-        var conn = "";
 
-        switch (request.DbSettingMode)
-        {
-            case 0:
-                var dbc = await _dbManagementService.GetDbByIdAsync(request.DbManagementId ?? 0, true, cancellationToken);
-                if (dbc is DbManagementPwdVM pwdDbc)
-                {
-                    request.SqlProvider = pwdDbc.SqlProvider;
-                    conn = await _testDbConnection.BuildDbConnectionAsync(new BuildDbConnectionModel
-                    {
-                        Provider = pwdDbc.SqlProvider ?? SqlAgentToolType.Global.ToString(),
-                        Host = pwdDbc.Host,
-                        Port = pwdDbc.Port,
-                        Database = pwdDbc.Database,
-                        Username = pwdDbc.Username,
-                        Password = _cryptoService.DecryptText(pwdDbc.PasswordHash, _hmacSecret),
-                        ExtraSettings = pwdDbc.ExtraSettings
-                    }, cancellationToken);
-                }
-                break;
-            case 1:
-                conn = await _testDbConnection.BuildDbConnectionAsync(new BuildDbConnectionModel
-                {
-                    Provider = request.SqlProvider ?? SqlAgentToolType.Global.ToString(),
-                    Host = request.Host,
-                    Port = request.Port,
-                    Database = request.Database,
-                    Username = request.Username,
-                    Password = request.Password,
-                    ExtraSettings = request.ExtraSettings
-                }, cancellationToken);
-                break;
-
-            default:
-                conn = null;
-                break;
-        }
         var issueMcpAccessKeyModel = new IssueMcpAccessKeyModel
         {
             Name = request.Name,
             ExpiresAt = request.ExpiresAt,
             AllowedTools = request.AllowedTools,
             CorsAllowedOrigins = request.CorsAllowedOrigins,
-            SqlProvider = request.SqlProvider,
-            SqlConnectionString = conn
+            DbManagementId = request.DbManagementId
         };
+
         var result = await _keyService.IssueKeyAsync(
             issueMcpAccessKeyModel,
             User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? User.FindFirstValue(ClaimTypes.NameIdentifier),

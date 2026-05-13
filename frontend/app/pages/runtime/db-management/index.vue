@@ -152,17 +152,17 @@ const test = async () => {
   try {
     testing.value = true;
     connectionTestResult.value = null;
-    const result = await testDbConnection(
-      1,
-      undefined,
-      form.value.sqlProvider ?? undefined,
-      form.value.host ?? undefined,
-      form.value.port ?? undefined,
-      form.value.username ?? undefined,
-      form.value.password ?? undefined,
-      form.value.database ?? undefined,
-      JSON.stringify(form.value.extraSettings),
-    );
+    const result = await testDbConnection({
+      dbSettingMode: 1,
+      dbManagementId: undefined,
+      sqlProvider: form.value.sqlProvider,
+      host: form.value.host,
+      port: form.value.port,
+      username: form.value.username,
+      password: form.value.password,
+      database: form.value.database,
+      extraSettings: JSON.stringify(form.value.extraSettings),
+    });
     connectionTestResult.value = {
       success: result.success,
       errorMessage: result.errorMessage || "Connection failed.",

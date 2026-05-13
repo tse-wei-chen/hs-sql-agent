@@ -63,18 +63,7 @@ const detail = ref<{
   expiresAt: string | null;
   allowedTools: string[];
   corsAllowedOrigins: string;
-  dbSettingMode: 0 | 1;
   dbManagementId: number | null;
-  sqlProvider: string;
-  host: string;
-  port: string;
-  username: string;
-  password: string;
-  database: string;
-  extraSettings: {
-    TrustServerCertificate?: boolean;
-    Encrypt?: boolean;
-  };
 }>({
   name: "",
   expiresAt: null,
@@ -85,18 +74,7 @@ const detail = ref<{
     "execute_query_safe",
   ],
   corsAllowedOrigins: "",
-  dbSettingMode: 0,
   dbManagementId: null,
-  sqlProvider: "Global",
-  host: "",
-  port: "",
-  username: "",
-  password: "",
-  database: "",
-  extraSettings: {
-    TrustServerCertificate: false,
-    Encrypt: false,
-  },
 });
 const connectionTestResult = ref<{
   success: boolean;
@@ -168,16 +146,7 @@ const issue = async () => {
           ? detail.value.allowedTools.join(",")
           : null,
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
-      dbSettingMode: detail.value.dbSettingMode,
-      dbManagementId: detail.value.dbManagementId || null,
-      sqlProvider:
-        detail.value.sqlProvider === "Global" ? null : detail.value.sqlProvider,
-      host: detail.value.host.trim() || null,
-      port: detail.value.port.trim() || null,
-      username: detail.value.username.trim() || null,
-      password: detail.value.password || null,
-      database: detail.value.database.trim() || null,
-      extraSettings: JSON.stringify(detail.value.extraSettings),
+      dbManagementId: detail.value.dbManagementId || 0,
     });
 
     issuedPlaintextKey.value = result.plaintextKey || "";
@@ -191,18 +160,7 @@ const issue = async () => {
         "execute_query_safe",
       ],
       corsAllowedOrigins: "",
-      dbSettingMode: 0,
       dbManagementId: null,
-      sqlProvider: "Global",
-      host: "",
-      port: "",
-      username: "",
-      password: "",
-      database: "",
-      extraSettings: {
-        TrustServerCertificate: false,
-        Encrypt: false,
-      },
     };
     await load();
   } catch (error: any) {
@@ -216,19 +174,10 @@ const test = async () => {
   try {
     testing.value = true;
     connectionTestResult.value = null;
-    const result = await testDbConnection(
-      detail.value.dbSettingMode,
-      detail.value.dbManagementId ?? undefined,
-      detail.value.sqlProvider ?? undefined,
-      detail.value.host ?? undefined,
-      detail.value.port ?? undefined,
-      detail.value.username ?? undefined,
-      detail.value.password ?? undefined,
-      detail.value.database ?? undefined,
-      !detail.value.dbManagementId
-        ? JSON.stringify(detail.value.extraSettings)
-        : undefined,
-    );
+    const result = await testDbConnection({
+      dbSettingMode: 0,
+      dbManagementId: detail.value.dbManagementId ?? undefined,
+    });
     connectionTestResult.value = {
       success: result.success,
       errorMessage: result.errorMessage || "Connection failed.",
@@ -251,34 +200,6 @@ const revoke = async (id: number) => {
     alert(error?.response?.data || "Failed to revoke key.");
   }
 };
-
-watch(
-  () => detail.value.sqlProvider,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      detail.value.host = "";
-      detail.value.port = "";
-      detail.value.username = "";
-      detail.value.password = "";
-      detail.value.database = "";
-    }
-  },
-);
-
-watch(
-  () => detail.value.dbSettingMode,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      detail.value.dbManagementId = null;
-      detail.value.sqlProvider = "Global";
-      detail.value.host = "";
-      detail.value.port = "";
-      detail.value.username = "";
-      detail.value.password = "";
-      detail.value.database = "";
-    }
-  },
-);
 
 onMounted(load);
 </script>
@@ -331,20 +252,7 @@ onMounted(load);
               />
             </Field>
             <Field>
-              <FieldLabel>Db Setting</FieldLabel>
-              <RadioGroup v-model="detail.dbSettingMode" class="flex flex-col">
-                <div class="flex items-center space-x-2">
-                  <RadioGroupItem id="r1" :value="0" />
-                  <Label for="r1">Use Existing Connection</Label>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <RadioGroupItem id="r2" :value="1" />
-                  <Label for="r2">Configure Manually</Label>
-                </div>
-              </RadioGroup>
-            </Field>
-            <Field v-if="detail.dbSettingMode === 0">
-              <FieldLabel>Database Connection</FieldLabel>
+              <FieldLabel>Database</FieldLabel>
               <Select v-model="detail.dbManagementId">
                 <SelectTrigger class="w-full">
                   <SelectValue placeholder="Select database connection" />
@@ -359,139 +267,6 @@ onMounted(load);
                   </SelectItem>
                 </SelectContent>
               </Select>
-            </Field>
-            <Field v-if="detail.dbSettingMode === 1">
-              <FieldLabel>SQL Provider Override</FieldLabel>
-              <Select v-model="detail.sqlProvider">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Select provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem
-                    v-for="[key, value] of PROVIDER_OPTIONS"
-                    :key="key"
-                    :value="key"
-                  >
-                    {{ value }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p class="mt-1 text-xs text-muted-foreground">
-                Use Global default, or select a provider together with a
-                connection string.
-              </p>
-            </Field>
-
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Host</FieldLabel>
-              <Input v-model="detail.host" placeholder="Host" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Port</FieldLabel>
-              <Input v-model="detail.port" placeholder="Port" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Username</FieldLabel>
-              <Input v-model="detail.username" placeholder="Username" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Password</FieldLabel>
-              <PasswordInput
-                v-model="detail.password"
-                type="password"
-                placeholder="Password"
-              />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Sqlite',
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Database</FieldLabel>
-              <Input v-model="detail.database" placeholder="Database" />
-            </Field>
-
-            <Field
-              v-if="
-                detail.sqlProvider === 'MsSqlServer' &&
-                detail.dbSettingMode === 1
-              "
-              class="md:col-span-2"
-            >
-              <FieldLabel>Extra Settings</FieldLabel>
-              <div class="flex flex-wrap gap-6 border rounded-md p-4">
-                <div class="flex items-center space-x-2">
-                  <Checkbox
-                    id="trustServerCertificateKey"
-                    v-model="detail.extraSettings.TrustServerCertificate"
-                  />
-                  <Label
-                    for="trustServerCertificateKey"
-                    class="text-sm font-medium leading-none cursor-pointer"
-                  >
-                    Trust Server Certificate
-                  </Label>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <Checkbox
-                    id="encryptKey"
-                    v-model="detail.extraSettings.Encrypt"
-                  />
-                  <Label
-                    for="encryptKey"
-                    class="text-sm font-medium leading-none cursor-pointer"
-                  >
-                    Encrypt Connection
-                  </Label>
-                </div>
-              </div>
             </Field>
             <span class="md:col-span-2">
               <hr />

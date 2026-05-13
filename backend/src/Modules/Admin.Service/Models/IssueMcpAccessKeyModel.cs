@@ -6,6 +6,5 @@ public class IssueMcpAccessKeyModel
     public DateTime? ExpiresAt { get; set; }
     public string? AllowedTools { get; set; }
     public string? CorsAllowedOrigins { get; set; }
-    public string? SqlProvider { get; set; }
-    public string? SqlConnectionString { get; set; }
+    public int DbManagementId { get; set; }
 }

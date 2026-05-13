@@ -52,17 +52,6 @@ public class McpAccessKeyServiceTests
         Assert.Contains("Key name is required", ex.Message);
     }
 
-    [Fact]
-    public async Task IssueKeyAsync_ShouldThrowArgumentException_WhenSqlProviderOrConnectionStringAreMismatched()
-    {
-        // Arrange
-        var requestWithProviderOnly = new IssueMcpAccessKeyModel { Name = "Test", SqlProvider = "PostgreSQL" };
-        var requestWithConnOnly = new IssueMcpAccessKeyModel { Name = "Test", SqlConnectionString = "Host=localhost;" };
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.IssueKeyAsync(requestWithProviderOnly, "tester", TestContext.Current.CancellationToken));
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.IssueKeyAsync(requestWithConnOnly, "tester", TestContext.Current.CancellationToken));
-    }
 
     [Fact]
     public async Task IssueKeyAsync_ShouldThrowArgumentException_WhenCorsOriginIsInvalid()
@@ -82,8 +71,7 @@ public class McpAccessKeyServiceTests
         var request = new IssueMcpAccessKeyModel
         {
             Name = "   Test Key   ",
-            SqlProvider = "  PostgreSQL  ",
-            SqlConnectionString = "  Host=localhost;  ",
+            DbManagementId = 1,
             CorsAllowedOrigins = "http://localhost:3000, HTTPS://API.EXAMPLE.COM/; http://localhost:3000  "
         };
 
@@ -97,15 +85,12 @@ public class McpAccessKeyServiceTests
         Assert.NotNull(result);
         Assert.Equal("Test Key", result.Name);
         Assert.Equal("http://localhost:3000,https://api.example.com", result.CorsAllowedOrigins);
-        Assert.Equal("PostgreSQL", result.SqlProvider);
-        Assert.True(result.HasSqlConnectionStringOverride);
         Assert.NotNull(result.PlaintextKey);
 
         mockDbSet.Verify(m => m.Add(It.Is<McpAccessKey>(e =>
             e.Name == "Test Key" &&
             e.CorsAllowedOrigins == "http://localhost:3000,https://api.example.com" &&
-            e.SqlProvider == "PostgreSQL" &&
-            e.SqlConnectionString == "ENCRYPTED_Host=localhost;" &&
+            e.DbManagementId == 1 &&
             e.CreatedBy == "tester" &&
             e.IsActive == true
         )), Times.Once);
@@ -232,8 +217,7 @@ public class McpAccessKeyServiceTests
                 KeyPrefix = prefix,
                 KeyHash = GenerateTestHash(rawKey),
                 IsActive = true,
-                SqlProvider = "PostgreSQL",
-                SqlConnectionString = "ENCRYPTED_Server=localhost;",
+                DbManagementId = 10,
                 CorsAllowedOrigins = "http://localhost:3000,http://app.com"
             }
         };
@@ -247,8 +231,7 @@ public class McpAccessKeyServiceTests
         Assert.Null(result.Reason);
         Assert.Equal(1, result.KeyId);
         Assert.Equal("Valid Key", result.Name);
-        Assert.Equal("PostgreSQL", result.SqlProvider);
-        Assert.Equal("Server=localhost;", result.SqlConnectionString);
+        Assert.Equal(10, result.DbManagementId);
 
         Assert.NotNull(result.CorsAllowedOriginsSet);
         Assert.Contains("http://localhost:3000", result.CorsAllowedOriginsSet);

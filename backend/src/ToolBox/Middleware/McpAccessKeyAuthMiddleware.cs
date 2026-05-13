@@ -3,8 +3,12 @@ using System.Text;
 using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Common.Interfaces;
 using Common.Models;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
+using SqlAgent.Service.Interfaces;
+using SqlAgent.Service.Models;
 using ToolBox.Background;
 
 namespace ToolBox.Middleware;
@@ -15,6 +19,10 @@ public class McpAccessKeyAuthMiddleware(
     IMcpAccessKeyLastUsedQueue lastUsedQueue,
     IMemoryCache cache,
     IConfiguration configuration,
+    IDbManagementService dbManagementService,
+    IDbSetterService dbSetterService,
+    ICryptoService cryptoService,
+    IOptions<McpKeySettings> mcpKeySettings,
     ILogger<McpAccessKeyAuthMiddleware> logger) : IMiddleware
 {
     private const int StripedLockCount = 64;
@@ -38,6 +46,10 @@ public class McpAccessKeyAuthMiddleware(
     private readonly IMcpAccessKeyLastUsedQueue _lastUsedQueue = lastUsedQueue;
     private readonly IMemoryCache _cache = cache;
     private readonly IConfiguration _configuration = configuration;
+    private readonly IDbManagementService _dbManagementService = dbManagementService;
+    private readonly IDbSetterService _dbSetterService = dbSetterService;
+    private readonly ICryptoService _cryptoService = cryptoService;
+    private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
     private readonly ILogger<McpAccessKeyAuthMiddleware> _logger = logger;
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
@@ -68,13 +80,33 @@ public class McpAccessKeyAuthMiddleware(
             return;
         }
         var provider = validation.SqlProvider ?? string.Empty;
-        var connString = validation.SqlConnectionString ?? string.Empty;
-        if (string.Equals(provider, "Global", StringComparison.OrdinalIgnoreCase))
+        var connString = string.Empty;
+
+        if (validation.DbManagementId.HasValue)
+        {
+            var dbc = await _dbManagementService.GetDbByIdAsync(validation.DbManagementId.Value, true, context.RequestAborted);
+            if (dbc is DbManagementPwdVM pwdDbc)
+            {
+                provider = pwdDbc.SqlProvider ?? string.Empty;
+                connString = await _dbSetterService.BuildDbConnectionAsync(new BuildDbConnectionModel
+                {
+                    Provider = pwdDbc.SqlProvider ?? "MsSqlServer",
+                    Host = pwdDbc.Host,
+                    Port = pwdDbc.Port,
+                    Database = pwdDbc.Database,
+                    Username = pwdDbc.Username,
+                    Password = _cryptoService.DecryptText(pwdDbc.PasswordHash, _hmacSecret),
+                    ExtraSettings = pwdDbc.ExtraSettings
+                }, context.RequestAborted) ?? string.Empty;
+            }
+        }
+        else if (string.Equals(provider, "Global", StringComparison.OrdinalIgnoreCase))
         {
             var globalConfig = _configuration.GetSection("SqlConfig");
             provider = globalConfig["Provider"] ?? "MsSqlServer";
             connString = globalConfig["ConnectionString"] ?? string.Empty;
         }
+
         context.Items[McpContextItemKeys.AccessKeyId] = validation.KeyId.Value;
         context.Items[McpContextItemKeys.AccessKeyName] = validation.Name ?? string.Empty;
         context.Items[McpContextItemKeys.AllowedTools] = validation.AllowedTools ?? string.Empty;
