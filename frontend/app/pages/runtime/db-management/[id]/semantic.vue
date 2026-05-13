@@ -38,7 +38,7 @@ import {
   deleteSemantic,
   type DbSemantic,
 } from "@/api/db-semantic";
-import { ChevronLeft, Save, Loader2, Plus, Trash2 } from "lucide-vue-next";
+import { ChevronLeft, Save, Loader2, Database } from "lucide-vue-next";
 
 definePageMeta({
   layout: "default",
