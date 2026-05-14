@@ -356,8 +356,8 @@ onMounted(load);
                     </TooltipTrigger>
                     <TooltipContent>
                       <p class="mt-1 text-xs text-background">
-                        If enabled, you can restrict the tables and columns the
-                        AI can access.
+                        If enabled, you can restrict the tables that the AI can
+                        access.
                       </p>
                     </TooltipContent>
                   </Tooltip>
