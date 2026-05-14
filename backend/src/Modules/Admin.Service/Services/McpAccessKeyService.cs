@@ -43,6 +43,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             AllowedTools = string.IsNullOrWhiteSpace(request.AllowedTools) ? null : request.AllowedTools.Trim(),
             CorsAllowedOrigins = normalizedCorsAllowedOrigins,
             DbManagementId = request.DbManagementId,
+            TableWhitelist = string.IsNullOrWhiteSpace(request.TableWhitelist) ? null : request.TableWhitelist.Trim(),
             CreatedAt = DateTime.UtcNow,
             CreatedBy = actorId,
             IsActive = true
@@ -61,6 +62,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             AllowedTools = entity.AllowedTools,
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             SqlProvider = entity.SqlProvider,
+            TableWhitelist = entity.TableWhitelist,
         };
     }
 
@@ -80,6 +82,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
                 AllowedTools = x.AllowedTools,
                 CorsAllowedOrigins = x.CorsAllowedOrigins,
                 SqlProvider = x.SqlProvider,
+                TableWhitelist = x.TableWhitelist,
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync(cancellationToken);
@@ -148,7 +151,8 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             CorsAllowedOriginsSet = ParseCorsAllowedOrigins(entity.CorsAllowedOrigins),
             SqlProvider = entity.SqlProvider,
-            DbManagementId = entity.DbManagementId
+            DbManagementId = entity.DbManagementId,
+            TableWhitelist = entity.TableWhitelist
         };
     }
 

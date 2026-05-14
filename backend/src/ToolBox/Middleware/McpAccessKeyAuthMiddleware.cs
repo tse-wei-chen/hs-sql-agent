@@ -114,6 +114,7 @@ public class McpAccessKeyAuthMiddleware(
         context.Items[McpContextItemKeys.SqlProvider] = provider;
         context.Items[McpContextItemKeys.SqlConnectionString] = connString;
         context.Items[McpContextItemKeys.DbManagementId] = validation.DbManagementId;
+        context.Items[McpContextItemKeys.TableWhitelist] = validation.TableWhitelist ?? string.Empty;
         if (!TryApplyCorsPolicy(context, validation.CorsAllowedOriginsSet, out _))
         {
             await WriteForbiddenAsync(context, ForbiddenResponseBytes);

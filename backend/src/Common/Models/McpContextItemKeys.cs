@@ -9,4 +9,5 @@ public static class McpContextItemKeys
     public const string SqlProvider = "McpSqlProvider";
     public const string SqlConnectionString = "McpSqlConnectionString";
     public const string DbManagementId = "McpDbManagementId";
+    public const string TableWhitelist = "McpTableWhitelist";
 }

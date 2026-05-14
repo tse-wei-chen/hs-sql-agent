@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0-alpha] - 2026-05-14
+
+### Breaking Change
+
+- **Remove "Configure Manually" mode**: MCP API keys now require association with a Database Management entry (`DbManagementId`). Legacy manual connection string input has been removed from both the API and UI.
+- Old MCP keys will no longer be able to connect to the database. Please regenerate new MCP keys.
+
+### Feature
+
+- **Table Whitelist**: Administrators can now restrict each MCP API key to specific database tables. When a whitelist is configured, `get_tables` results are filtered, and `get_columns` / `execute_query_safe` / `execute_dml_safe` will reject access to non-whitelisted tables.
+- **Semantic Layer**: Added a semantic metadata layer for databases, allowing administrators to define display names and descriptions for tables and columns. Semantic data is automatically merged into `get_tables` and `get_columns` MCP tool responses.
+- **Dynamic Breadcrumb**: The layout breadcrumb now dynamically reflects the current route path with proper labels and navigation links.
+
 ## [1.3.17-alpha] - 2026-05-13
 
 ### Feature

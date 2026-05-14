@@ -17,6 +17,7 @@ public class McpAccessKeyConfig : IEntityTypeConfiguration<McpAccessKey>
         builder.Property(x => x.CorsAllowedOrigins).HasMaxLength(4000);
         builder.Property(x => x.SqlProvider).HasMaxLength(32);
         builder.Property(x => x.DbManagementId);
+        builder.Property(x => x.TableWhitelist);
         builder.Property(x => x.CreatedBy).HasMaxLength(64);
         builder.Property(x => x.RevokedBy).HasMaxLength(64);
         builder.Property(x => x.CreatedAt).IsRequired();

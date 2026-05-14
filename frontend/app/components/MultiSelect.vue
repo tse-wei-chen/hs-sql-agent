@@ -29,12 +29,14 @@ interface Props {
   searchPlaceholder?: string;
   emptyMessage?: string;
   class?: string;
+  disabled?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   placeholder: "Select...",
   searchPlaceholder: "Search...",
   emptyMessage: "No results found.",
+  disabled: false,
 });
 
 const emit = defineEmits<{
@@ -80,12 +82,13 @@ function toggleAll() {
 </script>
 
 <template>
-  <Popover v-model:open="open">
+  <Popover v-model:open="open" :disabled="disabled">
     <PopoverTrigger as-child>
       <Button
         variant="outline"
         role="combobox"
         :aria-expanded="open"
+        :disabled="disabled"
         :class="
           cn(
             'w-full justify-between h-auto min-h-10 px-2 py-1 text-left',

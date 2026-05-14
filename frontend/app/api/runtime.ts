@@ -14,6 +14,7 @@ export interface IssueMcpKeyRequest {
   password?: string | null;
   database?: string | null;
   extraSettings?: string | null;
+  tableWhitelist?: string | null;
 }
 
 export interface TestDbConnectionRequest {

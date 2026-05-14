@@ -11,29 +11,32 @@ import {
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
   issueMcpKey,
   listMcpKeys,
   revokeMcpKey,
   testDbConnection,
 } from "@/api/runtime";
+import { Switch } from "@/components/ui/switch";
 import { listCustomSqlTools, type CustomSqlTool } from "@/api/custom-tools";
-import PasswordInput from "@/components/PasswordInput.vue";
-import { listDbManagements, type DbManagement } from "~/api/db-management";
-import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
-import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
+import {
+  listDbManagements,
+  getSchemas,
+  getTables,
+  type DbManagement,
+} from "~/api/db-management";
 import { KeyRound } from "lucide-vue-next";
 import MultiSelect from "~/components/MultiSelect.vue";
+import Transfer from "~/components/Transfer.vue";
+import { watch } from "vue";
+import { CircleQuestionMark } from "lucide-vue-next";
 
 definePageMeta({
   layout: "default",
@@ -48,6 +51,7 @@ interface McpKeyItem {
   corsAllowedOrigins?: string | null;
   sqlProvider?: string | null;
   hasSqlConnectionStringOverride?: boolean;
+  tableWhitelist?: string | null;
 }
 
 const keys = ref<McpKeyItem[]>([]);
@@ -64,6 +68,7 @@ const detail = ref<{
   allowedTools: string[];
   corsAllowedOrigins: string;
   dbManagementId: number | null;
+  tableWhitelist: string[];
 }>({
   name: "",
   expiresAt: null,
@@ -75,6 +80,67 @@ const detail = ref<{
   ],
   corsAllowedOrigins: "",
   dbManagementId: null,
+  tableWhitelist: [],
+});
+const isWhitelistEnabled = ref(false);
+const selectedSchema = ref<string | undefined>(undefined);
+const availableSchemas = ref<string[]>([]);
+const fetchingSchemas = ref(false);
+const availableTables = ref<string[]>([]);
+const fetchingTables = ref(false);
+
+watch(
+  () => detail.value.dbManagementId,
+  async (newVal) => {
+    selectedSchema.value = undefined;
+    availableTables.value = [];
+    detail.value.tableWhitelist = [];
+    if (newVal) {
+      fetchingSchemas.value = true;
+      try {
+        availableSchemas.value = await getSchemas(newVal);
+        if (availableSchemas.value.length > 0) {
+          selectedSchema.value = availableSchemas.value[0];
+        }
+      } catch (e) {
+        console.error("Failed to fetch schemas", e);
+        availableSchemas.value = [];
+      } finally {
+        fetchingSchemas.value = false;
+      }
+    } else {
+      availableSchemas.value = [];
+    }
+  },
+);
+
+watch(
+  () => selectedSchema.value,
+  async (newVal) => {
+    if (newVal && detail.value.dbManagementId) {
+      fetchingTables.value = true;
+      try {
+        availableTables.value = await getTables(
+          detail.value.dbManagementId,
+          newVal,
+        );
+      } catch (e) {
+        console.error("Failed to fetch tables", e);
+        availableTables.value = [];
+      } finally {
+        fetchingTables.value = false;
+      }
+    } else {
+      availableTables.value = [];
+    }
+  },
+);
+
+const tableOptions = computed(() => {
+  return availableTables.value.map((t) => ({
+    label: t,
+    value: `${selectedSchema.value}.${t}`,
+  }));
 });
 const connectionTestResult = ref<{
   success: boolean;
@@ -147,6 +213,10 @@ const issue = async () => {
           : null,
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
       dbManagementId: detail.value.dbManagementId || 0,
+      tableWhitelist:
+        isWhitelistEnabled.value && detail.value.tableWhitelist?.length > 0
+          ? detail.value.tableWhitelist.join(",")
+          : null,
     });
 
     issuedPlaintextKey.value = result.plaintextKey || "";
@@ -161,7 +231,10 @@ const issue = async () => {
       ],
       corsAllowedOrigins: "",
       dbManagementId: null,
+      tableWhitelist: [],
     };
+    isWhitelistEnabled.value = false;
+    selectedSchema.value = undefined;
     await load();
   } catch (error: any) {
     alert(error?.response?.data || "Failed to issue MCP key.");
@@ -272,6 +345,91 @@ onMounted(load);
               <hr />
             </span>
             <Field class="md:col-span-2">
+              <div class="flex items-center justify-start gap-2">
+                <FieldLabel>Restrict Data Access (Advanced) </FieldLabel>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <CircleQuestionMark
+                        class="h-5 w-5 text-muted-foreground"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p class="mt-1 text-xs text-background">
+                        If enabled, you can restrict the tables and columns the
+                        AI can access.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <Switch id="enable-whitelist" v-model="isWhitelistEnabled" />
+              </div>
+              <div
+                v-if="!detail.dbManagementId && isWhitelistEnabled"
+                class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground"
+              >
+                Please select a database connection first.
+              </div>
+              <div
+                v-else-if="fetchingSchemas && isWhitelistEnabled"
+                class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground"
+              >
+                Fetching schemas...
+              </div>
+              <Tabs
+                v-else-if="isWhitelistEnabled"
+                v-model="selectedSchema"
+                class="w-full"
+              >
+                <div class="flex items-center gap-4 mb-4">
+                  <div class="flex-1 overflow-x-auto pb-2">
+                    <TabsList
+                      class="inline-flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-auto min-w-full"
+                    >
+                      <TabsTrigger
+                        v-for="s in availableSchemas"
+                        :key="s"
+                        :value="s"
+                        class="inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow"
+                      >
+                        {{ s }}
+                      </TabsTrigger>
+                    </TabsList>
+                  </div>
+                </div>
+
+                <div
+                  v-if="!selectedSchema"
+                  class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground"
+                >
+                  Select a schema above to manage table whitelist.
+                </div>
+                <div v-else class="space-y-4">
+                  <div
+                    v-if="fetchingTables"
+                    class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground"
+                  >
+                    Fetching tables for {{ selectedSchema }}...
+                  </div>
+                  <Transfer
+                    v-else
+                    v-model="detail.tableWhitelist"
+                    :options="tableOptions"
+                    :disabled="fetchingTables"
+                    :left-title="`Tables in ${selectedSchema}`"
+                    right-title="Whitelist"
+                  />
+                  <p class="text-xs text-muted-foreground">
+                    Selected tables:
+                    {{ detail.tableWhitelist.length || "None (All access)" }}
+                  </p>
+                </div>
+              </Tabs>
+            </Field>
+            <span class="md:col-span-2">
+              <hr />
+            </span>
+            <Field class="md:col-span-2">
               <FieldLabel>Allowed Tools (multi-select)</FieldLabel>
               <MultiSelect
                 v-model="detail.allowedTools"
@@ -296,18 +454,31 @@ onMounted(load);
               </MultiSelect>
             </Field>
             <Field class="md:col-span-2">
-              <FieldLabel for="corsAllowedOrigins"
-                >CORS Allowed Origins</FieldLabel
-              >
+              <div class="flex items-center justify-start gap-2">
+                <FieldLabel for="corsAllowedOrigins"
+                  >CORS Allowed Origins</FieldLabel
+                >
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <CircleQuestionMark
+                        class="h-5 w-5 text-muted-foreground"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p class="mt-1 text-xs text-background">
+                        Comma-separated origins. Leave empty to block browser
+                        cross-origin requests for this key.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <Input
                 id="corsAllowedOrigins"
                 v-model="detail.corsAllowedOrigins"
                 placeholder="https://app.example.com, https://admin.example.com"
               />
-              <p class="mt-1 text-xs text-muted-foreground">
-                Comma-separated origins. Leave empty to block browser
-                cross-origin requests for this key.
-              </p>
             </Field>
           </FieldGroup>
           <span class="item-center flex justify-end gap-2">
@@ -426,6 +597,9 @@ onMounted(load);
               <div class="text-muted-foreground">
                 SQL: {{ key.sqlProvider || "Global" }} / connection:
                 {{ key.hasSqlConnectionStringOverride ? "override" : "Global" }}
+              </div>
+              <div class="text-muted-foreground">
+                Table Whitelist: {{ key.tableWhitelist || "All" }}
               </div>
             </div>
             <Button

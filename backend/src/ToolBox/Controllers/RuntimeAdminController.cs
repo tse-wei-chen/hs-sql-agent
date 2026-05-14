@@ -52,7 +52,8 @@ public class RuntimeAdminController(
             ExpiresAt = request.ExpiresAt,
             AllowedTools = request.AllowedTools,
             CorsAllowedOrigins = request.CorsAllowedOrigins,
-            DbManagementId = request.DbManagementId
+            DbManagementId = request.DbManagementId,
+            TableWhitelist = request.TableWhitelist
         };
 
         var result = await _keyService.IssueKeyAsync(
