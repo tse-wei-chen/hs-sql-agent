@@ -14,6 +14,19 @@ export interface IssueMcpKeyRequest {
   password?: string | null;
   database?: string | null;
   extraSettings?: string | null;
+  tableWhitelist?: string | null;
+}
+
+export interface TestDbConnectionRequest {
+  dbSettingMode: 0 | 1;
+  dbManagementId?: number | null;
+  sqlProvider?: string | null;
+  host?: string | null;
+  port?: string | null;
+  username?: string | null;
+  password?: string | null;
+  database?: string | null;
+  extraSettings?: string | null;
 }
 
 export interface AuditDailySummaryItem {
@@ -65,30 +78,10 @@ export const getRuntimeAuditDailySummary = async (days = 7) => {
   return response.data;
 };
 
-export const testDbConnection = async (
-  dbSettingMode: 0 | 1,
-  dbManagementId: number | undefined,
-  sqlProvider: string,
-  host: string,
-  port: string,
-  username: string,
-  password: string,
-  database: string,
-  extraSettings?: string,
-) => {
+export const testDbConnection = async (payload: TestDbConnectionRequest) => {
   const response = await xiorInstanceToken.post(
     "/runtime/mcp-keys/test-db-connection",
-    {
-      dbSettingMode: dbSettingMode,
-      dbManagementId: dbManagementId,
-      sqlProvider: sqlProvider,
-      host: host,
-      port: port,
-      username: username,
-      password: password,
-      database: database,
-      extraSettings: extraSettings,
-    },
+    payload,
   );
   return response.data;
 };

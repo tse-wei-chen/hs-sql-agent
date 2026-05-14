@@ -12,5 +12,6 @@ public class McpAccessKeyListItem
     public string? CorsAllowedOrigins { get; set; }
     public string? SqlProvider { get; set; }
     public bool HasSqlConnectionStringOverride { get; set; }
+    public string? TableWhitelist { get; set; }
     public DateTime CreatedAt { get; set; }
 }

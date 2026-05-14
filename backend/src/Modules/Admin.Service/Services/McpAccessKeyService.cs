@@ -28,15 +28,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             throw new ArgumentException("Key name is required.", nameof(request.Name));
         }
 
-
-        var normalizedProvider = string.IsNullOrWhiteSpace(request.SqlProvider) ? null : request.SqlProvider.Trim();
-        var normalizedConnectionString = string.IsNullOrWhiteSpace(request.SqlConnectionString) ? null : request.SqlConnectionString.Trim();
         var normalizedCorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins);
-
-        if ((normalizedProvider is null) != (normalizedConnectionString is null))
-        {
-            throw new ArgumentException("SqlProvider and SqlConnectionString must both be set for SQL override.");
-        }
 
         var plaintext = GenerateRawKey();
         var keyHash = HashKey(plaintext, _hmacSecret);
@@ -50,8 +42,8 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             ExpiresAt = request.ExpiresAt,
             AllowedTools = string.IsNullOrWhiteSpace(request.AllowedTools) ? null : request.AllowedTools.Trim(),
             CorsAllowedOrigins = normalizedCorsAllowedOrigins,
-            SqlProvider = normalizedProvider,
-            SqlConnectionString = _cryptoService.EncryptText(normalizedConnectionString, _hmacSecret),
+            DbManagementId = request.DbManagementId,
+            TableWhitelist = string.IsNullOrWhiteSpace(request.TableWhitelist) ? null : request.TableWhitelist.Trim(),
             CreatedAt = DateTime.UtcNow,
             CreatedBy = actorId,
             IsActive = true
@@ -70,7 +62,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             AllowedTools = entity.AllowedTools,
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             SqlProvider = entity.SqlProvider,
-            HasSqlConnectionStringOverride = !string.IsNullOrWhiteSpace(entity.SqlConnectionString),
+            TableWhitelist = entity.TableWhitelist,
         };
     }
 
@@ -90,7 +82,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
                 AllowedTools = x.AllowedTools,
                 CorsAllowedOrigins = x.CorsAllowedOrigins,
                 SqlProvider = x.SqlProvider,
-                HasSqlConnectionStringOverride = !string.IsNullOrWhiteSpace(x.SqlConnectionString),
+                TableWhitelist = x.TableWhitelist,
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync(cancellationToken);
@@ -159,7 +151,8 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             CorsAllowedOriginsSet = ParseCorsAllowedOrigins(entity.CorsAllowedOrigins),
             SqlProvider = entity.SqlProvider,
-            SqlConnectionString = _cryptoService.DecryptText(entity.SqlConnectionString, _hmacSecret)
+            DbManagementId = entity.DbManagementId,
+            TableWhitelist = entity.TableWhitelist
         };
     }
 

@@ -11,29 +11,32 @@ import {
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
   issueMcpKey,
   listMcpKeys,
   revokeMcpKey,
   testDbConnection,
 } from "@/api/runtime";
+import { Switch } from "@/components/ui/switch";
 import { listCustomSqlTools, type CustomSqlTool } from "@/api/custom-tools";
-import PasswordInput from "@/components/PasswordInput.vue";
-import { listDbManagements, type DbManagement } from "~/api/db-management";
-import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
-import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
+import {
+  listDbManagements,
+  getSchemas,
+  getTables,
+  type DbManagement,
+} from "~/api/db-management";
 import { KeyRound } from "lucide-vue-next";
 import MultiSelect from "~/components/MultiSelect.vue";
+import Transfer from "~/components/Transfer.vue";
+import { watch } from "vue";
+import { CircleQuestionMark } from "lucide-vue-next";
 
 definePageMeta({
   layout: "default",
@@ -48,6 +51,7 @@ interface McpKeyItem {
   corsAllowedOrigins?: string | null;
   sqlProvider?: string | null;
   hasSqlConnectionStringOverride?: boolean;
+  tableWhitelist?: string | null;
 }
 
 const keys = ref<McpKeyItem[]>([]);
@@ -63,18 +67,8 @@ const detail = ref<{
   expiresAt: string | null;
   allowedTools: string[];
   corsAllowedOrigins: string;
-  dbSettingMode: 0 | 1;
   dbManagementId: number | null;
-  sqlProvider: string;
-  host: string;
-  port: string;
-  username: string;
-  password: string;
-  database: string;
-  extraSettings: {
-    TrustServerCertificate?: boolean;
-    Encrypt?: boolean;
-  };
+  tableWhitelist: string[];
 }>({
   name: "",
   expiresAt: null,
@@ -85,18 +79,68 @@ const detail = ref<{
     "execute_query_safe",
   ],
   corsAllowedOrigins: "",
-  dbSettingMode: 0,
   dbManagementId: null,
-  sqlProvider: "Global",
-  host: "",
-  port: "",
-  username: "",
-  password: "",
-  database: "",
-  extraSettings: {
-    TrustServerCertificate: false,
-    Encrypt: false,
+  tableWhitelist: [],
+});
+const isWhitelistEnabled = ref(false);
+const selectedSchema = ref<string | undefined>(undefined);
+const availableSchemas = ref<string[]>([]);
+const fetchingSchemas = ref(false);
+const availableTables = ref<string[]>([]);
+const fetchingTables = ref(false);
+
+watch(
+  () => detail.value.dbManagementId,
+  async (newVal) => {
+    selectedSchema.value = undefined;
+    availableTables.value = [];
+    detail.value.tableWhitelist = [];
+    if (newVal) {
+      fetchingSchemas.value = true;
+      try {
+        availableSchemas.value = await getSchemas(newVal);
+        if (availableSchemas.value.length > 0) {
+          selectedSchema.value = availableSchemas.value[0];
+        }
+      } catch (e) {
+        console.error("Failed to fetch schemas", e);
+        availableSchemas.value = [];
+      } finally {
+        fetchingSchemas.value = false;
+      }
+    } else {
+      availableSchemas.value = [];
+    }
   },
+);
+
+watch(
+  () => selectedSchema.value,
+  async (newVal) => {
+    if (newVal && detail.value.dbManagementId) {
+      fetchingTables.value = true;
+      try {
+        availableTables.value = await getTables(
+          detail.value.dbManagementId,
+          newVal,
+        );
+      } catch (e) {
+        console.error("Failed to fetch tables", e);
+        availableTables.value = [];
+      } finally {
+        fetchingTables.value = false;
+      }
+    } else {
+      availableTables.value = [];
+    }
+  },
+);
+
+const tableOptions = computed(() => {
+  return availableTables.value.map((t) => ({
+    label: t,
+    value: `${selectedSchema.value}.${t}`,
+  }));
 });
 const connectionTestResult = ref<{
   success: boolean;
@@ -168,16 +212,11 @@ const issue = async () => {
           ? detail.value.allowedTools.join(",")
           : null,
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
-      dbSettingMode: detail.value.dbSettingMode,
-      dbManagementId: detail.value.dbManagementId || null,
-      sqlProvider:
-        detail.value.sqlProvider === "Global" ? null : detail.value.sqlProvider,
-      host: detail.value.host.trim() || null,
-      port: detail.value.port.trim() || null,
-      username: detail.value.username.trim() || null,
-      password: detail.value.password || null,
-      database: detail.value.database.trim() || null,
-      extraSettings: JSON.stringify(detail.value.extraSettings),
+      dbManagementId: detail.value.dbManagementId || 0,
+      tableWhitelist:
+        isWhitelistEnabled.value && detail.value.tableWhitelist?.length > 0
+          ? detail.value.tableWhitelist.join(",")
+          : null,
     });
 
     issuedPlaintextKey.value = result.plaintextKey || "";
@@ -191,19 +230,11 @@ const issue = async () => {
         "execute_query_safe",
       ],
       corsAllowedOrigins: "",
-      dbSettingMode: 0,
       dbManagementId: null,
-      sqlProvider: "Global",
-      host: "",
-      port: "",
-      username: "",
-      password: "",
-      database: "",
-      extraSettings: {
-        TrustServerCertificate: false,
-        Encrypt: false,
-      },
+      tableWhitelist: [],
     };
+    isWhitelistEnabled.value = false;
+    selectedSchema.value = undefined;
     await load();
   } catch (error: any) {
     alert(error?.response?.data || "Failed to issue MCP key.");
@@ -216,19 +247,10 @@ const test = async () => {
   try {
     testing.value = true;
     connectionTestResult.value = null;
-    const result = await testDbConnection(
-      detail.value.dbSettingMode,
-      detail.value.dbManagementId ?? undefined,
-      detail.value.sqlProvider ?? undefined,
-      detail.value.host ?? undefined,
-      detail.value.port ?? undefined,
-      detail.value.username ?? undefined,
-      detail.value.password ?? undefined,
-      detail.value.database ?? undefined,
-      !detail.value.dbManagementId
-        ? JSON.stringify(detail.value.extraSettings)
-        : undefined,
-    );
+    const result = await testDbConnection({
+      dbSettingMode: 0,
+      dbManagementId: detail.value.dbManagementId ?? undefined,
+    });
     connectionTestResult.value = {
       success: result.success,
       errorMessage: result.errorMessage || "Connection failed.",
@@ -251,34 +273,6 @@ const revoke = async (id: number) => {
     alert(error?.response?.data || "Failed to revoke key.");
   }
 };
-
-watch(
-  () => detail.value.sqlProvider,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      detail.value.host = "";
-      detail.value.port = "";
-      detail.value.username = "";
-      detail.value.password = "";
-      detail.value.database = "";
-    }
-  },
-);
-
-watch(
-  () => detail.value.dbSettingMode,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      detail.value.dbManagementId = null;
-      detail.value.sqlProvider = "Global";
-      detail.value.host = "";
-      detail.value.port = "";
-      detail.value.username = "";
-      detail.value.password = "";
-      detail.value.database = "";
-    }
-  },
-);
 
 onMounted(load);
 </script>
@@ -331,20 +325,7 @@ onMounted(load);
               />
             </Field>
             <Field>
-              <FieldLabel>Db Setting</FieldLabel>
-              <RadioGroup v-model="detail.dbSettingMode" class="flex flex-col">
-                <div class="flex items-center space-x-2">
-                  <RadioGroupItem id="r1" :value="0" />
-                  <Label for="r1">Use Existing Connection</Label>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <RadioGroupItem id="r2" :value="1" />
-                  <Label for="r2">Configure Manually</Label>
-                </div>
-              </RadioGroup>
-            </Field>
-            <Field v-if="detail.dbSettingMode === 0">
-              <FieldLabel>Database Connection</FieldLabel>
+              <FieldLabel>Database</FieldLabel>
               <Select v-model="detail.dbManagementId">
                 <SelectTrigger class="w-full">
                   <SelectValue placeholder="Select database connection" />
@@ -360,138 +341,90 @@ onMounted(load);
                 </SelectContent>
               </Select>
             </Field>
-            <Field v-if="detail.dbSettingMode === 1">
-              <FieldLabel>SQL Provider Override</FieldLabel>
-              <Select v-model="detail.sqlProvider">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Select provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem
-                    v-for="[key, value] of PROVIDER_OPTIONS"
-                    :key="key"
-                    :value="key"
-                  >
-                    {{ value }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p class="mt-1 text-xs text-muted-foreground">
-                Use Global default, or select a provider together with a
-                connection string.
-              </p>
-            </Field>
-
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Host</FieldLabel>
-              <Input v-model="detail.host" placeholder="Host" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Port</FieldLabel>
-              <Input v-model="detail.port" placeholder="Port" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Username</FieldLabel>
-              <Input v-model="detail.username" placeholder="Username" />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Password</FieldLabel>
-              <PasswordInput
-                v-model="detail.password"
-                type="password"
-                placeholder="Password"
-              />
-            </Field>
-            <Field
-              v-if="
-                [
-                  'Sqlite',
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(detail.sqlProvider) && detail.dbSettingMode === 1
-              "
-            >
-              <FieldLabel>Database</FieldLabel>
-              <Input v-model="detail.database" placeholder="Database" />
-            </Field>
-
-            <Field
-              v-if="
-                detail.sqlProvider === 'MsSqlServer' &&
-                detail.dbSettingMode === 1
-              "
-              class="md:col-span-2"
-            >
-              <FieldLabel>Extra Settings</FieldLabel>
-              <div class="flex flex-wrap gap-6 border rounded-md p-4">
-                <div class="flex items-center space-x-2">
-                  <Checkbox
-                    id="trustServerCertificateKey"
-                    v-model="detail.extraSettings.TrustServerCertificate"
-                  />
-                  <Label
-                    for="trustServerCertificateKey"
-                    class="text-sm font-medium leading-none cursor-pointer"
-                  >
-                    Trust Server Certificate
-                  </Label>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <Checkbox
-                    id="encryptKey"
-                    v-model="detail.extraSettings.Encrypt"
-                  />
-                  <Label
-                    for="encryptKey"
-                    class="text-sm font-medium leading-none cursor-pointer"
-                  >
-                    Encrypt Connection
-                  </Label>
-                </div>
+            <span class="md:col-span-2">
+              <hr />
+            </span>
+            <Field class="md:col-span-2">
+              <div class="flex items-center justify-start gap-2">
+                <FieldLabel>Restrict Data Access (Advanced) </FieldLabel>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <CircleQuestionMark
+                        class="h-5 w-5 text-muted-foreground"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p class="mt-1 text-xs text-background">
+                        If enabled, you can restrict the tables and columns the
+                        AI can access.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <Switch id="enable-whitelist" v-model="isWhitelistEnabled" />
               </div>
+              <div
+                v-if="!detail.dbManagementId && isWhitelistEnabled"
+                class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground"
+              >
+                Please select a database connection first.
+              </div>
+              <div
+                v-else-if="fetchingSchemas && isWhitelistEnabled"
+                class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground"
+              >
+                Fetching schemas...
+              </div>
+              <Tabs
+                v-else-if="isWhitelistEnabled"
+                v-model="selectedSchema"
+                class="w-full"
+              >
+                <div class="flex items-center gap-4 mb-4">
+                  <div class="flex-1 overflow-x-auto pb-2">
+                    <TabsList
+                      class="inline-flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-auto min-w-full"
+                    >
+                      <TabsTrigger
+                        v-for="s in availableSchemas"
+                        :key="s"
+                        :value="s"
+                        class="inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow"
+                      >
+                        {{ s }}
+                      </TabsTrigger>
+                    </TabsList>
+                  </div>
+                </div>
+
+                <div
+                  v-if="!selectedSchema"
+                  class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground"
+                >
+                  Select a schema above to manage table whitelist.
+                </div>
+                <div v-else class="space-y-4">
+                  <div
+                    v-if="fetchingTables"
+                    class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground"
+                  >
+                    Fetching tables for {{ selectedSchema }}...
+                  </div>
+                  <Transfer
+                    v-else
+                    v-model="detail.tableWhitelist"
+                    :options="tableOptions"
+                    :disabled="fetchingTables"
+                    :left-title="`Tables in ${selectedSchema}`"
+                    right-title="Whitelist"
+                  />
+                  <p class="text-xs text-muted-foreground">
+                    Selected tables:
+                    {{ detail.tableWhitelist.length || "None (All access)" }}
+                  </p>
+                </div>
+              </Tabs>
             </Field>
             <span class="md:col-span-2">
               <hr />
@@ -521,18 +454,31 @@ onMounted(load);
               </MultiSelect>
             </Field>
             <Field class="md:col-span-2">
-              <FieldLabel for="corsAllowedOrigins"
-                >CORS Allowed Origins</FieldLabel
-              >
+              <div class="flex items-center justify-start gap-2">
+                <FieldLabel for="corsAllowedOrigins"
+                  >CORS Allowed Origins</FieldLabel
+                >
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <CircleQuestionMark
+                        class="h-5 w-5 text-muted-foreground"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p class="mt-1 text-xs text-background">
+                        Comma-separated origins. Leave empty to block browser
+                        cross-origin requests for this key.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <Input
                 id="corsAllowedOrigins"
                 v-model="detail.corsAllowedOrigins"
                 placeholder="https://app.example.com, https://admin.example.com"
               />
-              <p class="mt-1 text-xs text-muted-foreground">
-                Comma-separated origins. Leave empty to block browser
-                cross-origin requests for this key.
-              </p>
             </Field>
           </FieldGroup>
           <span class="item-center flex justify-end gap-2">
@@ -651,6 +597,9 @@ onMounted(load);
               <div class="text-muted-foreground">
                 SQL: {{ key.sqlProvider || "Global" }} / connection:
                 {{ key.hasSqlConnectionStringOverride ? "override" : "Global" }}
+              </div>
+              <div class="text-muted-foreground">
+                Table Whitelist: {{ key.tableWhitelist || "All" }}
               </div>
             </div>
             <Button

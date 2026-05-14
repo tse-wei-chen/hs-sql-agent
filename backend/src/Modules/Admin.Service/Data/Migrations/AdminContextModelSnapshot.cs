@@ -166,6 +166,50 @@ namespace Admin.Service.Data.Migrations
                     b.ToTable("DbManagement");
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbSemantic", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ColumnName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SchemaName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TableName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DbManagementId", "SchemaName", "TableName", "ColumnName")
+                        .IsUnique();
+
+                    b.ToTable("DbSemantics");
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.McpAccessKey", b =>
                 {
                     b.Property<int>("Id")
@@ -186,6 +230,9 @@ namespace Admin.Service.Data.Migrations
                     b.Property<string>("CreatedBy")
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("DbManagementId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("ExpiresAt")
                         .HasColumnType("TEXT");
@@ -218,12 +265,11 @@ namespace Admin.Service.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("SqlConnectionString")
-                        .HasMaxLength(4000)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("SqlProvider")
                         .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TableWhitelist")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
@@ -259,6 +305,17 @@ namespace Admin.Service.Data.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("SuperUsers");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbSemantic", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
+                        .WithMany()
+                        .HasForeignKey("DbManagementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DbManagement");
                 });
 #pragma warning restore 612, 618
         }

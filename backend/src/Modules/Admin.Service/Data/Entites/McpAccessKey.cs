@@ -12,7 +12,8 @@ public class McpAccessKey
     public string? AllowedTools { get; set; }
     public string? CorsAllowedOrigins { get; set; }
     public string? SqlProvider { get; set; }
-    public string? SqlConnectionString { get; set; }
+    public int? DbManagementId { get; set; }
+    public string? TableWhitelist { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? RevokedAt { get; set; }

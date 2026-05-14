@@ -55,6 +55,7 @@ builder.Services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<ICustomSqlToolService, CustomSqlToolService>();
 builder.Services.AddScoped<IDbManagementService, DbManagementService>();
+builder.Services.AddScoped<IDbSemanticService, DbSemanticService>();
 builder.Services.AddSingleton<ICryptoService, CryptoService>();
 builder.Services.AddSingleton<IQueryValueParserService, QueryValueParserService>();
 builder.Services.AddScoped<ISqlStrategy, MySqlStrategy>();

@@ -1,22 +1,23 @@
 using System.ComponentModel;
-using ModelContextProtocol.Server;
+using System.Text.Json;
+using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Common.Models;
+using ModelContextProtocol.Server;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
-using System.Text.Json;
-using Common.Models;
-using Admin.Service.Interfaces;
 
 namespace ToolBox.Tools;
 
 [McpServerToolType]
-public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService)
+public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IDbSemanticService semanticService)
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
     private readonly IAuditService _auditService = auditService;
+    private readonly IDbSemanticService _semanticService = semanticService;
 
     [McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries).")]
     public async Task<string> ExecuteQuerySafe(
@@ -46,10 +47,9 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         bool distinct = false,
         [Description("Source subquery definition. If provided, tableName is ignored.")]
         QueryDefinition? fromQuery = null,
-        [Description("Alias for the source table or subquery (Optional).")]
+        [Description("Top-level alias for the source table or subquery. (Optional)")]
         string? alias = null)
     {
-        ValidateToolAccess("execute_query_safe");
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
         {
@@ -58,6 +58,8 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         var strategy = _sqlStrategyFactory.GetStrategy(dbType);
         try
         {
+            ValidateToolAccess("execute_query_safe");
+            ValidateAllTableAccess(tableName, joins, combineConditions, cteConditions, fromQuery, selectColumns, whereConditions, alias);
             var result = await strategy.ExecuteQueryAsync(
                 connectionString: sqlConfig.ConnectionString,
                 tableName: tableName,
@@ -91,7 +93,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 target: tableName ?? "subquery",
                 result: "failed",
                 detail: ex.Message);
-            throw;
+            return "Execution failed: " + ex.Message;
         }
     }
 
@@ -108,6 +110,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         try
         {
             ValidateToolAccess("execute_dml_safe");
+            ValidateAllTableAccess(dml?.TableName, null, null, null, dml?.FromQuery, null, dml?.WhereConditions);
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
             {
@@ -141,6 +144,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         try
         {
             ValidateToolAccess("get_columns");
+            ValidateAllTableAccess($"{schemaName}.{tableName}", null, null, null, null, null, null);
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
             {
@@ -152,7 +156,33 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
-            
+
+            // Merge Semantic Data
+            var dbId = ResolveDbManagementId();
+            if (dbId.HasValue)
+            {
+                var semantics = await _semanticService.GetSemanticsByDbIdAsync(dbId.Value);
+                var tableSemantics = semantics.Where(s =>
+                    string.Equals(s.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(s.TableName, tableName, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                foreach (var col in columns)
+                {
+                    var semantic = tableSemantics.FirstOrDefault(s => string.Equals(s.ColumnName, col.Name, StringComparison.OrdinalIgnoreCase));
+                    if (semantic != null)
+                    {
+                        var parts = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(semantic.DisplayName)) parts.Add($"Display Name: {semantic.DisplayName}");
+                        if (!string.IsNullOrWhiteSpace(semantic.Description)) parts.Add(semantic.Description);
+
+                        if (parts.Count > 0)
+                        {
+                            col.Description = string.Join(". ", parts);
+                        }
+                    }
+                }
+            }
+
             await _auditService.WriteLogAsync(
                 action: "mcp.get_columns",
                 target: $"{schemaName}.{tableName}",
@@ -216,6 +246,45 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
+
+            // Apply table whitelist filter
+            var whitelist = ResolveTableWhitelist();
+            if (whitelist is { Count: > 0 })
+            {
+                tables = tables.Where(t => whitelist.Contains($"{schemaName}.{t}")).ToList();
+            }
+
+            // Merge Semantic Data
+            var dbId = ResolveDbManagementId();
+            if (dbId.HasValue)
+            {
+                var semantics = await _semanticService.GetSemanticsByDbIdAsync(dbId.Value);
+
+                // To keep it simple and compatible with LLM expectations of "list of tables", 
+                // I'll append descriptions in parentheses if they exist.
+                var tablesWithDesc = tables.Select(t =>
+                {
+                    var s = semantics.FirstOrDefault(item =>
+                            string.Equals(item.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(item.TableName, t, StringComparison.OrdinalIgnoreCase) &&
+                            string.IsNullOrEmpty(item.ColumnName));
+
+                    if (s == null) return t;
+
+                    var parts = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(s.DisplayName)) parts.Add($"Display Name: {s.DisplayName}");
+                    if (!string.IsNullOrWhiteSpace(s.Description)) parts.Add(s.Description);
+
+                    return parts.Count > 0 ? $"{t} ({string.Join(". ", parts)})" : t;
+                });
+
+                await _auditService.WriteLogAsync(
+                    action: "mcp.get_tables",
+                    target: schemaName,
+                    result: "success");
+
+                return string.Join(", ", tablesWithDesc);
+            }
 
             await _auditService.WriteLogAsync(
                 action: "mcp.get_tables",
@@ -291,6 +360,129 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         if (!isAllowed)
         {
             throw new UnauthorizedAccessException($"API key does not have permission to use tool: {toolName}");
+        }
+    }
+
+    private int? ResolveDbManagementId()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context != null && context.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var idObj) && idObj is int id)
+        {
+            return id;
+        }
+        return null;
+    }
+
+    private HashSet<string>? ResolveTableWhitelist()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context == null) return null;
+
+        var tableWhitelist = context.Items[McpContextItemKeys.TableWhitelist] as string;
+        if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
+
+        return tableWhitelist
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ValidateAllTableAccess(
+        string? tableName,
+        List<JoinCondition>? joins,
+        List<CombineCondition>? combineConditions,
+        List<CteCondition>? cteConditions,
+        QueryDefinition? fromQuery,
+        List<SelectCondition>? selectColumns,
+        List<WhereCondition>? whereConditions,
+        string? topLevelAlias = null)
+    {
+        var whitelist = ResolveTableWhitelist();
+        if (whitelist is null or { Count: 0 }) return;
+
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(topLevelAlias)) aliases.Add(topLevelAlias);
+
+        CollectReferencesAndAliases(
+            tableName, joins, combineConditions, cteConditions,
+            fromQuery, selectColumns, whereConditions,
+            referenced, aliases);
+
+        var violations = referenced
+            .Where(t => !aliases.Contains(t))
+            .Where(t => !whitelist.Contains(t))
+            .ToList();
+
+        if (violations.Count > 0)
+        {
+            throw new UnauthorizedAccessException(
+                $"API key does not have permission to access table(s): {string.Join(", ", violations)}");
+        }
+    }
+
+    private static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (qd == null) return;
+        if (!string.IsNullOrWhiteSpace(qd.Alias)) aliases.Add(qd.Alias);
+
+        CollectReferencesAndAliases(
+            qd.TableName, qd.Joins, qd.CombineConditions, qd.CteConditions,
+            qd.FromQuery, qd.SelectColumns, qd.WhereColumnsAndValues,
+            referenced, aliases);
+    }
+
+    private static void CollectReferencesAndAliases(
+        string? tableName,
+        List<JoinCondition>? joins,
+        List<CombineCondition>? combineConditions,
+        List<CteCondition>? cteConditions,
+        QueryDefinition? fromQuery,
+        List<SelectCondition>? selectColumns,
+        List<WhereCondition>? whereConditions,
+        HashSet<string> referenced,
+        HashSet<string> aliases)
+    {
+        if (!string.IsNullOrWhiteSpace(tableName)) referenced.Add(tableName);
+
+        if (cteConditions != null)
+        {
+            foreach (var c in cteConditions)
+            {
+                if (!string.IsNullOrWhiteSpace(c.Name)) aliases.Add(c.Name);
+                CollectFromQueryDefinition(c.Query, referenced, aliases);
+            }
+        }
+
+        if (joins != null)
+        {
+            foreach (var j in joins)
+            {
+                if (!string.IsNullOrWhiteSpace(j.Table)) referenced.Add(j.Table);
+                if (!string.IsNullOrWhiteSpace(j.Alias)) aliases.Add(j.Alias);
+                CollectFromQueryDefinition(j.SubQuery, referenced, aliases);
+            }
+        }
+
+        if (fromQuery != null) CollectFromQueryDefinition(fromQuery, referenced, aliases);
+
+        if (combineConditions != null)
+            foreach (var c in combineConditions) CollectFromQueryDefinition(c.Query, referenced, aliases);
+
+        if (selectColumns != null)
+            foreach (var s in selectColumns) CollectFromQueryDefinition(s.SubQuery, referenced, aliases);
+
+        if (whereConditions != null)
+            CollectFromWheres(whereConditions, referenced, aliases);
+    }
+
+    private static void CollectFromWheres(List<WhereCondition>? wheres, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (wheres == null) return;
+        foreach (var w in wheres)
+        {
+            CollectFromQueryDefinition(w.SubQuery, referenced, aliases);
+            if (w.Groups != null) CollectFromWheres(w.Groups, referenced, aliases);
         }
     }
 }

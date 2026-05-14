@@ -26,7 +26,7 @@ import {
   deleteDbManagement,
   type DbManagement,
 } from "@/api/db-management";
-import { Eye, EyeOff, Database, Trash2, Edit2, Save } from "lucide-vue-next";
+import { Eye, EyeOff, Database, Trash2, Edit2, Save, Library } from "lucide-vue-next";
 import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 import PasswordInput from "@/components/PasswordInput.vue";
 import { testDbConnection } from "~/api/runtime";
@@ -152,17 +152,17 @@ const test = async () => {
   try {
     testing.value = true;
     connectionTestResult.value = null;
-    const result = await testDbConnection(
-      1,
-      undefined,
-      form.value.sqlProvider ?? undefined,
-      form.value.host ?? undefined,
-      form.value.port ?? undefined,
-      form.value.username ?? undefined,
-      form.value.password ?? undefined,
-      form.value.database ?? undefined,
-      JSON.stringify(form.value.extraSettings),
-    );
+    const result = await testDbConnection({
+      dbSettingMode: 1,
+      dbManagementId: undefined,
+      sqlProvider: form.value.sqlProvider,
+      host: form.value.host,
+      port: form.value.port,
+      username: form.value.username,
+      password: form.value.password,
+      database: form.value.database,
+      extraSettings: JSON.stringify(form.value.extraSettings),
+    });
     connectionTestResult.value = {
       success: result.success,
       errorMessage: result.errorMessage || "Connection failed.",
@@ -501,6 +501,17 @@ onMounted(load);
               <div
                 class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
               >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8 text-blue-600"
+                  title="Semantic Layer"
+                  as-child
+                >
+                  <NuxtLink :to="`/runtime/db-management/${db.id}/semantic`"
+                    ><Library class="size-4"
+                  /></NuxtLink>
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

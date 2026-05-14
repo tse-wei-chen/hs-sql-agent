@@ -15,15 +15,7 @@ public class IssueMcpAccessKeyRequestValidator : AbstractValidator<IssueMcpAcces
             .GreaterThan(DateTime.UtcNow).WithMessage("Expiration date must be in the future.")
             .When(x => x.ExpiresAt.HasValue);
 
-        RuleFor(x => x.DbSettingMode)
-            .InclusiveBetween(0, 1).WithMessage("Invalid Database Setting Mode.");
-            
-        RuleFor(x => x.Host)
-            .NotEmpty().WithMessage("Host is required when using direct connection.")
-            .When(x => x.DbSettingMode == 1);
-            
-        RuleFor(x => x.Database)
-            .NotEmpty().WithMessage("Database name is required when using direct connection.")
-            .When(x => x.DbSettingMode == 1);
+        RuleFor(x => x.DbManagementId)
+            .NotEmpty().WithMessage("Database Management ID is required.");
     }
 }
