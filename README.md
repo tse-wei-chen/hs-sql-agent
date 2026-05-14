@@ -26,8 +26,10 @@
 - **Guardrails & Safety**:
   - **Global Rate Limiting**: Prevent your database from being overwhelmed by AI loops or excessive traffic.
   - **Comprehensive Audit Logs**: Track every single query with daily summaries and detailed execution history.
+  - **Table White List**: Restrict AI access to specific authorized tables only.
 - **Customization**:
   - **Custom SQL Tools**: Define domain-specific SQL queries and DML statements to be exposed to the AI agent.
+  - **Semantic Layer**: Define a robust DB semantic layer to enhance AI reasoning and accuracy.
 
 ---
 
@@ -35,17 +37,21 @@
 
 The built-in Admin Panel allows you to monitor operations and manage access without touching a single configuration file.
 
-<img width="1919" height="1007" alt="Screenshot 2026-05-02 234836" src="https://github.com/user-attachments/assets/521be5e0-9589-49e6-90a3-3bf216618eed" />
+<img width="1919" height="951" alt="image" src="https://github.com/user-attachments/assets/4125fea0-ccad-4c56-aa75-bc9e396bec69" />
 
 _Operational Dashboard: Monitor keys and audit events in real-time._
 
-<img width="1919" height="1009" alt="Screenshot 2026-05-02 234907" src="https://github.com/user-attachments/assets/487d9a03-93e4-4451-aed9-95512a9c44c4" />
+<img width="1919" height="950" alt="image" src="https://github.com/user-attachments/assets/a4e25214-e9f4-4b8b-a1c1-d9e157e629dc" />
 
 _Granular Control: Assign specific database connections and tool subsets to each API key._
 
-<img width="1919" height="1007" alt="Screenshot 2026-05-02 234920" src="https://github.com/user-attachments/assets/a779bf60-6c88-49c9-94f2-4fbc9d554ba6" />
+<img width="1919" height="951" alt="image" src="https://github.com/user-attachments/assets/78462e19-c7bf-4bfc-8475-7e8c91362eb2" />
 
 _Low-Code Tools: Define custom SQL operations (e.g., `calculate_churn_rate`) for the AI agent._
+
+<img width="1919" height="950" alt="image" src="https://github.com/user-attachments/assets/4d8e5876-61d8-4421-b6fc-ef42c18a3d2d" />
+
+_DB Manage: Manage your DB connection._
 
 ---
 
