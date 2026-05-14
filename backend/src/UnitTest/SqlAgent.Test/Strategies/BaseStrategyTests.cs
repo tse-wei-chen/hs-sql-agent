@@ -70,17 +70,17 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldTriggerHint_WhenTableNotFound()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "NON_EXISTENT_TABLE_HS", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains($"code={TableNotFoundErrorCode}", res);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "NON_EXISTENT_TABLE_HS", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Contains($"code={TableNotFoundErrorCode}", ex.Message);
     }
 
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldTriggerHint_WhenColumnNotFound()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
             selectColumns: [new SelectCondition { Field = $"{TestTableName}.NON_EXISTENT_COL_HS" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains($"code={ColumnNotFoundErrorCode}", res);
+            cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Contains($"code={ColumnNotFoundErrorCode}", ex.Message);
     }
 
     [Fact]
@@ -88,12 +88,12 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     {
         var dml = CreateInsertDml();
         var dryRun = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        
+
         var tokenStart = dryRun.IndexOf("TokenRequired=");
-        if (tokenStart == -1) 
+        if (tokenStart == -1)
         {
-             Assert.Contains("Success", dryRun); // Maybe it didn't require a token?
-             return;
+            Assert.Contains("Success", dryRun); // Maybe it didn't require a token?
+            return;
         }
 
         var start = tokenStart + 14;
