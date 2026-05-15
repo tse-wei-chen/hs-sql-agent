@@ -10,26 +10,24 @@
 
 ## ✨ Key Features
 
-### 🚀 High-Speed & Universal Access
+### 🚀 High-Speed & Core Engine
 
-- **Instant Interaction**: Optimized C# backend ensures ultra-low latency for schema discovery and query execution.
-- **Universal Database Support**: One agent for all — supports `Sqlite`, `PostgreSQL`, `MySQL`, `SQLServer`, `Oracle`, and `FireBird`.
-- **Structured Querying**: Powered by [SqlKata](https://sqlkata.com) for reliable and safe SQL construction.
+- **Instant Interaction**: An optimized C# backend ensures ultra-low latency for schema discovery and query execution.
+- **Universal Database Support**: One agent to rule them all — natively supports `Sqlite`, `PostgreSQL`, `MySQL`, `SQLServer`, `Oracle`, and `FireBird`.
+- **Deterministic Accuracy**: Stop letting LLMs hallucinate raw SQL. The LLM doesn’t need to know complex or obscure database syntax; it simply extracts structured parameters (tables, columns, and conditions), leaving the deterministic SQL generation to the agent. Powered by a **Metadata Tool**, the LLM can dynamically query and map the perfect parameters every time.
+- **Robust Security**: Fully powered by [SqlKata](https://sqlkata.com) to enforce automatic parameterization on all inputs, neutralizing LLM-driven SQL injection risks at the source.
+- **Domain Knowledge & Semantic Layer**: Define a robust DB semantic layer and customizable SQL tools to enhance AI reasoning, aligning the agent perfectly with your specific business logic.
 
 ### 🛡️ Enterprise-Grade Governance
 
-- **Defending Against LLM-driven SQL Injection**: Powered by SqlKata, our agent enforces automatic parameterization of all inputs to neutralize SQL injection risks at the source.
-- **Built-in Admin Web UI**: Manage your SQL Agent visually. No more manual JSON configuration files.
-- **Granular Security Control**:
-  - **Key-Level Mapping**: Assign specific database connections to individual API keys.
+- **Built-in Admin Web UI**: Manage your SQL Agent visually through an intuitive dashboard. No more wrestling with manual JSON configuration files.
+- **Granular Access Control**:
+  - **Key-Level Mapping**: Securely assign specific database connections and scopes to individual API keys.
   - **Lifecycle Management**: Effortlessly issue, list, or revoke access keys in real-time.
-- **Guardrails & Safety**:
-  - **Global Rate Limiting**: Prevent your database from being overwhelmed by AI loops or excessive traffic.
-  - **Comprehensive Audit Logs**: Track every single query with daily summaries and detailed execution history.
-  - **Table White List**: Restrict AI access to specific authorized tables only.
-- **Customization**:
-  - **Custom SQL Tools**: Define domain-specific SQL queries and DML statements to be exposed to the AI agent.
-  - **Semantic Layer**: Define a robust DB semantic layer to enhance AI reasoning and accuracy.
+- **Production Guardrails**:
+  - **Table Whitelisting**: Restrict AI access to authorized tables only, ensuring sensitive data remains untouched.
+  - **Global Rate Limiting**: Prevent your production database from being overwhelmed by infinite AI loops or excessive traffic.
+  - **Comprehensive Audit Logs**: Track every single query with daily summaries and detailed execution history for compliance.
 
 ---
 
