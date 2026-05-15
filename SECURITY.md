@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.3.x-alpha   | :white_check_mark: |
+| 1.4.x-alpha   | :white_check_mark: |
+| 1.3.x-alpha   | :x:                |
 | 1.2.x-alpha   | :x:                |
 | 1.1.0-alpha   | :x:                |
 
