@@ -13,6 +13,7 @@ namespace SqlAgent.Service.Strategies;
 
 public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : ISqlStrategy
 {
+    private static readonly Regex SafeFunctionNamePattern = new(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
     private readonly IQueryValueParserService _valueParser = valueParser;
     protected readonly IConfiguration _configuration = configuration;
 
@@ -39,6 +40,10 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
             if (col.Arithmetic != null)
             {
                 columnExpr = MapArithmetic(col.Arithmetic);
+            }
+            else if (col.Function != null)
+            {
+                columnExpr = MapFunction(col.Function);
             }
             else if (col.CaseWhen?.Count > 0)
             {
@@ -94,14 +99,14 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
         return caseCol;
     }
 
-    private static AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
+    private AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
     {
         if (arithmetic.Operator != null)
         {
             // If we have an operator, we need two sides. 
             // If Left/Right are missing, use Constant or FieldName as fallback.
-            var left = arithmetic.Left != null ? MapArithmetic(arithmetic.Left) : (arithmetic.Constant != null ? new NumberColumn { Value = arithmetic.Constant } : new Column { Name = arithmetic.FieldName ?? "" });
-            var right = arithmetic.Right != null ? MapArithmetic(arithmetic.Right) : (arithmetic.Constant != null ? new NumberColumn { Value = arithmetic.Constant } : new Column { Name = arithmetic.FieldName ?? "" });
+            var left = arithmetic.Left != null ? MapArithmetic(arithmetic.Left) : MapArithmeticLeaf(arithmetic);
+            var right = arithmetic.Right != null ? MapArithmetic(arithmetic.Right) : MapArithmeticLeaf(arithmetic);
 
             return new ArithmeticColumn
             {
@@ -111,12 +116,54 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
             };
         }
 
+        return MapArithmeticLeaf(arithmetic);
+    }
+
+    private AbstractColumn MapArithmeticLeaf(SelectArithmeticCondition arithmetic)
+    {
         if (arithmetic.Constant != null)
         {
-            return new NumberColumn { Value = arithmetic.Constant };
+            var value = arithmetic.Constant is JsonElement je ? _valueParser.UnwrapJsonElement(je) : arithmetic.Constant;
+            return new NumberColumn { Value = value };
         }
 
         return new Column { Name = arithmetic.FieldName ?? string.Empty };
+    }
+
+    private AbstractColumn MapFunction(SqlFunctionCondition function)
+    {
+        var functionName = function.Name?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(functionName) || !SafeFunctionNamePattern.IsMatch(functionName))
+        {
+            throw new InvalidOperationException($"Invalid function name: {function.Name}");
+        }
+
+        return new FunctionColumn
+        {
+            Name = functionName,
+            Arguments = function.Arguments?.Select(MapFunctionArgument).ToList() ?? []
+        };
+    }
+
+    private AbstractColumn MapFunctionArgument(SqlFunctionArgument argument)
+    {
+        if (argument.Function != null)
+        {
+            return MapFunction(argument.Function);
+        }
+
+        if (argument.Constant != null)
+        {
+            var value = argument.Constant is JsonElement je ? _valueParser.UnwrapJsonElement(je) : argument.Constant;
+            return new NumberColumn { Value = value };
+        }
+
+        if (!string.IsNullOrWhiteSpace(argument.FieldName))
+        {
+            return new Column { Name = argument.FieldName.Trim() };
+        }
+
+        throw new InvalidOperationException("Function arguments must provide FieldName, Constant, or nested Function.");
     }
 
     private Query ApplyJoins(Query query, IList<JoinCondition> joins)
@@ -305,10 +352,16 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
     }
 
 
-    private static Query ApplyGroupByConditions(Query query, IList<GroupByCondition> conds)
+    private Query ApplyGroupByConditions(Query query, IList<GroupByCondition> conds)
     {
         foreach (var gf in conds)
         {
+            if (gf.Function != null)
+            {
+                query = query.GroupBy(MapFunction(gf.Function));
+                continue;
+            }
+
             var field = gf.Field.Trim();
             query = query.GroupBy(field);
         }
@@ -434,21 +487,25 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
     }
 
 
-    private static Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
+    private Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
     {
         if (cols == null || !cols.Any()) return query;
 
-        return cols.Where(c => !string.IsNullOrWhiteSpace(c.Field))
+        return cols.Where(c => c.Function != null || !string.IsNullOrWhiteSpace(c.Field))
             .Aggregate(query, (q, c) =>
             {
-                var field = c.Field.Trim();
+                var field = c.Field?.Trim() ?? string.Empty;
                 var dir = c.Direction?.ToLowerInvariant().Trim() ?? "asc";
+                var functionExpr = c.Function != null ? MapFunction(c.Function) : null;
 
                 return dir switch
                 {
                     "random" => q.OrderByRandom(field),
+                    "desc" when functionExpr != null => q.OrderByDesc(functionExpr),
                     "desc" => q.OrderByDesc(field),
+                    "asc" when functionExpr != null => q.OrderBy(functionExpr),
                     "asc" => q.OrderBy(field),
+                    _ when functionExpr != null => q.OrderBy(functionExpr),
                     _ => q.OrderBy(field)
                 };
             });

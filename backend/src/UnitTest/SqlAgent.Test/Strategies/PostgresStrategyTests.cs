@@ -156,4 +156,33 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         Assert.Contains("code=42702", res);
         Assert.Contains("Ambiguous column", res);
     }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportParameterizedArithmeticConstants()
+    {
+        using var constantJson = JsonDocument.Parse("1");
+
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
+            selectColumns:
+            [
+                new SelectCondition
+                {
+                    Arithmetic = new SelectArithmeticCondition
+                    {
+                        Left = new SelectArithmeticCondition { Constant = constantJson.RootElement.Clone() },
+                        Operator = "-",
+                        Right = new SelectArithmeticCondition { FieldName = "age" }
+                    },
+                    Alias = "delta"
+                }
+            ],
+            whereConditions: [new WhereCondition { Field = "name", Operator = "=", Value = "Alice" }],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.Equal(-29, rows[0].GetProperty("delta").GetInt32());
+    }
 }

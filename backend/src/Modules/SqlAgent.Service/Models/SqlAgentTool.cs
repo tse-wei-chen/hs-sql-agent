@@ -12,6 +12,8 @@ public class SelectCondition
     public string Aggregation { get; set; } = string.Empty;
     [Description("Arithmetic expression (Optional). If set, 'Field' will be ignored.")]
     public SelectArithmeticCondition? Arithmetic { get; set; }
+    [Description("Function expression (Optional). If set, 'Field' and 'Arithmetic' will be ignored.")]
+    public SqlFunctionCondition? Function { get; set; }
     [Description("Cases for CASE WHEN expression (Optional).")]
     public List<CaseWhenClause>? CaseWhen { get; set; }
     [Description("The default value for ELSE in a CASE expression (Optional).")]
@@ -41,6 +43,27 @@ public class SelectArithmeticCondition
     public string? Operator { get; set; }
     [Description("The right operand for arithmetic.")]
     public SelectArithmeticCondition? Right { get; set; }
+}
+
+public class SqlFunctionCondition
+{
+    [Description("The SQL function name, such as DATE_TRUNC, EXTRACT, LOWER, or COALESCE.")]
+    public string Name { get; set; } = string.Empty;
+
+    [Description("The ordered list of function arguments.")]
+    public List<SqlFunctionArgument>? Arguments { get; set; }
+}
+
+public class SqlFunctionArgument
+{
+    [Description("The field name for this argument (if it is a column reference).")]
+    public string? FieldName { get; set; }
+
+    [Description("The constant value for this argument (if it is a literal).")]
+    public object? Constant { get; set; }
+
+    [Description("Nested function expression for this argument (Optional).")]
+    public SqlFunctionCondition? Function { get; set; }
 }
 
 public class WhereCondition
@@ -98,12 +121,16 @@ public class GroupByCondition
 {
     [Description("The field to group by, format: 'TableName.FieldName' or 'FieldName'")]
     public string Field { get; set; } = string.Empty;
+    [Description("Function expression to group by (Optional). If set, 'Field' will be ignored.")]
+    public SqlFunctionCondition? Function { get; set; }
 }
 
 public class OrderByCondition
 {
     [Description("The field name to order by (e.g., 'Products.Price' or 'Orders.TotalAmount').")]
     public string Field { get; set; } = string.Empty;
+    [Description("Function expression to order by (Optional). If set, 'Field' will be ignored.")]
+    public SqlFunctionCondition? Function { get; set; }
     [Description("asc or desc or random, default is asc")]
     public string Direction { get; set; } = "asc";
 }

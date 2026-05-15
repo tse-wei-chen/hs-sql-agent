@@ -112,4 +112,71 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
         Assert.NotNull(res);
         Assert.Equal(2, res.Count);
     }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportParameterizedArithmeticConstants()
+    {
+        using var constantJson = JsonDocument.Parse("1");
+
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
+            selectColumns:
+            [
+                new SelectCondition
+                {
+                    Arithmetic = new SelectArithmeticCondition
+                    {
+                        Left = new SelectArithmeticCondition { Constant = constantJson.RootElement.Clone() },
+                        Operator = "-",
+                        Right = new SelectArithmeticCondition { FieldName = "Age" }
+                    },
+                    Alias = "Delta"
+                }
+            ],
+            whereConditions: [new WhereCondition { Field = "Name", Operator = "=", Value = "Alice" }],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.Equal(-29, rows[0].GetProperty("Delta").GetInt32());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportFunctionExpressionsInGrouping()
+    {
+        var yearFunction = new SqlFunctionCondition
+        {
+            Name = "SUBSTR",
+            Arguments =
+            [
+                new SqlFunctionArgument { FieldName = "CreatedDate" },
+                new SqlFunctionArgument { Constant = 1 },
+                new SqlFunctionArgument { Constant = 4 }
+            ]
+        };
+
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
+            selectColumns:
+            [
+                new SelectCondition { Function = yearFunction, Alias = "YearPart" },
+                new SelectCondition { Field = "Id", Aggregation = "COUNT", Alias = "UserCount" }
+            ],
+            groupByConditions:
+            [
+                new GroupByCondition { Function = yearFunction }
+            ],
+            orderByColumns:
+            [
+                new OrderByCondition { Function = yearFunction, Direction = "asc" }
+            ],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.Equal("2023", rows[0].GetProperty("YearPart").GetString());
+        Assert.Equal(3, rows[0].GetProperty("UserCount").GetInt32());
+    }
 }
