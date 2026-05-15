@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.1-alpha] - 2026-05-15
+
+### Changed
+
+- **Feature**:
+  - Add support for SQL function expressions
+  - Enhance arithmetic conditions
+
 ## [1.4.0-alpha] - 2026-05-14
 
 ### Breaking Change
