@@ -155,6 +155,13 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
         if (argument.Constant != null)
         {
             var value = argument.Constant is JsonElement je ? _valueParser.UnwrapJsonElement(je) : argument.Constant;
+
+            if (value is string stringValue)
+            {
+                var escaped = stringValue.Replace("'", "''");
+                return new NumberColumn { Value = new UnsafeLiteral($"'{escaped}'", replaceQuotes: false) };
+            }
+
             return new NumberColumn { Value = value };
         }
 
