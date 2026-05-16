@@ -56,13 +56,13 @@ public class FirebirdFixture : IDbFixture
 
 public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<FirebirdStrategy, FirebirdFixture>(fixture)
 {
-    protected override FirebirdStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
-        => new FirebirdStrategy(parser, configuration);
+    protected override FirebirdStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
+        => new(parser, configuration);
 
     protected override string TestTableName => "USERS";
     protected override string TestSchemaName => "Default";
 
-    // Firebird error codes are not as simple as numeric codes in hints, 
+    // Firebird error codes are not as simple as numeric codes in hints,
     // but the strategy currently uses string matching for hints.
     // However, the base class expects TableNotFoundErrorCode and ColumnNotFoundErrorCode.
     // I will use strings that appear in the error message if the strategy uses them.
@@ -94,7 +94,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         Assert.Contains(columns, c => c.Column == "NAME" && c.Type.Contains("VARCHAR", StringComparison.OrdinalIgnoreCase));
     }
 
-    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    protected override DmlDefinition CreateInsertDml() => new()
     {
         Operation = "insert",
         TableName = TestTableName,

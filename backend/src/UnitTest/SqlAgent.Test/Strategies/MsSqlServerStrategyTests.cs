@@ -40,7 +40,7 @@ public class MsSqlFixture : IDbFixture
                 Active BIT,
                 CreatedDate DATETIME
             );
-            INSERT INTO Users (Name, Age, Active, CreatedDate) VALUES 
+            INSERT INTO Users (Name, Age, Active, CreatedDate) VALUES
             ('Alice', 30, 1, '2023-01-01'),
             ('Bob', 25, 1, '2023-02-01');
         ";
@@ -53,8 +53,8 @@ public class MsSqlFixture : IDbFixture
 
 public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<MsSqlServerStrategy, MsSqlFixture>(fixture)
 {
-    protected override MsSqlServerStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
-        => new MsSqlServerStrategy(parser, configuration);
+    protected override MsSqlServerStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
+        => new(parser, configuration);
 
     protected override string TestTableName => "Users";
     protected override string TestSchemaName => "dbo";
@@ -71,7 +71,7 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
         Assert.Contains(columns, c => c.Column == "Active" && c.Type.Contains("bit", StringComparison.OrdinalIgnoreCase));
     }
 
-    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    protected override DmlDefinition CreateInsertDml() => new()
     {
         Operation = "insert",
         TableName = TestTableName,

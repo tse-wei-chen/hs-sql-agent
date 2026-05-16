@@ -129,9 +129,10 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
             return "Column not found. Tips: 1. For complex logic, use 'CaseWhen' or 'Arithmetic' instead of writing raw SQL in 'Field'. 2. In Joins/OrderBy, use 'TableName.FieldName' to avoid ambiguity.";
         }
 
-        if (string.Equals(code, "1292", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(code, "1292", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(code, "1525", StringComparison.OrdinalIgnoreCase))
         {
-            return "Truncated/Incorrect value. Check if your 'Value' matches the column data type (e.g., passing a string to an Integer field).";
+            return "Truncated/Incorrect value. Check if your 'Value' matches the column data type (e.g., passing a string to an Integer field or invalid date format).";
         }
 
         if (message.Contains("Operand should contain 1 column", StringComparison.OrdinalIgnoreCase))

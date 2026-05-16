@@ -45,7 +45,7 @@ public class MySqlFixture : IDbFixture
                 active BOOLEAN,
                 created_date DATETIME
             );
-            INSERT INTO users (name, age, active, created_date) VALUES 
+            INSERT INTO users (name, age, active, created_date) VALUES
             ('Alice', 30, true, '2023-01-01 10:00:00'),
             ('Bob', 25, true, '2023-02-01 10:00:00');
         ";
@@ -58,8 +58,8 @@ public class MySqlFixture : IDbFixture
 
 public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlStrategy, MySqlFixture>(fixture)
 {
-    protected override MySqlStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
-        => new MySqlStrategy(parser, configuration);
+    protected override MySqlStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
+        => new(parser, configuration);
 
     protected override string TestTableName => "users";
     protected override string TestSchemaName => "test_db";
@@ -76,7 +76,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
         Assert.Contains(columns, c => c.Column == "active" && c.Type.Contains("tinyint", StringComparison.OrdinalIgnoreCase));
     }
 
-    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    protected override DmlDefinition CreateInsertDml() => new()
     {
         Operation = "insert",
         TableName = TestTableName,

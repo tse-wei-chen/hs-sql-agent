@@ -317,6 +317,7 @@ app.UseWhen(
     {
         branch.UseRateLimiter();
         branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
+        branch.UseMiddleware<McpStringifiedArrayMiddleware>();
     });
 
 // 4. API pipeline (authentication/authorization)

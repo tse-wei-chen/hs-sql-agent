@@ -45,7 +45,7 @@ public class OracleFixture : IDbFixture
 
         cmd.CommandText = "INSERT INTO HS_USERS (NAME, AGE, ACTIVE, CREATED_DATE) VALUES ('Alice', 30, 1, TIMESTAMP '2023-01-01 10:00:00')";
         await cmd.ExecuteNonQueryAsync();
-        
+
         cmd.CommandText = "COMMIT";
         await cmd.ExecuteNonQueryAsync();
     }
@@ -56,8 +56,8 @@ public class OracleFixture : IDbFixture
 
 public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<OracleStrategy, OracleFixture>(fixture)
 {
-    protected override OracleStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
-        => new OracleStrategy(parser, configuration);
+    protected override OracleStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
+        => new(parser, configuration);
 
     protected override string TestTableName => "HS_USERS";
     protected override string TestSchemaName => new Oracle.ManagedDataAccess.Client.OracleConnectionStringBuilder(Fixture.ConnectionString).UserID.ToUpper();
@@ -74,7 +74,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
         Assert.Contains(columns, c => c.Column == "NAME" && c.Type.Contains("VARCHAR", StringComparison.OrdinalIgnoreCase));
     }
 
-    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    protected override DmlDefinition CreateInsertDml() => new()
     {
         Operation = "insert",
         TableName = TestTableName,

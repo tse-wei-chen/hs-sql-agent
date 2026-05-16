@@ -1,18 +1,19 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 
 namespace SqlAgent.Service.Models;
 
 public class SelectCondition
 {
-    [Description("The field name to select (if not using arithmetic or CASE).")]
+    [Description("The field name to select (if not using arithmetic or CASE). You may qualify it with a table name or alias, such as 'products.unit_price' or 'p.unit_price'.")]
     public string Field { get; set; } = string.Empty;
     [Description("Alias for the selected field (Optional).")]
     public string Alias { get; set; } = string.Empty;
-    [Description("The aggregation function to apply (e.g., 'SUM', 'COUNT').")]
+    [Description("Simple aggregation shorthand such as SUM or COUNT. It can wrap the selected expression produced by 'Field', 'Arithmetic', 'CaseWhen', or 'SubQuery'. Use it for cases like COUNT(order_id), SUM(price * quantity), or SUM(CASE WHEN ...). Prefer 'Function' when the aggregate itself needs explicit arguments or nesting, such as COUNT(*), ROUND(AVG(price), 2), or DATE_TRUNC(...).")]
     public string Aggregation { get; set; } = string.Empty;
-    [Description("Arithmetic expression (Optional). If set, 'Field' will be ignored.")]
+    [Description("Arithmetic expression (Optional). If set, 'Field' will be ignored. Example for 'price * quantity': {\"left\": {\"fieldName\": \"price\"}, \"operator\": \"*\", \"right\": {\"fieldName\": \"quantity\"}}.")]
     public SelectArithmeticCondition? Arithmetic { get; set; }
-    [Description("Function expression (Optional). If set, 'Field' and 'Arithmetic' will be ignored.")]
+    [Description("Function expression (Optional). Supports aggregate and scalar functions such as COUNT, AVG, ROUND, DATE_TRUNC, LOWER, or COALESCE. Use this for cases like COUNT(*), ROUND(AVG(price), 2), or other nested function calls. If set, 'Field', 'Aggregation', and 'Arithmetic' will be ignored.")]
     public SqlFunctionCondition? Function { get; set; }
     [Description("Cases for CASE WHEN expression (Optional).")]
     public List<CaseWhenClause>? CaseWhen { get; set; }
@@ -32,31 +33,38 @@ public class CaseWhenClause
 
 public class SelectArithmeticCondition
 {
-    [Description("The field name for this node (if it's a leaf node).")]
+    [Description("The field name for this node (if it's a leaf node). You may qualify it with a table name or alias, such as 'products.unit_price' or 'p.unit_price'. DO NOT provide 'left'/'operator'/'right' if you use this.")]
     public string? FieldName { get; set; }
-    [Description("The constant value (if it's a constant node).")]
+    [Description("The constant value (if it's a constant node). DO NOT provide 'left'/'operator'/'right' if you use this. WARNING: Databases like PostgreSQL are strictly typed. Provide decimal values (e.g., 1.0) instead of integers (1) if operating against a real/decimal column to prevent type mismatch.")]
     public object? Constant { get; set; }
 
-    [Description("The left operand for arithmetic.")]
+    [Description("The left operand for arithmetic. If this node is an operation, you must provide 'left', 'operator', and 'right' together, and NOTHING ELSE (no 'fieldName' or 'constant'). IMPORTANT: Do NOT wrap them in an extra 'arithmetic' property.")]
     public SelectArithmeticCondition? Left { get; set; }
     [Description("The operator (+, -, *, /).")]
     public string? Operator { get; set; }
-    [Description("The right operand for arithmetic.")]
+    [Description("The right operand for arithmetic. IMPORTANT: Do NOT wrap them in an extra 'arithmetic' property.")]
     public SelectArithmeticCondition? Right { get; set; }
+
+    [Description("Nested function expression for this node (if it's a leaf node).")]
+    public SqlFunctionCondition? Function { get; set; }
+
+    [JsonPropertyName("arithmetic")]
+    [Description("Internal property. DO NOT USE.")]
+    public SelectArithmeticCondition? Arithmetic { get; set; }
 }
 
 public class SqlFunctionCondition
 {
-    [Description("The SQL function name, such as DATE_TRUNC, EXTRACT, LOWER, or COALESCE.")]
+    [Description("The SQL function name. This includes aggregate functions like COUNT, SUM, AVG and scalar functions like ROUND, DATE_TRUNC, EXTRACT, LOWER, or COALESCE.")]
     public string Name { get; set; } = string.Empty;
 
-    [Description("The ordered list of function arguments.")]
+    [Description("The ordered list of function arguments. Example: COUNT(*) => [{ \"fieldName\": \"*\" }], ROUND(AVG(price), 2) => [{ \"function\": { \"name\": \"AVG\", \"arguments\": [{ \"fieldName\": \"price\" }] } }, { \"constant\": 2 }].")]
     public List<SqlFunctionArgument>? Arguments { get; set; }
 }
 
 public class SqlFunctionArgument
 {
-    [Description("The field name for this argument (if it is a column reference).")]
+    [Description("The field name for this argument (if it is a column reference). Use '*' here for COUNT(*).")]
     public string? FieldName { get; set; }
 
     [Description("The constant value for this argument (if it is a literal).")]
@@ -64,11 +72,14 @@ public class SqlFunctionArgument
 
     [Description("Nested function expression for this argument (Optional).")]
     public SqlFunctionCondition? Function { get; set; }
+
+    [Description("Arithmetic expression for this argument (Optional). Use this to pass expressions like 'price * quantity' into functions (e.g., SUM). Example: {\"left\": {\"fieldName\": \"price\"}, \"operator\": \"*\", \"right\": {\"fieldName\": \"quantity\"}}.")]
+    public SelectArithmeticCondition? Arithmetic { get; set; }
 }
 
 public class WhereCondition
 {
-    [Description("The field name to apply the condition on.")]
+    [Description("The field name to apply the condition on. You may qualify it with a table name or alias, such as 'products.discontinued' or 'p.discontinued'.")]
     public string Field { get; set; } = string.Empty;
     [Description("The operator to use in the condition (e.g., '=', '>', 'IN', 'EXISTS').")]
     public string Operator { get; set; } = "=";
@@ -92,13 +103,13 @@ public class WhereCondition
 
 public class JoinCondition
 {
-    [Description("The table to join with (e.g., 'Orders')")]
+    [Description("The table to join with (e.g., 'Orders'). Provide only the table name here. If you need an alias, use the separate 'Alias' property instead of embedding it in 'Table'.")]
     public string Table { get; set; } = string.Empty;
 
     [Description("The subquery to join with (Optional). If set, 'Table' will be ignored.")]
     public QueryDefinition? SubQuery { get; set; }
 
-    [Description("Alias for the joined table or subquery (Optional).")]
+    [Description("Alias for the joined table or subquery (Optional). CRITICAL: If you declare an alias here, you MUST use exactly this alias prefix in all references. Example: set Table='categories' and Alias='c'.")]
     public string? Alias { get; set; }
 
     [Description("First table and field for the ON condition (e.g., 'Users.Id')")]
@@ -119,7 +130,7 @@ public class JoinCondition
 
 public class GroupByCondition
 {
-    [Description("The field to group by, format: 'TableName.FieldName' or 'FieldName'")]
+    [Description("The field to group by, format: 'TableName.FieldName', 'Alias.FieldName', or 'FieldName'.")]
     public string Field { get; set; } = string.Empty;
     [Description("Function expression to group by (Optional). If set, 'Field' will be ignored.")]
     public SqlFunctionCondition? Function { get; set; }
@@ -127,7 +138,7 @@ public class GroupByCondition
 
 public class OrderByCondition
 {
-    [Description("The field name to order by (e.g., 'Products.Price' or 'Orders.TotalAmount').")]
+    [Description("The field name to order by (e.g., 'Products.Price', 'p.unit_price', or 'Orders.TotalAmount').")]
     public string Field { get; set; } = string.Empty;
     [Description("Function expression to order by (Optional). If set, 'Field' will be ignored.")]
     public SqlFunctionCondition? Function { get; set; }
@@ -143,7 +154,7 @@ public class HavingCondition
     public string Operator { get; set; } = "=";
     [Description("The value to compare against in HAVING.")]
     public object? Value { get; set; }
-    [Description("Optional aggregation function (e.g., SUM, COUNT).")]
+    [Description("Optional simple aggregation shorthand (e.g., SUM, COUNT) applied to 'Field'.")]
     public string Aggregation { get; set; } = string.Empty;
 
     [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
@@ -162,7 +173,7 @@ public class QueryDefinition
     public string TableName { get; set; } = string.Empty;
     [Description("The subquery to select from (Optional). If set, its results will be treated as the source table.")]
     public QueryDefinition? FromQuery { get; set; }
-    [Description("Alias for the source table or subquery (Optional).")]
+    [Description("Alias for the source table or subquery (Optional). CRITICAL: If you declare an alias here (e.g., 'p'), you MUST use exactly this alias prefix in all SelectColumns, Joins, and WhereConditions. Do not mix aliases! Example: set TableName='products' and Alias='p'.")]
     public string? Alias { get; set; }
     [Description("When true, only returns unique rows.")]
     public bool Distinct { get; set; }

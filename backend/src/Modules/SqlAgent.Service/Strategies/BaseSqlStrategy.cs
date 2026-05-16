@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
@@ -101,12 +102,20 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     private AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
     {
+        if (arithmetic.Arithmetic != null)
+        {
+            return MapArithmetic(arithmetic.Arithmetic);
+        }
+
         if (arithmetic.Operator != null)
         {
-            // If we have an operator, we need two sides. 
-            // If Left/Right are missing, use Constant or FieldName as fallback.
-            var left = arithmetic.Left != null ? MapArithmetic(arithmetic.Left) : MapArithmeticLeaf(arithmetic);
-            var right = arithmetic.Right != null ? MapArithmetic(arithmetic.Right) : MapArithmeticLeaf(arithmetic);
+            if (!string.IsNullOrWhiteSpace(arithmetic.FieldName) || arithmetic.Constant != null || arithmetic.Function != null)
+            {
+                throw new InvalidOperationException("Arithmetic node cannot contain both 'operator' and leaf properties. Use 'left' and 'right' for operations, and 'fieldName'/'constant'/'function' for leaf nodes.");
+            }
+
+            var left = arithmetic.Left != null ? MapArithmetic(arithmetic.Left) : throw new InvalidOperationException("Arithmetic operation missing 'left' operand.");
+            var right = arithmetic.Right != null ? MapArithmetic(arithmetic.Right) : throw new InvalidOperationException("Arithmetic operation missing 'right' operand.");
 
             return new ArithmeticColumn
             {
@@ -121,13 +130,31 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     private AbstractColumn MapArithmeticLeaf(SelectArithmeticCondition arithmetic)
     {
+        if (arithmetic.Function != null)
+        {
+            return MapFunction(arithmetic.Function);
+        }
+
         if (arithmetic.Constant != null)
         {
             var value = arithmetic.Constant is JsonElement je ? _valueParser.UnwrapJsonElement(je) : arithmetic.Constant;
+
+            // To prevent PostgreSQL "integer - real" type mismatch errors during parameterization,
+            // promote common integer types to decimal.
+            if (value is sbyte or byte or short or ushort or int or uint or long or ulong)
+            {
+                value = Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+            }
+
             return new NumberColumn { Value = value };
         }
 
-        return new Column { Name = arithmetic.FieldName ?? string.Empty };
+        if (string.IsNullOrWhiteSpace(arithmetic.FieldName))
+        {
+            throw new InvalidOperationException("Arithmetic leaf node must contain either FieldName, Constant, or Function. Do not wrap properties in an extra 'arithmetic' object.");
+        }
+
+        return new Column { Name = arithmetic.FieldName.Trim() };
     }
 
     private AbstractColumn MapFunction(SqlFunctionCondition function)
@@ -147,6 +174,11 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
     private AbstractColumn MapFunctionArgument(SqlFunctionArgument argument)
     {
+        if (argument.Arithmetic != null)
+        {
+            return MapArithmetic(argument.Arithmetic);
+        }
+
         if (argument.Function != null)
         {
             return MapFunction(argument.Function);
@@ -160,6 +192,24 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
             {
                 var escaped = stringValue.Replace("'", "''");
                 return new NumberColumn { Value = new UnsafeLiteral($"'{escaped}'", replaceQuotes: false) };
+            }
+
+            if (value is null)
+            {
+                return new NumberColumn { Value = new UnsafeLiteral("NULL", replaceQuotes: false) };
+            }
+
+            if (value is bool boolValue)
+            {
+                return new NumberColumn { Value = new UnsafeLiteral(boolValue ? "true" : "false", replaceQuotes: false) };
+            }
+
+            if (value is sbyte or byte or short or ushort or int or uint or long or ulong or float or double or decimal)
+            {
+                return new NumberColumn
+                {
+                    Value = new UnsafeLiteral(Convert.ToString(value, CultureInfo.InvariantCulture) ?? "0", replaceQuotes: false)
+                };
             }
 
             return new NumberColumn { Value = value };
@@ -560,10 +610,10 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
         var compiler = CreateCompiler();
         var db = new QueryFactory(connection, compiler);
-        var query = BuildQueryFromDefinition(definition);
 
         try
         {
+            var query = BuildQueryFromDefinition(definition);
             var result = await db.GetAsync(query, cancellationToken: cancellationToken);
             return SerializeQueryResult(result);
         }
@@ -586,18 +636,19 @@ public abstract class BaseSqlStrategy(IQueryValueParserService valueParser, ICon
 
         var compiler = CreateCompiler();
         var db = new QueryFactory(connection, compiler);
-        var query = new Query(dml.TableName);
-
-        // Apply where for update/delete
-        if (dml.WhereConditions?.Count > 0)
-        {
-            query = ApplyWhereConditions(query, dml.WhereConditions);
-        }
 
         using var transaction = connection.BeginTransaction();
 
         try
         {
+            var query = new Query(dml.TableName);
+
+            // Apply where for update/delete
+            if (dml.WhereConditions?.Count > 0)
+            {
+                query = ApplyWhereConditions(query, dml.WhereConditions);
+            }
+
             // Build the action
             Query terminalQuery;
             switch (dml.Operation.ToLowerInvariant())

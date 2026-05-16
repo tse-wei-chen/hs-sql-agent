@@ -45,7 +45,7 @@ public class PostgresFixture : IDbFixture
                 active BOOLEAN,
                 created_date TIMESTAMP
             );
-            INSERT INTO public.users (name, age, active, created_date) VALUES 
+            INSERT INTO public.users (name, age, active, created_date) VALUES
             ('Alice', 30, true, '2023-01-01 10:00:00'),
             ('Bob', 25, true, '2023-02-01 10:00:00'),
             ('Charlie', 35, false, '2023-03-01 10:00:00');
@@ -56,7 +56,7 @@ public class PostgresFixture : IDbFixture
                 amount DECIMAL(10, 2),
                 order_date DATE
             );
-            INSERT INTO public.orders (user_id, amount, order_date) VALUES 
+            INSERT INTO public.orders (user_id, amount, order_date) VALUES
             (1, 150.0, '2023-01-10'),
             (1, 200.0, '2023-02-15'),
             (2, 50.0, '2023-03-20');
@@ -70,8 +70,8 @@ public class PostgresFixture : IDbFixture
 
 public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<PostgresStrategy, PostgresFixture>(fixture)
 {
-    protected override PostgresStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration) 
-        => new PostgresStrategy(parser, configuration);
+    protected override PostgresStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
+        => new(parser, configuration);
 
     protected override string TestTableName => "users";
     protected override string TestSchemaName => "public";
@@ -96,7 +96,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         Assert.Equal("boolean", columns.First(c => c.Column == "active").Type, ignoreCase: true);
     }
 
-    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    protected override DmlDefinition CreateInsertDml() => new()
     {
         Operation = "insert",
         TableName = TestTableName,
@@ -184,5 +184,44 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         Assert.NotNull(rows);
         Assert.Single(rows);
         Assert.Equal(-29, rows[0].GetProperty("delta").GetInt32());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportNestedRoundFunctionWithConstantPrecision()
+    {
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "orders",
+            selectColumns:
+            [
+                new SelectCondition
+                {
+                    Function = new SqlFunctionCondition
+                    {
+                        Name = "ROUND",
+                        Arguments =
+                        [
+                            new SqlFunctionArgument
+                            {
+                                Function = new SqlFunctionCondition
+                                {
+                                    Name = "AVG",
+                                    Arguments =
+                                    [
+                                        new SqlFunctionArgument { FieldName = "amount" }
+                                    ]
+                                }
+                            },
+                            new SqlFunctionArgument { Constant = 2 }
+                        ]
+                    },
+                    Alias = "avg_amount"
+                }
+            ],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.Equal(133.33m, rows[0].GetProperty("avg_amount").GetDecimal());
     }
 }

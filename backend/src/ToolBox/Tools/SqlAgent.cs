@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
@@ -21,9 +22,9 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 
     [McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries).")]
     public async Task<string> ExecuteQuerySafe(
-        [Description("The table name (use schema-qualified table name). Can be null if fromQuery is provided.")]
+        [Description("The table name (use schema-qualified table name). Can be null if fromQuery is provided. Do not embed an alias here; use the separate 'alias' parameter for the source alias.")]
         string? tableName = null,
-        [Description("List of columns to select")]
+        [Description("List of columns to select. Use 'Aggregation' for cases like COUNT(order_id), SUM(price * quantity), or SUM(CASE WHEN ...). Use 'Function' for COUNT(*), AVG(price), ROUND(...), DATE_TRUNC(...), and other explicit or nested function expressions.")]
         List<SelectCondition>? selectColumns = null,
         [Description("List of where conditions")]
         List<WhereCondition>? whereConditions = null,
@@ -33,7 +34,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         int limit = 0,
         [Description("Offset the number of results returned")]
         int offset = 0,
-        [Description("List of joins. Each join is a dictionary with keys: 'Table', 'On', and optional 'Type' (default 'INNER').")]
+        [Description("List of joins. Provide the joined table in 'Table', any alias in the join's 'Alias' property, and fully qualified or aliased column references in 'First'/'Second'.")]
         List<JoinCondition>? joins = null,
         [Description("List of group by conditions. Each condition includes 'Table', 'Field'.")]
         List<GroupByCondition>? groupByConditions = null,
@@ -47,7 +48,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         bool distinct = false,
         [Description("Source subquery definition. If provided, tableName is ignored.")]
         QueryDefinition? fromQuery = null,
-        [Description("Top-level alias for the source table or subquery. (Optional)")]
+        [Description("Top-level alias for the source table or subquery. (Optional). Example: set tableName='products' and alias='p', then refer to source columns as 'p.unit_price'.")]
         string? alias = null)
     {
         var sqlConfig = await ResolveSqlConfigAsync();

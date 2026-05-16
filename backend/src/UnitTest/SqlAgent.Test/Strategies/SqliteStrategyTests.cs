@@ -49,12 +49,12 @@ public class SqliteFixture : IDbFixture
 public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<SqliteStrategy, SqliteFixture>(fixture)
 {
     protected override SqliteStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new SqliteStrategy(parser, configuration);
+        => new(parser, configuration);
 
     protected override string TestTableName => "Users";
     protected override string TestSchemaName => "";
 
-    protected override string TableNotFoundErrorCode => "SQLITE_1"; 
+    protected override string TableNotFoundErrorCode => "SQLITE_1";
     protected override string ColumnNotFoundErrorCode => "SQLITE_1";
 
     [Fact]
@@ -75,7 +75,7 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     }
 
 
-    protected override DmlDefinition CreateInsertDml() => new DmlDefinition
+    protected override DmlDefinition CreateInsertDml() => new()
     {
         Operation = "insert",
         TableName = TestTableName,
@@ -162,6 +162,10 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                 new SelectCondition { Function = yearFunction, Alias = "YearPart" },
                 new SelectCondition { Field = "Id", Aggregation = "COUNT", Alias = "UserCount" }
             ],
+            whereConditions:
+            [
+                new WhereCondition { Field = "Name", Operator = "in", Values = ["Alice", "Bob", "Charlie"] }
+            ],
             groupByConditions:
             [
                 new GroupByCondition { Function = yearFunction }
@@ -178,5 +182,170 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
         Assert.Single(rows);
         Assert.Equal("2023", rows[0].GetProperty("YearPart").GetString());
         Assert.Equal(3, rows[0].GetProperty("UserCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportNestedRoundWithNumericConstantArgument()
+    {
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
+            selectColumns:
+            [
+                new SelectCondition
+                {
+                    Alias = "RoundedAverage",
+                    Function = new SqlFunctionCondition
+                    {
+                        Name = "ROUND",
+                        Arguments =
+                        [
+                            new SqlFunctionArgument
+                            {
+                                Function = new SqlFunctionCondition
+                                {
+                                    Name = "AVG",
+                                    Arguments = [new SqlFunctionArgument { FieldName = "Amount" }]
+                                }
+                            },
+                            new SqlFunctionArgument { Constant = 2 }
+                        ]
+                    }
+                }
+            ],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.Equal(133.33m, rows[0].GetProperty("RoundedAverage").GetDecimal());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportAggregatedNestedArithmeticExpression()
+    {
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
+            selectColumns:
+            [
+                new SelectCondition { Field = "UserId", Alias = "UserId" },
+                new SelectCondition
+                {
+                    Alias = "Revenue",
+                    Aggregation = "SUM",
+                    Arithmetic = new SelectArithmeticCondition
+                    {
+                        Left = new SelectArithmeticCondition
+                        {
+                            Left = new SelectArithmeticCondition { FieldName = "Orders.Amount" },
+                            Operator = "*",
+                            Right = new SelectArithmeticCondition { Constant = 1 }
+                        },
+                        Operator = "*",
+                        Right = new SelectArithmeticCondition
+                        {
+                            Left = new SelectArithmeticCondition { Constant = 1 },
+                            Operator = "-",
+                            Right = new SelectArithmeticCondition { Constant = 0.1m }
+                        }
+                    }
+                }
+            ],
+            groupByConditions:
+            [
+                new GroupByCondition { Field = "UserId" }
+            ],
+            orderByColumns:
+            [
+                new OrderByCondition { Field = "UserId", Direction = "asc" }
+            ],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(1, rows[0].GetProperty("UserId").GetInt32());
+        Assert.Equal(315m, rows[0].GetProperty("Revenue").GetDecimal());
+        Assert.Equal(2, rows[1].GetProperty("UserId").GetInt32());
+        Assert.Equal(45m, rows[1].GetProperty("Revenue").GetDecimal());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportTopLevelAndJoinAliases()
+    {
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
+            alias: "o",
+            selectColumns:
+            [
+                new SelectCondition { Field = "u.Name", Alias = "CustomerName" },
+                new SelectCondition { Field = "o.Amount", Aggregation = "SUM", Alias = "TotalAmount" }
+            ],
+            joins:
+            [
+                new JoinCondition
+                {
+                    Table = "Users",
+                    Alias = "u",
+                    First = "o.UserId",
+                    Operator = "=",
+                    Second = "u.Id",
+                    Type = "INNER"
+                }
+            ],
+            groupByConditions:
+            [
+                new GroupByCondition { Field = "u.Name" }
+            ],
+            orderByColumns:
+            [
+                new OrderByCondition { Field = "TotalAmount", Direction = "desc" }
+            ],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("Alice", rows[0].GetProperty("CustomerName").GetString());
+        Assert.Equal(350m, rows[0].GetProperty("TotalAmount").GetDecimal());
+        Assert.Equal("Bob", rows[1].GetProperty("CustomerName").GetString());
+        Assert.Equal(50m, rows[1].GetProperty("TotalAmount").GetDecimal());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportArithmeticInFunctionArguments()
+    {
+        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
+            selectColumns:
+            [
+                new SelectCondition
+                {
+                    Alias = "TotalWithTax",
+                    Function = new SqlFunctionCondition
+                    {
+                        Name = "SUM",
+                        Arguments =
+                        [
+                            new SqlFunctionArgument
+                            {
+                                Arithmetic = new SelectArithmeticCondition
+                                {
+                                    Left = new SelectArithmeticCondition { FieldName = "Amount" },
+                                    Operator = "*",
+                                    Right = new SelectArithmeticCondition { Constant = 1.05m }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
+            whereConditions: [new WhereCondition { Field = "UserId", Operator = "=", Value = 1 }],
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        // User 1 has orders 150.0 and 200.0, total 350.0. 350.0 * 1.05 = 367.5
+        Assert.Equal(367.5m, rows[0].GetProperty("TotalWithTax").GetDecimal());
     }
 }
