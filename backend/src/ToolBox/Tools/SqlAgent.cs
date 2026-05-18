@@ -395,7 +395,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
     }
 
-    private static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
+    internal static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (qd == null) return;
         if (!string.IsNullOrWhiteSpace(qd.Alias)) aliases.Add(qd.Alias);
@@ -404,9 +404,16 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             qd.TableName, qd.Joins, qd.CombineConditions, qd.CteConditions,
             qd.FromQuery, qd.SelectColumns, qd.WhereColumnsAndValues,
             referenced, aliases);
+
+        if (qd.HavingConditions != null)
+            CollectFromHavingConditions(qd.HavingConditions, referenced, aliases);
+        if (qd.OrderByColumns != null)
+            CollectFromOrderByConditions(qd.OrderByColumns, referenced, aliases);
+        if (qd.GroupByConditions != null)
+            CollectFromGroupByConditions(qd.GroupByConditions, referenced, aliases);
     }
 
-    private static void CollectReferencesAndAliases(
+    internal static void CollectReferencesAndAliases(
         string? tableName,
         List<JoinCondition>? joins,
         List<CombineCondition>? combineConditions,
@@ -447,26 +454,41 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             foreach (var s in selectColumns)
             {
-                if (s is SubQuerySelectCondition sq)
+                switch (s)
                 {
-                    var qd = new QueryDefinition
+                    case SubQuerySelectCondition sq:
                     {
-                        TableName = sq.TableName,
-                        FromQuery = sq.FromQuery,
-                        Alias = sq.Alias,
-                        Distinct = sq.Distinct,
-                        SelectColumns = sq.SelectColumns,
-                        WhereColumnsAndValues = sq.WhereColumnsAndValues,
-                        OrderByColumns = sq.OrderByColumns,
-                        GroupByConditions = sq.GroupByConditions,
-                        HavingConditions = sq.HavingConditions,
-                        Joins = sq.Joins,
-                        CombineConditions = sq.CombineConditions,
-                        CteConditions = sq.CteConditions,
-                        Limit = sq.Limit,
-                        Offset = sq.Offset
-                    };
-                    CollectFromQueryDefinition(qd, referenced, aliases);
+                        var qd = new QueryDefinition
+                        {
+                            TableName = sq.TableName,
+                            FromQuery = sq.FromQuery,
+                            Alias = sq.Alias,
+                            Distinct = sq.Distinct,
+                            SelectColumns = sq.SelectColumns,
+                            WhereColumnsAndValues = sq.WhereColumnsAndValues,
+                            OrderByColumns = sq.OrderByColumns,
+                            GroupByConditions = sq.GroupByConditions,
+                            HavingConditions = sq.HavingConditions,
+                            Joins = sq.Joins,
+                            CombineConditions = sq.CombineConditions,
+                            CteConditions = sq.CteConditions,
+                            Limit = sq.Limit,
+                            Offset = sq.Offset
+                        };
+                        CollectFromQueryDefinition(qd, referenced, aliases);
+                        break;
+                    }
+                    case FunctionSelectCondition funcSel:
+                        CollectFromWheres(funcSel.FilterWhereConditions, referenced, aliases);
+                        CollectFromFunctionArguments(funcSel.Arguments, referenced, aliases);
+                        break;
+                    case OperationSelectCondition opSel:
+                        CollectFromSelectArithmeticCondition(opSel.Left, referenced, aliases);
+                        CollectFromSelectArithmeticCondition(opSel.Right, referenced, aliases);
+                        break;
+                    case CaseWhenSelectCondition cwSel:
+                        CollectFromCaseWhenClauses(cwSel.CaseWhen, referenced, aliases);
+                        break;
                 }
             }
         }
@@ -475,7 +497,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             CollectFromWheres(whereConditions, referenced, aliases);
     }
 
-    private static void CollectFromWheres(List<WhereCondition>? wheres, HashSet<string> referenced, HashSet<string> aliases)
+    internal static void CollectFromWheres(List<WhereCondition>? wheres, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (wheres == null) return;
         foreach (var w in wheres)
@@ -489,5 +511,111 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 CollectFromWheres(groupWhere.Groups, referenced, aliases);
             }
         }
+    }
+
+    internal static void CollectFromHavingConditions(List<HavingCondition>? havings, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (havings == null) return;
+        foreach (var h in havings)
+        {
+            switch (h)
+            {
+                case FunctionHavingCondition funcHaving:
+                    CollectFromSqlFunctionCondition(funcHaving.LeftFunction, referenced, aliases);
+                    break;
+                case GroupHavingCondition groupHaving:
+                    CollectFromHavingConditions(groupHaving.Groups, referenced, aliases);
+                    break;
+            }
+        }
+    }
+
+    internal static void CollectFromOrderByConditions(List<OrderByCondition>? orderBys, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (orderBys == null) return;
+        foreach (var o in orderBys)
+        {
+            if (o is FunctionOrderByCondition funcOrder)
+            {
+                CollectFromWheres(funcOrder.FilterWhereConditions, referenced, aliases);
+                CollectFromFunctionArguments(funcOrder.Arguments, referenced, aliases);
+            }
+        }
+    }
+
+    internal static void CollectFromGroupByConditions(List<GroupByCondition>? groupBys, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (groupBys == null) return;
+        foreach (var g in groupBys)
+        {
+            if (g is FunctionGroupByCondition funcGroup)
+            {
+                CollectFromWheres(funcGroup.FilterWhereConditions, referenced, aliases);
+                CollectFromFunctionArguments(funcGroup.Arguments, referenced, aliases);
+            }
+        }
+    }
+
+    internal static void CollectFromWindowDefinition(WindowDefinition? window, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (window == null) return;
+        CollectFromGroupByConditions(window.PartitionBy, referenced, aliases);
+        CollectFromOrderByConditions(window.OrderBy, referenced, aliases);
+    }
+
+    internal static void CollectFromSelectArithmeticCondition(SelectArithmeticCondition? condition, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (condition == null) return;
+        switch (condition)
+        {
+            case FunctionArithmeticCondition func:
+                CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
+                CollectFromFunctionArguments(func.Arguments, referenced, aliases);
+                break;
+            case OperationArithmeticCondition op:
+                CollectFromSelectArithmeticCondition(op.Left, referenced, aliases);
+                CollectFromSelectArithmeticCondition(op.Right, referenced, aliases);
+                break;
+            case CaseWhenArithmeticCondition cw:
+                CollectFromCaseWhenClauses(cw.CaseWhen, referenced, aliases);
+                break;
+        }
+    }
+
+    internal static void CollectFromCaseWhenClauses(List<CaseWhenClause>? clauses, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (clauses == null) return;
+        foreach (var clause in clauses)
+        {
+            CollectFromWheres([clause.Condition], referenced, aliases);
+        }
+    }
+
+    internal static void CollectFromFunctionArguments(List<SqlFunctionArgument>? args, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (args == null) return;
+        foreach (var arg in args)
+        {
+            switch (arg)
+            {
+                case NestedFunctionArgument nested:
+                    CollectFromWheres(nested.FilterWhereConditions, referenced, aliases);
+                    CollectFromFunctionArguments(nested.Arguments, referenced, aliases);
+                    break;
+                case ArithmeticFunctionArgument arith:
+                    CollectFromSelectArithmeticCondition(arith.Left, referenced, aliases);
+                    CollectFromSelectArithmeticCondition(arith.Right, referenced, aliases);
+                    break;
+            }
+        }
+    }
+
+    internal static void CollectFromSqlFunctionCondition(SqlFunctionCondition? func, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (func == null) return;
+        CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
+        CollectFromFunctionArguments(func.Arguments, referenced, aliases);
+        if (func.Window != null)
+            CollectFromWindowDefinition(func.Window, referenced, aliases);
     }
 }

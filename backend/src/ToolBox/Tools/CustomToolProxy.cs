@@ -85,6 +85,8 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     return result;
                 }
 
+                ValidateAllTableAccess(queryDef);
+
                 result = await strategy.ExecuteQueryAsync(
                     queryDef,
                     sqlConfig.ConnectionString
@@ -99,6 +101,8 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", result);
                     return result;
                 }
+
+                ValidateAllTableAccess(dmlDef);
 
                 result = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dmlDef);
             }
@@ -161,5 +165,74 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         }
 
         return json;
+    }
+
+    private HashSet<string>? ResolveTableWhitelist()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context == null) return null;
+
+        var tableWhitelist = context.Items[McpContextItemKeys.TableWhitelist] as string;
+        if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
+
+        return tableWhitelist
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ValidateAllTableAccess(QueryDefinition queryDef)
+    {
+        var whitelist = ResolveTableWhitelist();
+        if (whitelist is null or { Count: 0 }) return;
+
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(queryDef.Alias)) aliases.Add(queryDef.Alias);
+
+        SqlAgentTool.CollectReferencesAndAliases(
+            queryDef.TableName, queryDef.Joins, queryDef.CombineConditions, queryDef.CteConditions,
+            queryDef.FromQuery, queryDef.SelectColumns, queryDef.WhereColumnsAndValues,
+            referenced, aliases);
+
+        SqlAgentTool.CollectFromHavingConditions(queryDef.HavingConditions, referenced, aliases);
+        SqlAgentTool.CollectFromOrderByConditions(queryDef.OrderByColumns, referenced, aliases);
+        SqlAgentTool.CollectFromGroupByConditions(queryDef.GroupByConditions, referenced, aliases);
+
+        var violations = referenced
+            .Where(t => !aliases.Contains(t))
+            .Where(t => !whitelist.Contains(t))
+            .ToList();
+
+        if (violations.Count > 0)
+        {
+            throw new UnauthorizedAccessException(
+                $"API key does not have permission to access table(s): {string.Join(", ", violations)}");
+        }
+    }
+
+    private void ValidateAllTableAccess(DmlDefinition dmlDef)
+    {
+        var whitelist = ResolveTableWhitelist();
+        if (whitelist is null or { Count: 0 }) return;
+
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        SqlAgentTool.CollectReferencesAndAliases(
+            dmlDef.TableName, null, null, null,
+            dmlDef.FromQuery, null, dmlDef.WhereConditions,
+            referenced, aliases);
+
+        var violations = referenced
+            .Where(t => !aliases.Contains(t))
+            .Where(t => !whitelist.Contains(t))
+            .ToList();
+
+        if (violations.Count > 0)
+        {
+            throw new UnauthorizedAccessException(
+                $"API key does not have permission to access table(s): {string.Join(", ", violations)}");
+        }
     }
 }
