@@ -1,6 +1,14 @@
 import { ref, computed } from "vue";
 import { getSchemas, getTables, getColumns } from "@/api/db-management";
-import type { SortDirection, DmlOperation, SelectCondition, WhereCondition, OrderByCondition, JoinCondition, NameValuePair } from "@/types/query-definition";
+import type {
+  SortDirection,
+  DmlOperation,
+  SelectCondition,
+  WhereCondition,
+  OrderByCondition,
+  JoinCondition,
+  NameValuePair,
+} from "@/types/query-definition";
 
 export interface SqlBuilderOptions {
   type: "Query" | "DML";
@@ -104,7 +112,17 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   const insertValues = ref<{ fieldName: string; value: string }[]>([]);
 
   // --- Logic Helpers ---
-  const addColumn = () => selectColumns.value.push({ type: "field", table: "", field: "", alias: "", constant: "", functionName: "", isDistinct: false, arguments: [] });
+  const addColumn = () =>
+    selectColumns.value.push({
+      type: "field",
+      table: "",
+      field: "",
+      alias: "",
+      constant: "",
+      functionName: "",
+      isDistinct: false,
+      arguments: [],
+    });
   const removeColumn = (i: number) => selectColumns.value.splice(i, 1);
 
   const addWhere = () =>
@@ -130,22 +148,60 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       table: "",
       alias: "",
       type: "Inner",
-      onConditions: [{ leftTable: "", leftField: "", operator: "=", rightTable: "", rightField: "" }],
+      onConditions: [
+        {
+          leftTable: "",
+          leftField: "",
+          operator: "=",
+          rightTable: "",
+          rightField: "",
+        },
+      ],
     });
   const removeJoin = (i: number) => joins.value.splice(i, 1);
   const addJoinOnCondition = (joinIdx: number) =>
-    joins.value[joinIdx].onConditions.push({ leftTable: "", leftField: "", operator: "=", rightTable: "", rightField: "" });
+    joins.value[joinIdx]!.onConditions.push({
+      leftTable: "",
+      leftField: "",
+      operator: "=",
+      rightTable: "",
+      rightField: "",
+    });
   const removeJoinOnCondition = (joinIdx: number, condIdx: number) =>
-    joins.value[joinIdx].onConditions.splice(condIdx, 1);
+    joins.value[joinIdx]!.onConditions.splice(condIdx, 1);
 
-  const addOrderBy = () => orderBys.value.push({ type: "field", table: "", field: "", direction: "asc", functionName: "", arguments: [], isDistinct: false });
+  const addOrderBy = () =>
+    orderBys.value.push({
+      type: "field",
+      table: "",
+      field: "",
+      direction: "asc",
+      functionName: "",
+      arguments: [],
+      isDistinct: false,
+    });
   const removeOrderBy = (i: number) => orderBys.value.splice(i, 1);
-  const addColumnArg = (colIdx: number) => selectColumns.value[colIdx].arguments.push({ type: "field", table: "", field: "", constant: "" });
-  const removeColumnArg = (colIdx: number, argIdx: number) => selectColumns.value[colIdx].arguments.splice(argIdx, 1);
-  const addOrderByArg = (obIdx: number) => orderBys.value[obIdx].arguments.push({ type: "field", table: "", field: "", constant: "" });
-  const removeOrderByArg = (obIdx: number, argIdx: number) => orderBys.value[obIdx].arguments.splice(argIdx, 1);
+  const addColumnArg = (colIdx: number) =>
+    selectColumns.value[colIdx]!.arguments.push({
+      type: "field",
+      table: "",
+      field: "",
+      constant: "",
+    });
+  const removeColumnArg = (colIdx: number, argIdx: number) =>
+    selectColumns.value[colIdx]!.arguments.splice(argIdx, 1);
+  const addOrderByArg = (obIdx: number) =>
+    orderBys.value[obIdx]!.arguments.push({
+      type: "field",
+      table: "",
+      field: "",
+      constant: "",
+    });
+  const removeOrderByArg = (obIdx: number, argIdx: number) =>
+    orderBys.value[obIdx]!.arguments.splice(argIdx, 1);
 
-  const addInsertValue = () => insertValues.value.push({ fieldName: "", value: "" });
+  const addInsertValue = () =>
+    insertValues.value.push({ fieldName: "", value: "" });
   const removeInsertValue = (i: number) => insertValues.value.splice(i, 1);
 
   // --- Fetching Logic ---
@@ -160,11 +216,11 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     try {
       const schemas = await getSchemas(dbId.value);
       availableSchemas.value = schemas.filter((s) => s);
-    } catch (e) { }
+    } catch (e) {}
 
     try {
       availableTables.value = await getTables(dbId.value, "");
-    } catch (e2) { }
+    } catch (e2) {}
   };
 
   const onSchemaChange = async () => {
@@ -176,7 +232,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     const s = schema.value === "_default_" ? "" : schema.value;
     try {
       availableTables.value = await getTables(dbId.value, s);
-    } catch (e) { }
+    } catch (e) {}
   };
 
   const onTableChange = async () => {
@@ -189,7 +245,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
         name: c.column,
         dataType: c.type,
       }));
-    } catch (e) { }
+    } catch (e) {}
   };
 
   const joinTableColumns = ref<Record<string, string[]>>({});
@@ -212,10 +268,8 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
 
     try {
       const rawColumns = await getColumns(dbId.value, t, s);
-      joinTableColumns.value[fullTable] = rawColumns.map(
-        (c: any) => c.column,
-      );
-    } catch (e) { }
+      joinTableColumns.value[fullTable] = rawColumns.map((c: any) => c.column);
+    } catch (e) {}
   };
 
   // --- Column / Alias Logic ---
@@ -232,7 +286,9 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
 
   const allAvailableColumnNames = computed(() => {
     const all = [...mainTableColumnNames.value];
-    joins.value.forEach((j) => all.push(...(joinTableColumns.value[j.table] || [])));
+    joins.value.forEach((j) =>
+      all.push(...(joinTableColumns.value[j.table] || [])),
+    );
     return all;
   });
 
@@ -283,16 +339,33 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       const aliasVal = c.alias || undefined;
       switch (c.type) {
         case "field":
-          return { type: "field", fieldName: q(c.table, c.field), alias: aliasVal } as SelectCondition;
+          return {
+            type: "field",
+            fieldName: q(c.table, c.field),
+            alias: aliasVal,
+          } as SelectCondition;
         case "constant":
-          return { type: "constant", constant: c.constant, alias: aliasVal } as SelectCondition;
+          return {
+            type: "constant",
+            constant: c.constant,
+            alias: aliasVal,
+          } as SelectCondition;
         case "function": {
           const fnArgs = c.arguments.map((a) =>
             a.type === "field"
               ? { type: "field" as const, fieldName: q(a.table, a.field) }
-              : { type: "constant" as const, constant: a.constant || undefined },
+              : {
+                  type: "constant" as const,
+                  constant: a.constant || undefined,
+                },
           );
-          return { type: "function", functionName: c.functionName, arguments: fnArgs.length ? fnArgs : undefined, isDistinct: c.isDistinct || undefined, alias: aliasVal } as SelectCondition;
+          return {
+            type: "function",
+            functionName: c.functionName,
+            arguments: fnArgs.length ? fnArgs : undefined,
+            isDistinct: c.isDistinct || undefined,
+            alias: aliasVal,
+          } as SelectCondition;
         }
       }
     });
@@ -330,7 +403,12 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
             type: "in",
             fieldName: q(w.table, w.field),
             operator: "IN",
-            values: w.values ? w.values.split(",").map((v) => v.trim()).filter(Boolean) : [],
+            values: w.values
+              ? w.values
+                  .split(",")
+                  .map((v) => v.trim())
+                  .filter(Boolean)
+              : [],
           };
           if (w.isOr) (cond as any).isOr = true;
           if (w.isNot) (cond as any).isNot = true;
@@ -346,14 +424,27 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       const dir = capitalize(o.direction) as SortDirection;
       switch (o.type) {
         case "field":
-          return { type: "field", fieldName: q(o.table, o.field), direction: dir } as OrderByCondition;
+          return {
+            type: "field",
+            fieldName: q(o.table, o.field),
+            direction: dir,
+          } as OrderByCondition;
         case "function": {
           const fnArgs = o.arguments.map((a) =>
             a.type === "field"
               ? { type: "field" as const, fieldName: q(a.table, a.field) }
-              : { type: "constant" as const, constant: a.constant || undefined },
+              : {
+                  type: "constant" as const,
+                  constant: a.constant || undefined,
+                },
           );
-          return { type: "function", functionName: o.functionName, arguments: fnArgs.length ? fnArgs : undefined, isDistinct: o.isDistinct || undefined, direction: dir } as OrderByCondition;
+          return {
+            type: "function",
+            functionName: o.functionName,
+            arguments: fnArgs.length ? fnArgs : undefined,
+            isDistinct: o.isDistinct || undefined,
+            direction: dir,
+          } as OrderByCondition;
         }
       }
     });
@@ -383,14 +474,13 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       };
 
       const cols = buildSelectColumns();
-      output.selectColumns = cols.length > 0 ? cols : [{ type: "field", fieldName: "*" }];
+      output.selectColumns =
+        cols.length > 0 ? cols : [{ type: "field", fieldName: "*" }];
 
       const wheres = buildWhereConditions();
       if (wheres.length > 0) output.whereColumnsAndValues = wheres;
       const orders = buildOrderBys();
       if (orders.length > 0) output.orderByColumns = orders;
-      output.groupByConditions = [];
-      output.havingConditions = [];
 
       const j = buildJoins();
       if (j.length > 0) output.joins = j;
@@ -406,10 +496,13 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
       };
 
       if (insertValues.value.length > 0) {
-        output.values = insertValues.value.map((v) => ({
-          fieldName: v.fieldName,
-          value: v.value || undefined,
-        } as NameValuePair));
+        output.values = insertValues.value.map(
+          (v) =>
+            ({
+              fieldName: v.fieldName,
+              value: v.value || undefined,
+            }) as NameValuePair,
+        );
       }
 
       const wheres = buildWhereConditions();
