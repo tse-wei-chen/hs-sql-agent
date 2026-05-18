@@ -979,20 +979,8 @@ public abstract class BaseSqlStrategy(
         {
             FieldArithmeticCondition f => f.FieldName,
             ConstantArithmeticCondition c => BuildHavingConstPart(c.Constant, bindings),
-            OperationArithmeticCondition op => $"({BuildHavingArithPart(op.Left, bindings)} {HavingOpToSql(op.Operator)} {BuildHavingArithPart(op.Right, bindings)})",
+            OperationArithmeticCondition op => $"({BuildHavingArithPart(op.Left, bindings)} {GetOperatorString(op.Operator)} {BuildHavingArithPart(op.Right, bindings)})",
             _ => "?"
-        };
-    }
-
-    private static string HavingOpToSql(ArithmeticOperator op)
-    {
-        return op switch
-        {
-            ArithmeticOperator.Add => "+",
-            ArithmeticOperator.Subtract => "-",
-            ArithmeticOperator.Multiply => "*",
-            ArithmeticOperator.Divide => "/",
-            _ => "+"
         };
     }
 
