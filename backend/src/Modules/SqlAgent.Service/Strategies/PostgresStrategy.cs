@@ -11,7 +11,7 @@ using System.Text.RegularExpressions;
 
 namespace SqlAgent.Service.Strategies;
 
-public class PostgresStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public partial class PostgresStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
@@ -98,6 +98,9 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
     }
 
+    [GeneratedRegex(@"\bIN\b", RegexOptions.IgnoreCase)]
+    private static partial Regex InOperatorRegex();
+
     protected override string BuildHint(string? code, string message)
     {
         if (string.Equals(code, "42883", StringComparison.OrdinalIgnoreCase))
@@ -108,7 +111,8 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
                 return "Date vs Text type mismatch. Fix: Set 'IsDate': true in WhereCondition/HavingCondition, or ensure literals are in ISO format (e.g., '2024-01-01').";
             }
 
-            if (message.Contains("in", StringComparison.OrdinalIgnoreCase))
+            if (InOperatorRegex().IsMatch(message)
+                && message.Contains("operator", StringComparison.OrdinalIgnoreCase))
             {
                 return "Operator mismatch for IN/NOT IN. Fix: Use the 'Values' list (for constants) or 'SubQuery' (for dynamic sets) instead of the 'Value' field.";
             }
