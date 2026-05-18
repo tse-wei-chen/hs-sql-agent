@@ -3,6 +3,7 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
@@ -52,7 +53,9 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
         => new(parser, configuration);
 
     protected override string TestTableName => "Users";
+    protected override string TestOrdersTableName => "Orders";
     protected override string TestSchemaName => "";
+    protected override string TestOrdersUserIdColumn => "UserId";
 
     protected override string TableNotFoundErrorCode => "SQLITE_1";
     protected override string ColumnNotFoundErrorCode => "SQLITE_1";
@@ -77,12 +80,12 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
 
     protected override DmlDefinition CreateInsertDml() => new()
     {
-        Operation = "insert",
+        Operation = DmlOperation.Insert,
         TableName = TestTableName,
         Values = [
-            new NameValuePair { Name = "Name", Value = "David" },
-            new NameValuePair { Name = "Age", Value = 40 },
-            new NameValuePair { Name = "Active", Value = true }
+            new NameValuePair { FieldName = "Name", Value = "David" },
+            new NameValuePair { FieldName = "Age", Value = 40 },
+            new NameValuePair { FieldName = "Active", Value = true }
         ]
     };
 
@@ -99,13 +102,17 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldWrapInSubquery_WhenCombiningAndLimitIsSet()
     {
-        var queryDef2 = new QueryDefinition { TableName = "Orders", SelectColumns = [new SelectCondition { Field = "Amount" }] };
+        var queryDef2 = new QueryDefinition { TableName = "Orders", SelectColumns = [new FieldSelectCondition { FieldName = "Amount" }] };
 
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Users",
-            selectColumns: [new SelectCondition { Field = "Name" }],
-            combineConditions: [new CombineCondition { Type = "union", Query = queryDef2 }],
-            limit: 2,
-            orderByColumns: [new OrderByCondition { Field = "Name", Direction = "desc" }],
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "Users",
+                SelectColumns = [new FieldSelectCondition { FieldName = "Name" }],
+                CombineConditions = [new CombineCondition { Type = CombineType.Union, Query = queryDef2 }],
+                Limit = 2,
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "Name", Direction = SortDirection.Desc }]
+            }, Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -118,21 +125,23 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     {
         using var constantJson = JsonDocument.Parse("1");
 
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            selectColumns:
-            [
-                new SelectCondition
-                {
-                    Arithmetic = new SelectArithmeticCondition
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new OperationSelectCondition
                     {
-                        Left = new SelectArithmeticCondition { Constant = constantJson.RootElement.Clone() },
-                        Operator = "-",
-                        Right = new SelectArithmeticCondition { FieldName = "Age" }
-                    },
-                    Alias = "Delta"
-                }
-            ],
-            whereConditions: [new WhereCondition { Field = "Name", Operator = "=", Value = "Alice" }],
+                        Left = new ConstantArithmeticCondition { Constant = constantJson.RootElement.Clone() },
+                        Operator = ArithmeticOperator.Subtract,
+                        Right = new FieldArithmeticCondition { FieldName = "Age" },
+                        Alias = "Delta"
+                    }
+                ],
+                WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "Name", Operator = "=", Value = "Alice" }]
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -145,35 +154,63 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldSupportFunctionExpressionsInGrouping()
     {
-        var yearFunction = new SqlFunctionCondition
-        {
-            Name = "SUBSTR",
-            Arguments =
-            [
-                new SqlFunctionArgument { FieldName = "CreatedDate" },
-                new SqlFunctionArgument { Constant = 1 },
-                new SqlFunctionArgument { Constant = 4 }
-            ]
-        };
-
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            selectColumns:
-            [
-                new SelectCondition { Function = yearFunction, Alias = "YearPart" },
-                new SelectCondition { Field = "Id", Aggregation = "COUNT", Alias = "UserCount" }
-            ],
-            whereConditions:
-            [
-                new WhereCondition { Field = "Name", Operator = "in", Values = ["Alice", "Bob", "Charlie"] }
-            ],
-            groupByConditions:
-            [
-                new GroupByCondition { Function = yearFunction }
-            ],
-            orderByColumns:
-            [
-                new OrderByCondition { Function = yearFunction, Direction = "asc" }
-            ],
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "SUBSTR",
+                        Arguments =
+                        [
+                            new FieldFunctionArgument { FieldName = "CreatedDate" },
+                            new ConstantFunctionArgument { Constant = 1 },
+                            new ConstantFunctionArgument { Constant = 4 }
+                        ],
+                        Alias = "YearPart"
+                    },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "COUNT",
+                        Arguments = [new FieldFunctionArgument { FieldName = "Id" }],
+                        Alias = "UserCount"
+                    }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new InWhereCondition { FieldName = "Name", Operator = "in", Values = ["Alice", "Bob", "Charlie"] }
+                ],
+                GroupByConditions =
+                [
+                    new FunctionGroupByCondition
+                    {
+                        FunctionName = "SUBSTR",
+                        Arguments =
+                        [
+                            new FieldFunctionArgument { FieldName = "CreatedDate" },
+                            new ConstantFunctionArgument { Constant = 1 },
+                            new ConstantFunctionArgument { Constant = 4 }
+                        ]
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FunctionOrderByCondition
+                    {
+                        FunctionName = "SUBSTR",
+                        Arguments =
+                        [
+                            new FieldFunctionArgument { FieldName = "CreatedDate" },
+                            new ConstantFunctionArgument { Constant = 1 },
+                            new ConstantFunctionArgument { Constant = 4 }
+                        ],
+                        Direction = SortDirection.Asc
+                    }
+                ],
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -187,30 +224,32 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldSupportNestedRoundWithNumericConstantArgument()
     {
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
-            selectColumns:
-            [
-                new SelectCondition
-                {
-                    Alias = "RoundedAverage",
-                    Function = new SqlFunctionCondition
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FunctionSelectCondition
                     {
-                        Name = "ROUND",
+                        Alias = "RoundedAverage",
+                        FunctionName = "ROUND",
                         Arguments =
                         [
-                            new SqlFunctionArgument
+                            new NestedFunctionArgument
                             {
-                                Function = new SqlFunctionCondition
-                                {
-                                    Name = "AVG",
-                                    Arguments = [new SqlFunctionArgument { FieldName = "Amount" }]
-                                }
+                                FunctionName = "AVG",
+                                Arguments =
+                                [
+                                    new FieldFunctionArgument { FieldName = "Amount" }
+                                ]
                             },
-                            new SqlFunctionArgument { Constant = 2 }
+                            new ConstantFunctionArgument { Constant = 2 }
                         ]
                     }
-                }
-            ],
+                ]
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -223,40 +262,50 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldSupportAggregatedNestedArithmeticExpression()
     {
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
-            selectColumns:
-            [
-                new SelectCondition { Field = "UserId", Alias = "UserId" },
-                new SelectCondition
-                {
-                    Alias = "Revenue",
-                    Aggregation = "SUM",
-                    Arithmetic = new SelectArithmeticCondition
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "UserId", Alias = "UserId" },
+                    new FunctionSelectCondition
                     {
-                        Left = new SelectArithmeticCondition
-                        {
-                            Left = new SelectArithmeticCondition { FieldName = "Orders.Amount" },
-                            Operator = "*",
-                            Right = new SelectArithmeticCondition { Constant = 1 }
-                        },
-                        Operator = "*",
-                        Right = new SelectArithmeticCondition
-                        {
-                            Left = new SelectArithmeticCondition { Constant = 1 },
-                            Operator = "-",
-                            Right = new SelectArithmeticCondition { Constant = 0.1m }
-                        }
+                        Alias = "Revenue",
+                        FunctionName = "SUM",
+                        Arguments =
+                        [
+                            new ArithmeticFunctionArgument
+                            {
+                                Left = new OperationArithmeticCondition
+                                {
+                                    Left = new FieldArithmeticCondition { FieldName = "Orders.Amount" },
+                                    Operator = ArithmeticOperator.Multiply,
+                                    Right = new ConstantArithmeticCondition { Constant = 1 }
+                                },
+                                Operator = ArithmeticOperator.Multiply,
+                                Right = new OperationArithmeticCondition
+                                {
+                                    Left = new ConstantArithmeticCondition { Constant = 1 },
+                                    Operator = ArithmeticOperator.Subtract,
+                                    Right = new ConstantArithmeticCondition { Constant = 0.1m }
+                                }
+                            }
+                        ]
                     }
-                }
-            ],
-            groupByConditions:
-            [
-                new GroupByCondition { Field = "UserId" }
-            ],
-            orderByColumns:
-            [
-                new OrderByCondition { Field = "UserId", Direction = "asc" }
-            ],
+                ],
+                GroupByConditions =
+                [
+                    new FieldGroupByCondition { FieldName = "UserId" }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "UserId", Direction = SortDirection.Asc }
+                ]
+            },
+
+
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -272,33 +321,49 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldSupportTopLevelAndJoinAliases()
     {
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
-            alias: "o",
-            selectColumns:
-            [
-                new SelectCondition { Field = "u.Name", Alias = "CustomerName" },
-                new SelectCondition { Field = "o.Amount", Aggregation = "SUM", Alias = "TotalAmount" }
-            ],
-            joins:
-            [
-                new JoinCondition
-                {
-                    Table = "Users",
-                    Alias = "u",
-                    First = "o.UserId",
-                    Operator = "=",
-                    Second = "u.Id",
-                    Type = "INNER"
-                }
-            ],
-            groupByConditions:
-            [
-                new GroupByCondition { Field = "u.Name" }
-            ],
-            orderByColumns:
-            [
-                new OrderByCondition { Field = "TotalAmount", Direction = "desc" }
-            ],
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "Orders",
+                Alias = "o",
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "u.Name", Alias = "CustomerName" },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "SUM",
+                        Arguments = [new FieldFunctionArgument { FieldName = "o.Amount" }],
+                        Alias = "TotalAmount"
+                    }
+                ],
+                Joins =
+                [
+                    new JoinCondition
+                    {
+                        Table = "Users",
+                        Alias = "u",
+                        Type = JoinType.Inner,
+                        OnConditions =
+                        [
+                            new ColumnCompareWhereCondition
+                            {
+                                LeftFieldName = "o.UserId",
+                                Operator = "=",
+                                RightFieldName = "u.Id"
+                            }
+                        ]
+                    }
+                ],
+                GroupByConditions =
+                [
+                    new FieldGroupByCondition { FieldName = "u.Name" }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "TotalAmount", Direction = SortDirection.Desc }
+                ]
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -314,38 +379,36 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldSupportArithmeticInFunctionArguments()
     {
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "Orders",
-            selectColumns:
-            [
-                new SelectCondition
-                {
-                    Alias = "TotalWithTax",
-                    Function = new SqlFunctionCondition
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FunctionSelectCondition
                     {
-                        Name = "SUM",
+                        Alias = "TotalWithTax",
+                        FunctionName = "SUM",
                         Arguments =
                         [
-                            new SqlFunctionArgument
+                            new ArithmeticFunctionArgument
                             {
-                                Arithmetic = new SelectArithmeticCondition
-                                {
-                                    Left = new SelectArithmeticCondition { FieldName = "Amount" },
-                                    Operator = "*",
-                                    Right = new SelectArithmeticCondition { Constant = 1.05m }
-                                }
+                                Left = new FieldArithmeticCondition { FieldName = "Amount" },
+                                Operator = ArithmeticOperator.Multiply,
+                                Right = new ConstantArithmeticCondition { Constant = 1.05m }
                             }
                         ]
                     }
-                }
-            ],
-            whereConditions: [new WhereCondition { Field = "UserId", Operator = "=", Value = 1 }],
+                ]
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
 
         Assert.NotNull(rows);
         Assert.Single(rows);
-        // User 1 has orders 150.0 and 200.0, total 350.0. 350.0 * 1.05 = 367.5
-        Assert.Equal(367.5m, rows[0].GetProperty("TotalWithTax").GetDecimal());
+        // All orders: 150.0 + 200.0 + 50.0 = 400.0. 400.0 * 1.05 = 420.0
+        Assert.Equal(420m, rows[0].GetProperty("TotalWithTax").GetDecimal());
     }
 }

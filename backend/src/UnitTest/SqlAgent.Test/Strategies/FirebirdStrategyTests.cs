@@ -3,6 +3,7 @@ using DotNet.Testcontainers.Builders;
 using FirebirdSql.Data.FirebirdClient;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
@@ -45,6 +46,23 @@ public class FirebirdFixture : IDbFixture
 
         cmd.CommandText = "INSERT INTO USERS (ID, NAME, AGE) VALUES (1, 'Alice', 30)";
         await cmd.ExecuteNonQueryAsync();
+
+        cmd.CommandText = @"
+            CREATE TABLE ORDERS (
+                ID INTEGER PRIMARY KEY,
+                USER_ID INTEGER,
+                AMOUNT DECIMAL(10,2),
+                ORDER_DATE DATE
+            )
+        ";
+        await cmd.ExecuteNonQueryAsync();
+
+        cmd.CommandText = "INSERT INTO ORDERS (ID, USER_ID, AMOUNT, ORDER_DATE) VALUES (101, 1, 150.0, '2023-01-10')";
+        await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "INSERT INTO ORDERS (ID, USER_ID, AMOUNT, ORDER_DATE) VALUES (102, 1, 200.0, '2023-02-15')";
+        await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "INSERT INTO ORDERS (ID, USER_ID, AMOUNT, ORDER_DATE) VALUES (103, 2, 50.0, '2023-03-20')";
+        await cmd.ExecuteNonQueryAsync();
     }
 
     public async ValueTask DisposeAsync()
@@ -60,6 +78,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         => new(parser, configuration);
 
     protected override string TestTableName => "USERS";
+    protected override string TestOrdersTableName => "ORDERS";
     protected override string TestSchemaName => "Default";
 
     // Firebird error codes are not as simple as numeric codes in hints,
@@ -72,17 +91,28 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldTriggerHint_WhenTableNotFound()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "NON_EXISTENT", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains("Table does not exist", res);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "NON_EXISTENT"
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Contains("unknown", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldTriggerHint_WhenColumnNotFound()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            selectColumns: [new SelectCondition { Field = "FAKE_COL" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains("Invalid column name", res);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns = [new FieldSelectCondition { FieldName = "NON_EXISTENT_COL_HS" }]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Contains("unknown", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -96,12 +126,12 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
 
     protected override DmlDefinition CreateInsertDml() => new()
     {
-        Operation = "insert",
+        Operation = DmlOperation.Insert,
         TableName = TestTableName,
         Values = [
-            new NameValuePair { Name = "ID", Value = 2 },
-            new NameValuePair { Name = "NAME", Value = "David" },
-            new NameValuePair { Name = "AGE", Value = 40 }
+            new NameValuePair { FieldName = "ID", Value = 2 },
+            new NameValuePair { FieldName = "NAME", Value = "David" },
+            new NameValuePair { FieldName = "AGE", Value = 40 }
         ]
     };
 

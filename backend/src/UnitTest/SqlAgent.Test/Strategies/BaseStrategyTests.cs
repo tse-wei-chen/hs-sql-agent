@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
@@ -32,7 +33,9 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected abstract TStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration);
 
     protected abstract string TestTableName { get; }
+    protected abstract string TestOrdersTableName { get; }
     protected abstract string TestSchemaName { get; }
+    protected virtual string TestOrdersUserIdColumn => "user_id";
 
     [Fact]
     public virtual async Task GetTablesAsync_ShouldReturnTables()
@@ -58,8 +61,12 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnValidJson()
     {
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            limit: 1,
+        var json = await Strategy.ExecuteQueryAsync(new QueryDefinition
+            {
+                TableName = TestTableName,
+                Limit = 1
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -70,15 +77,26 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldTriggerHint_WhenTableNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "NON_EXISTENT_TABLE_HS", cancellationToken: TestContext.Current.CancellationToken));
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "NON_EXISTENT_TABLE_HS"
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains($"code={TableNotFoundErrorCode}", ex.Message);
     }
 
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldTriggerHint_WhenColumnNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            selectColumns: [new SelectCondition { Field = $"{TestTableName}.NON_EXISTENT_COL_HS" }],
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns = [new FieldSelectCondition { FieldName = $"{TestTableName}.NON_EXISTENT_COL_HS" }]
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains($"code={ColumnNotFoundErrorCode}", ex.Message);
     }
@@ -92,7 +110,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var tokenStart = dryRun.IndexOf("TokenRequired=");
         if (tokenStart == -1)
         {
-            Assert.Contains("Success", dryRun); // Maybe it didn't require a token?
+            Assert.Contains("Success", dryRun);
             return;
         }
 
@@ -102,6 +120,482 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
         var final = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
         Assert.Contains("Success", final);
+
+        // Cleanup: delete the inserted record to avoid polluting shared fixture DB
+        await CleanupInsertedDmlRecord(dml);
+    }
+
+    private async Task CleanupInsertedDmlRecord(DmlDefinition dml)
+    {
+        if (dml.Operation != DmlOperation.Insert || dml.Values == null || dml.Values.Count == 0)
+            return;
+
+        var nameValue = dml.Values.FirstOrDefault(v =>
+            string.Equals(v.FieldName, "Name", StringComparison.OrdinalIgnoreCase));
+        if (nameValue == null)
+            return;
+
+        var deleteDml = new DmlDefinition
+        {
+            Operation = DmlOperation.Delete,
+            TableName = dml.TableName,
+            WhereConditions =
+            [
+                new BasicWhereCondition
+                {
+                    FieldName = nameValue.FieldName,
+                    Operator = "=",
+                    Value = nameValue.Value
+                }
+            ]
+        };
+
+        var deleteDryRun = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, deleteDml, TestContext.Current.CancellationToken);
+        var deleteTokenStart = deleteDryRun.IndexOf("TokenRequired=");
+        if (deleteTokenStart == -1)
+            return;
+
+        var deleteStart = deleteTokenStart + 14;
+        var deleteEnd = deleteDryRun.IndexOf(" |", deleteStart);
+        deleteDml.ConfirmToken = deleteDryRun[deleteStart..deleteEnd];
+        await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, deleteDml, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportFullQueryDefinitionStructure()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                CteConditions =
+                [
+                    new CteCondition
+                    {
+                        CteAliasName = "active_users",
+                        Query = new QueryDefinition
+                        {
+                            TableName = TestTableName,
+                            SelectColumns =
+                            [
+                                new FieldSelectCondition { FieldName = "id" }
+                            ],
+                            WhereColumnsAndValues =
+                            [
+                                new BasicWhereCondition { FieldName = "age", Operator = ">", Value = 0 }
+                            ]
+                        }
+                    }
+                ],
+                Alias = "u",
+                FromQuery = new QueryDefinition
+                {
+                    TableName = TestTableName,
+                    WhereColumnsAndValues =
+                    [
+                        new BasicWhereCondition { FieldName = "age", Operator = ">", Value = 0 }
+                    ]
+                },
+                Distinct = true,
+                Joins =
+                [
+                    new JoinCondition
+                    {
+                        Table = TestOrdersTableName,
+                        Alias = "o",
+                        Type = JoinType.Left,
+                        OnConditions =
+                        [
+                            new ColumnCompareWhereCondition
+                            {
+                                LeftFieldName = "u.id",
+                                Operator = "=",
+                                RightFieldName = $"o.{TestOrdersUserIdColumn}"
+                            }
+                        ]
+                    }
+                ],
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "u.id", Alias = "user_id" },
+                    new FieldSelectCondition { FieldName = "u.name", Alias = "username" },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "COUNT",
+                        Arguments = [new FieldFunctionArgument { FieldName = "o.id" }],
+                        Alias = "order_count"
+                    },
+                    new OperationSelectCondition
+                    {
+                        Left = new FieldArithmeticCondition { FieldName = "u.age" },
+                        Operator = ArithmeticOperator.Add,
+                        Right = new ConstantArithmeticCondition { Constant = 0 },
+                        Alias = "age_check"
+                    },
+                    new ConstantSelectCondition { Constant = "active_user", Alias = "user_type" },
+                    new CaseWhenSelectCondition
+                    {
+                        CaseWhen =
+                        [
+                            new CaseWhenClause
+                            {
+                                Condition = new BasicWhereCondition
+                                {
+                                    FieldName = "u.age",
+                                    Operator = ">",
+                                    Value = 30
+                                },
+                                Value = "senior"
+                            }
+                        ],
+                        ElseValue = "junior",
+                        Alias = "age_group"
+                    }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new GroupWhereCondition
+                    {
+                        Groups =
+                        [
+                            new BasicWhereCondition { FieldName = "o.amount", Operator = ">", Value = 0 },
+                            new BasicWhereCondition { FieldName = "o.id", Operator = "isnull", Value = null, IsOr = true }
+                        ]
+                    }
+                ],
+                GroupByConditions =
+                [
+                    new FieldGroupByCondition { FieldName = "u.id" },
+                    new FieldGroupByCondition { FieldName = "u.name" },
+                    new FieldGroupByCondition { FieldName = "u.age" }
+                ],
+                HavingConditions =
+                [
+                    new FunctionHavingCondition
+                    {
+                        LeftFunction = new SqlFunctionCondition
+                        {
+                            FunctionName = "COUNT",
+                            Arguments = [new FieldFunctionArgument { FieldName = "o.id" }]
+                        },
+                        Operator = ">=",
+                        Value = 0
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "order_count", Direction = SortDirection.Desc }
+                ],
+                Limit = 5
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        Assert.True(rows.Count <= 5, $"Expected ≤5 rows, got {rows.Count}");
+
+        foreach (var row in rows)
+        {
+            Assert.True(row.TryGetProperty("user_id", out _));
+            Assert.True(row.TryGetProperty("username", out _));
+            Assert.True(row.TryGetProperty("order_count", out _));
+            Assert.True(row.TryGetProperty("age_check", out _));
+            Assert.True(row.TryGetProperty("user_type", out _));
+            Assert.True(row.TryGetProperty("age_group", out _));
+        }
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportSubQueryWhereCondition()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new SubQueryWhereCondition
+                    {
+                        FieldName = "id",
+                        Operator = "IN",
+                        SubQuery = new QueryDefinition
+                        {
+                            TableName = TestOrdersTableName,
+                            SelectColumns =
+                            [
+                                new FieldSelectCondition { FieldName = TestOrdersUserIdColumn }
+                            ],
+                            WhereColumnsAndValues =
+                            [
+                                new BasicWhereCondition { FieldName = "amount", Operator = ">", Value = 100 }
+                            ]
+                        }
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        // Users with orders > 100: Alice (userId=1 has orders 150, 200)
+        // Bob's order is 50, Charlie has no orders
+        Assert.Single(rows);
+        Assert.Equal("Alice", rows[0].GetProperty("uname").GetString());
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportWhereNotIsOrIsNot()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new BasicWhereCondition { FieldName = "name", Operator = "=", Value = "Alice" },
+                    new BasicWhereCondition { FieldName = "name", Operator = "=", Value = "Bob", IsOr = true },
+                    new BasicWhereCondition { FieldName = "name", Operator = "LIKE", Value = "C%", IsNot = true }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        // WHERE (name = 'Alice' OR name = 'Bob') AND NOT name LIKE 'C%'
+        // Alice: matches 'Alice' ✓ → included
+        // Bob: matches 'Bob' ✓ → included
+        // Charlie: doesn't match 'Alice' or 'Bob' → excluded (even though NOT LIKE 'C%' would be true)
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("Alice", rows[0].GetProperty("uname").GetString());
+        Assert.Equal("Bob", rows[1].GetProperty("uname").GetString());
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportSubQuerySelectCondition()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                Alias = "u",
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "u.name", Alias = "uname" },
+                    new SubQuerySelectCondition
+                    {
+                        TableName = TestOrdersTableName,
+                        SelectColumns =
+                        [
+                            new FunctionSelectCondition
+                            {
+                                FunctionName = "COUNT",
+                                Arguments = [new FieldFunctionArgument { FieldName = "id" }]
+                            }
+                        ],
+                        WhereColumnsAndValues =
+                        [
+                            new ColumnCompareWhereCondition
+                            {
+                                LeftFieldName = TestOrdersUserIdColumn,
+                                Operator = "=",
+                                RightFieldName = "u.id"
+                            }
+                        ],
+                        Alias = "order_count"
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "u.name", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        // Alice has 2 orders, Bob has 1, Charlie has 0
+        Assert.True(rows[0].TryGetProperty("order_count", out _));
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportOffsetWithoutLimit()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
+                ],
+                Offset = 1
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        // Skip 1: Bob (sorted: Alice, Bob, Charlie → skip Alice)
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("Bob", rows[0].GetProperty("uname").GetString());
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportExistsSubQueryWhereCondition()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new SubQueryWhereCondition
+                    {
+                        Operator = "EXISTS",
+                        SubQuery = new QueryDefinition
+                        {
+                            TableName = TestOrdersTableName,
+                            WhereColumnsAndValues =
+                            [
+                                new ColumnCompareWhereCondition
+                                {
+                                    LeftFieldName = TestOrdersUserIdColumn,
+                                    Operator = "=",
+                                    RightFieldName = $"{TestTableName}.id"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        // EXISTS: users who have at least one order → Alice (id=1) and Bob (id=2)
+        // Charlie (id=3) has no orders → excluded
+        Assert.Equal(2, rows.Count);
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportBetweenInHaving()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "name", Alias = "uname" },
+                    new FieldSelectCondition { FieldName = "age", Alias = "age" }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new BasicWhereCondition { FieldName = "age", Operator = "between", Value = new object[] { 25, 35 } }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        // age BETWEEN 25 AND 35 → Alice (30), Bob (25), Charlie (35)
+        Assert.Equal(3, rows.Count);
+    }
+
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportGroupHavingCondition()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestOrdersTableName,
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = TestOrdersUserIdColumn, Alias = "uid" },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "COUNT",
+                        Arguments = [new FieldFunctionArgument { FieldName = "id" }],
+                        Alias = "cnt"
+                    }
+                ],
+                GroupByConditions =
+                [
+                    new FieldGroupByCondition { FieldName = TestOrdersUserIdColumn }
+                ],
+                HavingConditions =
+                [
+                    new GroupHavingCondition
+                    {
+                        Groups =
+                        [
+                            new FunctionHavingCondition
+                            {
+                                LeftFunction = new SqlFunctionCondition
+                                {
+                                    FunctionName = "COUNT",
+                                    Arguments = [new FieldFunctionArgument { FieldName = "id" }]
+                                },
+                                Operator = ">=",
+                                Value = 1
+                            }
+                        ]
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "uid", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        // HAVING (COUNT(id) >= 1) → all order groups pass (each user has at least 1 order)
+        Assert.Equal(2, rows.Count);
     }
 
     protected abstract string TableNotFoundErrorCode { get; }

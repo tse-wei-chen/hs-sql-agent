@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
@@ -74,6 +75,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         => new(parser, configuration);
 
     protected override string TestTableName => "users";
+    protected override string TestOrdersTableName => "orders";
     protected override string TestSchemaName => "public";
 
     protected override string TableNotFoundErrorCode => "42P01";
@@ -98,12 +100,12 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
 
     protected override DmlDefinition CreateInsertDml() => new()
     {
-        Operation = "insert",
+        Operation = DmlOperation.Insert,
         TableName = TestTableName,
         Values = [
-            new NameValuePair { Name = "name", Value = "David" },
-            new NameValuePair { Name = "age", Value = 40 },
-            new NameValuePair { Name = "active", Value = true }
+            new NameValuePair { FieldName = "name", Value = "David" },
+            new NameValuePair { FieldName = "age", Value = 40 },
+            new NameValuePair { FieldName = "active", Value = true }
         ]
     };
 
@@ -128,33 +130,69 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger22P02Hint_WhenValueFormatIsInvalid()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            whereConditions: [new WhereCondition { Field = "created_date", Operator = "=", Value = "this-is-not-a-date" }],
-            cancellationToken: TestContext.Current.CancellationToken);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "created_date", Operator = "=", Value = "this-is-not-a-date" }]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.True(res.Contains("code=22P02") || res.Contains("code=42883"), $"Result was: {res}");
+        Assert.True(ex.Message.Contains("code=22P02") || ex.Message.Contains("code=42883"), $"Result was: {ex.Message}");
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger42883Hint_WhenOperatorOrTypeMismatch()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            whereConditions: [new WhereCondition { Field = "active", Operator = ">", Value = 1 }],
-            cancellationToken: TestContext.Current.CancellationToken);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns = [
+                    new OperationSelectCondition
+                    {
+                        Left = new FieldArithmeticCondition { FieldName = "name" },
+                        Operator = ArithmeticOperator.Subtract,
+                        Right = new ConstantArithmeticCondition { Constant = 1 }
+                    }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=42883", res);
-        Assert.Contains("Operator", res);
+        Assert.Contains("code=42883", ex.Message);
+        Assert.Contains("Operator", ex.Message);
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger42702Hint_WhenColumnIsAmbiguous()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            joins: [new JoinCondition { Table = "orders", First = "users.id", Second = "orders.user_id" }],
-            selectColumns: [new SelectCondition { Field = "id" }],
-            cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Contains("code=42702", res);
-        Assert.Contains("Ambiguous column", res);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                Joins = [
+                    new JoinCondition
+                    {
+                        Table = "orders",
+                        OnConditions =
+                        [
+                            new ColumnCompareWhereCondition
+                            {
+                                LeftFieldName = "users.id",
+                                Operator = "=",
+                                RightFieldName = "orders.user_id"
+                            }
+                        ]
+                    }
+                ],
+                SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Contains("code=42702", ex.Message);
+        Assert.Contains("Ambiguous column", ex.Message);
     }
 
     [Fact]
@@ -162,21 +200,23 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     {
         using var constantJson = JsonDocument.Parse("1");
 
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            selectColumns:
-            [
-                new SelectCondition
-                {
-                    Arithmetic = new SelectArithmeticCondition
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new OperationSelectCondition
                     {
-                        Left = new SelectArithmeticCondition { Constant = constantJson.RootElement.Clone() },
-                        Operator = "-",
-                        Right = new SelectArithmeticCondition { FieldName = "age" }
-                    },
-                    Alias = "delta"
-                }
-            ],
-            whereConditions: [new WhereCondition { Field = "name", Operator = "=", Value = "Alice" }],
+                        Left = new ConstantArithmeticCondition { Constant = constantJson.RootElement.Clone() },
+                        Operator = ArithmeticOperator.Subtract,
+                        Right = new FieldArithmeticCondition { FieldName = "age" },
+                        Alias = "delta"
+                    }
+                ],
+                WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "name", Operator = "=", Value = "Alice" }],
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
@@ -189,33 +229,32 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     [Fact]
     public async Task ExecuteQueryAsync_ShouldSupportNestedRoundFunctionWithConstantPrecision()
     {
-        var json = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, "orders",
-            selectColumns:
-            [
-                new SelectCondition
-                {
-                    Function = new SqlFunctionCondition
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FunctionSelectCondition
                     {
-                        Name = "ROUND",
+                        Alias = "avg_amount",
+                        FunctionName = "ROUND",
                         Arguments =
                         [
-                            new SqlFunctionArgument
+                            new NestedFunctionArgument
                             {
-                                Function = new SqlFunctionCondition
-                                {
-                                    Name = "AVG",
-                                    Arguments =
-                                    [
-                                        new SqlFunctionArgument { FieldName = "amount" }
-                                    ]
-                                }
+                                FunctionName = "AVG",
+                                Arguments =
+                                [
+                                    new FieldFunctionArgument { FieldName = "amount" }
+                                ]
                             },
-                            new SqlFunctionArgument { Constant = 2 }
+                            new ConstantFunctionArgument { Constant = 2 }
                         ]
-                    },
-                    Alias = "avg_amount"
-                }
-            ],
+                    }
+                ]
+            },
+            Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
