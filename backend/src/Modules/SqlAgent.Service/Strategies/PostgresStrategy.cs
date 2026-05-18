@@ -105,7 +105,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
             if (message.Contains("date", StringComparison.OrdinalIgnoreCase) &&
                 message.Contains("text", StringComparison.OrdinalIgnoreCase))
             {
-                return "Date vs Text type mismatch. Fix: Set 'IsDate': true in WhereCondition/HavingCondition, or ensure literals are in ISO format.";
+                return "Date vs Text type mismatch. Fix: Set 'IsDate': true in WhereCondition/HavingCondition, or ensure literals are in ISO format (e.g., '2024-01-01').";
             }
 
             if (message.Contains("in", StringComparison.OrdinalIgnoreCase))
@@ -113,32 +113,52 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
                 return "Operator mismatch for IN/NOT IN. Fix: Use the 'Values' list (for constants) or 'SubQuery' (for dynamic sets) instead of the 'Value' field.";
             }
 
-            return "Operator/type mismatch. Ensure 'Value' matches the field type. For calculations, use the 'Arithmetic' object instead of raw strings.";
+            return "Operator/type mismatch. Ensure 'Value' matches the field type. For calculations, use the 'Arithmetic' object instead of raw strings in 'Field'.";
         }
 
         if (string.Equals(code, "42703", StringComparison.OrdinalIgnoreCase))
         {
-            return "Column not recognized. Tips: 1. Ensure 'Field' name is correct. 2. For SQL functions or complex logic, use 'Aggregation', 'Arithmetic', or 'CaseWhen' instead of raw strings in 'Field'.";
+            return "Column not recognized. Tips: 1. Ensure 'Field' name is correct. 2. For SQL functions or complex logic, use 'FunctionSelectCondition', 'Arithmetic', or 'CaseWhen' instead of raw strings in 'Field'. 3. If using a CTE column, verify the CTE alias and column name.";
         }
 
         if (string.Equals(code, "42P01", StringComparison.OrdinalIgnoreCase))
         {
-            return "Table or CTE not found. Check 'TableName'. For CTEs, use the 'CteConditions' list and refer to them by their 'Name' (unqualified).";
+            return "Table or CTE not found. Check 'TableName'. For CTEs, use the 'CteConditions' list and refer to them by their alias (unqualified). For subqueries in FROM, ensure 'FromQuery' has a valid structure with an 'Alias'.";
         }
 
         if (string.Equals(code, "42702", StringComparison.OrdinalIgnoreCase))
         {
-            return "Ambiguous column. Fix: Use 'TableName.FieldName' in the 'Field' property to qualify which table the column belongs to.";
+            return "Ambiguous column. Fix: Use 'TableAlias.ColumnName' in the 'Field' property (and in Join 'OnConditions') to qualify which table the column belongs to.";
         }
 
         if (string.Equals(code, "22P02", StringComparison.OrdinalIgnoreCase))
         {
-            return "Invalid value format. Ensure the 'Value' (or 'Constant' in Arithmetic) matches the database column type (e.g., UUID, Integer, or Timestamp).";
+            return "Invalid value format. Ensure the 'Value' (or 'Constant' in Arithmetic) matches the database column type (e.g., UUID format, Integer, or Timestamp ISO string).";
         }
 
         if (string.Equals(code, "42601", StringComparison.OrdinalIgnoreCase))
         {
-            return "Syntax error. Check if 'SubQuery' is missing a 'TableName', or if 'Arithmetic' operators (+, -, *, /) are used correctly.";
+            return "Syntax error. Check if 'SubQuery' is missing a 'TableName', or if 'Arithmetic' operators (+, -, *, /) are used correctly. Verify 'CombineConditions' (UNION/INTERSECT) have matching column counts and types.";
+        }
+
+        if (string.Equals(code, "23505", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Unique violation. The insert/update would create a duplicate value in a column with a UNIQUE constraint. Check 'Values' for existing data.";
+        }
+
+        if (string.Equals(code, "23503", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Foreign key violation. The referenced record does not exist. Ensure related data is inserted first or check foreign key values.";
+        }
+
+        if (string.Equals(code, "22012", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Division by zero. Check 'Arithmetic' expressions for division where the divisor could be zero. Use NULLIF(denominator, 0) to guard against this.";
+        }
+
+        if (string.Equals(code, "42P17", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Recursive CTE issue. Ensure the CTE has a non-recursive base term (UNION ALL with a non-recursive branch).";
         }
 
         return base.BuildHint(code, message);

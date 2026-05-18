@@ -48,7 +48,8 @@ public class MySqlFixture : IDbFixture
             );
             INSERT INTO users (name, age, active, created_date) VALUES
             ('Alice', 30, true, '2023-01-01 10:00:00'),
-            ('Bob', 25, true, '2023-02-01 10:00:00');
+            ('Bob', 25, true, '2023-02-01 10:00:00'),
+            ('Charlie', 35, false, '2023-03-01 10:00:00');
 
             CREATE TABLE IF NOT EXISTS orders (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -143,7 +144,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             new QueryDefinition
             {
                 TableName = TestTableName,
-                SelectColumns = [new OperationSelectCondition { Left = new FieldArithmeticCondition { FieldName = "name" }, Operator = ArithmeticOperator.Add, Right = new ConstantArithmeticCondition { Constant = 1 } }]
+                WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "name", Operator = "ILIKE", Value = "test" }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));

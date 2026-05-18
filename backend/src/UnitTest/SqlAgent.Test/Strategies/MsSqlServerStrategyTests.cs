@@ -43,7 +43,8 @@ public class MsSqlFixture : IDbFixture
             );
             INSERT INTO Users (Name, Age, Active, CreatedDate) VALUES
             ('Alice', 30, 1, '2023-01-01'),
-            ('Bob', 25, 1, '2023-02-01');
+            ('Bob', 25, 1, '2023-02-01'),
+            ('Charlie', 35, 0, '2023-03-01');
 
             CREATE TABLE Orders (
                 Id INT IDENTITY(1,1) PRIMARY KEY,
@@ -128,7 +129,7 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=102", ex.Message);
-        Assert.Contains("Incorrect syntax near", ex.Message);
+        Assert.Contains("code=245", ex.Message);
+        Assert.Contains("Data type conversion error", ex.Message);
     }
 }

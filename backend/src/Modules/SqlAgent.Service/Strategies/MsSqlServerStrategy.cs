@@ -133,15 +133,39 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
     {
         if (string.Equals(code, "207", StringComparison.OrdinalIgnoreCase))
         {
-            return "Invalid column name. Check 'SelectColumns' or 'WhereConditions'.";
+            return "Invalid column name. Check 'SelectColumns' or 'WhereConditions'. For derived/calculated columns, use 'Arithmetic' or 'CaseWhen' instead of raw SQL in 'Field'. Use 'TableAlias.ColumnName' in joins to avoid ambiguity.";
         }
         if (string.Equals(code, "208", StringComparison.OrdinalIgnoreCase))
         {
-            return "Invalid object name. Check 'TableName'.";
+            return "Invalid object name (table/view not found). Check 'TableName' and schema prefix (e.g., 'dbo.TableName'). For CTEs, ensure 'CteConditions' is used with a valid subquery.";
         }
         if (string.Equals(code, "156", StringComparison.OrdinalIgnoreCase) || string.Equals(code, "102", StringComparison.OrdinalIgnoreCase))
         {
-            return "Incorrect syntax near keyword. Verify your conditions and arithmetic usage.";
+            return "Incorrect syntax near keyword. Verify your conditions and arithmetic usage. Check that 'SubQuery' has valid structure, 'CombineConditions' have matching columns, and 'Operator' values are valid.";
+        }
+        if (string.Equals(code, "515", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Cannot insert NULL into a NOT NULL column. Ensure all required fields in 'Values' are provided and non-null.";
+        }
+        if (string.Equals(code, "2627", StringComparison.OrdinalIgnoreCase) || string.Equals(code, "2601", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Unique constraint violation. The insert/update would create a duplicate value. Check your data for uniqueness conflicts.";
+        }
+        if (string.Equals(code, "547", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Foreign key constraint violation. The referenced record does not exist. Insert the referenced record first or correct the foreign key value.";
+        }
+        if (string.Equals(code, "245", StringComparison.OrdinalIgnoreCase) || string.Equals(code, "8114", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Data type conversion error. Ensure 'Value' types match the column types. For date comparisons, use 'IsDate': true in the condition.";
+        }
+        if (string.Equals(code, "1205", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Deadlock occurred. The query was chosen as a deadlock victim. Retry the operation.";
+        }
+        if (string.Equals(code, "8134", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Division by zero error. Check arithmetic expressions where divisor could be zero. Use NULLIF(denominator, 0) to guard against division by zero.";
         }
         return base.BuildHint(code, message);
     }
