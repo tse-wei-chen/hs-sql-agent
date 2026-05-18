@@ -19,6 +19,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.IdentityModel.Tokens;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
@@ -354,12 +355,23 @@ static McpServerTool[] GetToolsForType<[DynamicallyAccessedMembers(
     var methods = toolType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
         .Where(m => m.GetCustomAttributes(typeof(McpServerToolAttribute), false).Length != 0);
 
+    // Create mutable copy of MCP default options with AllowOutOfOrderMetadataProperties=true.
+    // This ensures polymorphic [JsonDerivedType] discriminators ("type" field) can appear
+    // at any position in the JSON, not only as the first property of each object.
+    var serializerOptions = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions)
+    {
+        AllowOutOfOrderMetadataProperties = true
+    };
+
     foreach (var method in methods)
     {
         var tool = McpServerTool.Create(method, (request) =>
         {
             return request.Services!.GetRequiredService<T>()!;
-        }, new McpServerToolCreateOptions());
+        }, new McpServerToolCreateOptions
+        {
+            SerializerOptions = serializerOptions
+        });
         tools.Add(tool);
     }
 

@@ -1,8 +1,10 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
+using ModelContextProtocol;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
@@ -19,7 +21,11 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
     private readonly IAuditService _auditService = auditService;
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
-    private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions _jsonOptions = new(McpJsonUtilities.DefaultOptions)
+    {
+        AllowOutOfOrderMetadataProperties = true,
+        PropertyNameCaseInsensitive = true
+    };
 
     public async Task<string> Execute(JsonElement arguments)
     {
@@ -80,21 +86,8 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                 }
 
                 result = await strategy.ExecuteQueryAsync(
-                    sqlConfig.ConnectionString,
-                    queryDef.TableName,
-                    queryDef.SelectColumns,
-                    queryDef.WhereColumnsAndValues,
-                    queryDef.OrderByColumns,
-                    queryDef.GroupByConditions,
-                    queryDef.HavingConditions,
-                    queryDef.CombineConditions,
-                    queryDef.CteConditions,
-                    queryDef.Limit,
-                    queryDef.Offset,
-                    queryDef.Joins,
-                    queryDef.FromQuery,
-                    queryDef.Alias,
-                    queryDef.Distinct
+                    queryDef,
+                    sqlConfig.ConnectionString
                 );
             }
             else if (isDml)

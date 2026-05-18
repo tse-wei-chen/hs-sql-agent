@@ -10,21 +10,8 @@ public interface ISqlStrategy
     string BuildConnectionString(BuildDbConnectionModelBase model);
     DbConnection CreateConnection(string connectionString);
     Task<string> ExecuteQueryAsync(
-        string? connectionString = null,
-        string? tableName = null,
-        List<SelectCondition>? selectColumns = null,
-        List<WhereCondition>? whereConditions = null,
-        List<OrderByCondition>? orderByColumns = null,
-        List<GroupByCondition>? groupByConditions = null,
-        List<HavingCondition>? havingConditions = null,
-        List<CombineCondition>? combineConditions = null,
-        List<CteCondition>? cteConditions = null,
-        int? limit = null,
-        int? offset = null,
-        List<JoinCondition>? joins = null,
-        QueryDefinition? fromQuery = null,
-        string? alias = null,
-        bool distinct = false,
+        QueryDefinition definition,
+        string? connectionString,
         CancellationToken cancellationToken = default
     );
     Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
