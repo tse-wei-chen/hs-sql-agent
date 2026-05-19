@@ -30,6 +30,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         2. FUNCTION ARGUMENTS: Every argument inside a function's 'arguments' list MUST explicitly declare its 'type' (e.g., ""type"": ""field"", ""type"": ""constant"", ""type"": ""arithmetic"", ""type"": ""function""). Never omit the type discriminator.
         3. STRICT TABLE ALIASES: If you define an 'alias' for the main table (TableName) or a joined table, you MUST use exactly that prefix (e.g., 'p.product_name') for ALL fieldNames referencing that table across Select, Where, OrderBy, and GroupBy. Do not mix unaliased and aliased names.
         4. COLUMN REUSE: If a column has an 'alias' defined in SelectColumns, you CANNOT reuse that alias string inside WhereColumnsAndValues. You must reference the original column or expression.
+        5. FROMQUERY SCOPE: When using 'FromQuery' (a subquery in FROM), the outer query's SelectColumns, WhereConditions, etc. can ONLY reference the subquery's output columns, NOT the inner tables or their aliases. For example, if the subquery produces columns 'customer_id' and 'order_count', the outer query must use 'customer_id' or 'order_count' — NOT 'o.order_id' (where 'o' is a join alias only inside the subquery).
 
         Supported SQL Capabilities: JOINs, WHERE filtering, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs (With clauses), Subqueries, and COMBINE (UNION/INTERSECT/EXCEPT).
     ")]

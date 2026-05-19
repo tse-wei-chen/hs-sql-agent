@@ -9,6 +9,7 @@ namespace SqlAgent.Service.Models;
 [JsonDerivedType(typeof(ConstantFunctionArgument), "constant")]
 [JsonDerivedType(typeof(NestedFunctionArgument), "function")]
 [JsonDerivedType(typeof(ArithmeticFunctionArgument), "operation")]
+[JsonDerivedType(typeof(CaseWhenFunctionArgument), "case_when")]
 public abstract class SqlFunctionArgument { }
 
 public class FieldFunctionArgument : SqlFunctionArgument
@@ -49,4 +50,13 @@ public class ArithmeticFunctionArgument : SqlFunctionArgument
 
     [Description("The right operand. Can be a field, constant, function, or another nested operation.")]
     public SelectArithmeticCondition Right { get; set; } = null!;
+}
+
+public class CaseWhenFunctionArgument : SqlFunctionArgument
+{
+    [Description("Cases for CASE WHEN expression.")]
+    public List<CaseWhenClause> CaseWhen { get; set; } = [];
+
+    [Description("The default value for ELSE in a CASE expression (Optional).")]
+    public object? ElseValue { get; set; }
 }

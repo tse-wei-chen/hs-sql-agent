@@ -117,6 +117,9 @@ public abstract partial class BaseSqlStrategy(
         if (definition.CteConditions?.Count > 0)
             query = ApplyCtes(query, definition.CteConditions);
 
+        if (definition.FromQuery != null)
+            ValidateOuterScopeAgainstSubquery(definition.FromQuery, definition);
+
         if (definition.Distinct)
             query = query.Distinct();
 
@@ -170,6 +173,179 @@ public abstract partial class BaseSqlStrategy(
         }
 
         return new Query(tableName);
+    }
+
+    private void ValidateOuterScopeAgainstSubquery(QueryDefinition subQuery, QueryDefinition outerDef)
+    {
+        if (outerDef.SelectColumns == null || outerDef.SelectColumns.Count == 0) return;
+        var subAlias = string.IsNullOrWhiteSpace(subQuery.Alias)
+            ? (string.IsNullOrWhiteSpace(outerDef.Alias) ? "_sub" : outerDef.Alias!)
+            : subQuery.Alias;
+
+        var innerAliases = CollectInnerJoinAliases(subQuery);
+
+        foreach (var col in outerDef.SelectColumns)
+        {
+            CheckOuterSelectColumn(subQuery, col, innerAliases, subAlias);
+        }
+    }
+
+    private HashSet<string> CollectInnerJoinAliases(QueryDefinition subQuery)
+    {
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(subQuery.Alias))
+        {
+            aliases.Add(subQuery.Alias);
+        }
+
+        if (subQuery.Joins == null) return aliases;
+        foreach (var j in subQuery.Joins)
+        {
+            if (!string.IsNullOrWhiteSpace(j.Alias))
+                aliases.Add(j.Alias);
+
+            if (j.SubQuery?.Joins != null)
+            {
+                foreach (var sj in j.SubQuery.Joins)
+                {
+                    if (!string.IsNullOrWhiteSpace(sj.Alias))
+                        aliases.Add(sj.Alias);
+                }
+            }
+        }
+        return aliases;
+    }
+
+    private void CheckOuterSelectColumn(QueryDefinition subQuery, SelectCondition col, HashSet<string> innerAliases, string subAlias)
+    {
+        switch (col)
+        {
+            case FieldSelectCondition f:
+                CheckFieldNameLeak(f.FieldName, "outer SELECT", innerAliases, subAlias);
+                break;
+
+            case FunctionSelectCondition fn when fn.Arguments != null:
+                foreach (var arg in fn.Arguments)
+                    CheckFunctionArgLeak(arg, innerAliases, subAlias);
+                break;
+
+            case OperationSelectCondition op:
+                CheckArithmeticLeak(op.Left, innerAliases, subAlias);
+                CheckArithmeticLeak(op.Right, innerAliases, subAlias);
+                break;
+
+            case CaseWhenSelectCondition cw when cw.CaseWhen != null:
+                foreach (var clause in cw.CaseWhen)
+                    CheckWhereLeak(clause.Condition, innerAliases, subAlias);
+                break;
+        }
+    }
+
+    private void CheckFieldNameLeak(string? fieldName, string context, HashSet<string> innerAliases, string subAlias)
+    {
+        if (string.IsNullOrWhiteSpace(fieldName)) return;
+
+        var trimmed = fieldName.AsSpan().Trim();
+        if (trimmed.Equals("*", StringComparison.OrdinalIgnoreCase)) return;
+
+        int firstDot = trimmed.IndexOf('.');
+        if (firstDot == -1) return;
+
+        int lastDot = trimmed.LastIndexOf('.');
+        if (firstDot != lastDot) return;
+
+        var prefix = trimmed.Slice(0, firstDot);
+        var columnName = trimmed.Slice(firstDot + 1);
+
+        if (prefix.Equals(subAlias.AsSpan(), StringComparison.OrdinalIgnoreCase)) return;
+        string prefixStr = prefix.ToString();
+        if (innerAliases.Contains(prefixStr))
+        {
+            throw new InvalidOperationException(
+                $"Field '{fieldName.Trim()}' in {context} references table alias '{prefixStr}', " +
+                $"which is defined only inside a subquery (FromQuery). " +
+                $"The outer query can only see the subquery's output columns, " +
+                $"not its internal tables. Use '{subAlias}.{columnName.ToString()}' instead " +
+                $"or reference the column via its alias from the subquery.");
+        }
+    }
+
+    private void CheckFunctionArgLeak(SqlFunctionArgument arg, HashSet<string> innerAliases, string subAlias)
+    {
+        switch (arg)
+        {
+            case FieldFunctionArgument f:
+                CheckFieldNameLeak(f.FieldName, "outer SELECT function argument", innerAliases, subAlias);
+                break;
+
+            case NestedFunctionArgument n when n.Arguments != null:
+                foreach (var a in n.Arguments)
+                    CheckFunctionArgLeak(a, innerAliases, subAlias);
+                break;
+
+            case ArithmeticFunctionArgument a:
+                CheckArithmeticLeak(a.Left, innerAliases, subAlias);
+                CheckArithmeticLeak(a.Right, innerAliases, subAlias);
+                break;
+
+            case CaseWhenFunctionArgument cw when cw.CaseWhen != null:
+                foreach (var clause in cw.CaseWhen)
+                    CheckWhereLeak(clause.Condition, innerAliases, subAlias);
+                break;
+        }
+    }
+
+    private void CheckArithmeticLeak(SelectArithmeticCondition? cond, HashSet<string> innerAliases, string subAlias)
+    {
+        switch (cond)
+        {
+            case FieldArithmeticCondition f:
+                CheckFieldNameLeak(f.FieldName, "outer SELECT arithmetic", innerAliases, subAlias);
+                break;
+
+            case FunctionArithmeticCondition fn when fn.Arguments != null:
+                foreach (var arg in fn.Arguments)
+                    CheckFunctionArgLeak(arg, innerAliases, subAlias);
+                break;
+
+            case OperationArithmeticCondition op:
+                CheckArithmeticLeak(op.Left, innerAliases, subAlias);
+                CheckArithmeticLeak(op.Right, innerAliases, subAlias);
+                break;
+
+            case CaseWhenArithmeticCondition cw when cw.CaseWhen != null:
+                foreach (var clause in cw.CaseWhen)
+                    CheckWhereLeak(clause.Condition, innerAliases, subAlias);
+                break;
+        }
+    }
+
+    private void CheckWhereLeak(WhereCondition? w, HashSet<string> innerAliases, string subAlias)
+    {
+        switch (w)
+        {
+            case BasicWhereCondition b:
+                CheckFieldNameLeak(b.FieldName, "outer WHERE", innerAliases, subAlias);
+                break;
+
+            case SubQueryWhereCondition sq when sq.SubQuery != null:
+                if (sq.SubQuery.SelectColumns != null)
+                {
+                    foreach (var c in sq.SubQuery.SelectColumns)
+                        CheckOuterSelectColumn(sq.SubQuery, c, innerAliases, subAlias);
+                }
+                if (sq.SubQuery.WhereColumnsAndValues != null)
+                {
+                    foreach (var wc in sq.SubQuery.WhereColumnsAndValues)
+                        CheckWhereLeak(wc, innerAliases, subAlias);
+                }
+                break;
+
+            case GroupWhereCondition g when g.Groups != null:
+                foreach (var gg in g.Groups)
+                    CheckWhereLeak(gg, innerAliases, subAlias);
+                break;
+        }
     }
 
     private Query ApplyCtes(Query query, List<CteCondition> ctes)
@@ -247,7 +423,7 @@ public abstract partial class BaseSqlStrategy(
                 CaseWhenSelectCondition caseWhenCol => MapCaseWhen(caseWhenCol.CaseWhen, caseWhenCol.ElseValue),
                 SubQuerySelectCondition subQueryCol => MapSubQueryColumn(subQueryCol),
                 FieldSelectCondition fieldCol when !string.IsNullOrWhiteSpace(fieldCol.FieldName)
-                    => new Column { Name = fieldCol.FieldName.Trim() },
+                    => ValidateFieldColumn(fieldCol.FieldName.Trim()),
                 _ => null
             };
 
@@ -261,6 +437,16 @@ public abstract partial class BaseSqlStrategy(
         }
 
         return query;
+    }
+
+    private static Column ValidateFieldColumn(string fieldName)
+    {
+        if (fieldName.Contains('(') || fieldName.Contains(')'))
+            throw new InvalidOperationException(
+                $"Field name '{fieldName}' contains parentheses. " +
+                "type: 'field' only allows pure column references. " +
+                "Use type: 'function' for SQL functions like COUNT, SUM, AVG.");
+        return new Column { Name = fieldName };
     }
 
     private QueryColumn MapSubQueryColumn(SubQuerySelectCondition sq)
@@ -485,6 +671,7 @@ public abstract partial class BaseSqlStrategy(
             }),
             NestedFunctionArgument nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions)),
             ConstantFunctionArgument constantArg => MapConstantValue(constantArg.Constant),
+            CaseWhenFunctionArgument caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
             FieldFunctionArgument fieldArg when !string.IsNullOrWhiteSpace(fieldArg.FieldName)
                 => new Column { Name = fieldArg.FieldName.Trim() },
             _ => throw new InvalidOperationException(
@@ -961,6 +1148,9 @@ public abstract partial class BaseSqlStrategy(
             ArithmeticFunctionArgument a when a.Left != null => BuildHavingArithPart(
                 new OperationArithmeticCondition { Left = a.Left, Operator = a.Operator, Right = a.Right },
                 bindings),
+            CaseWhenFunctionArgument => throw new InvalidOperationException(
+                "CASE WHEN is not supported in HAVING clause function arguments. " +
+                "Use it in SELECT columns instead."),
             _ => "?"
         };
     }
