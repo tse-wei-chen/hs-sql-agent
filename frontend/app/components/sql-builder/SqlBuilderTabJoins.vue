@@ -8,21 +8,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2 } from "lucide-vue-next";
+import { Trash2, Plus } from "lucide-vue-next";
 import ComboboxInput from "@/components/ComboboxInput.vue";
 import SqlBuilderSection from "./SqlBuilderSection.vue";
+import type { JoinItem } from "@/composables/useSqlBuilder";
 
 const props = defineProps<{
-  joins: {
-    table: string;
-    alias: string;
-    type: string;
-    firstTable: string;
-    first: string;
-    operator: string;
-    secondTable: string;
-    second: string;
-  }[];
+  joins: JoinItem[];
   qualifiedTables: string[];
   nowValidTables: string[];
   mainColumnOptions: string[];
@@ -32,6 +24,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   add: [];
   remove: [index: number];
+  addOnCondition: [joinIndex: number];
+  removeOnCondition: [joinIndex: number, condIndex: number];
   fetchColumns: [index: number];
 }>();
 </script>
@@ -64,9 +58,11 @@ const emit = defineEmits<{
             ><SelectValue
           /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="INNER">INNER JOIN</SelectItem>
-            <SelectItem value="LEFT">LEFT JOIN</SelectItem>
-            <SelectItem value="RIGHT">RIGHT JOIN</SelectItem>
+            <SelectItem value="Inner">INNER JOIN</SelectItem>
+            <SelectItem value="Left">LEFT JOIN</SelectItem>
+            <SelectItem value="Right">RIGHT JOIN</SelectItem>
+            <SelectItem value="Full">FULL JOIN</SelectItem>
+            <SelectItem value="Cross">CROSS JOIN</SelectItem>
           </SelectContent>
         </Select>
         <ComboboxInput
@@ -79,7 +75,7 @@ const emit = defineEmits<{
         <Input
           v-model="j.alias"
           placeholder="Alias (optional)"
-          class="h-8 text-xs w-40"
+          class="h-8 text-xs w-32"
         />
         <Button
           variant="ghost"
@@ -89,37 +85,64 @@ const emit = defineEmits<{
           ><Trash2 class="size-4"
         /></Button>
       </div>
-      <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold px-2">ON</span>
-        <ComboboxInput
-          v-model="j.firstTable"
-          :options="nowValidTables"
-          placeholder="Source Table"
-          class="flex-1"
-        />
-        <ComboboxInput
-          v-model="j.first"
-          :options="getJoinColumnOptions(j.firstTable)"
-          placeholder="Source Field"
-          class="flex-1"
-        />
-        <Input
-          v-model="j.operator"
-          placeholder="="
-          class="h-8 text-xs w-16 text-center"
-        />
-        <ComboboxInput
-          v-model="j.secondTable"
-          :options="nowValidTables"
-          placeholder="Target Table"
-          class="flex-1"
-        />
-        <ComboboxInput
-          v-model="j.second"
-          :options="getJoinColumnOptions(j.secondTable)"
-          placeholder="Target Field)"
-          class="flex-1"
-        />
+
+      <div class="ml-2 pl-3 border-l-2 border-muted-foreground/20 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-muted-foreground">ON Conditions</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-6 text-xs gap-1"
+            @click="emit('addOnCondition', i)"
+          >
+            <Plus class="size-3" /> Add Condition
+          </Button>
+        </div>
+
+        <div
+          v-for="(oc, ci) in j.onConditions"
+          :key="ci"
+          class="flex items-center gap-2"
+        >
+          <span class="text-xs text-muted-foreground w-4">{{ ci === 0 ? '' : 'AND' }}</span>
+          <ComboboxInput
+            v-model="oc.leftTable"
+            :options="nowValidTables"
+            placeholder="Source Table"
+            class="flex-1"
+          />
+          <ComboboxInput
+            v-model="oc.leftField"
+            :options="getJoinColumnOptions(oc.leftTable)"
+            placeholder="Source Field"
+            class="flex-1"
+          />
+          <Input
+            v-model="oc.operator"
+            placeholder="="
+            class="h-8 text-xs w-16 text-center"
+          />
+          <ComboboxInput
+            v-model="oc.rightTable"
+            :options="nowValidTables"
+            placeholder="Target Table"
+            class="flex-1"
+          />
+          <ComboboxInput
+            v-model="oc.rightField"
+            :options="getJoinColumnOptions(oc.rightTable)"
+            placeholder="Target Field"
+            class="flex-1"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-8 w-8 text-destructive shrink-0"
+            @click="emit('removeOnCondition', i, ci)"
+            :disabled="j.onConditions.length <= 1"
+            ><Trash2 class="size-4"
+          /></Button>
+        </div>
       </div>
     </div>
   </SqlBuilderSection>

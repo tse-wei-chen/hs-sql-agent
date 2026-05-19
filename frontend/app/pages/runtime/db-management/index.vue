@@ -16,7 +16,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { CircleAlert, CircleCheck } from "lucide-vue-next";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
@@ -26,34 +37,56 @@ import {
   deleteDbManagement,
   type DbManagement,
 } from "@/api/db-management";
-import { Eye, EyeOff, Database, Trash2, Edit2, Save, Library } from "lucide-vue-next";
+import {
+  Eye,
+  EyeOff,
+  Database,
+  Trash2,
+  Edit2,
+  Save,
+  Library,
+} from "lucide-vue-next";
 import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 import PasswordInput from "@/components/PasswordInput.vue";
 import { testDbConnection } from "~/api/runtime";
+import FormField from "@/components/FormField.vue";
+import { useForm } from "vee-validate";
 
 definePageMeta({
   layout: "default",
 });
+
+interface DbFormValues {
+  name: string
+  sqlProvider: string
+  host: string
+  port: string
+  username: string
+  password: string
+  database: string
+  TrustServerCertificate: boolean
+  Encrypt: boolean
+}
+
+const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm } = useForm<DbFormValues>({
+  initialValues: {
+    name: "",
+    sqlProvider: "Mysql",
+    host: "",
+    port: "",
+    username: "",
+    password: "",
+    database: "",
+    TrustServerCertificate: false,
+    Encrypt: false,
+  },
+})
 
 const dbs = ref<DbManagement[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
 const testing = ref(false);
-// Form state
-const form = ref({
-  name: "",
-  sqlProvider: "Mysql",
-  host: "",
-  port: "",
-  username: "",
-  password: "",
-  database: "",
-  extraSettings: {
-    TrustServerCertificate: false,
-    Encrypt: false,
-  },
-});
 
 const connectionTestResult = ref<{
   success: boolean;
@@ -73,55 +106,43 @@ const load = async () => {
 };
 
 const resetForm = () => {
-  form.value = {
-    name: "",
-    sqlProvider: "Mysql",
-    host: "",
-    port: "",
-    username: "",
-    password: "",
-    database: "",
-    extraSettings: {
-      TrustServerCertificate: false,
-      Encrypt: false,
-    },
-  };
+  resetVeeForm()
   editingId.value = null;
 };
 
 const startEdit = (db: DbManagement) => {
   editingId.value = db.id;
-  form.value = {
+  const extraSettings = db.extraSettings ? JSON.parse(db.extraSettings) : {}
+  setValues({
     name: db.name,
     sqlProvider: db.sqlProvider || "Mysql",
     host: db.host || "",
     port: db.port || "",
     username: db.username || "",
-    password: "", // do not fill password on edit for security, let them supply new if changed
+    password: "",
     database: db.database || "",
-    extraSettings: db.extraSettings
-      ? JSON.parse(db.extraSettings)
-      : { TrustServerCertificate: false, Encrypt: false },
-  };
+    TrustServerCertificate: extraSettings.TrustServerCertificate ?? false,
+    Encrypt: extraSettings.Encrypt ?? false,
+  })
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
 const save = async () => {
-  if (!form.value.name || !form.value.sqlProvider) {
-    alert("Name and SQL Provider are required.");
-    return;
-  }
-
   saving.value = true;
   try {
+    const v = values
     const payload = {
-      ...form.value,
-      extraSettings: JSON.stringify(form.value.extraSettings),
+      name: v.name,
+      sqlProvider: v.sqlProvider,
+      host: v.host,
+      port: v.port,
+      username: v.username,
+      password: v.password,
+      database: v.database,
+      extraSettings: JSON.stringify({ TrustServerCertificate: v.TrustServerCertificate, Encrypt: v.Encrypt }),
     };
-    // Clean up empty strings just in case
 
     if (editingId.value) {
-      // If password is empty on edit, we usually don't update it in backend, assuming backend handles this gracefully
       await updateDbManagement(editingId.value, payload);
     } else {
       await createDbManagement(payload);
@@ -152,16 +173,17 @@ const test = async () => {
   try {
     testing.value = true;
     connectionTestResult.value = null;
+    const v = values
     const result = await testDbConnection({
       dbSettingMode: 1,
       dbManagementId: undefined,
-      sqlProvider: form.value.sqlProvider,
-      host: form.value.host,
-      port: form.value.port,
-      username: form.value.username,
-      password: form.value.password,
-      database: form.value.database,
-      extraSettings: JSON.stringify(form.value.extraSettings),
+      sqlProvider: v.sqlProvider,
+      host: v.host,
+      port: v.port,
+      username: v.username,
+      password: v.password,
+      database: v.database,
+      extraSettings: JSON.stringify({ TrustServerCertificate: v.TrustServerCertificate, Encrypt: v.Encrypt }),
     });
     connectionTestResult.value = {
       success: result.success,
@@ -193,148 +215,96 @@ onMounted(load);
         </CardDescription>
       </CardHeader>
       <CardContent class="pt-6">
-        <form class="space-y-6" @submit.prevent="save">
+        <VeeForm class="space-y-6" :onSubmit="save">
           <FieldGroup class="grid gap-4 md:grid-cols-2">
-            <Field class="md:col-span-2">
-              <FieldLabel for="name">Connection Name *</FieldLabel>
-              <Input
-                id="name"
-                v-model="form.name"
-                placeholder="e.g., Production DB"
-                required
-              />
-            </Field>
+            <FormField name="name" rules="required" label="Connection Name" class="md:col-span-2">
+              <template #default="{ field }">
+                <Input v-bind="field" id="name" placeholder="e.g., Production DB" />
+              </template>
+            </FormField>
 
-            <Field>
-              <FieldLabel for="sqlProvider">SQL Provider *</FieldLabel>
-              <Select v-model="form.sqlProvider">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Select provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem
-                    v-for="[key, value] of PROVIDER_OPTIONS"
-                    :key="key"
-                    :value="key"
+            <VeeField name="sqlProvider" rules="required" v-slot="{ field, errorMessage, meta: fieldMeta }">
+              <Field>
+                <FieldLabel for="sqlProvider">SQL Provider<RequiredStar /></FieldLabel>
+                <div class="relative">
+                  <Select v-bind="field">
+                    <SelectTrigger class="w-full">
+                      <SelectValue placeholder="Select provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem
+                        v-for="[key, value] of PROVIDER_OPTIONS"
+                        :key="key"
+                        :value="key"
+                      >
+                        {{ value }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <TooltipProvider v-if="errorMessage && fieldMeta.touched">
+                    <Tooltip>
+                      <TooltipTrigger as-child>
+                        <div class="absolute right-0 top-1/2 -translate-y-1/2 pr-3">
+                          <CircleAlert class="size-4 text-destructive" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" align="end">
+                        {{ errorMessage }}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <div
+                    v-else-if="fieldMeta.touched && fieldMeta.valid"
+                    class="absolute right-0 top-1/2 -translate-y-1/2 pr-3"
                   >
-                    {{ value }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
+                    <CircleCheck class="size-4 text-green-500" />
+                  </div>
+                </div>
+              </Field>
+            </VeeField>
 
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(form.sqlProvider)
-              "
-            >
-              <FieldLabel for="host">Host</FieldLabel>
-              <PasswordInput
-                id="host"
-                v-model="form.host"
-                placeholder="e.g., localhost or 192.168.1.100"
-              />
-            </Field>
+            <template v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(values.sqlProvider)">
+              <FormField name="host" label="Host">
+                <template #default="{ field }">
+                  <PasswordInput v-bind="field" id="host" placeholder="e.g., localhost or 192.168.1.100" />
+                </template>
+              </FormField>
 
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(form.sqlProvider)
-              "
-            >
-              <FieldLabel for="port">Port</FieldLabel>
-              <PasswordInput
-                id="port"
-                v-model="form.port"
-                placeholder="e.g., 3306"
-              />
-            </Field>
+              <FormField name="port" label="Port" rules="numeric">
+                <template #default="{ field }">
+                  <PasswordInput v-bind="field" id="port" placeholder="e.g., 3306" />
+                </template>
+              </FormField>
 
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(form.sqlProvider)
-              "
-            >
-              <FieldLabel for="username">Username</FieldLabel>
-              <PasswordInput
-                id="username"
-                v-model="form.username"
-                placeholder="Database user"
-              />
-            </Field>
+              <FormField name="username" label="Username">
+                <template #default="{ field }">
+                  <PasswordInput v-bind="field" id="username" placeholder="Database user" />
+                </template>
+              </FormField>
 
-            <Field
-              v-if="
-                [
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(form.sqlProvider)
-              "
-            >
-              <FieldLabel for="password">Password</FieldLabel>
-              <PasswordInput
-                id="password"
-                v-model="form.password"
-                placeholder="Database password"
-              />
-              <p
-                v-if="editingId"
-                class="text-[0.7rem] text-muted-foreground mt-1"
-              >
-                Leave blank to keep existing password intact.
-              </p>
-            </Field>
+              <FormField name="password" label="Password" :helpText="editingId ? 'Leave blank to keep existing password intact.' : undefined">
+                <template #default="{ field }">
+                  <PasswordInput v-bind="field" id="password" placeholder="Database password" />
+                </template>
+              </FormField>
+            </template>
 
-            <Field
-              v-if="
-                [
-                  'Sqlite',
-                  'Postgres',
-                  'MySQL',
-                  'MsSqlServer',
-                  'Oracle',
-                  'Firebird',
-                ].includes(form.sqlProvider)
-              "
-            >
-              <FieldLabel for="database">Database</FieldLabel>
-              <PasswordInput
-                id="database"
-                v-model="form.database"
-                placeholder="e.g., my_app_db"
-              />
-            </Field>
+            <FormField
+              v-if="['Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(values.sqlProvider)"
+              name="database" label="Database">
+              <template #default="{ field }">
+                <PasswordInput v-bind="field" id="database" placeholder="e.g., my_app_db" />
+              </template>
+            </FormField>
 
-            <Field
-              v-if="form.sqlProvider === 'MsSqlServer'"
-              class="md:col-span-2"
-            >
+            <Field v-if="values.sqlProvider === 'MsSqlServer'" class="md:col-span-2">
               <FieldLabel>Extra Settings</FieldLabel>
               <div class="flex flex-wrap gap-6 border rounded-md p-4">
                 <div class="flex items-center space-x-2">
                   <Checkbox
                     id="trustServerCertificate"
-                    v-model="form.extraSettings.TrustServerCertificate"
+                    :checked="values.TrustServerCertificate"
+                    @update:checked="(v: boolean) => setFieldValue('TrustServerCertificate', v)"
                   />
                   <Label
                     for="trustServerCertificate"
@@ -344,7 +314,11 @@ onMounted(load);
                   </Label>
                 </div>
                 <div class="flex items-center space-x-2">
-                  <Checkbox id="encrypt" v-model="form.extraSettings.Encrypt" />
+                  <Checkbox
+                    id="encrypt"
+                    :checked="values.Encrypt"
+                    @update:checked="(v: boolean) => setFieldValue('Encrypt', v)"
+                  />
                   <Label
                     for="encrypt"
                     class="text-sm font-medium leading-none cursor-pointer"
@@ -423,7 +397,7 @@ onMounted(load);
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            <Button type="submit" :disabled="saving">
+            <Button type="submit" :disabled="!meta.valid || saving">
               <Save v-if="!saving" class="size-4 mr-2" />
               {{
                 saving
@@ -434,7 +408,7 @@ onMounted(load);
               }}
             </Button>
           </div>
-        </form>
+        </VeeForm>
       </CardContent>
     </Card>
 

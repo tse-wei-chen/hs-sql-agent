@@ -2,14 +2,10 @@
 import type { HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Field as UIField,
-  FieldGroup,
-  FieldLabel,
-  FieldError,
-} from "@/components/ui/field";
+import { FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
+import FormField from "@/components/FormField.vue";
 import { checkFirstRun, signUp } from "~/api/admin";
 
 const props = defineProps<{
@@ -65,56 +61,25 @@ const submit = async (values: any) => {
         Please Sign up upon your first login.
       </p>
     </div>
-    <VeeForm v-slot="{ meta, errors, submitCount }" @submit="submit">
+    <VeeForm v-slot="{ meta }" :onSubmit="submit">
       <FieldGroup>
-        <VeeField name="email" rules="required|email" v-slot="{ field, errorMessage, meta: fieldMeta }">
-          <UIField class="relative">
-            <FieldLabel for="email"> Email </FieldLabel>
-            <Input
-              v-bind="field"
-              id="email"
-              type="email"
-              placeholder="Enter your email"
-            />
-            <div class="relative">
-              <FieldError v-if="errorMessage && (fieldMeta.touched || submitCount > 0)" class="text-destructive absolute">
-                {{ errorMessage }}
-              </FieldError>
-            </div>
-          </UIField>
-        </VeeField>
+        <FormField name="email" rules="required|email" label="Email" class="relative">
+          <template #default="{ field }">
+            <Input v-bind="field" id="email" type="email" placeholder="Enter your email" />
+          </template>
+        </FormField>
 
-        <VeeField name="password" rules="required|min:8" v-slot="{ field, errorMessage, meta: fieldMeta }">
-          <UIField class="relative">
-            <FieldLabel for="password"> Password </FieldLabel>
-            <PasswordInput
-              v-bind="field"
-              id="password"
-              placeholder="Min 8 characters"
-            />
-            <div class="relative">
-              <FieldError v-if="errorMessage && (fieldMeta.touched || submitCount > 0)" class="text-destructive absolute">
-                {{ errorMessage }}
-              </FieldError>
-            </div>
-          </UIField>
-        </VeeField>
+        <FormField name="password" rules="required|min:8" label="Password" class="relative">
+          <template #default="{ field }">
+            <PasswordInput v-bind="field" id="password" placeholder="Min 8 characters" />
+          </template>
+        </FormField>
 
-        <VeeField name="confirmPassword" rules="required|confirmed:@password" v-slot="{ field, errorMessage, meta: fieldMeta }">
-          <UIField class="relative">
-            <FieldLabel for="confirmPassword"> Confirm Password </FieldLabel>
-            <PasswordInput
-              v-bind="field"
-              id="confirmPassword"
-              placeholder="Repeat your password"
-            />
-            <div class="relative">
-              <FieldError v-if="errorMessage && (fieldMeta.touched || submitCount > 0)" class="text-destructive absolute">
-                {{ errorMessage }}
-              </FieldError>
-            </div>
-          </UIField>
-        </VeeField>
+        <FormField name="confirmPassword" rules="required|confirmed:@password" label="Confirm Password" class="relative">
+          <template #default="{ field }">
+            <PasswordInput v-bind="field" id="confirmPassword" placeholder="Repeat your password" />
+          </template>
+        </FormField>
 
         <UIField>
           <Button type="submit" :disabled="!meta.valid || submitting || checkingFirstRun">

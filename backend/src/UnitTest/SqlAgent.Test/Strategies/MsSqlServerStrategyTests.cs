@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
@@ -42,7 +43,19 @@ public class MsSqlFixture : IDbFixture
             );
             INSERT INTO Users (Name, Age, Active, CreatedDate) VALUES
             ('Alice', 30, 1, '2023-01-01'),
-            ('Bob', 25, 1, '2023-02-01');
+            ('Bob', 25, 1, '2023-02-01'),
+            ('Charlie', 35, 0, '2023-03-01');
+
+            CREATE TABLE Orders (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                UserId INT,
+                Amount DECIMAL(10,2),
+                OrderDate DATE
+            );
+            INSERT INTO Orders (UserId, Amount, OrderDate) VALUES
+            (1, 150.0, '2023-01-10'),
+            (1, 200.0, '2023-02-15'),
+            (2, 50.0, '2023-03-20');
         ";
         await cmd.ExecuteNonQueryAsync();
     }
@@ -57,7 +70,9 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
         => new(parser, configuration);
 
     protected override string TestTableName => "Users";
+    protected override string TestOrdersTableName => "Orders";
     protected override string TestSchemaName => "dbo";
+    protected override string TestOrdersUserIdColumn => "UserId";
 
     protected override string TableNotFoundErrorCode => "208";
     protected override string ColumnNotFoundErrorCode => "207";
@@ -73,12 +88,12 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
 
     protected override DmlDefinition CreateInsertDml() => new()
     {
-        Operation = "insert",
+        Operation = DmlOperation.Insert,
         TableName = TestTableName,
         Values = [
-            new NameValuePair { Name = "Name", Value = "David" },
-            new NameValuePair { Name = "Age", Value = 40 },
-            new NameValuePair { Name = "Active", Value = true }
+            new NameValuePair { FieldName = "Name", Value = "David" },
+            new NameValuePair { FieldName = "Age", Value = 40 },
+            new NameValuePair { FieldName = "Active", Value = true }
         ]
     };
 
@@ -105,11 +120,16 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger102Hint_WhenSyntaxIsInvalid()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            selectColumns: [new SelectCondition { Arithmetic = new SelectArithmeticCondition { FieldName = "Name", Operator = "!!!", Constant = 1 } }],
-            cancellationToken: TestContext.Current.CancellationToken);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns = [new OperationSelectCondition { Left = new FieldArithmeticCondition { FieldName = "Name" }, Operator = ArithmeticOperator.Subtract, Right = new ConstantArithmeticCondition { Constant = 1 } }]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=102", res);
-        Assert.Contains("Incorrect syntax near", res);
+        Assert.Contains("code=245", ex.Message);
+        Assert.Contains("Data type conversion error", ex.Message);
     }
 }

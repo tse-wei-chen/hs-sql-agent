@@ -6,7 +6,7 @@ import ComboboxInput from "@/components/ComboboxInput.vue";
 import SqlBuilderSection from "./SqlBuilderSection.vue";
 
 defineProps<{
-  insertValues: { name: string; value: string }[];
+  insertValues: { fieldName: string; value: string }[];
   options: string[];
   canAutofill: boolean;
 }>();
@@ -49,7 +49,7 @@ const emit = defineEmits<{
       class="flex items-center gap-2"
     >
       <ComboboxInput
-        v-model="v.name"
+        v-model="v.fieldName"
         :options="options"
         placeholder="Column Name"
         class="flex-1"
@@ -62,7 +62,7 @@ const emit = defineEmits<{
       <Button
         variant="ghost"
         size="icon"
-        class="h-8 w-8 text-destructive"
+        class="h-8 w-8 text-destructive shrink-0"
         @click="emit('remove', i)"
         ><Trash2 class="size-4"
       /></Button>

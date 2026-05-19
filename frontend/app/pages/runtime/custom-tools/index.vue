@@ -19,6 +19,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { CircleAlert, CircleCheck } from "lucide-vue-next";
+import {
   listCustomSqlTools,
   createCustomSqlTool,
   updateCustomSqlTool,
@@ -27,32 +34,42 @@ import {
 } from "@/api/custom-tools";
 import {
   listDbManagements,
-  getSchemas,
-  getTables,
-  getColumns,
   type DbManagement,
 } from "@/api/db-management";
 import { Plus, Trash2, Edit2, Save, X, Wand2 } from "lucide-vue-next";
 import { json } from "@codemirror/lang-json";
-import { oneDark } from '@codemirror/theme-one-dark';
+import { oneDark } from "@codemirror/theme-one-dark";
+import FormField from "@/components/FormField.vue";
+import { useForm } from "vee-validate";
+
 definePageMeta({
   layout: "default",
 });
+
+interface ToolFormValues {
+  name: string
+  description: string
+  type: 'Query' | 'DML'
+  definitionJson: string
+}
+
+const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm } = useForm<ToolFormValues>({
+  initialValues: {
+    name: "",
+    description: "",
+    type: "Query",
+    definitionJson: "",
+  },
+})
+
 const tools = ref<CustomSqlTool[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
-const colorMode = useColorMode()
-// Form state
-const form = ref({
-  name: "",
-  description: "",
-  type: "Query" as "Query" | "DML",
-  definitionJson: "",
-  parameters: [] as { name: string; type: string; description: string }[],
-});
+const colorMode = useColorMode();
+const parameters = ref<{ name: string; type: string; description: string }[]>([]);
+const isAdvancedBuilderOpen = ref(false);
 
-// Assistant State
 const dbs = ref<DbManagement[]>([]);
 
 const loadDbs = async () => {
@@ -63,18 +80,15 @@ const loadDbs = async () => {
   }
 };
 
-const isAdvancedBuilderOpen = ref(false);
-
 const onAdvancedBuilderApply = (json: string) => {
-  form.value.definitionJson = json;
-  // Trigger format
+  setFieldValue("definitionJson", json);
   formatJson();
 };
 
 const isJsonValid = computed(() => {
-  if (!form.value.definitionJson) return true;
+  if (!values.definitionJson) return true;
   try {
-    JSON.parse(form.value.definitionJson);
+    JSON.parse(values.definitionJson);
     return true;
   } catch {
     return false;
@@ -82,11 +96,11 @@ const isJsonValid = computed(() => {
 });
 
 const formatJson = () => {
-  if (isJsonValid.value && form.value.definitionJson) {
+  if (isJsonValid.value && values.definitionJson) {
     try {
-      const parsed = JSON.parse(form.value.definitionJson);
-      form.value.definitionJson = JSON.stringify(parsed, null, 2);
-    } catch { }
+      const parsed = JSON.parse(values.definitionJson);
+      setFieldValue("definitionJson", JSON.stringify(parsed, null, 2));
+    } catch {}
   }
 };
 
@@ -100,60 +114,46 @@ const load = async () => {
 };
 
 const resetForm = () => {
-  form.value = {
-    name: "",
-    description: "",
-    type: "Query",
-    definitionJson: "",
-    parameters: [],
-  };
+  resetVeeForm()
+  parameters.value = []
   editingId.value = null;
 };
 
 const addParameter = () => {
-  form.value.parameters.push({ name: "", type: "string", description: "" });
+  parameters.value.push({ name: "", type: "string", description: "" });
 };
 
 const removeParameter = (index: number) => {
-  form.value.parameters.splice(index, 1);
+  parameters.value.splice(index, 1);
 };
 
 const startEdit = (tool: CustomSqlTool) => {
   editingId.value = tool.id;
-  form.value = {
+  setValues({
     name: tool.name,
     description: tool.description,
     type: tool.type,
     definitionJson: tool.definitionJson,
-    parameters: tool.parametersJson ? JSON.parse(tool.parametersJson) : [],
-  };
-  // Scroll to form or show dialog (in this case, we'll just show the form at top)
+  })
+  parameters.value = tool.parametersJson ? JSON.parse(tool.parametersJson) : [];
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
 const save = async () => {
-  if (
-    !form.value.name ||
-    !form.value.description ||
-    !form.value.definitionJson
-  ) {
-    alert("Please fill in all required fields.");
-    return;
-  }
-
-  // Validate JSON
-  try {
-    JSON.parse(form.value.definitionJson);
-  } catch (e) {
-    alert("Invalid JSON in Definition.");
+  if (parameters.value.some((p) => !p.name.trim())) {
+    alert("All parameters must have a name.");
     return;
   }
 
   saving.value = true;
   try {
+    const v = values
     const payload = {
-      ...form.value,
-      parametersJson: JSON.stringify(form.value.parameters),
+      name: v.name,
+      description: v.description,
+      type: v.type,
+      definitionJson: v.definitionJson,
+      parametersJson: JSON.stringify(parameters.value),
     };
 
     if (editingId.value) {
@@ -186,11 +186,11 @@ const remove = async (id: number) => {
 };
 
 watch(
-  () => form.value.type,
+  () => values.type,
   (newVal, oldVal) => {
     if (newVal !== oldVal) {
-      form.value.definitionJson = "";
-      form.value.parameters = [];
+      setFieldValue("definitionJson", "");
+      parameters.value = [];
       isAdvancedBuilderOpen.value = false;
     }
   },
@@ -206,7 +206,7 @@ onMounted(async () => {
   <div class="space-y-6">
     <!-- Tool Editor -->
     <Card>
-      <CardHeader class="border-b ">
+      <CardHeader class="border-b">
         <CardTitle>{{
           editingId ? "Edit Custom Tool" : "Create Custom Tool"
         }}</CardTitle>
@@ -215,19 +215,17 @@ onMounted(async () => {
         </CardDescription>
       </CardHeader>
       <CardContent class="pt-6">
-        <form class="space-y-6" @submit.prevent="save">
+        <VeeForm class="space-y-6" :onSubmit="save">
           <FieldGroup class="grid gap-4 md:grid-cols-2">
-            <Field>
-              <FieldLabel for="name">Tool Name</FieldLabel>
-              <Input id="name" v-model="form.name" placeholder="e.g., get_vip_customers" />
-              <p class="text-[0.7rem] text-muted-foreground mt-1">
-                Snake case recommended. This is how the LLM will see it.
-              </p>
-            </Field>
+            <FormField name="name" rules="required" label="Tool Name" helpText="Snake case recommended. This is how the LLM will see it.">
+              <template #default="{ field }">
+                <Input v-bind="field" id="name" placeholder="e.g., get_vip_customers" />
+              </template>
+            </FormField>
 
             <Field>
               <FieldLabel for="type">Operation Type</FieldLabel>
-              <Select v-model="form.type">
+              <Select :modelValue="values.type" @update:modelValue="(v: unknown) => setFieldValue('type', (v ?? 'Query') as 'Query' | 'DML')">
                 <SelectTrigger id="type">
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
@@ -238,49 +236,66 @@ onMounted(async () => {
               </Select>
             </Field>
 
-            <Field class="md:col-span-2">
-              <FieldLabel for="description">Description (for LLM)</FieldLabel>
-              <Textarea id="description" v-model="form.description"
-                placeholder="Describe what this tool does and when to use it..." />
-            </Field>
+            <FormField name="description" rules="required" label="Description (for LLM)" class="md:col-span-2">
+              <template #default="{ field }">
+                <Textarea v-bind="field" id="description"
+                  placeholder="Describe what this tool does and when to use it..." />
+              </template>
+            </FormField>
 
-            <Field class="md:col-span-2">
-              <div class="flex items-center justify-between mb-2">
-                <FieldLabel for="definition" class="mb-0">SQL Definition (JSON)</FieldLabel>
-                <div class="flex items-center gap-2">
-                  <Button v-if="form.type === 'Query'" variant="default" size="sm"
-                    class="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
-                    @click="isAdvancedBuilderOpen = true" type="button">
-                    <Wand2 class="size-3 mr-1" /> Open Advanced Builder
-                  </Button>
-                  <Button variant="outline" size="sm" class="h-7 text-[0.65rem] px-2" @click="formatJson" type="button"
-                    :disabled="!isJsonValid || !form.definitionJson">
-                    Format JSON
-                  </Button>
+            <VeeField name="definitionJson" rules="required|json" v-slot="{ field, handleChange, errorMessage, meta: fieldMeta }">
+              <Field class="md:col-span-2">
+                <div class="flex items-center justify-between mb-2">
+                  <FieldLabel for="definition" class="mb-0">SQL Definition (JSON)</FieldLabel>
+                  <div class="flex items-center gap-2">
+                    <Button v-if="values.type === 'Query'" variant="default" size="sm"
+                      class="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
+                      @click="isAdvancedBuilderOpen = true" type="button">
+                      <Wand2 class="size-3 mr-1" /> Open Advanced Builder
+                    </Button>
+                    <Button variant="outline" size="sm" class="h-7 text-[0.65rem] px-2" @click="formatJson" type="button"
+                      :disabled="!isJsonValid || !values.definitionJson">
+                      Format JSON
+                    </Button>
+                  </div>
                 </div>
-              </div>
 
-              <div class="space-y-2">
-                <div
-                  class="border rounded-md overflow-hidden focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-shadow">
-                  <NuxtCodeMirror :key="colorMode.value" id="definition" :editable="true" :extensions="[json()]"
-                    :theme="colorMode.value === 'dark' ? oneDark : undefined" :basic-setup="true"
-                    :indent-with-tab="true" v-model="form.definitionJson" :style="{
-                      minHeight: '150px',
-                      maxHeight: '400px',
-                      overflowY: 'auto',
-                    }" placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }' />
+                <div class="space-y-2">
+                  <div
+                    class="border rounded-md overflow-hidden focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-shadow">
+                    <NuxtCodeMirror :key="colorMode.value" id="definition" :editable="true" :extensions="[json()]"
+                      :theme="colorMode.value === 'dark' ? oneDark : undefined" :basic-setup="true"
+                      :indent-with-tab="true" :modelValue="field.value" @update:modelValue="(v: string) => handleChange(v ?? '')"
+                      :style="{
+                        minHeight: '150px',
+                        maxHeight: '400px',
+                        overflowY: 'auto',
+                      }" placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }' />
+                  </div>
+                  <div class="flex justify-between items-start">
+                    <p class="text-[0.7rem] text-muted-foreground" v-pre>
+                      Use {{ parameterName }} as placeholders in values.
+                    </p>
+                    <TooltipProvider v-if="errorMessage && fieldMeta.touched">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span class="cursor-default">
+                            <CircleAlert class="size-4 text-destructive" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" align="end">
+                          {{ errorMessage }}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <CircleCheck
+                      v-else-if="fieldMeta.touched && fieldMeta.valid"
+                      class="size-4 text-green-500"
+                    />
+                  </div>
                 </div>
-                <div class="flex justify-between items-start">
-                  <p class="text-[0.7rem] text-muted-foreground" v-pre>
-                    Use {{ parameterName }} as placeholders in values.
-                  </p>
-                  <p v-if="!isJsonValid" class="text-[0.7rem] text-destructive font-semibold">
-                    Invalid JSON format
-                  </p>
-                </div>
-              </div>
-            </Field>
+              </Field>
+            </VeeField>
           </FieldGroup>
 
           <!-- Parameters Section -->
@@ -294,24 +309,24 @@ onMounted(async () => {
               </Button>
             </div>
 
-            <div v-if="form.parameters.length === 0"
+            <div v-if="parameters.length === 0"
               class="text-xs text-muted-foreground border rounded-lg p-4 bg-muted/20 text-center">
               No parameters defined yet.
             </div>
 
-            <div v-for="(p, index) in form.parameters" :key="index"
+            <div v-for="(p, index) in parameters" :key="index"
               class="flex items-start gap-3 p-3 border rounded-lg bg-muted/5 group">
-              
+
               <div class="grid grid-cols-12 gap-3 flex-1">
                 <Field class="col-span-3">
                   <FieldLabel class="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Name</FieldLabel>
-                  <Input v-model="p.name" placeholder="eg. id"  />
+                  <Input v-model="p.name" placeholder="eg. id" />
                 </Field>
 
                 <Field class="col-span-3">
                   <FieldLabel class="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Type</FieldLabel>
                   <Select v-model="p.type">
-                    <SelectTrigger >
+                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -324,7 +339,7 @@ onMounted(async () => {
 
                 <Field class="col-span-6">
                   <FieldLabel class="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Description</FieldLabel>
-                  <Input v-model="p.description" placeholder="eg. User unique ID"/>
+                  <Input v-model="p.description" placeholder="eg. User unique ID" />
                 </Field>
               </div>
 
@@ -339,20 +354,20 @@ onMounted(async () => {
             <Button v-if="editingId" type="button" variant="ghost" @click="resetForm">
               Cancel
             </Button>
-            <Button type="submit" :disabled="saving">
+            <Button type="submit" :disabled="!meta.valid || saving">
               <Save v-if="!saving" class="size-4 mr-2" />
               {{
                 saving ? "Saving..." : editingId ? "Update Tool" : "Create Tool"
               }}
             </Button>
           </div>
-        </form>
+        </VeeForm>
       </CardContent>
     </Card>
 
     <!-- Tools List -->
     <Card>
-      <CardHeader class="border-b ">
+      <CardHeader class="border-b">
         <CardTitle>Registered Custom Tools</CardTitle>
       </CardHeader>
       <CardContent class="pt-6">
@@ -409,7 +424,7 @@ onMounted(async () => {
       </CardContent>
     </Card>
 
-    <AdvancedJsonBuilderDialog v-model:open="isAdvancedBuilderOpen" :type="form.type as any" :dbs="dbs"
+    <AdvancedJsonBuilderDialog v-model:open="isAdvancedBuilderOpen" :type="values.type as any" :dbs="dbs"
       @apply="onAdvancedBuilderApply" />
   </div>
 </template>

@@ -1,0 +1,47 @@
+using System.ComponentModel;
+using System.Text.Json.Serialization;
+using SqlAgent.Service.Enums;
+
+namespace SqlAgent.Service.Models;
+
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(BasicHavingCondition), "basic")]
+[JsonDerivedType(typeof(FunctionHavingCondition), "function_compare")]
+[JsonDerivedType(typeof(GroupHavingCondition), "group")]
+public abstract class HavingCondition
+{
+    [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
+    public bool IsOr { get; set; }
+    [Description("When true, negates the entire condition or group (NOT).")]
+    public bool IsNot { get; set; }
+}
+
+public class BasicHavingCondition : HavingCondition
+{
+    [Description("FieldName to check in HAVING clause. e.g., 'total_amount' (if aliased or evaluated)")]
+    public string FieldName { get; set; } = string.Empty;
+    [Description("Comparison operator: '=', '>', '<', '>=', '<=', '<>'")]
+    public string Operator { get; set; } = "=";
+    [Description("The value to compare against.")]
+    public object? Value { get; set; }
+    [Description("Whether the value is a date.")]
+    public bool IsDate { get; set; }
+}
+
+public class FunctionHavingCondition : HavingCondition
+{
+    [Description("The SQL Function being evaluated. e.g., SUM(o.total_price)")]
+    public SqlFunctionCondition LeftFunction { get; set; } = new();
+
+    [Description("Comparison operator, e.g., '>', '<=', '='")]
+    public string Operator { get; set; } = ">";
+
+    [Description("The expected threshold value, e.g., 50000")]
+    public object? Value { get; set; }
+}
+
+public class GroupHavingCondition : HavingCondition
+{
+    [Description("Nested HAVING conditions grouped together inside parentheses.")]
+    public List<HavingCondition> Groups { get; set; } = [];
+}

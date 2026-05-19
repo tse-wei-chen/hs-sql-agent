@@ -1,17 +1,17 @@
-using Dapper;
-using FirebirdSql.Data.FirebirdClient;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Dapper;
+using FirebirdSql.Data.FirebirdClient;
+using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Models;
+using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
-public class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public partial class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
 
@@ -100,7 +100,8 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
 
     protected override string BuildExecutionErrorMessage(Exception ex, string type)
     {
-        var code = ex is FbException fbEx ? fbEx.ErrorCode.ToString() : TryExtractFbSqlCode(ex.Message);
+        var iscCode = ex is FbException fbEx ? fbEx.ErrorCode.ToString() : null;
+        var code = TryExtractFbSqlCode(ex.Message) ?? iscCode;
         var hint = BuildHint(code, ex.Message);
 
         return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
@@ -108,19 +109,55 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
 
     protected override string BuildHint(string? code, string message)
     {
-        if (message.Contains("Column unknown", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Invalid column name. Check your Select, Where, or Join conditions.";
-        }
         if (message.Contains("Table unknown", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Table does not exist. Verify TableName.";
-        }
+            return "Table does not exist. Check 'TableName'. Firebird table names are case-sensitive; ensure the table was created in the connected database.";
+
+        if (message.Contains("Column unknown", StringComparison.OrdinalIgnoreCase))
+            return "Column not found. Verify column names in 'SelectColumns' / 'WhereConditions'. Firebird column names are case-sensitive (use UPPERCASE for unquoted identifiers). For complex expressions, use 'Arithmetic' or 'CaseWhen' instead of raw SQL in 'Field'.";
+
+        if (message.Contains("conversion error", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("expression evaluation", StringComparison.OrdinalIgnoreCase))
+            return "Data type conversion error. Ensure 'Value' types match the column types. For date comparisons, use 'IsDate': true in the condition.";
+
+        if (message.Contains("violation of", StringComparison.OrdinalIgnoreCase)
+            && message.Contains("constraint", StringComparison.OrdinalIgnoreCase))
+            return "Constraint violation. The operation violates a PRIMARY KEY, UNIQUE, or FOREIGN KEY constraint. Check your data values.";
+
+        if (message.Contains("arithmetic exception", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("divide by zero", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("division by zero", StringComparison.OrdinalIgnoreCase))
+            return "Division by zero or numeric overflow. Check 'Arithmetic' expressions for zero divisors or values exceeding numeric precision.";
+
+        if (message.Contains("overflow", StringComparison.OrdinalIgnoreCase))
+            return "Numeric overflow. A value exceeds the column's numeric range. Check numeric values in 'Values' or 'Arithmetic' expressions.";
+
         return base.BuildHint(code, message);
     }
 
     private static string? TryExtractFbSqlCode(string message)
     {
+        if (string.IsNullOrWhiteSpace(message)) return null;
+
+        // Extract SQL code pattern: "SQL error code = -204" or "SQL Code = -204"
+        var sqlCodeMatch = SqlCodeRegex().Match(message);
+        if (sqlCodeMatch.Success)
+        {
+            var rawCode = sqlCodeMatch.Groups["code"].Value;
+            return "FB_SQL_" + rawCode;
+        }
+
+        // Extract gds code pattern: "gds code = 335544569"
+        var gdsCodeMatch = GdsCodeRegex().Match(message);
+        if (gdsCodeMatch.Success)
+        {
+            return "FB_GDS_" + gdsCodeMatch.Groups["code"].Value;
+        }
+
         return null;
     }
+
+    [GeneratedRegex(@".*gds\s+code\s*=\s*(?<code>\d+)", RegexOptions.IgnoreCase, "zh-TW")]
+    private static partial Regex GdsCodeRegex();
+    [GeneratedRegex(@"SQL\s+(?:error\s+)?[Cc]ode\s*=\s*(?<code>-?\d+)", RegexOptions.IgnoreCase, "zh-TW")]
+    private static partial Regex SqlCodeRegex();
 }

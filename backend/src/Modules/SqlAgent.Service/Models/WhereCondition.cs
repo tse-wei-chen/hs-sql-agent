@@ -1,0 +1,70 @@
+using System.ComponentModel;
+using System.Text.Json.Serialization;
+using SqlAgent.Service.Enums;
+
+namespace SqlAgent.Service.Models;
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(BasicWhereCondition), "basic")]
+[JsonDerivedType(typeof(ColumnCompareWhereCondition), "column_compare")]
+[JsonDerivedType(typeof(InWhereCondition), "in")]
+[JsonDerivedType(typeof(SubQueryWhereCondition), "subquery")]
+[JsonDerivedType(typeof(GroupWhereCondition), "group")]
+public abstract class WhereCondition
+{
+    [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
+    public bool IsOr { get; set; }
+    [Description("When true, negates the entire condition or group (NOT).")]
+    public bool IsNot { get; set; }
+}
+
+public class BasicWhereCondition : WhereCondition
+{
+    [Description("The column name to filter. e.g., 'p.discontinued'")]
+    public string FieldName { get; set; } = string.Empty;
+    [Description("Comparison operator: '=', '>', '<', '>=', '<=', '<>', 'LIKE', 'ILIKE'")]
+    public string Operator { get; set; } = "=";
+    [Description("The value to compare against.")]
+    public object? Value { get; set; }
+    [Description("Whether the value is a date.")]
+    public bool IsDate { get; set; }
+}
+
+public class ColumnCompareWhereCondition : WhereCondition
+{
+    [Description("The left-hand side column reference. e.g., 'c.customer_id'")]
+    public string LeftFieldName { get; set; } = string.Empty;
+
+    [Description("The operator, typically '='")]
+    public string Operator { get; set; } = "=";
+
+    [Description("The right-hand side column reference. e.g., 'o.customer_id'")]
+    public string RightFieldName { get; set; } = string.Empty;
+}
+
+public class InWhereCondition : WhereCondition
+{
+    [Description("The column name to filter. e.g., 'p.discontinued'")]
+    public string FieldName { get; set; } = string.Empty;
+    [Description("Must be 'IN' or 'NOT IN'")]
+    public string Operator { get; set; } = "IN";
+    [Description("The values to compare against.")]
+    public List<object> Values { get; set; } = [];
+    [Description("Whether the values are dates.")]
+    public bool IsDate { get; set; }
+}
+
+public class SubQueryWhereCondition : WhereCondition
+{
+    [Description("The field name for IN/NOT IN with subquery. Leave null/empty ONLY for 'EXISTS' or 'NOT EXISTS'.")]
+    public string? FieldName { get; set; }
+    [Description("Operator: 'IN', 'NOT IN', 'EXISTS', 'NOT EXISTS'")]
+    public string Operator { get; set; } = "IN";
+    [Description("The subquery to use for the filter.")]
+    public QueryDefinition SubQuery { get; set; } = new();
+}
+
+public class GroupWhereCondition : WhereCondition
+{
+    [Description("Nested conditions grouped together inside parentheses.")]
+    public List<WhereCondition> Groups { get; set; } = [];
+}

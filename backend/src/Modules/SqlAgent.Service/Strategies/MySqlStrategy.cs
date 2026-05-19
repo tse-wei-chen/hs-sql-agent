@@ -1,18 +1,17 @@
-using Dapper;
-using MySql.Data.MySqlClient;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Dapper;
+using Microsoft.Extensions.Configuration;
+using MySql.Data.MySqlClient;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Models;
+using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
-public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
@@ -54,8 +53,8 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             var sql = @"
-            SELECT TABLE_NAME 
-            FROM information_schema.TABLES 
+            SELECT TABLE_NAME
+            FROM information_schema.TABLES
             WHERE TABLE_SCHEMA = @schemaName
             AND TABLE_TYPE = 'BASE TABLE';";
 
@@ -79,7 +78,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
             await connection.OpenAsync(cancellationToken);
             const string sql = @"
                 SELECT COLUMN_NAME, DATA_TYPE
-                FROM INFORMATION_SCHEMA.COLUMNS 
+                FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName
                 ORDER BY ORDINAL_POSITION";
 
@@ -111,28 +110,53 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
         {
             if (message.Contains("date", StringComparison.OrdinalIgnoreCase) || message.Contains("time", StringComparison.OrdinalIgnoreCase))
             {
-                return "Date comparison syntax error. Fix: Use 'IsDate': true in WhereCondition, or ensure your 'Value' is a valid ISO date string.";
+                return "Date comparison syntax error. Fix: Use 'IsDate': true in WhereCondition, or ensure your 'Value' is a valid ISO date string (e.g., '2024-01-01').";
             }
 
-            return "SQL syntax error. Tips: 1. Use 'Arithmetic' object for math instead of raw strings in 'Field'. 2. Check 'Operator' compatibility (e.g., '=', 'IN', 'LIKE'). 3. Ensure 'CombineConditions' type is correct.";
+            return "SQL syntax error. Tips: 1. Use 'Arithmetic' object for math instead of raw strings in 'Field'. 2. Check 'Operator' compatibility (e.g., '=', 'IN', 'LIKE'). 3. Ensure 'CombineConditions' (UNION/INTERSECT) have matching column counts. 4. Verify 'SubQuery' has a valid 'TableName'.";
         }
 
         if (string.Equals(code, "42S02", StringComparison.OrdinalIgnoreCase)
             || message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase))
         {
-            return "Table or CTE not found. Check 'TableName'. Note: If using 'FromQuery' (Subquery in FROM), ensure you provide an 'Alias'.";
+            return "Table or CTE not found. Check 'TableName'. Note: If using 'FromQuery' (subquery in FROM), ensure you provide an 'Alias'. For CTEs, use 'CteConditions' list.";
         }
 
         if (string.Equals(code, "42S22", StringComparison.OrdinalIgnoreCase)
             || message.Contains("Unknown column", StringComparison.OrdinalIgnoreCase))
         {
-            return "Column not found. Tips: 1. For complex logic, use 'CaseWhen' or 'Arithmetic' instead of writing raw SQL in 'Field'. 2. In Joins/OrderBy, use 'TableName.FieldName' to avoid ambiguity.";
+            return "Column not found. Tips: 1. For complex logic, use 'CaseWhen' or 'Arithmetic' instead of writing raw SQL in 'Field'. 2. In Joins/OrderBy/GroupBy, use 'TableAlias.ColumnName' to avoid ambiguity. 3. Verify column name spelling matches the table definition.";
         }
 
         if (string.Equals(code, "1292", StringComparison.OrdinalIgnoreCase)
             || string.Equals(code, "1525", StringComparison.OrdinalIgnoreCase))
         {
-            return "Truncated/Incorrect value. Check if your 'Value' matches the column data type (e.g., passing a string to an Integer field or invalid date format).";
+            return "Truncated or incorrect value. Check if your 'Value' matches the column data type (e.g., passing a string to an Integer field, or using an invalid date format like '2024/13/01').";
+        }
+
+        if (string.Equals(code, "1054", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Unknown column in field list. Verify column names in 'SelectColumns'. For derived columns, use 'Alias' and reference the alias in 'OrderBy' or 'GroupBy'.";
+        }
+
+        if (string.Equals(code, "1146", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Table does not exist. Check 'TableName' and schema prefix. Ensure the table was created in the connected database.";
+        }
+
+        if (string.Equals(code, "1062", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Duplicate entry for a UNIQUE constraint. The insert/update value conflicts with an existing row. Check your 'Values' for uniqueness.";
+        }
+
+        if (string.Equals(code, "1452", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Foreign key constraint fails. The referenced record does not exist. Ensure related data is inserted first.";
+        }
+
+        if (string.Equals(code, "1366", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Incorrect integer/date value. The 'Value' type does not match the column type. Check that numeric fields receive numbers, and date fields receive valid date strings with 'IsDate': true.";
         }
 
         if (message.Contains("Operand should contain 1 column", StringComparison.OrdinalIgnoreCase))
@@ -147,12 +171,17 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
     {
         if (string.IsNullOrWhiteSpace(message)) return null;
 
-        var sqlState = Regex.Match(message, @"SQLSTATE\[(?<code>[0-9A-Z]{5})\]", RegexOptions.IgnoreCase);
+        var sqlState = SqlStateRegex().Match(message);
         if (sqlState.Success) return sqlState.Groups["code"].Value.ToUpperInvariant();
 
-        var mysqlCode = Regex.Match(message, @"\b(?<code>\d{4})\b");
+        var mysqlCode = SqlCodeRegex().Match(message);
         if (mysqlCode.Success) return mysqlCode.Groups["code"].Value;
 
         return null;
     }
+
+    [GeneratedRegex(@"SQLSTATE\[(?<code>[0-9A-Z]{5})\]", RegexOptions.IgnoreCase, "zh-TW")]
+    private static partial Regex SqlStateRegex();
+    [GeneratedRegex(@"\b(?<code>\d{4})\b")]
+    private static partial Regex SqlCodeRegex();
 }

@@ -20,36 +20,23 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     private readonly IAuditService _auditService = auditService;
     private readonly IDbSemanticService _semanticService = semanticService;
 
-    [McpServerTool, Description("Execute a query (supports join, where, group, having, combine, cte, order by, limit, offset, distinct, subqueries).")]
+    [McpServerTool, Description(@"
+        Execute a complex SELECT query strictly using the structured definition block.
+
+        CRITICAL RULES FOR LLM GENERATION:
+        1. NO RAW MATH IN FIELDS: Never put arithmetic operators (+, -, *, /) inside a 'field' node's fieldName.
+           - Incorrect: { ""type"": ""field"", ""fieldName"": ""price * quantity"" }
+           - Correct: You MUST use ""type"": ""arithmetic"" and split it into left, operator, and right nodes.
+        2. FUNCTION ARGUMENTS: Every argument inside a function's 'arguments' list MUST explicitly declare its 'type' (e.g., ""type"": ""field"", ""type"": ""constant"", ""type"": ""arithmetic"", ""type"": ""function""). Never omit the type discriminator.
+        3. STRICT TABLE ALIASES: If you define an 'alias' for the main table (TableName) or a joined table, you MUST use exactly that prefix (e.g., 'p.product_name') for ALL fieldNames referencing that table across Select, Where, OrderBy, and GroupBy. Do not mix unaliased and aliased names.
+        4. COLUMN REUSE: If a column has an 'alias' defined in SelectColumns, you CANNOT reuse that alias string inside WhereColumnsAndValues. You must reference the original column or expression.
+        5. FROMQUERY SCOPE: When using 'FromQuery' (a subquery in FROM), the outer query's SelectColumns, WhereConditions, etc. can ONLY reference the subquery's output columns, NOT the inner tables or their aliases. For example, if the subquery produces columns 'customer_id' and 'order_count', the outer query must use 'customer_id' or 'order_count' — NOT 'o.order_id' (where 'o' is a join alias only inside the subquery).
+
+        Supported SQL Capabilities: JOINs, WHERE filtering, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs (With clauses), Subqueries, and COMBINE (UNION/INTERSECT/EXCEPT).
+    ")]
     public async Task<string> ExecuteQuerySafe(
-        [Description("The table name (use schema-qualified table name). Can be null if fromQuery is provided. Do not embed an alias here; use the separate 'alias' parameter for the source alias.")]
-        string? tableName = null,
-        [Description("List of columns to select. Use 'Aggregation' for cases like COUNT(order_id), SUM(price * quantity), or SUM(CASE WHEN ...). Use 'Function' for COUNT(*), AVG(price), ROUND(...), DATE_TRUNC(...), and other explicit or nested function expressions.")]
-        List<SelectCondition>? selectColumns = null,
-        [Description("List of where conditions")]
-        List<WhereCondition>? whereConditions = null,
-        [Description("List of columns to order by. Each item can include 'Field', 'Aggregation' (e.g., COUNT, SUM), and 'Direction' (ASC or DESC).")]
-        List<OrderByCondition>? orderByColumns = null,
-        [Description("Limit the number of results returned")]
-        int limit = 0,
-        [Description("Offset the number of results returned")]
-        int offset = 0,
-        [Description("List of joins. Provide the joined table in 'Table', any alias in the join's 'Alias' property, and fully qualified or aliased column references in 'First'/'Second'.")]
-        List<JoinCondition>? joins = null,
-        [Description("List of group by conditions. Each condition includes 'Table', 'Field'.")]
-        List<GroupByCondition>? groupByConditions = null,
-        [Description("List of having conditions.")]
-        List<HavingCondition>? havingConditions = null,
-        [Description("List of combine conditions (union/union all/intersect/except).")]
-        List<CombineCondition>? combineConditions = null,
-        [Description("List of CTE definitions.")]
-        List<CteCondition>? cteConditions = null,
-        [Description("Whether to use SELECT DISTINCT")]
-        bool distinct = false,
-        [Description("Source subquery definition. If provided, tableName is ignored.")]
-        QueryDefinition? fromQuery = null,
-        [Description("Top-level alias for the source table or subquery. (Optional). Example: set tableName='products' and alias='p', then refer to source columns as 'p.unit_price'.")]
-        string? alias = null)
+        [Description("The structured complete query definition block. Ensure all polymorphic 'type' fields are strictly populated according to the schema rules.")]
+        QueryDefinition definition)
     {
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
@@ -60,28 +47,15 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         try
         {
             ValidateToolAccess("execute_query_safe");
-            ValidateAllTableAccess(tableName, joins, combineConditions, cteConditions, fromQuery, selectColumns, whereConditions, alias);
+            ValidateAllTableAccess(definition.TableName, definition.Joins, definition.CombineConditions, definition.CteConditions, definition.FromQuery, definition.SelectColumns, definition.WhereColumnsAndValues, definition.Alias);
             var result = await strategy.ExecuteQueryAsync(
-                connectionString: sqlConfig.ConnectionString,
-                tableName: tableName,
-                selectColumns: selectColumns,
-                whereConditions: whereConditions,
-                orderByColumns: orderByColumns,
-                groupByConditions: groupByConditions,
-                havingConditions: havingConditions,
-                combineConditions: combineConditions,
-                cteConditions: cteConditions,
-                limit: limit > 0 ? limit : null,
-                offset: offset > 0 ? offset : null,
-                joins: joins,
-                fromQuery: fromQuery,
-                alias: alias,
-                distinct: distinct
+                definition,
+                sqlConfig.ConnectionString
             );
 
             await _auditService.WriteLogAsync(
                 action: "mcp.query.executed",
-                target: tableName ?? "subquery",
+                target: definition?.TableName ?? "unknown",
                 result: "success",
                 detail: $"Provider: {dbType}");
 
@@ -91,7 +65,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             await _auditService.WriteLogAsync(
                 action: "mcp.query.executed",
-                target: tableName ?? "subquery",
+                target: definition?.TableName ?? "unknown",
                 result: "failed",
                 detail: ex.Message);
             return "Execution failed: " + ex.Message;
@@ -99,7 +73,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     }
 
     [McpServerTool, Description(@"
-		Execute a DML operation (INSERT, UPDATE, DELETE). 
+		Execute a DML operation (INSERT, UPDATE, DELETE).
 		This tool uses a mandatory two-step safety mechanism:
 		1. First call (without ConfirmToken): Performs a Dry Run, returns affected rows and a unique ConfirmToken.
 		2. Second call (with ConfirmToken): Actually commits the operation if the token matches.
@@ -122,9 +96,9 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
 
             await _auditService.WriteLogAsync(
                 action: "mcp.dml.executed",
-                target: dml.TableName,
+                target: dml?.TableName ?? "unknown",
                 result: "success",
-                detail: $"Operation: {dml.Operation}");
+                detail: $"Operation: {dml?.Operation}");
 
             return result;
         }
@@ -252,7 +226,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             var whitelist = ResolveTableWhitelist();
             if (whitelist is { Count: > 0 })
             {
-                tables = tables.Where(t => whitelist.Contains($"{schemaName}.{t}")).ToList();
+                tables = [.. tables.Where(t => whitelist.Contains($"{schemaName}.{t}"))];
             }
 
             // Merge Semantic Data
@@ -261,7 +235,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             {
                 var semantics = await _semanticService.GetSemanticsByDbIdAsync(dbId.Value);
 
-                // To keep it simple and compatible with LLM expectations of "list of tables", 
+                // To keep it simple and compatible with LLM expectations of "list of tables",
                 // I'll append descriptions in parentheses if they exist.
                 var tablesWithDesc = tables.Select(t =>
                 {
@@ -422,7 +396,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
     }
 
-    private static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
+    internal static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (qd == null) return;
         if (!string.IsNullOrWhiteSpace(qd.Alias)) aliases.Add(qd.Alias);
@@ -431,9 +405,16 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             qd.TableName, qd.Joins, qd.CombineConditions, qd.CteConditions,
             qd.FromQuery, qd.SelectColumns, qd.WhereColumnsAndValues,
             referenced, aliases);
+
+        if (qd.HavingConditions != null)
+            CollectFromHavingConditions(qd.HavingConditions, referenced, aliases);
+        if (qd.OrderByColumns != null)
+            CollectFromOrderByConditions(qd.OrderByColumns, referenced, aliases);
+        if (qd.GroupByConditions != null)
+            CollectFromGroupByConditions(qd.GroupByConditions, referenced, aliases);
     }
 
-    private static void CollectReferencesAndAliases(
+    internal static void CollectReferencesAndAliases(
         string? tableName,
         List<JoinCondition>? joins,
         List<CombineCondition>? combineConditions,
@@ -450,7 +431,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             foreach (var c in cteConditions)
             {
-                if (!string.IsNullOrWhiteSpace(c.Name)) aliases.Add(c.Name);
+                if (!string.IsNullOrWhiteSpace(c.CteAliasName)) aliases.Add(c.CteAliasName);
                 CollectFromQueryDefinition(c.Query, referenced, aliases);
             }
         }
@@ -471,19 +452,171 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             foreach (var c in combineConditions) CollectFromQueryDefinition(c.Query, referenced, aliases);
 
         if (selectColumns != null)
-            foreach (var s in selectColumns) CollectFromQueryDefinition(s.SubQuery, referenced, aliases);
+        {
+            foreach (var s in selectColumns)
+            {
+                switch (s)
+                {
+                    case SubQuerySelectCondition sq:
+                        {
+                            var qd = new QueryDefinition
+                            {
+                                TableName = sq.TableName,
+                                FromQuery = sq.FromQuery,
+                                Alias = sq.Alias,
+                                Distinct = sq.Distinct,
+                                SelectColumns = sq.SelectColumns,
+                                WhereColumnsAndValues = sq.WhereColumnsAndValues,
+                                OrderByColumns = sq.OrderByColumns,
+                                GroupByConditions = sq.GroupByConditions,
+                                HavingConditions = sq.HavingConditions,
+                                Joins = sq.Joins,
+                                CombineConditions = sq.CombineConditions,
+                                CteConditions = sq.CteConditions,
+                                Limit = sq.Limit,
+                                Offset = sq.Offset
+                            };
+                            CollectFromQueryDefinition(qd, referenced, aliases);
+                            break;
+                        }
+                    case FunctionSelectCondition funcSel:
+                        CollectFromWheres(funcSel.FilterWhereConditions, referenced, aliases);
+                        CollectFromFunctionArguments(funcSel.Arguments, referenced, aliases);
+                        break;
+                    case OperationSelectCondition opSel:
+                        CollectFromSelectArithmeticCondition(opSel.Left, referenced, aliases);
+                        CollectFromSelectArithmeticCondition(opSel.Right, referenced, aliases);
+                        break;
+                    case CaseWhenSelectCondition cwSel:
+                        CollectFromCaseWhenClauses(cwSel.CaseWhen, referenced, aliases);
+                        break;
+                }
+            }
+        }
 
         if (whereConditions != null)
             CollectFromWheres(whereConditions, referenced, aliases);
     }
 
-    private static void CollectFromWheres(List<WhereCondition>? wheres, HashSet<string> referenced, HashSet<string> aliases)
+    internal static void CollectFromWheres(List<WhereCondition>? wheres, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (wheres == null) return;
         foreach (var w in wheres)
         {
-            CollectFromQueryDefinition(w.SubQuery, referenced, aliases);
-            if (w.Groups != null) CollectFromWheres(w.Groups, referenced, aliases);
+            if (w is SubQueryWhereCondition subQueryWhere)
+            {
+                CollectFromQueryDefinition(subQueryWhere.SubQuery, referenced, aliases);
+            }
+            else if (w is GroupWhereCondition groupWhere)
+            {
+                CollectFromWheres(groupWhere.Groups, referenced, aliases);
+            }
         }
+    }
+
+    internal static void CollectFromHavingConditions(List<HavingCondition>? havings, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (havings == null) return;
+        foreach (var h in havings)
+        {
+            switch (h)
+            {
+                case FunctionHavingCondition funcHaving:
+                    CollectFromSqlFunctionCondition(funcHaving.LeftFunction, referenced, aliases);
+                    break;
+                case GroupHavingCondition groupHaving:
+                    CollectFromHavingConditions(groupHaving.Groups, referenced, aliases);
+                    break;
+            }
+        }
+    }
+
+    internal static void CollectFromOrderByConditions(List<OrderByCondition>? orderBys, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (orderBys == null) return;
+        foreach (var o in orderBys)
+        {
+            if (o is FunctionOrderByCondition funcOrder)
+            {
+                CollectFromWheres(funcOrder.FilterWhereConditions, referenced, aliases);
+                CollectFromFunctionArguments(funcOrder.Arguments, referenced, aliases);
+            }
+        }
+    }
+
+    internal static void CollectFromGroupByConditions(List<GroupByCondition>? groupBys, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (groupBys == null) return;
+        foreach (var g in groupBys)
+        {
+            if (g is FunctionGroupByCondition funcGroup)
+            {
+                CollectFromWheres(funcGroup.FilterWhereConditions, referenced, aliases);
+                CollectFromFunctionArguments(funcGroup.Arguments, referenced, aliases);
+            }
+        }
+    }
+
+    internal static void CollectFromWindowDefinition(WindowDefinition? window, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (window == null) return;
+        CollectFromGroupByConditions(window.PartitionBy, referenced, aliases);
+        CollectFromOrderByConditions(window.OrderBy, referenced, aliases);
+    }
+
+    internal static void CollectFromSelectArithmeticCondition(SelectArithmeticCondition? condition, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (condition == null) return;
+        switch (condition)
+        {
+            case FunctionArithmeticCondition func:
+                CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
+                CollectFromFunctionArguments(func.Arguments, referenced, aliases);
+                break;
+            case OperationArithmeticCondition op:
+                CollectFromSelectArithmeticCondition(op.Left, referenced, aliases);
+                CollectFromSelectArithmeticCondition(op.Right, referenced, aliases);
+                break;
+            case CaseWhenArithmeticCondition cw:
+                CollectFromCaseWhenClauses(cw.CaseWhen, referenced, aliases);
+                break;
+        }
+    }
+
+    internal static void CollectFromCaseWhenClauses(List<CaseWhenClause>? clauses, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (clauses == null) return;
+        foreach (var clause in clauses)
+        {
+            CollectFromWheres([clause.Condition], referenced, aliases);
+        }
+    }
+
+    internal static void CollectFromFunctionArguments(List<SqlFunctionArgument>? args, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (args == null) return;
+        foreach (var arg in args)
+        {
+            switch (arg)
+            {
+                case NestedFunctionArgument nested:
+                    CollectFromWheres(nested.FilterWhereConditions, referenced, aliases);
+                    CollectFromFunctionArguments(nested.Arguments, referenced, aliases);
+                    break;
+                case ArithmeticFunctionArgument arith:
+                    CollectFromSelectArithmeticCondition(arith.Left, referenced, aliases);
+                    CollectFromSelectArithmeticCondition(arith.Right, referenced, aliases);
+                    break;
+            }
+        }
+    }
+
+    internal static void CollectFromSqlFunctionCondition(SqlFunctionCondition? func, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (func == null) return;
+        CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
+        CollectFromFunctionArguments(func.Arguments, referenced, aliases);
+        if (func.Window != null)
+            CollectFromWindowDefinition(func.Window, referenced, aliases);
     }
 }

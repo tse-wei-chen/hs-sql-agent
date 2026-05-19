@@ -3,6 +3,7 @@ using DotNet.Testcontainers.Builders;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using MySql.Data.MySqlClient;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
@@ -47,7 +48,19 @@ public class MySqlFixture : IDbFixture
             );
             INSERT INTO users (name, age, active, created_date) VALUES
             ('Alice', 30, true, '2023-01-01 10:00:00'),
-            ('Bob', 25, true, '2023-02-01 10:00:00');
+            ('Bob', 25, true, '2023-02-01 10:00:00'),
+            ('Charlie', 35, false, '2023-03-01 10:00:00');
+
+            CREATE TABLE IF NOT EXISTS orders (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                amount DECIMAL(10,2),
+                order_date DATE
+            );
+            INSERT INTO orders (user_id, amount, order_date) VALUES
+            (1, 150.0, '2023-01-10'),
+            (1, 200.0, '2023-02-15'),
+            (2, 50.0, '2023-03-20');
         ";
         await cmd.ExecuteNonQueryAsync();
     }
@@ -62,6 +75,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
         => new(parser, configuration);
 
     protected override string TestTableName => "users";
+    protected override string TestOrdersTableName => "orders";
     protected override string TestSchemaName => "test_db";
 
     protected override string TableNotFoundErrorCode => "1146";
@@ -78,12 +92,12 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
 
     protected override DmlDefinition CreateInsertDml() => new()
     {
-        Operation = "insert",
+        Operation = DmlOperation.Insert,
         TableName = TestTableName,
         Values = [
-            new NameValuePair { Name = "name", Value = "David" },
-            new NameValuePair { Name = "age", Value = 40 },
-            new NameValuePair { Name = "active", Value = true }
+            new NameValuePair { FieldName = "name", Value = "David" },
+            new NameValuePair { FieldName = "age", Value = 40 },
+            new NameValuePair { FieldName = "active", Value = true }
         ]
     };
 
@@ -111,21 +125,31 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger1292Hint_WhenValueFormatIsIncorrect()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            whereConditions: [new WhereCondition { Field = "created_date", Operator = "=", Value = "not-a-date" }],
-            cancellationToken: TestContext.Current.CancellationToken);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "created_date", Operator = "=", Value = "not-a-date" }]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.True(res.Contains("code=1292") || res.Contains("Error"), $"Result was: {res}");
+        Assert.True(ex.Message.Contains("code=1292") || ex.Message.Contains("Error"), $"Result was: {ex.Message}");
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldTrigger1064Hint_WhenSyntaxIsInvalid()
     {
-        var res = await Strategy.ExecuteQueryAsync(Fixture.ConnectionString, TestTableName,
-            selectColumns: [new SelectCondition { Arithmetic = new SelectArithmeticCondition { FieldName = "name", Operator = "INVALID", Constant = 1 } }],
-            cancellationToken: TestContext.Current.CancellationToken);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "name", Operator = "ILIKE", Value = "test" }]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=1064", res);
-        Assert.Contains("SQL syntax error", res);
+        Assert.Contains("code=1064", ex.Message);
+        Assert.Contains("SQL syntax error", ex.Message);
     }
 }

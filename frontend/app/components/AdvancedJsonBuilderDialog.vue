@@ -68,12 +68,18 @@ const {
   fetchJoinColumns,
   addColumn,
   removeColumn,
+  addColumnArg,
+  removeColumnArg,
   addWhere,
   removeWhere,
   addJoin,
   removeJoin,
+  addJoinOnCondition,
+  removeJoinOnCondition,
   addOrderBy,
   removeOrderBy,
+  addOrderByArg,
+  removeOrderByArg,
   addInsertValue,
   removeInsertValue,
   autofillColumns,
@@ -125,7 +131,8 @@ const apply = () => {
         <DialogTitle>Advanced JSON Builder - {{ type }}</DialogTitle>
         <DialogDescription>
           Construct your SQL tool definition visually. Complex features like
-          subqueries must be added manually in the raw JSON after generation.
+          subqueries, CTEs, CASE/WHEN, window functions, and UNION must be
+          added manually in the raw JSON after generation.
         </DialogDescription>
       </DialogHeader>
 
@@ -190,6 +197,8 @@ const apply = () => {
             @add="addColumn"
             @remove="removeColumn"
             @autofill="autofillColumns"
+            @add-arg="addColumnArg"
+            @remove-arg="removeColumnArg"
           />
 
           <!-- Where Tab -->
@@ -213,6 +222,8 @@ const apply = () => {
             :get-join-column-options="filterColumnOptionsByTable"
             @add="addJoin"
             @remove="removeJoin"
+            @add-on-condition="addJoinOnCondition"
+            @remove-on-condition="removeJoinOnCondition"
             @fetch-columns="fetchJoinColumns"
           />
 
@@ -226,6 +237,8 @@ const apply = () => {
             :now-valid-tables="nowValidTables"
             @add="addOrderBy"
             @remove="removeOrderBy"
+            @add-arg="addOrderByArg"
+            @remove-arg="removeOrderByArg"
           />
 
           <!-- DML Values Tab -->
