@@ -1,18 +1,17 @@
-using Dapper;
-using MySql.Data.MySqlClient;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Dapper;
+using Microsoft.Extensions.Configuration;
+using MySql.Data.MySqlClient;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Models;
+using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
-public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
@@ -54,8 +53,8 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             var sql = @"
-            SELECT TABLE_NAME 
-            FROM information_schema.TABLES 
+            SELECT TABLE_NAME
+            FROM information_schema.TABLES
             WHERE TABLE_SCHEMA = @schemaName
             AND TABLE_TYPE = 'BASE TABLE';";
 
@@ -79,7 +78,7 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
             await connection.OpenAsync(cancellationToken);
             const string sql = @"
                 SELECT COLUMN_NAME, DATA_TYPE
-                FROM INFORMATION_SCHEMA.COLUMNS 
+                FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName
                 ORDER BY ORDINAL_POSITION";
 
@@ -172,12 +171,17 @@ public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration 
     {
         if (string.IsNullOrWhiteSpace(message)) return null;
 
-        var sqlState = Regex.Match(message, @"SQLSTATE\[(?<code>[0-9A-Z]{5})\]", RegexOptions.IgnoreCase);
+        var sqlState = SqlStateRegex().Match(message);
         if (sqlState.Success) return sqlState.Groups["code"].Value.ToUpperInvariant();
 
-        var mysqlCode = Regex.Match(message, @"\b(?<code>\d{4})\b");
+        var mysqlCode = SqlCodeRegex().Match(message);
         if (mysqlCode.Success) return mysqlCode.Groups["code"].Value;
 
         return null;
     }
+
+    [GeneratedRegex(@"SQLSTATE\[(?<code>[0-9A-Z]{5})\]", RegexOptions.IgnoreCase, "zh-TW")]
+    private static partial Regex SqlStateRegex();
+    [GeneratedRegex(@"\b(?<code>\d{4})\b")]
+    private static partial Regex SqlCodeRegex();
 }

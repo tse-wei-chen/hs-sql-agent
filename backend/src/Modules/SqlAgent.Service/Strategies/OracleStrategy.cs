@@ -1,18 +1,17 @@
-using Dapper;
-using Oracle.ManagedDataAccess.Client;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Dapper;
+using Microsoft.Extensions.Configuration;
+using Oracle.ManagedDataAccess.Client;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Models;
+using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
-public class OracleStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public partial class OracleStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
@@ -149,8 +148,11 @@ public class OracleStrategy(IQueryValueParserService valueParser, IConfiguration
 
     private static string? TryExtractOracleCode(string message)
     {
-        var errorMatch = Regex.Match(message, @"(ORA-\d+)");
+        var errorMatch = SqlCodeRegex().Match(message);
         if (errorMatch.Success) return errorMatch.Groups[1].Value;
         return null;
     }
+
+    [GeneratedRegex(@"(ORA-\d+)")]
+    private static partial Regex SqlCodeRegex();
 }

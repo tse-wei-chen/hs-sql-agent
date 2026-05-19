@@ -1,17 +1,17 @@
-using Dapper;
-using FirebirdSql.Data.FirebirdClient;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Dapper;
+using FirebirdSql.Data.FirebirdClient;
+using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Models;
+using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
-public class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public partial class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
 
@@ -139,7 +139,7 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
         if (string.IsNullOrWhiteSpace(message)) return null;
 
         // Extract SQL code pattern: "SQL error code = -204" or "SQL Code = -204"
-        var sqlCodeMatch = Regex.Match(message, @"SQL\s+(?:error\s+)?[Cc]ode\s*=\s*(?<code>-?\d+)", RegexOptions.IgnoreCase);
+        var sqlCodeMatch = SqlCodeRegex().Match(message);
         if (sqlCodeMatch.Success)
         {
             var rawCode = sqlCodeMatch.Groups["code"].Value;
@@ -147,7 +147,7 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
         }
 
         // Extract gds code pattern: "gds code = 335544569"
-        var gdsCodeMatch = Regex.Match(message, @".*gds\s+code\s*=\s*(?<code>\d+)", RegexOptions.IgnoreCase);
+        var gdsCodeMatch = GdsCodeRegex().Match(message);
         if (gdsCodeMatch.Success)
         {
             return "FB_GDS_" + gdsCodeMatch.Groups["code"].Value;
@@ -155,4 +155,9 @@ public class FirebirdStrategy(IQueryValueParserService valueParser, IConfigurati
 
         return null;
     }
+
+    [GeneratedRegex(@".*gds\s+code\s*=\s*(?<code>\d+)", RegexOptions.IgnoreCase, "zh-TW")]
+    private static partial Regex GdsCodeRegex();
+    [GeneratedRegex(@"SQL\s+(?:error\s+)?[Cc]ode\s*=\s*(?<code>-?\d+)", RegexOptions.IgnoreCase, "zh-TW")]
+    private static partial Regex SqlCodeRegex();
 }

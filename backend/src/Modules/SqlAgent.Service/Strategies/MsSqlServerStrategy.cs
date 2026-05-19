@@ -10,7 +10,7 @@ using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
-public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public partial class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
@@ -79,8 +79,8 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             var sql = @"
-            SELECT TABLE_NAME 
-            FROM INFORMATION_SCHEMA.TABLES 
+            SELECT TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
             WHERE TABLE_SCHEMA = @schemaName
             AND TABLE_TYPE = 'BASE TABLE';";
             var command = new CommandDefinition(sql, new { schemaName }, cancellationToken: cancellationToken);
@@ -105,7 +105,7 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
 
             const string sql = @"
             SELECT COLUMN_NAME, DATA_TYPE
-            FROM INFORMATION_SCHEMA.COLUMNS 
+            FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName
             ORDER BY ORDINAL_POSITION";
             var command = new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken);
@@ -172,8 +172,11 @@ public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfigur
 
     private static string? TryExtractSqlCode(string message)
     {
-        var errorMatch = Regex.Match(message, @"Error Number:\s*(?<code>\d+)");
+        var errorMatch = SqlCodeRegex().Match(message);
         if (errorMatch.Success) return errorMatch.Groups["code"].Value;
         return null;
     }
+
+    [GeneratedRegex(@"Error Number:\s*(?<code>\d+)")]
+    private static partial Regex SqlCodeRegex();
 }

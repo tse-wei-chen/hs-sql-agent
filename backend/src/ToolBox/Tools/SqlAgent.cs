@@ -225,7 +225,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             var whitelist = ResolveTableWhitelist();
             if (whitelist is { Count: > 0 })
             {
-                tables = tables.Where(t => whitelist.Contains($"{schemaName}.{t}")).ToList();
+                tables = [.. tables.Where(t => whitelist.Contains($"{schemaName}.{t}"))];
             }
 
             // Merge Semantic Data
@@ -457,27 +457,27 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 switch (s)
                 {
                     case SubQuerySelectCondition sq:
-                    {
-                        var qd = new QueryDefinition
                         {
-                            TableName = sq.TableName,
-                            FromQuery = sq.FromQuery,
-                            Alias = sq.Alias,
-                            Distinct = sq.Distinct,
-                            SelectColumns = sq.SelectColumns,
-                            WhereColumnsAndValues = sq.WhereColumnsAndValues,
-                            OrderByColumns = sq.OrderByColumns,
-                            GroupByConditions = sq.GroupByConditions,
-                            HavingConditions = sq.HavingConditions,
-                            Joins = sq.Joins,
-                            CombineConditions = sq.CombineConditions,
-                            CteConditions = sq.CteConditions,
-                            Limit = sq.Limit,
-                            Offset = sq.Offset
-                        };
-                        CollectFromQueryDefinition(qd, referenced, aliases);
-                        break;
-                    }
+                            var qd = new QueryDefinition
+                            {
+                                TableName = sq.TableName,
+                                FromQuery = sq.FromQuery,
+                                Alias = sq.Alias,
+                                Distinct = sq.Distinct,
+                                SelectColumns = sq.SelectColumns,
+                                WhereColumnsAndValues = sq.WhereColumnsAndValues,
+                                OrderByColumns = sq.OrderByColumns,
+                                GroupByConditions = sq.GroupByConditions,
+                                HavingConditions = sq.HavingConditions,
+                                Joins = sq.Joins,
+                                CombineConditions = sq.CombineConditions,
+                                CteConditions = sq.CteConditions,
+                                Limit = sq.Limit,
+                                Offset = sq.Offset
+                            };
+                            CollectFromQueryDefinition(qd, referenced, aliases);
+                            break;
+                        }
                     case FunctionSelectCondition funcSel:
                         CollectFromWheres(funcSel.FilterWhereConditions, referenced, aliases);
                         CollectFromFunctionArguments(funcSel.Arguments, referenced, aliases);

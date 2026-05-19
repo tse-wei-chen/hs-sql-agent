@@ -18,6 +18,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { CircleAlert, CircleCheck } from "lucide-vue-next";
 import {
   issueMcpKey,
   listMcpKeys,
@@ -37,6 +38,8 @@ import MultiSelect from "~/components/MultiSelect.vue";
 import Transfer from "~/components/Transfer.vue";
 import { watch } from "vue";
 import { CircleQuestionMark } from "lucide-vue-next";
+import FormField from "@/components/FormField.vue";
+import { useForm } from "vee-validate";
 
 definePageMeta({
   layout: "default",
@@ -54,6 +57,26 @@ interface McpKeyItem {
   tableWhitelist?: string | null;
 }
 
+interface McpKeyDetail {
+  expiresAt: string | null
+  allowedTools: string[]
+  corsAllowedOrigins: string
+  dbManagementId: number | null
+  tableWhitelist: string[]
+}
+
+const { meta, values, setFieldValue, resetForm: resetVeeForm } = useForm<{ name: string; dbManagementId: number | null }>({
+  initialValues: { name: "", dbManagementId: null },
+})
+
+const initialDetail: McpKeyDetail = {
+  expiresAt: null,
+  allowedTools: ["get_columns", "get_schemas", "get_tables", "execute_query_safe"],
+  corsAllowedOrigins: "",
+  dbManagementId: null,
+  tableWhitelist: [],
+}
+
 const keys = ref<McpKeyItem[]>([]);
 const customTools = ref<CustomSqlTool[]>([]);
 const dbManagements = ref<DbManagement[]>([]);
@@ -62,32 +85,18 @@ const issuing = ref(false);
 const testing = ref(false);
 const customExpiresAt = ref("");
 const selectedTools = ref<string[]>([]);
-const detail = ref<{
-  name: string;
-  expiresAt: string | null;
-  allowedTools: string[];
-  corsAllowedOrigins: string;
-  dbManagementId: number | null;
-  tableWhitelist: string[];
-}>({
-  name: "",
-  expiresAt: null,
-  allowedTools: [
-    "get_columns",
-    "get_schemas",
-    "get_tables",
-    "execute_query_safe",
-  ],
-  corsAllowedOrigins: "",
-  dbManagementId: null,
-  tableWhitelist: [],
-});
+const detail = ref<McpKeyDetail>({ ...initialDetail });
 const isWhitelistEnabled = ref(false);
 const selectedSchema = ref<string | undefined>(undefined);
 const availableSchemas = ref<string[]>([]);
 const fetchingSchemas = ref(false);
 const availableTables = ref<string[]>([]);
 const fetchingTables = ref(false);
+const connectionTestResult = ref<{
+  success: boolean;
+  errorMessage: string;
+} | null>(null);
+const issuedPlaintextKey = ref("");
 
 watch(
   () => detail.value.dbManagementId,
@@ -142,12 +151,6 @@ const tableOptions = computed(() => {
     value: `${selectedSchema.value}.${t}`,
   }));
 });
-const connectionTestResult = ref<{
-  success: boolean;
-  errorMessage: string;
-} | null>(null);
-
-const issuedPlaintextKey = ref("");
 
 const baseToolOptions = [
   { label: "Execute Query", value: "execute_query_safe", risk: "medium" },
@@ -191,22 +194,26 @@ const load = async () => {
   }
 };
 
+const resetForm = () => {
+  resetVeeForm()
+  detail.value = { ...initialDetail }
+  isWhitelistEnabled.value = false
+  selectedSchema.value = undefined
+  issuedPlaintextKey.value = ""
+};
+
 const issue = async () => {
-  if (!detail.value.name.trim()) {
-    alert("Key name is required.");
-    return;
-  }
   issuing.value = true;
-  detail.value.expiresAt =
+  const expiresAt =
     detail.value.expiresAt === "custom"
       ? customExpiresAt.value
       : detail.value.expiresAt === null
         ? null
-        : new Date(detail.value.expiresAt).toISOString();
+        : new Date(detail.value.expiresAt!).toISOString();
   try {
     const result = await issueMcpKey({
-      name: detail.value.name.trim(),
-      expiresAt: detail.value.expiresAt,
+      name: values.name.trim(),
+      expiresAt,
       allowedTools:
         detail.value.allowedTools?.length > 0
           ? detail.value.allowedTools.join(",")
@@ -220,21 +227,7 @@ const issue = async () => {
     });
 
     issuedPlaintextKey.value = result.plaintextKey || "";
-    detail.value = {
-      name: "",
-      expiresAt: null,
-      allowedTools: [
-        "get_columns",
-        "get_schemas",
-        "get_tables",
-        "execute_query_safe",
-      ],
-      corsAllowedOrigins: "",
-      dbManagementId: null,
-      tableWhitelist: [],
-    };
-    isWhitelistEnabled.value = false;
-    selectedSchema.value = undefined;
+    resetForm()
     await load();
   } catch (error: any) {
     alert(error?.response?.data || "Failed to issue MCP key.");
@@ -287,16 +280,13 @@ onMounted(load);
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form class="space-y-6 pt-4">
+        <VeeForm class="space-y-6 pt-4" :onSubmit="issue">
           <FieldGroup class="grid gap-4 md:grid-cols-2">
-            <Field>
-              <FieldLabel for="name">Name</FieldLabel>
-              <Input
-                id="name"
-                v-model="detail.name"
-                placeholder="Claude Desktop Production"
-              />
-            </Field>
+            <FormField name="name" rules="required" label="Name">
+              <template #default="{ field }">
+                <Input v-bind="field" id="name" placeholder="Claude Desktop Production" />
+              </template>
+            </FormField>
 
             <Field>
               <FieldLabel for="expiresMode">Expires</FieldLabel>
@@ -324,23 +314,45 @@ onMounted(load);
                 type="datetime-local"
               />
             </Field>
-            <Field>
-              <FieldLabel>Database</FieldLabel>
-              <Select v-model="detail.dbManagementId">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Select database connection" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem
-                    v-for="db in dbManagements"
-                    :key="db.id"
-                    :value="db.id"
+            <VeeField name="dbManagementId" rules="required" v-slot="{ errorMessage, meta: fieldMeta }">
+              <Field>
+                <FieldLabel>Database<RequiredStar /></FieldLabel>
+                <div class="relative">
+                  <Select :modelValue="detail.dbManagementId" @update:modelValue="(v: unknown) => { detail.dbManagementId = v as number | null; setFieldValue('dbManagementId', v as number | null) }">
+                    <SelectTrigger class="w-full">
+                      <SelectValue placeholder="Select database connection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem
+                        v-for="db in dbManagements"
+                        :key="db.id"
+                        :value="db.id"
+                      >
+                        {{ db.name }} ({{ db.sqlProvider }})
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <TooltipProvider v-if="errorMessage && fieldMeta.touched">
+                    <Tooltip>
+                      <TooltipTrigger as-child>
+                        <div class="absolute right-0 top-1/2 -translate-y-1/2 pr-3">
+                          <CircleAlert class="size-4 text-destructive" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" align="end">
+                        {{ errorMessage }}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <div
+                    v-else-if="fieldMeta.touched && fieldMeta.valid"
+                    class="absolute right-0 top-1/2 -translate-y-1/2 pr-3"
                   >
-                    {{ db.name }} ({{ db.sqlProvider }})
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
+                    <CircleCheck class="size-4 text-green-500" />
+                  </div>
+                </div>
+              </Field>
+            </VeeField>
             <span class="md:col-span-2">
               <hr />
             </span>
@@ -542,15 +554,14 @@ onMounted(load);
             </TooltipProvider>
             <Button
               type="submit"
-              :disabled="issuing"
+              :disabled="!meta.valid || issuing"
               class="w-full md:w-auto"
-              @click.prevent="issue"
             >
               <KeyRound />
               {{ issuing ? "Issuing..." : "Issue Key" }}
             </Button>
           </span>
-        </form>
+        </VeeForm>
 
         <div
           v-if="issuedPlaintextKey"

@@ -12,12 +12,12 @@ using SqlKata.Execution;
 
 namespace SqlAgent.Service.Strategies;
 
-public abstract class BaseSqlStrategy(
+public abstract partial class BaseSqlStrategy(
     IQueryValueParserService valueParser,
     IConfiguration configuration) : ISqlStrategy
 {
-    private static readonly Regex SafeFunctionNamePattern =
-        new(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")]
+    private static partial Regex SafeFunctionNamePattern();
 
     private readonly IQueryValueParserService _valueParser = valueParser;
 
@@ -387,11 +387,11 @@ public abstract class BaseSqlStrategy(
 
             float or double or decimal or sbyte or byte or short or ushort
                 or int or uint or long or ulong => new NumberColumn
-            {
-                Value = new UnsafeLiteral(
+                {
+                    Value = new UnsafeLiteral(
                     Convert.ToString(value, CultureInfo.InvariantCulture) ?? "0",
                     replaceQuotes: false)
-            },
+                },
 
             _ => new NumberColumn { Value = value }
         };
@@ -417,7 +417,7 @@ public abstract class BaseSqlStrategy(
     {
         var functionName = function.FunctionName?.Trim() ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(functionName) || !SafeFunctionNamePattern.IsMatch(functionName))
+        if (string.IsNullOrWhiteSpace(functionName) || !SafeFunctionNamePattern().IsMatch(functionName))
             throw new InvalidOperationException($"Invalid function name: {function.FunctionName}");
 
         var args = function.Arguments?.Select(MapFunctionArgument).ToList() ?? [];
@@ -453,7 +453,7 @@ public abstract class BaseSqlStrategy(
 
             if (function.Window.OrderBy?.Count > 0)
             {
-                result.OverOrderBy = function.Window.OrderBy
+                result.OverOrderBy = [.. function.Window.OrderBy
                     .Select(o =>
                     {
                         var col = o switch
@@ -466,8 +466,7 @@ public abstract class BaseSqlStrategy(
                         return (col, o.Direction == SortDirection.Desc ? "desc" : "asc");
                     })
                     .Where(x => x.Item1 != null)
-                    .Select(x => (x.Item1!, x.Item2))
-                    .ToList();
+                    .Select(x => (x.Item1!, x.Item2))];
             }
         }
 
@@ -604,7 +603,7 @@ public abstract class BaseSqlStrategy(
         return query;
     }
 
-    private Q ApplyColumnCompareWhere<Q>(Q query, ColumnCompareWhereCondition c)
+    private static Q ApplyColumnCompareWhere<Q>(Q query, ColumnCompareWhereCondition c)
         where Q : BaseQuery<Q>
     {
         if (string.IsNullOrWhiteSpace(c.LeftFieldName) || string.IsNullOrWhiteSpace(c.RightFieldName))
@@ -1099,7 +1098,7 @@ public abstract class BaseSqlStrategy(
     // ORDER BY
     // =====================================================================
 
-    private Query ApplyOrderByColumns(Query query, IList<OrderByCondition> cols)
+    private Query ApplyOrderByColumns(Query query, List<OrderByCondition> cols)
     {
         if (cols == null || cols.Count == 0)
             return query;

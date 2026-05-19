@@ -2,14 +2,10 @@
 import type { HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Field as UIField,
-  FieldGroup,
-  FieldLabel,
-  FieldError,
-} from "@/components/ui/field";
+import { FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
+import FormField from "@/components/FormField.vue";
 import { checkFirstRun, signIn } from "~/api/admin";
 
 const props = defineProps<{
@@ -56,7 +52,7 @@ const submit = async (values: any) => {
 
 <template>
   <div :class="cn('flex flex-col gap-6', props.class)">
-    <VeeForm v-slot="{ meta, errors, submitCount }" @submit="submit">
+    <VeeForm v-slot="{ meta }" :onSubmit="submit">
       <FieldGroup>
         <div class="flex flex-col items-center gap-1 text-center">
           <h1 class="text-2xl font-bold">HS Admin Panel</h1>
@@ -65,37 +61,17 @@ const submit = async (values: any) => {
           </p>
         </div>
         
-        <VeeField name="email" rules="required|email" v-slot="{ field, errorMessage, meta: fieldMeta }">
-          <UIField class="relative">
-            <FieldLabel for="email"> Email </FieldLabel>
-            <Input
-              v-bind="field"
-              id="email"
-              type="email"
-              placeholder="m@example.com"
-            />
-            <div class="relative">
-              <FieldError v-if="errorMessage && (fieldMeta.touched || submitCount > 0)" class="text-destructive absolute">
-                {{ errorMessage }}
-              </FieldError>
-            </div>
-          </UIField>
-        </VeeField>
+        <FormField name="email" rules="required|email" label="Email" class="relative">
+          <template #default="{ field }">
+            <Input v-bind="field" id="email" type="email" placeholder="m@example.com" />
+          </template>
+        </FormField>
 
-        <VeeField name="password" rules="required" v-slot="{ field, errorMessage, meta: fieldMeta }">
-          <UIField class="relative">
-            <FieldLabel for="password"> Password </FieldLabel>
-            <PasswordInput
-              v-bind="field"
-              id="password"
-            />
-            <div class="relative">
-              <FieldError v-if="errorMessage && (fieldMeta.touched || submitCount > 0)" class="text-destructive absolute">
-                {{ errorMessage }}
-              </FieldError>
-            </div>
-          </UIField>
-        </VeeField>
+        <FormField name="password" rules="required" label="Password" class="relative">
+          <template #default="{ field }">
+            <PasswordInput v-bind="field" id="password" />
+          </template>
+        </FormField>
 
         <UIField>
           <Button type="submit" :disabled="!meta.valid || submitting">
