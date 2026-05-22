@@ -65,7 +65,7 @@ interface McpKeyDetail {
   tableWhitelist: string[]
 }
 
-const { meta, values, setFieldValue, resetForm: resetVeeForm } = useForm<{ name: string; dbManagementId: number | null }>({
+const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<{ name: string; dbManagementId: number | null }>({
   initialValues: { name: "", dbManagementId: null },
 })
 
@@ -235,6 +235,7 @@ const issue = async () => {
     issuing.value = false;
   }
 };
+const onIssue = handleSubmit(issue)
 
 const test = async () => {
   try {
@@ -280,7 +281,7 @@ onMounted(load);
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <VeeForm class="space-y-6 pt-4" :onSubmit="issue">
+        <form class="space-y-6 pt-4" @submit.prevent="onIssue">
           <FieldGroup class="grid gap-4 md:grid-cols-2">
             <FormField name="name" rules="required" label="Name">
               <template #default="{ field }">
@@ -561,7 +562,7 @@ onMounted(load);
               {{ issuing ? "Issuing..." : "Issue Key" }}
             </Button>
           </span>
-        </VeeForm>
+        </form>
 
         <div
           v-if="issuedPlaintextKey"

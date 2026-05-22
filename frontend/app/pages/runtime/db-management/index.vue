@@ -68,7 +68,7 @@ interface DbFormValues {
   Encrypt: boolean
 }
 
-const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm } = useForm<DbFormValues>({
+const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<DbFormValues>({
   initialValues: {
     name: "",
     sqlProvider: "Mysql",
@@ -156,6 +156,7 @@ const save = async () => {
     saving.value = false;
   }
 };
+const onSave = handleSubmit(save)
 
 const remove = async (id: number) => {
   if (!confirm("Are you sure you want to delete this database connection?"))
@@ -215,7 +216,7 @@ onMounted(load);
         </CardDescription>
       </CardHeader>
       <CardContent class="pt-6">
-        <VeeForm class="space-y-6" :onSubmit="save">
+        <form class="space-y-6" @submit.prevent="onSave">
           <FieldGroup class="grid gap-4 md:grid-cols-2">
             <FormField name="name" rules="required" label="Connection Name" class="md:col-span-2">
               <template #default="{ field }">
@@ -408,7 +409,7 @@ onMounted(load);
               }}
             </Button>
           </div>
-        </VeeForm>
+        </form>
       </CardContent>
     </Card>
 

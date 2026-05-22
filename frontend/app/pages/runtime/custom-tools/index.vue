@@ -53,7 +53,7 @@ interface ToolFormValues {
   definitionJson: string
 }
 
-const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm } = useForm<ToolFormValues>({
+const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<ToolFormValues>({
   initialValues: {
     name: "",
     description: "",
@@ -173,6 +173,7 @@ const save = async () => {
     saving.value = false;
   }
 };
+const onSave = handleSubmit(save)
 
 const remove = async (id: number) => {
   if (!confirm("Are you sure you want to delete this tool?")) return;
@@ -215,7 +216,7 @@ onMounted(async () => {
         </CardDescription>
       </CardHeader>
       <CardContent class="pt-6">
-        <VeeForm class="space-y-6" :onSubmit="save">
+        <form class="space-y-6" @submit.prevent="onSave">
           <FieldGroup class="grid gap-4 md:grid-cols-2">
             <FormField name="name" rules="required" label="Tool Name" helpText="Snake case recommended. This is how the LLM will see it.">
               <template #default="{ field }">
@@ -361,7 +362,7 @@ onMounted(async () => {
               }}
             </Button>
           </div>
-        </VeeForm>
+        </form>
       </CardContent>
     </Card>
 
