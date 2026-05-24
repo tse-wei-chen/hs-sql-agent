@@ -1,6 +1,30 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.6.0-alpha] - 2026-05-24
+
+### Feature
+
+- **Semantic Layer Update MCP Tool**: Added `UpdateSemanticLayer` MCP tool to upsert display names and descriptions for tables/columns, enriching schema discovery results.
+- **CI/CD Pipeline**: Added GitHub Actions workflow (`.github/workflows/test.yml`) running `Admin.Test`, `ToolBox.Test`, `SqlAgent.Test`, and frontend tests on release.
+
+### Infrastructure
+
+- New `Infrastructure.csproj` project with corresponding test project.
+- Added `ToolBox.Test`, `Common.Test`, `Infrastructure.Test` to solution.
+
+### Tests
+
+- **McpAccessKeyAuthMiddlewareTests** (+221 lines): Comprehensive coverage for MCP auth middleware — valid/invalid keys, missing Authorization, `X-MCP-Server-Key` header fallback, CORS origin enforcement, and context item propagation.
+- **CustomToolProxyTests** (+196 lines): Tests for tool not found, parameter replacement, missing SQL config, DML execution, and audit logging on success/failure.
+- **SanityTests**: Added to both `Common.Test` and `Infrastructure.Test`.
+
+### Fix
+
+- **Frontend `useVModel` removal**: Replaced `useVModel` (from `@vueuse/core`) with native `computed` getter/setter in `Input.vue`, `Textarea.vue`, and `PasswordInput.vue` to reduce dependency footprint. Added `value` prop as fallback for `modelValue`.
+- **PasswordInput.vue**: Renamed internal `value` computed → `model` to avoid prop name collision; added `value` prop support.
+- **db-management Select binding**: Fixed `Select` component to use explicit `:model-value` / `@update:model-value` instead of `v-bind="field"` for proper v-model compatibility.
+
 ## [1.5.1-alpha] - 2026-05-22
 
 ## fix form create/edit not work
