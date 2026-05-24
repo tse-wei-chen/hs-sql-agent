@@ -279,6 +279,69 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
     }
 
+    [McpServerTool, Description(@"
+        Update the semantic layer metadata for one or more tables and columns.
+        This enriches schema discovery results with human-readable display names and descriptions.
+        If a semantic entry already exists for the given table/column, it will be updated.
+        Only table-level entries (without columnName) affect GetTables results;
+        column-level entries affect GetColumns results.
+    ")]
+    public async Task<string> UpdateSemanticLayer(
+        [Description("List of semantic entries to upsert. Each entry must have tableName; schemaName, columnName, description, and displayName are optional.")]
+        List<SemanticLayerEntry> entries)
+    {
+        try
+        {
+            ValidateToolAccess("update_semantic_layer");
+            var dbId = ResolveDbManagementId();
+            if (!dbId.HasValue)
+            {
+                return "Error: No database connection associated with this API key.";
+            }
+
+            if (entries == null || entries.Count == 0)
+            {
+                return "Error: No semantic entries provided.";
+            }
+
+            var results = new List<string>();
+            foreach (var entry in entries)
+            {
+                var request = new DbSemanticRequest
+                {
+                    DbManagementId = dbId.Value,
+                    SchemaName = entry.SchemaName,
+                    TableName = entry.TableName,
+                    ColumnName = entry.ColumnName,
+                    Description = entry.Description,
+                    DisplayName = entry.DisplayName
+                };
+
+                var vm = await _semanticService.UpsertSemanticAsync(request);
+                var target = string.IsNullOrEmpty(entry.ColumnName)
+                    ? $"{entry.SchemaName ?? "dbo"}.{entry.TableName}"
+                    : $"{entry.SchemaName ?? "dbo"}.{entry.TableName}.{entry.ColumnName}";
+                results.Add($"  - {target}: updated");
+            }
+
+            await _auditService.WriteLogAsync(
+                action: "mcp.update_semantic_layer",
+                target: $"updated {entries.Count} entries",
+                result: "success");
+
+            return $"Semantic layer updated successfully:\n{string.Join("\n", results)}";
+        }
+        catch (Exception ex)
+        {
+            await _auditService.WriteLogAsync(
+                action: "mcp.update_semantic_layer",
+                target: "semantic_layer",
+                result: "failed",
+                detail: ex.Message);
+            return $"Error updating semantic layer: {ex.Message}";
+        }
+    }
+
     private static bool CheckProviderAndConnectionString(SqlRuntimeConfig sqlConfig, out SqlAgentToolType dbType)
     {
         dbType = default;

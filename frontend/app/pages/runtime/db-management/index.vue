@@ -228,7 +228,10 @@ onMounted(load);
               <Field>
                 <FieldLabel for="sqlProvider">SQL Provider<RequiredStar /></FieldLabel>
                 <div class="relative">
-                  <Select v-bind="field">
+                  <Select
+                    :model-value="field.value"
+                    @update:model-value="field.onChange"
+                  >
                     <SelectTrigger class="w-full">
                       <SelectValue placeholder="Select provider" />
                     </SelectTrigger>

@@ -11,6 +11,7 @@ import {
 
 interface Props {
   modelValue?: string | number;
+  value?: string | number;
   class?: any;
 }
 
@@ -21,8 +22,8 @@ const emit = defineEmits(["update:modelValue"]);
 const show = ref(false);
 const handleToggle = () => (show.value = !show.value);
 
-const value = computed({
-  get: () => props.modelValue,
+const model = computed({
+  get: () => props.modelValue ?? props.value,
   set: (val) => emit("update:modelValue", val),
 });
 </script>
@@ -30,11 +31,12 @@ const value = computed({
 <template>
   <InputGroup>
     <InputGroupInput
-      v-model="value"
+      v-model="model"
       :type="show ? 'text' : 'password'"
       :class="cn(props.class)"
       v-bind="$attrs"
     />
+
     <InputGroupAddon align="inline-end">
       <InputGroupButton
         type="button"
