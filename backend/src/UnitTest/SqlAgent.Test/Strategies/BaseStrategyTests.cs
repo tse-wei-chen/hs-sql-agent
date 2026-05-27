@@ -221,14 +221,14 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                     new FunctionSelectCondition
                     {
                         FunctionName = "COUNT",
-                        Arguments = [new FieldFunctionArgument { FieldName = "o.id" }],
+                        Arguments = [new FieldSelectCondition { FieldName = "o.id" }],
                         Alias = "order_count"
                     },
                     new OperationSelectCondition
                     {
-                        Left = new FieldArithmeticCondition { FieldName = "u.age" },
+                        Left = new FieldSelectCondition { FieldName = "u.age" },
                         Operator = ArithmeticOperator.Add,
-                        Right = new ConstantArithmeticCondition { Constant = 0 },
+                        Right = new ConstantSelectCondition { Constant = 0 },
                         Alias = "age_check"
                     },
                     new ConstantSelectCondition { Constant = "active_user", Alias = "user_type" },
@@ -275,7 +275,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                         LeftFunction = new SqlFunctionCondition
                         {
                             FunctionName = "COUNT",
-                            Arguments = [new FieldFunctionArgument { FieldName = "o.id" }]
+                            Arguments = [new FieldSelectCondition { FieldName = "o.id" }]
                         },
                         Operator = ">=",
                         Value = 0
@@ -293,7 +293,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
-        Assert.True(rows.Count <= 5, $"Expected ≤5 rows, got {rows.Count}");
+        Assert.True(rows.Count <= 5, $"Expected ?? rows, got {rows.Count}");
 
         foreach (var row in rows)
         {
@@ -383,9 +383,9 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
         // WHERE (name = 'Alice' OR name = 'Bob') AND NOT name LIKE 'C%'
-        // Alice: matches 'Alice' ✓ → included
-        // Bob: matches 'Bob' ✓ → included
-        // Charlie: doesn't match 'Alice' or 'Bob' → excluded (even though NOT LIKE 'C%' would be true)
+        // Alice: matches 'Alice' ????included
+        // Bob: matches 'Bob' ????included
+        // Charlie: doesn't match 'Alice' or 'Bob' ??excluded (even though NOT LIKE 'C%' would be true)
         Assert.Equal(2, rows.Count);
         Assert.Equal("Alice", rows[0].GetProperty("uname").GetString());
         Assert.Equal("Bob", rows[1].GetProperty("uname").GetString());
@@ -410,7 +410,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                             new FunctionSelectCondition
                             {
                                 FunctionName = "COUNT",
-                                Arguments = [new FieldFunctionArgument { FieldName = "id" }]
+                                Arguments = [new FieldSelectCondition { FieldName = "id" }]
                             }
                         ],
                         WhereColumnsAndValues =
@@ -462,7 +462,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
-        // Skip 1: Bob (sorted: Alice, Bob, Charlie → skip Alice)
+        // Skip 1: Bob (sorted: Alice, Bob, Charlie ??skip Alice)
         Assert.Equal(2, rows.Count);
         Assert.Equal("Bob", rows[0].GetProperty("uname").GetString());
     }
@@ -508,8 +508,8 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
-        // EXISTS: users who have at least one order → Alice (id=1) and Bob (id=2)
-        // Charlie (id=3) has no orders → excluded
+        // EXISTS: users who have at least one order ??Alice (id=1) and Bob (id=2)
+        // Charlie (id=3) has no orders ??excluded
         Assert.Equal(2, rows.Count);
     }
 
@@ -539,7 +539,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
-        // age BETWEEN 25 AND 35 → Alice (30), Bob (25), Charlie (35)
+        // age BETWEEN 25 AND 35 ??Alice (30), Bob (25), Charlie (35)
         Assert.Equal(3, rows.Count);
     }
 
@@ -556,7 +556,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                     new FunctionSelectCondition
                     {
                         FunctionName = "COUNT",
-                        Arguments = [new FieldFunctionArgument { FieldName = "id" }],
+                        Arguments = [new FieldSelectCondition { FieldName = "id" }],
                         Alias = "cnt"
                     }
                 ],
@@ -575,7 +575,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                                 LeftFunction = new SqlFunctionCondition
                                 {
                                     FunctionName = "COUNT",
-                                    Arguments = [new FieldFunctionArgument { FieldName = "id" }]
+                                    Arguments = [new FieldSelectCondition { FieldName = "id" }]
                                 },
                                 Operator = ">=",
                                 Value = 1
@@ -594,7 +594,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
-        // HAVING (COUNT(id) >= 1) → all order groups pass (each user has at least 1 order)
+        // HAVING (COUNT(id) >= 1) ??all order groups pass (each user has at least 1 order)
         Assert.Equal(2, rows.Count);
     }
 

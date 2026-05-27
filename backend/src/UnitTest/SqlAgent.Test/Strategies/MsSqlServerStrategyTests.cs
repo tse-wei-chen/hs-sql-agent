@@ -124,7 +124,7 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
             new QueryDefinition
             {
                 TableName = TestTableName,
-                SelectColumns = [new OperationSelectCondition { Left = new FieldArithmeticCondition { FieldName = "Name" }, Operator = ArithmeticOperator.Subtract, Right = new ConstantArithmeticCondition { Constant = 1 } }]
+                SelectColumns = [new OperationSelectCondition { Left = new FieldSelectCondition { FieldName = "Name" }, Operator = ArithmeticOperator.Subtract, Right = new ConstantSelectCondition { Constant = 1 } }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));

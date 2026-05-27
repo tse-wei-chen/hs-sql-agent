@@ -54,7 +54,7 @@ const emit = defineEmits<{
           <SelectContent>
             <SelectItem value="basic">Basic</SelectItem>
             <SelectItem value="column_compare">Column Compare</SelectItem>
-            <SelectItem value="in">IN</SelectItem>
+
           </SelectContent>
         </Select>
 
@@ -107,6 +107,13 @@ const emit = defineEmits<{
             class="h-8 text-xs w-24"
           />
           <Input
+            v-if="w.operator.toUpperCase() === 'IN' || w.operator.toUpperCase() === 'NOT IN'"
+            v-model="w.values"
+            placeholder="val1, val2, val3"
+            class="h-8 text-xs flex-1"
+          />
+          <Input
+            v-else
             v-model="w.value"
             placeholder="Value (e.g. {{userId}})"
             class="h-8 text-xs flex-1"
@@ -157,37 +164,7 @@ const emit = defineEmits<{
         </div>
       </template>
 
-      <!-- IN type -->
-      <template v-if="w.type === 'in'">
-        <div class="flex items-center gap-2">
-          <ComboboxInput
-            v-model="w.table"
-            :options="nowValidTables"
-            placeholder="Target Table"
-            class="flex-1"
-          />
-          <ComboboxInput
-            v-model="w.field"
-            :options="options(w.table)"
-            placeholder="Field"
-            class="flex-1"
-          />
-          <span class="text-xs font-semibold">IN</span>
-          <Input
-            v-model="w.values"
-            placeholder="val1, val2, val3"
-            class="h-8 text-xs flex-1"
-          />
-          <label class="flex items-center gap-1 text-[0.6rem] whitespace-nowrap">
-            <input
-              type="checkbox"
-              v-model="w.isDate"
-              class="rounded border-gray-300"
-            />
-            Date
-          </label>
-        </div>
-      </template>
+
     </div>
   </SqlBuilderSection>
 </template>

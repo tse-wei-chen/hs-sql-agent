@@ -31,15 +31,15 @@ public class FieldSelectCondition : SelectCondition
 
 public class OperationSelectCondition : SelectCondition
 {
-    [Description("The left operand. Can be a field, constant, function, or another nested operation.")]
-    public SelectArithmeticCondition Left { get; set; } = null!;
+    [Description("The left operand. Supports all SelectCondition types.")]
+    public SelectCondition Left { get; set; } = null!;
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     [Description("Must be one of the enum values: 'Add', 'Subtract', 'Multiply', 'Divide'")]
     public ArithmeticOperator Operator { get; set; } = ArithmeticOperator.Add;
 
-    [Description("The right operand. Can be a field, constant, function, or another nested operation.")]
-    public SelectArithmeticCondition Right { get; set; } = null!;
+    [Description("The right operand. Supports all SelectCondition types.")]
+    public SelectCondition Right { get; set; } = null!;
 }
 
 public class ConstantSelectCondition : SelectCondition
@@ -53,8 +53,8 @@ public class FunctionSelectCondition : SelectCondition
     [Description("SQL function name in UPPERCASE. e.g., 'COUNT', 'SUM', 'AVG', 'ROUND', 'NULLIF', 'COALESCE'.")]
     public string FunctionName { get; set; } = string.Empty;
 
-    [Description("Ordered list of arguments. Each argument must specify its own polymorphic type.")]
-    public List<SqlFunctionArgument>? Arguments { get; set; }
+    [Description("Ordered list of arguments. Each argument is a SelectCondition.")]
+    public List<SelectCondition>? Arguments { get; set; }
 
     [Description("Optional. DISTINCT keyword inside function, e.g., COUNT(DISTINCT o.customer_id) -> set IsDistinct = true.")]
     public bool IsDistinct { get; set; }

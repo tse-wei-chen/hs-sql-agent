@@ -6,7 +6,6 @@ namespace SqlAgent.Service.Models;
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(BasicWhereCondition), "basic")]
 [JsonDerivedType(typeof(ColumnCompareWhereCondition), "column_compare")]
-[JsonDerivedType(typeof(InWhereCondition), "in")]
 [JsonDerivedType(typeof(SubQueryWhereCondition), "subquery")]
 [JsonDerivedType(typeof(GroupWhereCondition), "group")]
 public abstract class WhereCondition
@@ -21,10 +20,12 @@ public class BasicWhereCondition : WhereCondition
 {
     [Description("The column name to filter. e.g., 'p.discontinued'")]
     public string FieldName { get; set; } = string.Empty;
-    [Description("Comparison operator: '=', '>', '<', '>=', '<=', '<>', 'LIKE', 'ILIKE'")]
+    [Description("Comparison operator: '=', '>', '<', '>=', '<=', '<>', 'LIKE', 'ILIKE', 'IN', 'NOT IN'")]
     public string Operator { get; set; } = "=";
-    [Description("The value to compare against.")]
+    [Description("The value to compare against (for IN/NOT IN, use Values array instead).")]
     public object? Value { get; set; }
+    [Description("The values array for IN/NOT IN operator. When set, Operator should be 'IN' or 'NOT IN'.")]
+    public List<object> Values { get; set; } = [];
     [Description("Whether the value is a date.")]
     public bool IsDate { get; set; }
 }
@@ -39,18 +40,6 @@ public class ColumnCompareWhereCondition : WhereCondition
 
     [Description("The right-hand side column reference. e.g., 'o.customer_id'")]
     public string RightFieldName { get; set; } = string.Empty;
-}
-
-public class InWhereCondition : WhereCondition
-{
-    [Description("The column name to filter. e.g., 'p.discontinued'")]
-    public string FieldName { get; set; } = string.Empty;
-    [Description("Must be 'IN' or 'NOT IN'")]
-    public string Operator { get; set; } = "IN";
-    [Description("The values to compare against.")]
-    public List<object> Values { get; set; } = [];
-    [Description("Whether the values are dates.")]
-    public bool IsDate { get; set; }
 }
 
 public class SubQueryWhereCondition : WhereCondition

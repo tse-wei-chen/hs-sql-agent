@@ -166,14 +166,14 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                     new FunctionSelectCondition
                     {
                         FunctionName = "COUNT",
-                        Arguments = [new FieldFunctionArgument { FieldName = "O.ID" }],
+                        Arguments = [new FieldSelectCondition { FieldName = "O.ID" }],
                         Alias = "order_count"
                     },
                     new OperationSelectCondition
                     {
-                        Left = new FieldArithmeticCondition { FieldName = "U.AGE" },
+                        Left = new FieldSelectCondition { FieldName = "U.AGE" },
                         Operator = ArithmeticOperator.Add,
-                        Right = new ConstantArithmeticCondition { Constant = 0 },
+                        Right = new ConstantSelectCondition { Constant = 0 },
                         Alias = "age_check"
                     },
                     new ConstantSelectCondition { Constant = "active_user", Alias = "user_type" },
@@ -220,7 +220,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                         LeftFunction = new SqlFunctionCondition
                         {
                             FunctionName = "COUNT",
-                            Arguments = [new FieldFunctionArgument { FieldName = "O.ID" }]
+                            Arguments = [new FieldSelectCondition { FieldName = "O.ID" }]
                         },
                         Operator = ">=",
                         Value = 0
@@ -317,7 +317,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                             new FunctionSelectCondition
                             {
                                 FunctionName = "COUNT",
-                                Arguments = [new FieldFunctionArgument { FieldName = "ID" }]
+                                Arguments = [new FieldSelectCondition { FieldName = "ID" }]
                             }
                         ],
                         WhereColumnsAndValues =
@@ -465,7 +465,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                     new FunctionSelectCondition
                     {
                         FunctionName = "COUNT",
-                        Arguments = [new FieldFunctionArgument { FieldName = "ID" }],
+                        Arguments = [new FieldSelectCondition { FieldName = "ID" }],
                         Alias = "cnt"
                     }
                 ],
@@ -484,7 +484,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                                 LeftFunction = new SqlFunctionCondition
                                 {
                                     FunctionName = "COUNT",
-                                    Arguments = [new FieldFunctionArgument { FieldName = "ID" }]
+                                    Arguments = [new FieldSelectCondition { FieldName = "ID" }]
                                 },
                                 Operator = ">=",
                                 Value = 1

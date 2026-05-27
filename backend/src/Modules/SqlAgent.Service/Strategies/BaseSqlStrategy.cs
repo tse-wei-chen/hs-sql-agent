@@ -22,7 +22,7 @@ public abstract partial class BaseSqlStrategy(
     private readonly IQueryValueParserService _valueParser = valueParser;
 
     private static SqlFunctionCondition ToFunc(
-        string name, List<SqlFunctionArgument>? args, bool distinct, List<WhereCondition>? filter) =>
+        string name, List<SelectCondition>? args, bool distinct, List<WhereCondition>? filter) =>
         new() { FunctionName = name, Arguments = args, IsDistinct = distinct, FilterWhereConditions = filter };
     protected readonly IConfiguration _configuration = configuration;
 
@@ -156,12 +156,12 @@ public abstract partial class BaseSqlStrategy(
     {
         if (definition.FromQuery != null)
         {
-            // Use the inner FromQuery's alias as the subquery wrapper alias,
-            // so column references (e.g. "sub.customer_id") stay valid.
-            // Fall back to the outer definition's Alias.
-            var alias = definition.FromQuery.Alias;
+            // Use the outer definition's Alias as the subquery wrapper alias,
+            // so the outer SELECT can reference columns using the outer alias.
+            // Fall back to the inner FromQuery's Alias, then "_sub".
+            var alias = definition.Alias;
             if (string.IsNullOrWhiteSpace(alias))
-                alias = definition.Alias ?? "_sub";
+                alias = definition.FromQuery.Alias ?? "_sub";
             return new Query().From(BuildQueryFromDefinition(definition.FromQuery), alias);
         }
 
@@ -178,9 +178,8 @@ public abstract partial class BaseSqlStrategy(
     private void ValidateOuterScopeAgainstSubquery(QueryDefinition subQuery, QueryDefinition outerDef)
     {
         if (outerDef.SelectColumns == null || outerDef.SelectColumns.Count == 0) return;
-        var subAlias = string.IsNullOrWhiteSpace(subQuery.Alias)
-            ? (string.IsNullOrWhiteSpace(outerDef.Alias) ? "_sub" : outerDef.Alias!)
-            : subQuery.Alias;
+        // Must match ResolveSource: outerDef.Alias → subQuery.Alias → "_sub"
+        var subAlias = outerDef.Alias ?? subQuery.Alias ?? "_sub";
 
         var innerAliases = CollectInnerJoinAliases(subQuery);
 
@@ -230,8 +229,8 @@ public abstract partial class BaseSqlStrategy(
                 break;
 
             case OperationSelectCondition op:
-                CheckArithmeticLeak(op.Left, innerAliases, subAlias);
-                CheckArithmeticLeak(op.Right, innerAliases, subAlias);
+                CheckExprLeak(op.Left, innerAliases, subAlias);
+                CheckExprLeak(op.Right, innerAliases, subAlias);
                 break;
 
             case CaseWhenSelectCondition cw when cw.CaseWhen != null:
@@ -270,50 +269,50 @@ public abstract partial class BaseSqlStrategy(
         }
     }
 
-    private void CheckFunctionArgLeak(SqlFunctionArgument arg, HashSet<string> innerAliases, string subAlias)
+    private void CheckFunctionArgLeak(SelectCondition arg, HashSet<string> innerAliases, string subAlias)
     {
         switch (arg)
         {
-            case FieldFunctionArgument f:
+            case FieldSelectCondition f:
                 CheckFieldNameLeak(f.FieldName, "outer SELECT function argument", innerAliases, subAlias);
                 break;
 
-            case NestedFunctionArgument n when n.Arguments != null:
+            case FunctionSelectCondition n when n.Arguments != null:
                 foreach (var a in n.Arguments)
                     CheckFunctionArgLeak(a, innerAliases, subAlias);
                 break;
 
-            case ArithmeticFunctionArgument a:
-                CheckArithmeticLeak(a.Left, innerAliases, subAlias);
-                CheckArithmeticLeak(a.Right, innerAliases, subAlias);
+            case OperationSelectCondition a:
+                CheckExprLeak(a.Left, innerAliases, subAlias);
+                CheckExprLeak(a.Right, innerAliases, subAlias);
                 break;
 
-            case CaseWhenFunctionArgument cw when cw.CaseWhen != null:
+            case CaseWhenSelectCondition cw when cw.CaseWhen != null:
                 foreach (var clause in cw.CaseWhen)
                     CheckWhereLeak(clause.Condition, innerAliases, subAlias);
                 break;
         }
     }
 
-    private void CheckArithmeticLeak(SelectArithmeticCondition? cond, HashSet<string> innerAliases, string subAlias)
+    private void CheckExprLeak(SelectCondition? cond, HashSet<string> innerAliases, string subAlias)
     {
         switch (cond)
         {
-            case FieldArithmeticCondition f:
-                CheckFieldNameLeak(f.FieldName, "outer SELECT arithmetic", innerAliases, subAlias);
+            case FieldSelectCondition f:
+                CheckFieldNameLeak(f.FieldName, "outer SELECT expression", innerAliases, subAlias);
                 break;
 
-            case FunctionArithmeticCondition fn when fn.Arguments != null:
+            case FunctionSelectCondition fn when fn.Arguments != null:
                 foreach (var arg in fn.Arguments)
                     CheckFunctionArgLeak(arg, innerAliases, subAlias);
                 break;
 
-            case OperationArithmeticCondition op:
-                CheckArithmeticLeak(op.Left, innerAliases, subAlias);
-                CheckArithmeticLeak(op.Right, innerAliases, subAlias);
+            case OperationSelectCondition op:
+                CheckExprLeak(op.Left, innerAliases, subAlias);
+                CheckExprLeak(op.Right, innerAliases, subAlias);
                 break;
 
-            case CaseWhenArithmeticCondition cw when cw.CaseWhen != null:
+            case CaseWhenSelectCondition cw when cw.CaseWhen != null:
                 foreach (var clause in cw.CaseWhen)
                     CheckWhereLeak(clause.Condition, innerAliases, subAlias);
                 break;
@@ -417,8 +416,7 @@ public abstract partial class BaseSqlStrategy(
             var columnExpr = col switch
             {
                 OperationSelectCondition opCol => MapArithmetic(opCol),
-                ConstantSelectCondition constCol => MapArithmetic(
-                    new ConstantArithmeticCondition { Constant = constCol.Constant }),
+                ConstantSelectCondition constCol => MapArithmetic(constCol),
                 FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
                 CaseWhenSelectCondition caseWhenCol => MapCaseWhen(caseWhenCol.CaseWhen, caseWhenCol.ElseValue),
                 SubQuerySelectCondition subQueryCol => MapSubQueryColumn(subQueryCol),
@@ -507,40 +505,30 @@ public abstract partial class BaseSqlStrategy(
     // Arithmetic expressions
     // =====================================================================
 
-    private AbstractColumn MapArithmetic(SelectArithmeticCondition arithmetic)
+    private AbstractColumn MapArithmetic(SelectCondition? expr)
     {
-        return arithmetic switch
+        return expr switch
         {
-            OperationArithmeticCondition op => new ArithmeticColumn
+            OperationSelectCondition op => new ArithmeticColumn
             {
                 Left = MapArithmetic(op.Left),
                 Right = MapArithmetic(op.Right),
                 Operator = GetOperatorString(op.Operator)
             },
 
-            FunctionArithmeticCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
+            FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
 
-            ConstantArithmeticCondition cst => MapConstantValue(cst.Constant),
+            ConstantSelectCondition cst => MapConstantValue(cst.Constant),
 
-            FieldArithmeticCondition field => new Column { Name = field.FieldName.Trim() },
+            FieldSelectCondition field => new Column { Name = field.FieldName.Trim() },
 
-            CaseWhenArithmeticCondition cs => MapCaseWhen(cs.CaseWhen, cs.ElseValue),
+            CaseWhenSelectCondition cs => MapCaseWhen(cs.CaseWhen, cs.ElseValue),
+
+            null => throw new InvalidOperationException("Expression is null."),
 
             _ => throw new InvalidOperationException(
-                $"Unknown arithmetic condition type: {arithmetic?.GetType().Name}")
+                $"Unsupported expression type in arithmetic context: {expr?.GetType().Name}")
         };
-    }
-
-    private AbstractColumn MapArithmetic(OperationSelectCondition opCol)
-    {
-        var internalNode = new OperationArithmeticCondition
-        {
-            Left = opCol.Left,
-            Operator = opCol.Operator,
-            Right = opCol.Right
-        };
-
-        return MapArithmetic(internalNode);
     }
 
     private NumberColumn MapConstantValue(object? rawConstant)
@@ -659,20 +647,15 @@ public abstract partial class BaseSqlStrategy(
         return result;
     }
 
-    private AbstractColumn MapFunctionArgument(SqlFunctionArgument argument)
+    private AbstractColumn MapFunctionArgument(SelectCondition argument)
     {
         return argument switch
         {
-            ArithmeticFunctionArgument a => MapArithmetic(new OperationArithmeticCondition
-            {
-                Left = a.Left,
-                Operator = a.Operator,
-                Right = a.Right
-            }),
-            NestedFunctionArgument nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions)),
-            ConstantFunctionArgument constantArg => MapConstantValue(constantArg.Constant),
-            CaseWhenFunctionArgument caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
-            FieldFunctionArgument fieldArg when !string.IsNullOrWhiteSpace(fieldArg.FieldName)
+            OperationSelectCondition a => MapArithmetic(a),
+            FunctionSelectCondition nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions)),
+            ConstantSelectCondition constantArg => MapConstantValue(constantArg.Constant),
+            CaseWhenSelectCondition caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
+            FieldSelectCondition fieldArg when !string.IsNullOrWhiteSpace(fieldArg.FieldName)
                 => new Column { Name = fieldArg.FieldName.Trim() },
             _ => throw new InvalidOperationException(
                 $"Unsupported or invalid function argument type: {argument?.GetType().Name ?? "null"}")
@@ -701,7 +684,6 @@ public abstract partial class BaseSqlStrategy(
         {
             GroupWhereCondition g => ApplyGroupWhere(query, g),
             SubQueryWhereCondition s => ApplySubQueryWhere(query, s),
-            InWhereCondition i => ApplyInWhere(query, i),
             BasicWhereCondition b => ApplyBasicWhere(query, b),
             ColumnCompareWhereCondition c => ApplyColumnCompareWhere(query, c),
             _ => query
@@ -751,23 +733,6 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
-    private Q ApplyInWhere<Q>(Q query, InWhereCondition c)
-        where Q : BaseQuery<Q>
-    {
-        if (string.IsNullOrWhiteSpace(c.FieldName) || c.Values == null || c.Values.Count == 0)
-            return query;
-
-        var op = (c.Operator ?? "in").ToLowerInvariant().Replace(" ", "").Trim();
-        var vals = c.Values.Select(v => v is JsonElement je ? _valueParser.UnwrapJsonElement(je) : v).ToList();
-
-        if (c.IsDate)
-            return ApplyDateIn(query, c.FieldName, op, vals, c.IsOr);
-
-        return op == "in"
-            ? ApplyInLogic(query, c.FieldName, vals, c.IsOr, c.IsNot, negate: false)
-            : ApplyInLogic(query, c.FieldName, vals, c.IsOr, c.IsNot, negate: true);
-    }
-
     private Q ApplyBasicWhere<Q>(Q query, BasicWhereCondition c)
         where Q : BaseQuery<Q>
     {
@@ -775,7 +740,29 @@ public abstract partial class BaseSqlStrategy(
             return query;
 
         var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
-        var val = c.Value is JsonElement je ? _valueParser.UnwrapJsonElement(je) : c.Value;
+
+        // IN / NOT IN with Values array
+        if ((op is "in" or "notin") && c.Values.Count > 0)
+        {
+            var vals = c.Values.Select(v => v is JsonElement je ? _valueParser.UnwrapJsonElement(je) : v).ToList();
+
+            if (c.IsDate)
+                return ApplyDateIn(query, c.FieldName, op, vals, c.IsOr);
+
+            var negate = op == "notin";
+            if (negate)
+            {
+                return c.IsOr
+                    ? (c.IsNot ? query.OrWhereIn(c.FieldName, vals) : query.OrWhereNotIn(c.FieldName, vals))
+                    : (c.IsNot ? query.WhereIn(c.FieldName, vals) : query.WhereNotIn(c.FieldName, vals));
+            }
+
+            return c.IsOr
+                ? (c.IsNot ? query.OrWhereNotIn(c.FieldName, vals) : query.OrWhereIn(c.FieldName, vals))
+                : (c.IsNot ? query.WhereNotIn(c.FieldName, vals) : query.WhereIn(c.FieldName, vals));
+        }
+
+        var val = c.Value is JsonElement jeV ? _valueParser.UnwrapJsonElement(jeV) : c.Value;
 
         if (c.IsDate)
             return ApplyDateWhere(query, c.FieldName, op, val, c.IsOr);
@@ -916,26 +903,6 @@ public abstract partial class BaseSqlStrategy(
             : (isOr
                 ? query.OrWhereDateNotBetween(field, lowDt, highDt)
                 : query.WhereDateNotBetween(field, lowDt, highDt));
-    }
-
-    // =====================================================================
-    // IN helper
-    // =====================================================================
-
-    private static Q ApplyInLogic<Q>(
-        Q query, string field, List<object> values, bool isOr, bool isNot, bool negate)
-        where Q : BaseQuery<Q>
-    {
-        if (negate)
-        {
-            return isOr
-                ? (isNot ? query.OrWhereIn(field, values) : query.OrWhereNotIn(field, values))
-                : (isNot ? query.WhereIn(field, values) : query.WhereNotIn(field, values));
-        }
-
-        return isOr
-            ? (isNot ? query.OrWhereNotIn(field, values) : query.OrWhereIn(field, values))
-            : (isNot ? query.WhereNotIn(field, values) : query.WhereIn(field, values));
     }
 
     // =====================================================================
@@ -1130,13 +1097,13 @@ public abstract partial class BaseSqlStrategy(
         return $"{func.FunctionName}({string.Join(", ", argParts)})";
     }
 
-    private string BuildHavingArgPart(SqlFunctionArgument arg, List<object> bindings)
+    private string BuildHavingArgPart(SelectCondition arg, List<object> bindings)
     {
         return arg switch
         {
-            FieldFunctionArgument f => f.FieldName,
-            ConstantFunctionArgument c => BuildHavingConstPart(c.Constant, bindings),
-            NestedFunctionArgument n => BuildHavingFuncExpr(
+            FieldSelectCondition f => f.FieldName,
+            ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            FunctionSelectCondition n => BuildHavingFuncExpr(
                 new SqlFunctionCondition
                 {
                     FunctionName = n.FunctionName,
@@ -1145,10 +1112,8 @@ public abstract partial class BaseSqlStrategy(
                     FilterWhereConditions = n.FilterWhereConditions
                 },
                 bindings),
-            ArithmeticFunctionArgument a when a.Left != null => BuildHavingArithPart(
-                new OperationArithmeticCondition { Left = a.Left, Operator = a.Operator, Right = a.Right },
-                bindings),
-            CaseWhenFunctionArgument => throw new InvalidOperationException(
+            OperationSelectCondition a when a.Left != null => BuildHavingArithPart(a, bindings),
+            CaseWhenSelectCondition => throw new InvalidOperationException(
                 "CASE WHEN is not supported in HAVING clause function arguments. " +
                 "Use it in SELECT columns instead."),
             _ => "?"
@@ -1162,15 +1127,23 @@ public abstract partial class BaseSqlStrategy(
         return "?";
     }
 
-    private string BuildHavingArithPart(SelectArithmeticCondition condition, List<object> bindings)
+    private string BuildHavingArithPart(OperationSelectCondition op, List<object> bindings)
     {
-        return condition switch
+        var left = op.Left switch
         {
-            FieldArithmeticCondition f => f.FieldName,
-            ConstantArithmeticCondition c => BuildHavingConstPart(c.Constant, bindings),
-            OperationArithmeticCondition op => $"({BuildHavingArithPart(op.Left, bindings)} {GetOperatorString(op.Operator)} {BuildHavingArithPart(op.Right, bindings)})",
+            FieldSelectCondition f => f.FieldName,
+            ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            OperationSelectCondition nested => BuildHavingArithPart(nested, bindings),
             _ => "?"
         };
+        var right = op.Right switch
+        {
+            FieldSelectCondition f => f.FieldName,
+            ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            OperationSelectCondition nested => BuildHavingArithPart(nested, bindings),
+            _ => "?"
+        };
+        return $"({left} {GetOperatorString(op.Operator)} {right})";
     }
 
     private Query ApplySimpleHaving(Query query, string field, string op, object? val)

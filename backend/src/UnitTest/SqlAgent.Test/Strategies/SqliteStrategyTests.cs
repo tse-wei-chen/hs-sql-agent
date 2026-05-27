@@ -133,9 +133,9 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                 [
                     new OperationSelectCondition
                     {
-                        Left = new ConstantArithmeticCondition { Constant = constantJson.RootElement.Clone() },
+                        Left = new ConstantSelectCondition { Constant = constantJson.RootElement.Clone() },
                         Operator = ArithmeticOperator.Subtract,
-                        Right = new FieldArithmeticCondition { FieldName = "Age" },
+                        Right = new FieldSelectCondition { FieldName = "Age" },
                         Alias = "Delta"
                     }
                 ],
@@ -165,22 +165,22 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                         FunctionName = "SUBSTR",
                         Arguments =
                         [
-                            new FieldFunctionArgument { FieldName = "CreatedDate" },
-                            new ConstantFunctionArgument { Constant = 1 },
-                            new ConstantFunctionArgument { Constant = 4 }
+                            new FieldSelectCondition { FieldName = "CreatedDate" },
+                            new ConstantSelectCondition { Constant = 1 },
+                            new ConstantSelectCondition { Constant = 4 }
                         ],
                         Alias = "YearPart"
                     },
                     new FunctionSelectCondition
                     {
                         FunctionName = "COUNT",
-                        Arguments = [new FieldFunctionArgument { FieldName = "Id" }],
+                        Arguments = [new FieldSelectCondition { FieldName = "Id" }],
                         Alias = "UserCount"
                     }
                 ],
                 WhereColumnsAndValues =
                 [
-                    new InWhereCondition { FieldName = "Name", Operator = "in", Values = ["Alice", "Bob", "Charlie"] }
+                    new BasicWhereCondition { FieldName = "Name", Operator = "in", Values = ["Alice", "Bob", "Charlie"] }
                 ],
                 GroupByConditions =
                 [
@@ -189,9 +189,9 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                         FunctionName = "SUBSTR",
                         Arguments =
                         [
-                            new FieldFunctionArgument { FieldName = "CreatedDate" },
-                            new ConstantFunctionArgument { Constant = 1 },
-                            new ConstantFunctionArgument { Constant = 4 }
+                            new FieldSelectCondition { FieldName = "CreatedDate" },
+                            new ConstantSelectCondition { Constant = 1 },
+                            new ConstantSelectCondition { Constant = 4 }
                         ]
                     }
                 ],
@@ -202,9 +202,9 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                         FunctionName = "SUBSTR",
                         Arguments =
                         [
-                            new FieldFunctionArgument { FieldName = "CreatedDate" },
-                            new ConstantFunctionArgument { Constant = 1 },
-                            new ConstantFunctionArgument { Constant = 4 }
+                            new FieldSelectCondition { FieldName = "CreatedDate" },
+                            new ConstantSelectCondition { Constant = 1 },
+                            new ConstantSelectCondition { Constant = 4 }
                         ],
                         Direction = SortDirection.Asc
                     }
@@ -236,15 +236,15 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                         FunctionName = "ROUND",
                         Arguments =
                         [
-                            new NestedFunctionArgument
+                            new FunctionSelectCondition
                             {
                                 FunctionName = "AVG",
                                 Arguments =
                                 [
-                                    new FieldFunctionArgument { FieldName = "Amount" }
+                                    new FieldSelectCondition { FieldName = "Amount" }
                                 ]
                             },
-                            new ConstantFunctionArgument { Constant = 2 }
+                            new ConstantSelectCondition { Constant = 2 }
                         ]
                     }
                 ]
@@ -275,20 +275,20 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                         FunctionName = "SUM",
                         Arguments =
                         [
-                            new ArithmeticFunctionArgument
+                            new OperationSelectCondition
                             {
-                                Left = new OperationArithmeticCondition
+                                Left = new OperationSelectCondition
                                 {
-                                    Left = new FieldArithmeticCondition { FieldName = "Orders.Amount" },
+                                    Left = new FieldSelectCondition { FieldName = "Orders.Amount" },
                                     Operator = ArithmeticOperator.Multiply,
-                                    Right = new ConstantArithmeticCondition { Constant = 1 }
+                                    Right = new ConstantSelectCondition { Constant = 1 }
                                 },
                                 Operator = ArithmeticOperator.Multiply,
-                                Right = new OperationArithmeticCondition
+                                Right = new OperationSelectCondition
                                 {
-                                    Left = new ConstantArithmeticCondition { Constant = 1 },
+                                    Left = new ConstantSelectCondition { Constant = 1 },
                                     Operator = ArithmeticOperator.Subtract,
-                                    Right = new ConstantArithmeticCondition { Constant = 0.1m }
+                                    Right = new ConstantSelectCondition { Constant = 0.1m }
                                 }
                             }
                         ]
@@ -332,7 +332,7 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                     new FunctionSelectCondition
                     {
                         FunctionName = "SUM",
-                        Arguments = [new FieldFunctionArgument { FieldName = "o.Amount" }],
+                        Arguments = [new FieldSelectCondition { FieldName = "o.Amount" }],
                         Alias = "TotalAmount"
                     }
                 ],
@@ -391,11 +391,11 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                         FunctionName = "SUM",
                         Arguments =
                         [
-                            new ArithmeticFunctionArgument
+                            new OperationSelectCondition
                             {
-                                Left = new FieldArithmeticCondition { FieldName = "Amount" },
+                                Left = new FieldSelectCondition { FieldName = "Amount" },
                                 Operator = ArithmeticOperator.Multiply,
-                                Right = new ConstantArithmeticCondition { Constant = 1.05m }
+                                Right = new ConstantSelectCondition { Constant = 1.05m }
                             }
                         ]
                     }

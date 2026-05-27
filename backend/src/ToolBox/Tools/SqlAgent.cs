@@ -544,11 +544,11 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                         }
                     case FunctionSelectCondition funcSel:
                         CollectFromWheres(funcSel.FilterWhereConditions, referenced, aliases);
-                        CollectFromFunctionArguments(funcSel.Arguments, referenced, aliases);
+                        CollectFromExpressions(funcSel.Arguments, referenced, aliases);
                         break;
                     case OperationSelectCondition opSel:
-                        CollectFromSelectArithmeticCondition(opSel.Left, referenced, aliases);
-                        CollectFromSelectArithmeticCondition(opSel.Right, referenced, aliases);
+                        CollectFromExpression(opSel.Left, referenced, aliases);
+                        CollectFromExpression(opSel.Right, referenced, aliases);
                         break;
                     case CaseWhenSelectCondition cwSel:
                         CollectFromCaseWhenClauses(cwSel.CaseWhen, referenced, aliases);
@@ -602,7 +602,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             if (o is FunctionOrderByCondition funcOrder)
             {
                 CollectFromWheres(funcOrder.FilterWhereConditions, referenced, aliases);
-                CollectFromFunctionArguments(funcOrder.Arguments, referenced, aliases);
+                CollectFromExpressions(funcOrder.Arguments, referenced, aliases);
             }
         }
     }
@@ -615,7 +615,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             if (g is FunctionGroupByCondition funcGroup)
             {
                 CollectFromWheres(funcGroup.FilterWhereConditions, referenced, aliases);
-                CollectFromFunctionArguments(funcGroup.Arguments, referenced, aliases);
+                CollectFromExpressions(funcGroup.Arguments, referenced, aliases);
             }
         }
     }
@@ -627,22 +627,31 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         CollectFromOrderByConditions(window.OrderBy, referenced, aliases);
     }
 
-    internal static void CollectFromSelectArithmeticCondition(SelectArithmeticCondition? condition, HashSet<string> referenced, HashSet<string> aliases)
+    internal static void CollectFromExpression(SelectCondition? condition, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (condition == null) return;
         switch (condition)
         {
-            case FunctionArithmeticCondition func:
+            case FunctionSelectCondition func:
                 CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
-                CollectFromFunctionArguments(func.Arguments, referenced, aliases);
+                CollectFromExpressions(func.Arguments, referenced, aliases);
                 break;
-            case OperationArithmeticCondition op:
-                CollectFromSelectArithmeticCondition(op.Left, referenced, aliases);
-                CollectFromSelectArithmeticCondition(op.Right, referenced, aliases);
+            case OperationSelectCondition op:
+                CollectFromExpression(op.Left, referenced, aliases);
+                CollectFromExpression(op.Right, referenced, aliases);
                 break;
-            case CaseWhenArithmeticCondition cw:
+            case CaseWhenSelectCondition cw:
                 CollectFromCaseWhenClauses(cw.CaseWhen, referenced, aliases);
                 break;
+        }
+    }
+
+    internal static void CollectFromExpressions(List<SelectCondition>? args, HashSet<string> referenced, HashSet<string> aliases)
+    {
+        if (args == null) return;
+        foreach (var arg in args)
+        {
+            CollectFromExpression(arg, referenced, aliases);
         }
     }
 
@@ -655,30 +664,11 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
     }
 
-    internal static void CollectFromFunctionArguments(List<SqlFunctionArgument>? args, HashSet<string> referenced, HashSet<string> aliases)
-    {
-        if (args == null) return;
-        foreach (var arg in args)
-        {
-            switch (arg)
-            {
-                case NestedFunctionArgument nested:
-                    CollectFromWheres(nested.FilterWhereConditions, referenced, aliases);
-                    CollectFromFunctionArguments(nested.Arguments, referenced, aliases);
-                    break;
-                case ArithmeticFunctionArgument arith:
-                    CollectFromSelectArithmeticCondition(arith.Left, referenced, aliases);
-                    CollectFromSelectArithmeticCondition(arith.Right, referenced, aliases);
-                    break;
-            }
-        }
-    }
-
     internal static void CollectFromSqlFunctionCondition(SqlFunctionCondition? func, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (func == null) return;
         CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
-        CollectFromFunctionArguments(func.Arguments, referenced, aliases);
+        CollectFromExpressions(func.Arguments, referenced, aliases);
         if (func.Window != null)
             CollectFromWindowDefinition(func.Window, referenced, aliases);
     }

@@ -23,7 +23,7 @@ export interface QueryDefinition {
   offset?: number | null;
 }
 
-// ===== SelectCondition (polymorphic) =====
+// ===== SelectCondition (polymorphic, used everywhere: SELECT, function args, arithmetic) =====
 export type SelectCondition =
   | FieldSelectCondition
   | OperationSelectCondition
@@ -40,9 +40,9 @@ export interface FieldSelectCondition {
 
 export interface OperationSelectCondition {
   type: "operation";
-  left: SelectArithmeticCondition;
+  left: SelectCondition;
   operator: ArithmeticOperator;
-  right: SelectArithmeticCondition;
+  right: SelectCondition;
   alias?: string | null;
 }
 
@@ -55,7 +55,7 @@ export interface ConstantSelectCondition {
 export interface FunctionSelectCondition {
   type: "function";
   functionName: string;
-  arguments?: SqlFunctionArgument[] | null;
+  arguments?: SelectCondition[] | null;
   isDistinct?: boolean;
   filterWhereConditions?: WhereCondition[] | null;
   alias?: string | null;
@@ -86,50 +86,10 @@ export interface SubQuerySelectCondition {
   offset?: number | null;
 }
 
-// ===== SelectArithmeticCondition (polymorphic) =====
-export type SelectArithmeticCondition =
-  | FieldArithmeticCondition
-  | ConstantArithmeticCondition
-  | OperationArithmeticCondition
-  | FunctionArithmeticCondition
-  | CaseWhenArithmeticCondition;
-
-export interface FieldArithmeticCondition {
-  type: "field";
-  fieldName: string;
-}
-
-export interface ConstantArithmeticCondition {
-  type: "constant";
-  constant: unknown;
-}
-
-export interface OperationArithmeticCondition {
-  type: "operation";
-  left: SelectArithmeticCondition;
-  operator: ArithmeticOperator;
-  right: SelectArithmeticCondition;
-}
-
-export interface FunctionArithmeticCondition {
-  type: "function";
-  functionName: string;
-  arguments?: SqlFunctionArgument[] | null;
-  isDistinct?: boolean;
-  filterWhereConditions?: WhereCondition[] | null;
-}
-
-export interface CaseWhenArithmeticCondition {
-  type: "case_when";
-  caseWhen: CaseWhenClause[];
-  elseValue?: unknown;
-}
-
 // ===== WhereCondition (polymorphic) =====
 export type WhereCondition =
   | BasicWhereCondition
   | ColumnCompareWhereCondition
-  | InWhereCondition
   | SubQueryWhereCondition
   | GroupWhereCondition;
 
@@ -138,6 +98,7 @@ export interface BasicWhereCondition {
   fieldName: string;
   operator: string;
   value?: unknown;
+  values?: unknown[];
   isDate?: boolean;
   isOr?: boolean;
   isNot?: boolean;
@@ -148,16 +109,6 @@ export interface ColumnCompareWhereCondition {
   leftFieldName: string;
   operator: string;
   rightFieldName: string;
-  isOr?: boolean;
-  isNot?: boolean;
-}
-
-export interface InWhereCondition {
-  type: "in";
-  fieldName: string;
-  operator: string;
-  values: unknown[];
-  isDate?: boolean;
   isOr?: boolean;
   isNot?: boolean;
 }
@@ -192,7 +143,7 @@ export interface FieldOrderByCondition {
 export interface FunctionOrderByCondition {
   type: "function";
   functionName: string;
-  arguments?: SqlFunctionArgument[] | null;
+  arguments?: SelectCondition[] | null;
   isDistinct?: boolean;
   filterWhereConditions?: WhereCondition[] | null;
   direction: SortDirection;
@@ -211,7 +162,7 @@ export interface FieldGroupByCondition {
 export interface FunctionGroupByCondition {
   type: "function";
   functionName: string;
-  arguments?: SqlFunctionArgument[] | null;
+  arguments?: SelectCondition[] | null;
   isDistinct?: boolean;
   filterWhereConditions?: WhereCondition[] | null;
 }
@@ -269,45 +220,13 @@ export interface CteCondition {
   query: QueryDefinition;
 }
 
-// ===== SqlFunctionCondition =====
+// ===== SqlFunctionCondition (used in HAVING / Window) =====
 export interface SqlFunctionCondition {
   functionName: string;
-  arguments?: SqlFunctionArgument[] | null;
+  arguments?: SelectCondition[] | null;
   isDistinct?: boolean;
   filterWhereConditions?: WhereCondition[] | null;
   window?: WindowDefinition | null;
-}
-
-// ===== SqlFunctionArgument (polymorphic) =====
-export type SqlFunctionArgument =
-  | FieldFunctionArgument
-  | ConstantFunctionArgument
-  | NestedFunctionArgument
-  | ArithmeticFunctionArgument;
-
-export interface FieldFunctionArgument {
-  type: "field";
-  fieldName: string;
-}
-
-export interface ConstantFunctionArgument {
-  type: "constant";
-  constant: unknown;
-}
-
-export interface NestedFunctionArgument {
-  type: "function";
-  functionName: string;
-  arguments?: SqlFunctionArgument[] | null;
-  isDistinct?: boolean;
-  filterWhereConditions?: WhereCondition[] | null;
-}
-
-export interface ArithmeticFunctionArgument {
-  type: "operation";
-  left: SelectArithmeticCondition;
-  operator: ArithmeticOperator;
-  right: SelectArithmeticCondition;
 }
 
 // ===== WindowDefinition =====

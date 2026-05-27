@@ -227,7 +227,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
                     new FunctionSelectCondition
                     {
                         FunctionName = "COUNT",
-                        Arguments = [new FieldFunctionArgument { FieldName = "o.ID" }],
+                        Arguments = [new FieldSelectCondition { FieldName = "o.ID" }],
                         Alias = "order_count"
                     },
                     new ConstantSelectCondition { Constant = "active_user", Alias = "user_type" }
@@ -255,7 +255,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
                         LeftFunction = new SqlFunctionCondition
                         {
                             FunctionName = "COUNT",
-                            Arguments = [new FieldFunctionArgument { FieldName = "o.ID" }]
+                            Arguments = [new FieldSelectCondition { FieldName = "o.ID" }]
                         },
                         Operator = ">=",
                         Value = 0
@@ -457,7 +457,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
                             new FunctionSelectCondition
                             {
                                 FunctionName = "COUNT",
-                                Arguments = [new FieldFunctionArgument { FieldName = "ID" }]
+                                Arguments = [new FieldSelectCondition { FieldName = "ID" }]
                             }
                         ],
                         WhereColumnsAndValues =

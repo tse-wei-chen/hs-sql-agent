@@ -34,7 +34,7 @@ export interface ColumnItem {
 }
 
 export interface WhereItem {
-  type: "basic" | "column_compare" | "in";
+  type: "basic" | "column_compare";
   table: string;
   field: string;
   operator: string;
@@ -400,7 +400,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
         }
         case "in": {
           const cond: WhereCondition = {
-            type: "in",
+            type: "basic",
             fieldName: q(w.table, w.field),
             operator: "IN",
             values: w.values

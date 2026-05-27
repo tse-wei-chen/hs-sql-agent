@@ -152,9 +152,9 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
                 SelectColumns = [
                     new OperationSelectCondition
                     {
-                        Left = new FieldArithmeticCondition { FieldName = "name" },
+                        Left = new FieldSelectCondition { FieldName = "name" },
                         Operator = ArithmeticOperator.Subtract,
-                        Right = new ConstantArithmeticCondition { Constant = 1 }
+                        Right = new ConstantSelectCondition { Constant = 1 }
                     }
                 ]
             },
@@ -208,9 +208,9 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
                 [
                     new OperationSelectCondition
                     {
-                        Left = new ConstantArithmeticCondition { Constant = constantJson.RootElement.Clone() },
+                        Left = new ConstantSelectCondition { Constant = constantJson.RootElement.Clone() },
                         Operator = ArithmeticOperator.Subtract,
-                        Right = new FieldArithmeticCondition { FieldName = "age" },
+                        Right = new FieldSelectCondition { FieldName = "age" },
                         Alias = "delta"
                     }
                 ],
@@ -241,15 +241,15 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
                         FunctionName = "ROUND",
                         Arguments =
                         [
-                            new NestedFunctionArgument
+                            new FunctionSelectCondition
                             {
                                 FunctionName = "AVG",
                                 Arguments =
                                 [
-                                    new FieldFunctionArgument { FieldName = "amount" }
+                                    new FieldSelectCondition { FieldName = "amount" }
                                 ]
                             },
-                            new ConstantFunctionArgument { Constant = 2 }
+                            new ConstantSelectCondition { Constant = 2 }
                         ]
                     }
                 ]
