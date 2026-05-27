@@ -1,6 +1,29 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.7.0-alpha] - 2026-05-27
+
+### Breaking Change
+
+**Custom Tools saved with the old query definition schema will fail to execute.** Existing saved query definitions (in `CustomTool.JsonDefinition`) that use the removed types `"type": "in"`, `SelectArithmeticCondition`, or `SqlFunctionArgument` can no longer be deserialized. Affected Custom Tools must be rebuilt or their JSON definition updated to the new schema.
+
+- **Removed `InWhereCondition`**: IN/NOT IN is now handled by `BasicWhereCondition` via `Operator = "IN"` + `Values` array. The `type: "in"` discriminator no longer exists.
+- **Removed `SelectArithmeticCondition`** (5 types: `FieldArithmeticCondition`, `ConstantArithmeticCondition`, `OperationArithmeticCondition`, `FunctionArithmeticCondition`, `CaseWhenArithmeticCondition`): Arithmetic operands now use the unified `SelectCondition` type directly, eliminating the redundant parallel hierarchy.
+- **Removed `SqlFunctionArgument`** (4 types: `FieldFunctionArgument`, `ConstantFunctionArgument`, `NestedFunctionArgument`, `ArithmeticFunctionArgument`): Function arguments now use `SelectCondition` directly, same type as SELECT columns.
+
+### Refactor
+
+- **Backend** (`SqlAgent.Service`):
+  - `BasicWhereCondition` gained `Values` property for IN support.
+  - `OperationSelectCondition.Left`/`Right` changed from `SelectArithmeticCondition` to `SelectCondition`.
+  - `FunctionSelectCondition.Arguments` changed from `List<SqlFunctionArgument>` to `List<SelectCondition>`.
+  - Same change applied to `SqlFunctionCondition.Arguments`, `FunctionOrderByCondition.Arguments`, `FunctionGroupByCondition.Arguments`.
+  - `ResolveSource()` alias resolution fixed: outer `Alias` now takes priority over `fromQuery.Alias`.
+- **Frontend** (`query-definition.ts`, `useSqlBuilder.ts`, `SqlBuilderTabWhere.vue`):
+  - Type definitions fully aligned with new backend schema.
+  - `"in"` type removed from `WhereItem` union; IN conditions mapped to `type: "basic"` + `operator: "IN"`.
+  - UI: IN is no longer a separate dropdown option — shown automatically when operator is `IN`/`NOT IN`.
+
 ## [1.6.0-alpha] - 2026-05-24
 
 ### Feature
