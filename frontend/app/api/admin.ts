@@ -1,7 +1,6 @@
 import {
   xiorInstance,
   xiorInstanceRefreshToken,
-  xiorInstanceToken,
 } from "./xiorInstance";
 
 export const checkFirstRun = async () => {

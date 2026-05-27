@@ -1,4 +1,4 @@
-export default defineNuxtRouteMiddleware((to, from) => {
+export default defineNuxtRouteMiddleware((to, _from) => {
   if (import.meta.server) return;
   const token = window.localStorage.getItem("accessToken");
   const isLogin = !!token;

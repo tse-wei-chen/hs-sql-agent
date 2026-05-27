@@ -1,8 +1,3 @@
-<script lang="ts">
-export const description = "An inset sidebar with secondary navigation.";
-export const iframeHeight = "800px";
-</script>
-
 <script setup lang="ts">
 import AppSidebar from "@/components/AppSidebar.vue";
 import {
@@ -20,6 +15,8 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import ToggleTheme from "@/components/ToggleTheme.vue";
+// export const description = "An inset sidebar with secondary navigation.";
+// export const iframeHeight = "800px";
 const route = useRoute();
 const router = useRouter();
 

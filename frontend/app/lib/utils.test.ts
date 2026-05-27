@@ -7,7 +7,9 @@ describe('cn utility', () => {
   })
 
   it('handles conditional classes', () => {
-    expect(cn('base', true && 'active', false && 'hidden')).toBe('base active')
+    const isActive = true
+    const isHidden = false
+    expect(cn('base', isActive && 'active', isHidden && 'hidden')).toBe('base active')
   })
 
   it('handles undefined and null', () => {

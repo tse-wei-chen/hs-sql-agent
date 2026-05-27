@@ -23,8 +23,7 @@ import {
   ChartTooltipContent,
   componentToString,
 } from "@/components/ui/chart";
-import { VisAxis, VisGroupedBar, VisXYContainer } from "@unovis/vue";
-import { VisDonut, VisSingleContainer } from "@unovis/vue";
+import { VisAxis, VisGroupedBar, VisXYContainer, VisDonut, VisSingleContainer  } from "@unovis/vue";
 import { Donut } from "@unovis/ts";
 
 definePageMeta({

@@ -1,6 +1,10 @@
 name: Tests
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   release:
     types: [published]
 
@@ -70,4 +74,19 @@ jobs:
       - run: pnpm install
         working-directory: frontend
       - run: pnpm test
+        working-directory: frontend
+
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable pnpm
+      - run: pnpm install
+        working-directory: frontend
+      - run: pnpm lint
         working-directory: frontend

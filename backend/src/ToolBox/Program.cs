@@ -298,7 +298,12 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
+
+app.UseExceptionHandler();
 
 // 1. database migration
 using (var scope = app.Services.CreateScope())

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch  } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,7 +18,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { CircleAlert, CircleCheck } from "lucide-vue-next";
+import { CircleAlert, CircleCheck, KeyRound , CircleQuestionMark  } from "lucide-vue-next";
 import {
   issueMcpKey,
   listMcpKeys,
@@ -33,11 +33,11 @@ import {
   getTables,
   type DbManagement,
 } from "~/api/db-management";
-import { KeyRound } from "lucide-vue-next";
+
 import MultiSelect from "~/components/MultiSelect.vue";
 import Transfer from "~/components/Transfer.vue";
-import { watch } from "vue";
-import { CircleQuestionMark } from "lucide-vue-next";
+
+
 import FormField from "@/components/FormField.vue";
 import { useForm } from "vee-validate";
 

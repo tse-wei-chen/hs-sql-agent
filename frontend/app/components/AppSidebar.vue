@@ -115,7 +115,7 @@ const data = ref({
                 as-child
                 :is-active="route.path === childItem.url"
               >
-                <a v-on:click="navigateTo(childItem.url)">
+                <a @click="navigateTo(childItem.url)">
                   {{ childItem.title }}
                 </a>
               </SidebarMenuButton>

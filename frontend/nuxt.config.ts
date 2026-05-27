@@ -62,6 +62,7 @@ export default defineNuxtConfig({
     '@vee-validate/nuxt',
     "nuxt-codemirror",
     "@nuxtjs/color-mode",
+    "@nuxt/eslint",
   ],
   veeValidate: {
     autoImports: true,

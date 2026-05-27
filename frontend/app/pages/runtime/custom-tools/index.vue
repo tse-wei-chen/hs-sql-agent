@@ -24,7 +24,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CircleAlert, CircleCheck } from "lucide-vue-next";
+import { CircleAlert, CircleCheck, Plus, Trash2, Edit2, Save, X, Wand2  } from "lucide-vue-next";
 import {
   listCustomSqlTools,
   createCustomSqlTool,
@@ -36,7 +36,7 @@ import {
   listDbManagements,
   type DbManagement,
 } from "@/api/db-management";
-import { Plus, Trash2, Edit2, Save, X, Wand2 } from "lucide-vue-next";
+
 import { json } from "@codemirror/lang-json";
 import { oneDark } from "@codemirror/theme-one-dark";
 import FormField from "@/components/FormField.vue";

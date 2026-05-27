@@ -27,7 +27,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CircleAlert, CircleCheck } from "lucide-vue-next";
+import { CircleAlert, CircleCheck,
+  Eye,
+  EyeOff,
+  Database,
+  Trash2,
+  Edit2,
+  Save,
+  Library } from "lucide-vue-next";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
@@ -37,15 +44,7 @@ import {
   deleteDbManagement,
   type DbManagement,
 } from "@/api/db-management";
-import {
-  Eye,
-  EyeOff,
-  Database,
-  Trash2,
-  Edit2,
-  Save,
-  Library,
-} from "lucide-vue-next";
+
 import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 import PasswordInput from "@/components/PasswordInput.vue";
 import { testDbConnection } from "~/api/runtime";

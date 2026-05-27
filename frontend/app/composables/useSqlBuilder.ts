@@ -216,11 +216,15 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     try {
       const schemas = await getSchemas(dbId.value);
       availableSchemas.value = schemas.filter((s) => s);
-    } catch (e) {}
+    } catch {
+      // ignored
+    }
 
     try {
       availableTables.value = await getTables(dbId.value, "");
-    } catch (e2) {}
+    } catch {
+      // ignored
+    }
   };
 
   const onSchemaChange = async () => {
@@ -232,7 +236,9 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     const s = schema.value === "_default_" ? "" : schema.value;
     try {
       availableTables.value = await getTables(dbId.value, s);
-    } catch (e) {}
+    } catch {
+      // ignored
+    }
   };
 
   const onTableChange = async () => {
@@ -245,7 +251,9 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
         name: c.column,
         dataType: c.type,
       }));
-    } catch (e) {}
+    } catch {
+      // ignored
+    }
   };
 
   const joinTableColumns = ref<Record<string, string[]>>({});
@@ -269,7 +277,9 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     try {
       const rawColumns = await getColumns(dbId.value, t, s);
       joinTableColumns.value[fullTable] = rawColumns.map((c: any) => c.column);
-    } catch (e) {}
+    } catch {
+      // ignored
+    }
   };
 
   // --- Column / Alias Logic ---
@@ -297,7 +307,7 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
   });
 
   const nowValidTables = computed(() => {
-    var mainAndJoinTables = [table.value, ...joins.value.map((j) => j.table)];
+    const mainAndJoinTables = [table.value, ...joins.value.map((j) => j.table)];
     return availableTables.value.filter((t) => mainAndJoinTables.includes(t));
   });
 
@@ -376,6 +386,24 @@ export function useSqlBuilder(options: SqlBuilderOptions) {
     return items.map((w) => {
       switch (w.type) {
         case "basic": {
+          const op = w.operator.toUpperCase()
+          if (op === "IN" || op === "NOT IN") {
+            const cond: WhereCondition = {
+              type: "basic",
+              fieldName: q(w.table, w.field),
+              operator: w.operator,
+              values: w.values
+                ? w.values
+                    .split(",")
+                    .map((v) => v.trim())
+                    .filter(Boolean)
+                : [],
+            };
+            if (w.isOr) (cond as any).isOr = true;
+            if (w.isNot) (cond as any).isNot = true;
+            if (w.isDate) (cond as any).isDate = true;
+            return cond;
+          }
           const cond: WhereCondition = {
             type: "basic",
             fieldName: q(w.table, w.field),
