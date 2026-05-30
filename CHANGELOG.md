@@ -1,6 +1,39 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.8.0-alpha] - 2026-05-30
+
+### NuGet Package Release
+
+`HsSqlAgent.Server` is now available as a NuGet package — embed the full MCP SQL Agent into any existing ASP.NET Core application.
+
+```bash
+dotnet add package HsSqlAgent.Server
+```
+
+```csharp
+builder.Services.AddHsSqlAgent(options => { ... });
+app.UseHsSqlAgent();
+// app.UseHsSqlAgent().ServeAdminUi();  // optional Admin UI
+```
+
+- **Admin UI embedded in DLL**: The frontend SPA is compiled and embedded as assembly resources (`EmbeddedFileProvider`). No external `wwwroot` files to deploy — the UI ships inside the NuGet package.
+- **Dual-mode pipeline**: `UseHsSqlAgent()` for API-only (MCP + Admin API), `.ServeAdminUi()` to also serve the built-in Admin UI.
+- **Project references included**: `Admin.Service`, `Common`, `SqlAgent.Service`, and `SqlKata.*` are automatically bundled in the package via `CopyProjectReferencesToPackage`.
+- **GitHub Actions workflow**: New `.github/workflows/nuget-publish.yml` to publish on release or manually via `workflow_dispatch`.
+
+### Docker
+
+- **Fixed duplicate frontend build**: The `CompileFrontend` MSBuild target now skips `pnpm install/generate` when `wwwroot/index.html` already exists (e.g., Docker pre-populated). The existing files are still embedded as resources.
+- **Frontend dist goes to HsSqlAgent.Server**: Dockerfile copies frontend output to `HsSqlAgent.Server/wwwroot/` instead of `ToolBox/wwwroot/`, aligning with the embedded resource strategy.
+
+### Infrastructure
+
+- Added `Microsoft.Extensions.FileProviders.Embedded` package reference.
+- Added `<IsPackable>true</IsPackable>` to `HsSqlAgent.Server.csproj`.
+- Added `NODE_ENV=production` to the `pnpm generate` step in `CompileFrontend`.
+- Documentation moved to [GitHub Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki) — main README simplified with links.
+
 ## [1.7.0-alpha] - 2026-05-27
 
 ### Breaking Change
