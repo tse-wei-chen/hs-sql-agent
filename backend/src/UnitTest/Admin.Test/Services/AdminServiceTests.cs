@@ -105,12 +105,12 @@ public class AdminServiceTests
         Assert.NotNull(result.RefreshToken);
 
         var dbSetMock = Mock.Get(_contextMock.Object.SuperUsers);
-        dbSetMock.Verify(m => m.Add(It.Is<SuperUser>(u => 
-            u.Mail == "test@example.com" && 
+        dbSetMock.Verify(m => m.Add(It.Is<SuperUser>(u =>
+            u.Mail == "test@example.com" &&
             u.Username == "test" &&
             BCrypt.Net.BCrypt.Verify("password123", u.PasswordHash)
         )), Times.Once);
-        
+
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -239,7 +239,7 @@ public class AdminServiceTests
 
         var invalidJwtSettings = new JwtSettings { SecretKey = emptySecret! };
         _jwtSettingsMock.Setup(s => s.Value).Returns(invalidJwtSettings);
-        
+
         _service = new AdminService(_contextMock.Object, _jwtSettingsMock.Object, _configMock.Object);
 
         var request = new SignInRequest { Email = "test@example.com", Password = "password123" };

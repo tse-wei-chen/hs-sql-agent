@@ -3,7 +3,8 @@
     <Project Path="src/Common/Common.csproj" />
     <Project Path="src/Infrastructure/Infrastructure.csproj" />
     <Project Path="src/Modules/Admin.Service/Admin.Service.csproj" />
-	<Project Path="src/Modules/SqlAgent.Service/SqlAgent.Service.csproj" />
+    <Project Path="src/Modules/SqlAgent.Service/SqlAgent.Service.csproj" />
+    <Project Path="src/Modules/HsSqlAgent.Server/HsSqlAgent.Server.csproj" />
     <Project Path="src/ToolBox/ToolBox.csproj" />
 	<Project Path="src\UnitTest\Admin.Test\Admin.Test.csproj" />
 	<Project Path="src\UnitTest\SqlAgent.Test\SqlAgent.Test.csproj" />

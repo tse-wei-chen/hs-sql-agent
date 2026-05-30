@@ -3,6 +3,7 @@
 **/.vs/
 **/.cursor/
 **/.vscode/
+**/node_modules/
 .git/
 .gitignore
 README.md

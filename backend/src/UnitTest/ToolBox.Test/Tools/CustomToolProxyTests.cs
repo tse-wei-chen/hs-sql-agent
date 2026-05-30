@@ -9,7 +9,7 @@ using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
-using ToolBox.Tools;
+using HsSqlAgent.Server.Tools;
 using Xunit;
 
 namespace ToolBox.Test.Tools;

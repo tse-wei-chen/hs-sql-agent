@@ -30,6 +30,10 @@ export default defineNuxtConfig({
     },
   },
 
+  $production: {
+    routeRules: {}
+  },
+
   vite: {
     plugins: [tailwindcss()],
     optimizeDeps: {

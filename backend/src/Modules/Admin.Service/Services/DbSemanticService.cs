@@ -21,11 +21,11 @@ public class DbSemanticService(IAdminContext context) : IDbSemanticService
     public async Task<DbSemanticVM> UpsertSemanticAsync(DbSemanticRequest request, CancellationToken cancellationToken = default)
     {
         var entity = await _context.DbSemantics
-            .FirstOrDefaultAsync(s => 
-                s.DbManagementId == request.DbManagementId && 
-                s.SchemaName == request.SchemaName && 
-                s.TableName == request.TableName && 
-                s.ColumnName == request.ColumnName, 
+            .FirstOrDefaultAsync(s =>
+                s.DbManagementId == request.DbManagementId &&
+                s.SchemaName == request.SchemaName &&
+                s.TableName == request.TableName &&
+                s.ColumnName == request.ColumnName,
                 cancellationToken);
 
         if (entity == null)
@@ -46,7 +46,7 @@ public class DbSemanticService(IAdminContext context) : IDbSemanticService
         entity.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
-        
+
         return DbSemanticVM.Projection.Compile().Invoke(entity);
     }
 

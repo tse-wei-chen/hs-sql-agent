@@ -1,4 +1,4 @@
-namespace ToolBox.Models;
+namespace HsSqlAgent.Server.Models;
 
 public class SqlConfig
 {

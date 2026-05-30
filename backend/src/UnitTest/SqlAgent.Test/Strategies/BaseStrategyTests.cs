@@ -62,10 +62,10 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     public virtual async Task ExecuteQueryAsync_ShouldReturnValidJson()
     {
         var json = await Strategy.ExecuteQueryAsync(new QueryDefinition
-            {
-                TableName = TestTableName,
-                Limit = 1
-            },
+        {
+            TableName = TestTableName,
+            Limit = 1
+        },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 

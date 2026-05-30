@@ -62,7 +62,7 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
             // Try to get ActorId from JWT
             actorId = httpContext.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
                       ?? httpContext.User?.FindFirstValue(ClaimTypes.NameIdentifier);
-            
+
             if (actorId != null)
             {
                 actorType = "admin";

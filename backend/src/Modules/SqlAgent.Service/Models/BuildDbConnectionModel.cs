@@ -1,6 +1,7 @@
 using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Models;
+
 public class BuildDbConnectionModelBase
 {
     public string? Host { get; set; }

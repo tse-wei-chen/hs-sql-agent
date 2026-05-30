@@ -2,49 +2,42 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using HsSqlAgent.Server.Attributes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using ToolBox.Attributes;
 
-namespace ToolBox.Controllers;
+namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 public class AdminController(ILogger<AdminController> logger, IAdminService adminService, IAuditService auditService) : ControllerBase
 {
-    private readonly ILogger<AdminController> _logger = logger;
-    private readonly IAdminService _adminService = adminService;
-    private readonly IAuditService _auditService = auditService;
-
     [HttpGet("first-run")]
     [AllowAnonymous]
     public async Task<IActionResult> CheckFirstRunAsync()
-        => Ok(await _adminService.IsFirstRunAsync());
+        => Ok(await adminService.IsFirstRunAsync());
 
     [HttpPost("sign-in")]
     [AllowAnonymous]
     public async Task<IActionResult> SignIn([FromBody] SignInRequest request)
     {
-        if (!ModelState.IsValid)
-        {
-            return ValidationProblem(ModelState);
-        }
+        if (!ModelState.IsValid) return ValidationProblem(ModelState);
         try
         {
-            var result = await _adminService.SignInAsync(request);
-            await _auditService.WriteLogAsync("admin.signin", request.Email, "success");
+            var result = await adminService.SignInAsync(request);
+            await auditService.WriteLogAsync("admin.signin", request.Email, "success");
             return Ok(result);
         }
         catch (UnauthorizedAccessException ex)
         {
-            _logger.LogWarning(ex, "Sign-in failed for user");
-            await _auditService.WriteLogAsync("admin.signin", request.Email, "failed", "Invalid credentials");
+            logger.LogWarning(ex, "Sign-in failed for user");
+            await auditService.WriteLogAsync("admin.signin", request.Email, "failed", "Invalid credentials");
             return Forbid();
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Invalid sign-in request.");
-            await _auditService.WriteLogAsync("admin.signin", request.Email, "failed", ex.Message);
+            logger.LogWarning(ex, "Invalid sign-in request.");
+            await auditService.WriteLogAsync("admin.signin", request.Email, "failed", ex.Message);
             return BadRequest(ex.Message);
         }
     }
@@ -53,26 +46,23 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
     [AllowAnonymous]
     public async Task<IActionResult> SignUp([FromBody] SignUpRequest request)
     {
-        if (!ModelState.IsValid)
-        {
-            return ValidationProblem(ModelState);
-        }
+        if (!ModelState.IsValid) return ValidationProblem(ModelState);
         try
         {
-            var result = await _adminService.SignUpAsync(request);
-            await _auditService.WriteLogAsync("admin.signup", request.Email, "success");
+            var result = await adminService.SignUpAsync(request);
+            await auditService.WriteLogAsync("admin.signup", request.Email, "success");
             return Ok(result);
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Invalid sign-up request.");
-            await _auditService.WriteLogAsync("admin.signup", request.Email, "failed", ex.Message);
+            logger.LogWarning(ex, "Invalid sign-up request.");
+            await auditService.WriteLogAsync("admin.signup", request.Email, "failed", ex.Message);
             return BadRequest(ex.Message);
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "Sign-up attempt when admin user already exists.");
-            await _auditService.WriteLogAsync("admin.signup", request.Email, "failed", ex.Message);
+            logger.LogWarning(ex, "Sign-up attempt when admin user already exists.");
+            await auditService.WriteLogAsync("admin.signup", request.Email, "failed", ex.Message);
             return BadRequest(ex.Message);
         }
     }
@@ -82,22 +72,20 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
     public async Task<IActionResult> RefreshTokenAsync()
     {
         if (User.FindFirstValue(JwtRegisteredClaimNames.Sub) is var id && string.IsNullOrWhiteSpace(id))
-        {
             return Unauthorized("User ID is required.");
-        }
         try
         {
-            var result = await _adminService.RefreshTokenAsync(id);
+            var result = await adminService.RefreshTokenAsync(id);
             return Ok(result);
         }
         catch (UnauthorizedAccessException ex)
         {
-            _logger.LogWarning(ex, "Token refresh failed");
+            logger.LogWarning(ex, "Token refresh failed");
             return Forbid();
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Invalid token refresh request.");
+            logger.LogWarning(ex, "Invalid token refresh request.");
             return BadRequest(ex.Message);
         }
     }

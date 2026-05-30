@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -5,13 +6,13 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using Common.Models;
+using HsSqlAgent.Server.Background;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using ToolBox.Background;
 
-namespace ToolBox.Middleware;
+namespace HsSqlAgent.Server.Middleware;
 
 public class McpAccessKeyAuthMiddleware(
     IMcpAccessKeyService keyService,
@@ -370,5 +371,3 @@ public class McpAccessKeyAuthMiddleware(
         return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }
 }
-
-

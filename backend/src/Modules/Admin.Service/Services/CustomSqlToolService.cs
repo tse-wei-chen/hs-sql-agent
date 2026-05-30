@@ -49,7 +49,7 @@ public class CustomSqlToolService(
     {
         var tool = await _context.CustomSqlTools.FindAsync(id);
         if (tool == null) return false;
-        
+
         _context.CustomSqlTools.Remove(tool);
         await _context.SaveChangesAsync();
         return true;

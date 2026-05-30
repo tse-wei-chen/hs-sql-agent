@@ -5,12 +5,12 @@ public class CustomSqlTool
     public int Id { get; set; }
     public string Name { get; set; } = null!;
     public string Description { get; set; } = null!;
-    
+
     /// <summary>
     /// JSON representation of QueryDefinition or DmlDefinition.
     /// </summary>
     public string DefinitionJson { get; set; } = null!;
-    
+
     /// <summary>
     /// "Query" or "DML"
     /// </summary>
