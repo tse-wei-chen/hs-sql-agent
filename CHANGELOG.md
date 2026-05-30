@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.8.1-alpha] - 2026-05-30
+
+### NuGet Package Release
+fix package use
+
 ## [1.8.0-alpha] - 2026-05-30
 
 ### NuGet Package Release
