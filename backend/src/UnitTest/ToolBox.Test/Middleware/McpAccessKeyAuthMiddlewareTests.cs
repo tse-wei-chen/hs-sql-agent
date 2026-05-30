@@ -63,6 +63,7 @@ public class McpAccessKeyAuthMiddlewareTests
     public async Task InvokeAsync_ShouldReturn401_WhenMissingKey()
     {
         var context = new DefaultHttpContext();
+        context.Request.Path = "/mcp";
         context.Response.Body = new MemoryStream();
 
         RequestDelegate next = _ => Task.CompletedTask;
