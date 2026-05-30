@@ -11,8 +11,8 @@ using Microsoft.Extensions.Options;
 using Moq;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using ToolBox.Background;
-using ToolBox.Middleware;
+using HsSqlAgent.Server.Background;
+using HsSqlAgent.Server.Middleware;
 using Xunit;
 
 namespace ToolBox.Test.Middleware;
@@ -60,28 +60,9 @@ public class McpAccessKeyAuthMiddlewareTests
     }
 
     [Fact]
-    public async Task InvokeAsync_ShouldSkip_WhenPathIsNotMcp()
-    {
-        var context = new DefaultHttpContext();
-        context.Request.Path = "/api/test";
-
-        var nextCalled = false;
-        RequestDelegate next = _ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        };
-
-        await _middleware.InvokeAsync(context, next);
-
-        Assert.True(nextCalled);
-    }
-
-    [Fact]
     public async Task InvokeAsync_ShouldReturn401_WhenMissingKey()
     {
         var context = new DefaultHttpContext();
-        context.Request.Path = "/mcp";
         context.Response.Body = new MemoryStream();
 
         RequestDelegate next = _ => Task.CompletedTask;

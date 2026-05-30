@@ -9,7 +9,7 @@ public class DbSemanticConfig : IEntityTypeConfiguration<DbSemantic>
     public void Configure(EntityTypeBuilder<DbSemantic> builder)
     {
         builder.HasKey(x => x.Id);
-        
+
         builder.Property(x => x.TableName).IsRequired().HasMaxLength(256);
         builder.Property(x => x.ColumnName).HasMaxLength(256);
         builder.Property(x => x.SchemaName).HasMaxLength(256);

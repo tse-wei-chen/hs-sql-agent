@@ -1,0 +1,86 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <OutputType>Library</OutputType>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>HsSqlAgent.Server</PackageId>
+    <VersionPrefix>1.7.0</VersionPrefix>
+    <VersionSuffix>alpha</VersionSuffix>
+    <Authors>tse-wei-chen</Authors>
+    <Company>hs-sql-agent</Company>
+    <Description>Embeddable MCP SQL Agent server for ASP.NET Core. Add HsSqlAgent to any existing ASP.NET Core app with AddHsSqlAgent() / UseHsSqlAgent().</Description>
+    <PackageTags>sql;mcp;ai;database;aspnetcore;hangfire-style</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="FluentValidation.AspNetCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Common\Common.csproj" />
+    <ProjectReference Include="..\Admin.Service\Admin.Service.csproj" />
+    <ProjectReference Include="..\SqlAgent.Service\SqlAgent.Service.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+
+  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)" Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="CompileFrontend" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release'">
+    <Message Importance="high" Text="[HsSqlAgent] Checking frontend dist status..." />
+
+    <!-- skip pnpm build if wwwroot already exists (e.g., pre-populated in Docker) -->
+    <PropertyGroup>
+      <_FrontendExists Condition="Exists('wwwroot\index.html')">true</_FrontendExists>
+    </PropertyGroup>
+
+    <Exec Command="pnpm install" WorkingDirectory="../../../../frontend" Condition="'$(_FrontendExists)' != 'true'" />
+    <Exec Command="pnpm generate" WorkingDirectory="../../../../frontend" EnvironmentVariables="NODE_ENV=production" Condition="'$(_FrontendExists)' != 'true'" />
+
+    <ItemGroup Condition="'$(_FrontendExists)' != 'true'">
+      <FrontendDistFiles Include="../../../../frontend/dist\**\*.*" />
+    </ItemGroup>
+
+    <MakeDir Directories="wwwroot" Condition="'$(_FrontendExists)' != 'true'" />
+
+    <Copy SourceFiles="@(FrontendDistFiles)" 
+          DestinationFiles="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" 
+          SkipUnchangedFiles="true"
+          Condition="'$(_FrontendExists)' != 'true'" />
+
+    <!-- Embed frontend files as assembly resources (for use with EmbeddedFileProvider) -->
+    <ItemGroup>
+      <EmbeddedResource Include="wwwroot\**" />
+    </ItemGroup>
+  </Target>
+</Project>

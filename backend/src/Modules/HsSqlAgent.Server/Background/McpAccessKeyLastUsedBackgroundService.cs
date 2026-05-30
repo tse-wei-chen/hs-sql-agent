@@ -1,23 +1,19 @@
 using Admin.Service.Interfaces;
 
-namespace ToolBox.Background;
+namespace HsSqlAgent.Server.Background;
 
 public class McpAccessKeyLastUsedBackgroundService(
     IMcpAccessKeyLastUsedQueue queue,
-    IServiceScopeFactory serviceScopeFactory,
+    IServiceScopeFactory scopeFactory,
     ILogger<McpAccessKeyLastUsedBackgroundService> logger) : BackgroundService
 {
-    private readonly IMcpAccessKeyLastUsedQueue _queue = queue;
-    private readonly IServiceScopeFactory _serviceScopeFactory = serviceScopeFactory;
-    private readonly ILogger<McpAccessKeyLastUsedBackgroundService> _logger = logger;
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (var keyId in _queue.DequeueAllAsync(stoppingToken))
+        await foreach (var keyId in queue.DequeueAllAsync(stoppingToken))
         {
             try
             {
-                using var scope = _serviceScopeFactory.CreateScope();
+                using var scope = scopeFactory.CreateScope();
                 var keyService = scope.ServiceProvider.GetRequiredService<IMcpAccessKeyService>();
                 await keyService.TouchLastUsedAsync(keyId, stoppingToken);
             }
@@ -27,7 +23,7 @@ public class McpAccessKeyLastUsedBackgroundService(
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to update MCP key last-used timestamp for keyId={KeyId}", keyId);
+                logger.LogWarning(ex, "Failed to update LastUsed for key {KeyId}", keyId);
             }
         }
     }

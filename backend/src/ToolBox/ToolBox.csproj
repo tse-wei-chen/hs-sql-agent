@@ -8,9 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.AspNetCore" />
-    <PackageReference Include="ModelContextProtocol" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -18,8 +15,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Common\Common.csproj" />
-    <ProjectReference Include="..\Modules\Admin.Service\Admin.Service.csproj" />
-    <ProjectReference Include="..\Modules\SqlAgent.Service\SqlAgent.Service.csproj" />
+    <ProjectReference Include="..\Modules\HsSqlAgent.Server\HsSqlAgent.Server.csproj" />
   </ItemGroup>
 </Project>

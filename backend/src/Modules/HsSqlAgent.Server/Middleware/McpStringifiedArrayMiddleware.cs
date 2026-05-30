@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
-using Microsoft.AspNetCore.Http;
 
-namespace ToolBox.Middleware;
+namespace HsSqlAgent.Server.Middleware;
 
 public class McpStringifiedArrayMiddleware(RequestDelegate next)
 {

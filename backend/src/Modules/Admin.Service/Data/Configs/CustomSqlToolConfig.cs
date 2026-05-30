@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Admin.Service.Data.Entites;
 
 namespace Admin.Service.Data.Configs;
+
 public class CustomSqlToolConfig : IEntityTypeConfiguration<CustomSqlTool>
 {
     public void Configure(EntityTypeBuilder<CustomSqlTool> builder)

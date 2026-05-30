@@ -15,7 +15,7 @@ public class QueryValueParserServiceTests
     {
         // Arrange
         var json = JsonDocument.Parse("\"hello world\"").RootElement;
-        
+
         // Act
         var result = _service.UnwrapJsonElement(json);
 
@@ -28,7 +28,7 @@ public class QueryValueParserServiceTests
     {
         // Arrange
         var json = JsonDocument.Parse("42").RootElement;
-        
+
         // Act
         var result = _service.UnwrapJsonElement(json);
 
@@ -42,7 +42,7 @@ public class QueryValueParserServiceTests
     {
         // Arrange
         var json = JsonDocument.Parse("3.14").RootElement;
-        
+
         // Act
         var result = _service.UnwrapJsonElement(json);
 
@@ -57,7 +57,7 @@ public class QueryValueParserServiceTests
         // Arrange
         var jsonTrue = JsonDocument.Parse("true").RootElement;
         var jsonFalse = JsonDocument.Parse("false").RootElement;
-        
+
         // Act & Assert
         Assert.Equal(true, _service.UnwrapJsonElement(jsonTrue));
         Assert.Equal(false, _service.UnwrapJsonElement(jsonFalse));
@@ -68,7 +68,7 @@ public class QueryValueParserServiceTests
     {
         // Arrange
         var json = JsonDocument.Parse("[1, \"two\", true]").RootElement;
-        
+
         // Act
         var result = _service.UnwrapJsonElement(json);
 
@@ -85,7 +85,7 @@ public class QueryValueParserServiceTests
     {
         // Arrange
         var json = JsonDocument.Parse("{\"key\":\"value\"}").RootElement;
-        
+
         // Act
         var result = _service.UnwrapJsonElement(json);
 
@@ -112,7 +112,7 @@ public class QueryValueParserServiceTests
     {
         var expectedDt = new DateTime(2023, 10, 25, 10, 0, 0);
         var result = _service.TryToDateTime(expectedDt, out var dt);
-        
+
         Assert.True(result);
         Assert.Equal(expectedDt, dt);
     }
@@ -121,7 +121,7 @@ public class QueryValueParserServiceTests
     public void TryToDateTime_ShouldReturnTrueAndParsedDate_WhenValueIsValidDateString()
     {
         var result = _service.TryToDateTime("2023-10-25T10:00:00Z", out var dt);
-        
+
         Assert.True(result);
         Assert.Equal(new DateTime(2023, 10, 25, 10, 0, 0, DateTimeKind.Utc).ToLocalTime(), dt);
     }
@@ -130,7 +130,7 @@ public class QueryValueParserServiceTests
     public void TryToDateTime_ShouldReturnFalse_WhenValueIsInvalidDateString()
     {
         var result = _service.TryToDateTime("Not-a-date", out var dt);
-        
+
         Assert.False(result);
         Assert.Equal(default, dt);
     }
@@ -143,7 +143,7 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldReturnFalse_WhenValueIsNull()
     {
         var result = _service.TryGetInValues(null, out var values);
-        
+
         Assert.False(result);
         Assert.Empty(values);
     }
@@ -152,9 +152,9 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldReturnTrueAndUnwrapElements_WhenValueIsJsonArray()
     {
         var json = JsonDocument.Parse("[1, \"test\", false]").RootElement;
-        
+
         var result = _service.TryGetInValues(json, out var values);
-        
+
         Assert.True(result);
         var arr = values.ToArray();
         Assert.Equal(3, arr.Length);
@@ -167,9 +167,9 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldReturnFalse_WhenValueIsEmptyJsonArray()
     {
         var json = JsonDocument.Parse("[]").RootElement;
-        
+
         var result = _service.TryGetInValues(json, out var values);
-        
+
         Assert.False(result);
     }
 
@@ -177,9 +177,9 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldParseStringContents_WhenValueIsJsonStringContainingArray()
     {
         var json = JsonDocument.Parse("\"(1, 2, 3)\"").RootElement;
-        
+
         var result = _service.TryGetInValues(json, out var values);
-        
+
         Assert.True(result);
         var arr = values.ToArray();
         Assert.Equal(3, arr.Length);
@@ -190,9 +190,9 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldReturnTrue_WhenValueIsIEnumerableObject()
     {
         IEnumerable<object> input = new List<object> { 1, "test", null! }; // Contains null which should be filtered
-        
+
         var result = _service.TryGetInValues(input, out var values);
-        
+
         Assert.True(result);
         var arr = values.ToArray();
         Assert.Equal(2, arr.Length);
@@ -204,9 +204,9 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldReturnFalse_WhenValueIsIEnumerableObjectWithOnlyNulls()
     {
         IEnumerable<object> input = new List<object> { null!, null! };
-        
+
         var result = _service.TryGetInValues(input, out var values);
-        
+
         Assert.False(result);
     }
 
@@ -218,7 +218,7 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldParseStringWithDifferentFormats(string input, int expectedCount)
     {
         var result = _service.TryGetInValues(input, out var values);
-        
+
         Assert.True(result);
         Assert.Equal(expectedCount, values.Count());
     }
@@ -227,7 +227,7 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldParseDatesInString_WhenApplicable()
     {
         var result = _service.TryGetInValues("2023-01-01, not-a-date", out var values);
-        
+
         Assert.True(result);
         var arr = values.ToArray();
         Assert.Equal(2, arr.Length);
@@ -239,7 +239,7 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldReturnFalse_WhenStringOnlyContainsEmptyValues()
     {
         var result = _service.TryGetInValues(" ( , , ) ", out var values);
-        
+
         Assert.False(result);
     }
 
@@ -247,7 +247,7 @@ public class QueryValueParserServiceTests
     public void TryGetInValues_ShouldReturnFalse_WhenValueIsUnsupportedType()
     {
         var result = _service.TryGetInValues(42, out var values);
-        
+
         Assert.False(result);
     }
 
@@ -259,7 +259,7 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldReturnFalse_WhenValueIsNull()
     {
         var result = _service.TryGetRangeValues(null, out var start, out var end);
-        
+
         Assert.False(result);
         Assert.Null(start);
         Assert.Null(end);
@@ -269,9 +269,9 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldReturnTrue_WhenJsonIsObjectWithStartAndEnd()
     {
         var json = JsonDocument.Parse("{\"start\": 10, \"end\": 20}").RootElement;
-        
+
         var result = _service.TryGetRangeValues(json, out var start, out var end);
-        
+
         Assert.True(result);
         Assert.Equal(10L, start);
         Assert.Equal(20L, end);
@@ -281,9 +281,9 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldReturnFalse_WhenJsonIsObjectMissingStartOrEnd()
     {
         var json = JsonDocument.Parse("{\"start\": 10}").RootElement;
-        
+
         var result = _service.TryGetRangeValues(json, out var start, out var end);
-        
+
         Assert.False(result);
         Assert.Null(start);
         Assert.Null(end);
@@ -293,9 +293,9 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldReturnTrue_WhenJsonIsArrayWithAtLeastTwoElements()
     {
         var json = JsonDocument.Parse("[10, 20, 30]").RootElement;
-        
+
         var result = _service.TryGetRangeValues(json, out var start, out var end);
-        
+
         Assert.True(result);
         Assert.Equal(10L, start);
         Assert.Equal(20L, end);
@@ -305,9 +305,9 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldReturnFalse_WhenJsonIsArrayWithFewerThanTwoElements()
     {
         var json = JsonDocument.Parse("[10]").RootElement;
-        
+
         var result = _service.TryGetRangeValues(json, out var start, out var end);
-        
+
         Assert.False(result);
     }
 
@@ -315,9 +315,9 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldReturnTrue_WhenValueIsIEnumerableWithAtLeastTwoElements()
     {
         IEnumerable<object> input = new List<object> { "A", "B", "C" };
-        
+
         var result = _service.TryGetRangeValues(input, out var start, out var end);
-        
+
         Assert.True(result);
         Assert.Equal("A", start);
         Assert.Equal("B", end);
@@ -327,9 +327,9 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldParseDates_WhenStartOrEndAreDateStrings()
     {
         var json = JsonDocument.Parse("[\"2023-01-01\", \"2023-12-31\"]").RootElement;
-        
+
         var result = _service.TryGetRangeValues(json, out var start, out var end);
-        
+
         Assert.True(result);
         Assert.IsType<DateTime>(start);
         Assert.IsType<DateTime>(end);
@@ -339,7 +339,7 @@ public class QueryValueParserServiceTests
     public void TryGetRangeValues_ShouldReturnFalse_WhenValueIsUnsupportedType()
     {
         var result = _service.TryGetRangeValues("10, 20", out var start, out var end);
-        
+
         Assert.False(result); // According to the source, string is not handled for Range Values directly
     }
 

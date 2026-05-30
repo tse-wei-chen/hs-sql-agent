@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\ToolBox\ToolBox.csproj" />
+    <ProjectReference Include="..\..\Modules\HsSqlAgent.Server\HsSqlAgent.Server.csproj" />
   </ItemGroup>
 
 </Project>

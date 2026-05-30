@@ -6,8 +6,8 @@ namespace Common.Services;
 
 public class CryptoService : ICryptoService
 {
-    private const int NonceSize = 12; 
-    private const int TagSize = 16; 
+    private const int NonceSize = 12;
+    private const int TagSize = 16;
 
     public string? EncryptText(string? plainText, byte[] secretKey)
     {
@@ -15,7 +15,7 @@ public class CryptoService : ICryptoService
 
         byte[] key = SHA256.HashData(secretKey);
         byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
-        
+
         byte[] nonce = new byte[NonceSize];
         RandomNumberGenerator.Fill(nonce);
 
@@ -51,7 +51,7 @@ public class CryptoService : ICryptoService
         var nonce = fullCipher.AsSpan(0, NonceSize);
         var tag = fullCipher.AsSpan(NonceSize, TagSize);
         var cipherBytes = fullCipher.AsSpan(NonceSize + TagSize);
-        
+
         byte[] decryptedBytes = new byte[cipherBytes.Length];
 
         using (var aesGcm = new AesGcm(key, TagSize))

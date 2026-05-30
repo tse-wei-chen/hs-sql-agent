@@ -1,3 +1,5 @@
+namespace HsSqlAgent.Server.Models;
+
 public class SemanticLayerEntry
 {
     public string? SchemaName { get; set; }

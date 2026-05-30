@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Models;
+
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(BasicWhereCondition), "basic")]
 [JsonDerivedType(typeof(ColumnCompareWhereCondition), "column_compare")]

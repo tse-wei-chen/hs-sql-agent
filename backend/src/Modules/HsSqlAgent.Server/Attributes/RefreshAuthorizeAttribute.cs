@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 
-namespace ToolBox.Attributes;
+namespace HsSqlAgent.Server.Attributes;
 
 public sealed class RefreshAuthorizeAttribute : AuthorizeAttribute
 {

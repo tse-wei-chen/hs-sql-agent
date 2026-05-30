@@ -1,6 +1,6 @@
 FROM node:24-alpine AS frontend-builder
 WORKDIR /app/frontend
-
+ENV NODE_ENV=production
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
@@ -19,12 +19,13 @@ COPY backend/src/Modules/SqlAgent.Service/SqlAgent.Service.csproj ./backend/src/
 COPY backend/src/Modules/SqlKata.Service/Directory.Packages.props ./backend/src/Modules/SqlKata.Service/
 COPY backend/src/Modules/SqlKata.Service/QueryBuilder/QueryBuilder.csproj ./backend/src/Modules/SqlKata.Service/QueryBuilder/
 COPY backend/src/Modules/SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj ./backend/src/Modules/SqlKata.Service/SqlKata.Execution/
+COPY backend/src/Modules/HsSqlAgent.Server/HsSqlAgent.Server.csproj ./backend/src/Modules/HsSqlAgent.Server/
 COPY backend/src/ToolBox/ToolBox.csproj ./backend/src/ToolBox/
 RUN dotnet restore ./backend/src/ToolBox/ToolBox.csproj
 
 COPY backend/ ./backend/
 
-COPY --from=frontend-builder /app/frontend/dist/ ./backend/src/ToolBox/wwwroot/
+COPY --from=frontend-builder /app/frontend/dist/ ./backend/src/Modules/HsSqlAgent.Server/wwwroot/
 
 RUN dotnet publish ./backend/src/ToolBox/ToolBox.csproj -c Release -o /app/publish /p:UseAppHost=false
 

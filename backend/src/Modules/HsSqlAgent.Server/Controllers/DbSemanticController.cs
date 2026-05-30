@@ -3,33 +3,25 @@ using Admin.Service.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace ToolBox.Controllers;
+namespace HsSqlAgent.Server.Controllers;
 
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class DbSemanticController(IDbSemanticService semanticService) : ControllerBase
 {
-    private readonly IDbSemanticService _semanticService = semanticService;
-
     [HttpGet("{dbManagementId}")]
     public async Task<ActionResult<List<DbSemanticVM>>> GetByDbId(int dbManagementId)
-    {
-        var result = await _semanticService.GetSemanticsByDbIdAsync(dbManagementId);
-        return Ok(result);
-    }
+        => Ok(await semanticService.GetSemanticsByDbIdAsync(dbManagementId));
 
     [HttpPost]
     public async Task<ActionResult<DbSemanticVM>> Upsert(DbSemanticRequest request)
-    {
-        var result = await _semanticService.UpsertSemanticAsync(request);
-        return Ok(result);
-    }
+        => Ok(await semanticService.UpsertSemanticAsync(request));
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(int id)
     {
-        await _semanticService.DeleteSemanticAsync(id);
+        await semanticService.DeleteSemanticAsync(id);
         return NoContent();
     }
 }

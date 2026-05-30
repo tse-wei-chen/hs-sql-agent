@@ -1,8 +1,6 @@
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Channels;
 
-namespace ToolBox.Background;
+namespace HsSqlAgent.Server.Background;
 
 public class McpAccessKeyLastUsedQueue : IMcpAccessKeyLastUsedQueue
 {

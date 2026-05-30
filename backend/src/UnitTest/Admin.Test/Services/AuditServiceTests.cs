@@ -35,7 +35,7 @@ public class AuditServiceTests
         await _service.WriteAsync("login", "target_user", "success", null, "   ", null, null, null, CancellationToken.None);
 
         // Assert
-        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a => 
+        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
             a.Action == "login" &&
             a.Target == "target_user" &&
             a.Result == "success" &&
@@ -51,7 +51,7 @@ public class AuditServiceTests
         await _service.WriteAsync("query", "db1", "failed", "details", "user", "u1", "127.0.0.1", "Mozilla", CancellationToken.None);
 
         // Assert
-        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a => 
+        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
             a.Action == "query" &&
             a.Target == "db1" &&
             a.Result == "failed" &&
@@ -76,10 +76,10 @@ public class AuditServiceTests
         var context = new DefaultHttpContext();
         context.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("192.168.1.1");
         context.Request.Headers.UserAgent = "TestAgent";
-        
+
         var claims = new List<Claim> { new(JwtRegisteredClaimNames.Sub, "user-123") };
         context.User = new ClaimsPrincipal(new ClaimsIdentity(claims));
-        
+
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
 
         // Act

@@ -1,236 +1,71 @@
-# ⚡ hs-sql-agent (High-Speed SQL Agent)
+# hs-sql-agent
 
-> **The high-performance MCP server designed for instant SQL interaction and secure enterprise governance.**
+> **The high-performance MCP server for instant SQL interaction and secure enterprise governance.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml)
 
-`hs-sql-agent` is a robust HTTP MCP server for relational databases that bridges the gap between AI agents and your data. Unlike "black-box" generic SQL agents, `hs-sql-agent` provides a **High-Speed** execution engine with a **Built-in Admin Panel** to ensure every AI-generated query is managed, audited, and secure.
+`hs-sql-agent` is an HTTP MCP server for relational databases (SQLite, PostgreSQL, MySQL, SQL Server, Oracle, Firebird) with a built-in Admin Panel for governance.
 
----
+## 🤔 Why hs-sql-agent?
 
-## ✨ Key Features
+Most "Chat with your Data" tools ask the LLM to write raw SQL — a recipe for hallucinations, dialect confusion, and injection risks. **hs-sql-agent flips the model**: the LLM only extracts logical parameters (tables, columns, conditions), and a deterministic engine ([SqlKata](https://sqlkata.com)) constructs the final SQL. Zero hallucinated syntax, zero injection surface.
 
-### 🚀 High-Speed & Core Engine
+- **Deterministic Accuracy** — The LLM never writes raw SQL. No made-up tables, no wrong functions, no dialect mix-ups between PostgreSQL and Oracle.
+- **Universal DB Support** — One agent for SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird. The same MCP endpoint switches engines transparently.
+- **Enterprise Governance** — Built-in Admin Web UI, key-level connection mapping, table whitelisting, per-key CORS, rate limiting, and full audit logs.
+- **Semantic Layer** — Map cryptic legacy column names to business-friendly labels so the LLM understands your schema.
 
-- **Instant Interaction**: An optimized C# backend ensures ultra-low latency for schema discovery and query execution.
-- **Universal Database Support**: One agent to rule them all — natively supports `Sqlite`, `PostgreSQL`, `MySQL`, `SQLServer`, `Oracle`, and `FireBird`.
-- **Deterministic Accuracy**: Stop letting LLMs hallucinate raw SQL. The LLM doesn’t need to know complex or obscure database syntax; it simply extracts structured parameters (tables, columns, and conditions), leaving the deterministic SQL generation to the agent. Powered by a **Metadata Tool**, the LLM can dynamically query and map the perfect parameters every time.
-- **Robust Security**: Fully powered by [SqlKata](https://sqlkata.com) to enforce automatic parameterization on all inputs, neutralizing LLM-driven SQL injection risks at the source.
-- **Domain Knowledge & Semantic Layer**: Define a robust DB semantic layer and customizable SQL tools to enhance AI reasoning, aligning the agent perfectly with your specific business logic.
+### Where to use it
 
-### 🛡️ Enterprise-Grade Governance
+| Use case | Description |
+|----------|-------------|
+| **Cursor / Claude Desktop** | Let devs query dev/test DBs in natural language from their AI IDE. |
+| **Multi-DB agents** | One MCP server, many databases — switch between PostgreSQL, MySQL, Oracle, etc. per API key. |
+| **Enterprise chatbots** | Connect internal AI agents to ERP/CRM systems with table-level permission isolation. |
+| **Legacy modernization** | Bridge modern AI to decades-old databases via the semantic layer. |
 
-- **Built-in Admin Web UI**: Manage your SQL Agent visually through an intuitive dashboard. No more wrestling with manual JSON configuration files.
-- **Granular Access Control**:
-  - **Key-Level Mapping**: Securely assign specific database connections and scopes to individual API keys.
-  - **Lifecycle Management**: Effortlessly issue, list, or revoke access keys in real-time.
-- **Production Guardrails**:
-  - **Table Whitelisting**: Restrict AI access to authorized tables only, ensuring sensitive data remains untouched.
-  - **Global Rate Limiting**: Prevent your production database from being overwhelmed by infinite AI loops or excessive traffic.
-  - **Comprehensive Audit Logs**: Track every single query with daily summaries and detailed execution history for compliance.
-
----
-
-## 🖥️ Admin Panel
-
-The built-in Admin Panel allows you to monitor operations and manage access without touching a single configuration file.
-
-<img width="1919" height="951" alt="image" src="https://github.com/user-attachments/assets/4125fea0-ccad-4c56-aa75-bc9e396bec69" />
-
-_Operational Dashboard: Monitor keys and audit events in real-time._
-
-<img width="1919" height="950" alt="image" src="https://github.com/user-attachments/assets/a4e25214-e9f4-4b8b-a1c1-d9e157e629dc" />
-
-_Granular Control: Assign specific database connections and tool subsets to each API key._
-
-<img width="1919" height="951" alt="image" src="https://github.com/user-attachments/assets/78462e19-c7bf-4bfc-8475-7e8c91362eb2" />
-
-_Low-Code Tools: Define custom SQL operations (e.g., `calculate_churn_rate`) for the AI agent._
-
-<img width="1919" height="950" alt="image" src="https://github.com/user-attachments/assets/4d8e5876-61d8-4421-b6fc-ef42c18a3d2d" />
-
-_DB Manage: Manage your DB connection._
-
----
-
-## 🚀 Quick Start (Docker Compose)
-
-The easiest way to run **HS SQL Agent** is using Docker Compose. This ensures your configuration is saved and your data persists across restarts.
-
-### 1. Setup Configuration
-
-Copy the example environment file:
+## 🚀 Quick Start
 
 ```bash
-cp .env.example .env
+cp .env.example .env      # set HMAC_KEY and JWT_KEY (32+ bytes)
+docker compose up -d       # http://localhost:8080
 ```
 
-Edit the `.env` file to set your secret keys:
+## 📦 NuGet for Existing .NET APIs
 
-```env
-HMAC_KEY=YourMcpHmacSecretKeyHere-AtLeast32Bytes!
-JWT_KEY=YourSuperSecretKeyHere-AtLeast32Bytes!
-JWT_ISS=HS-Agent
-JWT_AUD=HS-Agent-Users
-JWT_ACCESS_TOKEN_EXPIRATION_MINUTES=1
-JWT_REFRESH_TOKEN_EXPIRATION_DAYS=30
-RATE_LIMITING_PERMIT_LIMIT=0
-RATE_LIMITING_WINDOW_SECONDS=0
-RATE_LIMITING_QUEUE_LIMIT=0
-```
-
-> [!IMPORTANT]
-> **Security Note:** Never use example keys in production. Replace `HMAC_KEY` and `JWT_KEY` with unique, 32+ byte strings.
-
-### 2. Launch the Application
+Already have an ASP.NET Core API? Embed the full MCP SQL Agent + Admin UI in minutes:
 
 ```bash
-docker compose up -d
+dotnet add package HsSqlAgent.Server
 ```
 
-### 3. Access the Service
-
-- **Admin Panel:** `http://localhost:8080`
-- **MCP Endpoint:** `http://localhost:8080/mcp`
-
----
-
-## 🏗️ Architecture
-
-- **Backend**: ASP.NET Core (`net10.0`) - High-performance server and MCP tool logic.
-- **Frontend**: Nuxt 4 - Premium administrative dashboard.
-- **Storage**: SQLite - Local persistent store for keys, logs, and custom tool definitions.
-
----
-
-## 🗺️ Roadmap & Capabilities
-
-### MCP Tools
-
-Ready for use (Experimental Stage). You can also define your own tools in the Admin Panel!
-
-| Progress | Tool                    | Description                                                                |
-| :------- | :---------------------- | :------------------------------------------------------------------------- |
-| 🧪       | `execute_query_safe`    | Execute a query (supports join, where, order by, group by, limit)          |
-| 🧪       | `get_columns`           | Get column names and data types of a table                                 |
-| 🧪       | `get_schemas`           | Get schemas in the database                                                |
-| 🧪       | `get_tables`            | Get tables in the database                                                 |
-| 🧪       | `execute_dml_safe`      | Execute a DML statement (INSERT, UPDATE, DELETE) with safety confirmation  |
-| 🔜       | `save_query`            | Save query for AI agent                                                    |
-| 🔜       | `update_semantic_layer` | Let AI agent update and enrich the Semantic Layer with discovered metadata |
-
-### Admin & Security
-
-| Progress | Feature              | Description                                   |
-| :------- | :------------------- | :-------------------------------------------- |
-| ✅       | `Allowed Tools`      | Manage tool access for each API key           |
-| ✅       | `Per-key Connection` | Override database settings for specific keys  |
-| ✅       | `Key Management`     | Issue, list, and revoke keys in real-time     |
-| ✅       | `Audit Logging`      | Detailed query execution history and metadata |
-| ✅       | `Rate Limiting`      | Global rate limiting                          |
-| ✅       | `Table WhiteList`    | Configure table whitelisting per API key      |
-| ✅       | `Semantic Layer`     | Define DB semantic layer for AI agent.        |
-
----
-
-## 📒 How to Use
-
-### First-time Setup
-
-1. Start the services and open `http://localhost:8080`.
-2. Create the first admin account and sign in.
-3. Go to **MCP Keys** and click `Issue Key`.
-4. Copy the **Key Value** (only shown once) and add it to your client config.
-
-### Client Configuration
-
-Add the following to your MCP client configuration (e.g., `claude_desktop_config.json`):
-
-```json
-{
-	"mcpServers": {
-		"hs-sql-agent": {
-			"url": "http://localhost:8080/mcp",
-			"headers": {
-				"X-MCP-Server-Key": "<YOUR_MCP_KEY>"
-			}
-		}
-	}
-}
+```csharp
+builder.Services.AddHsSqlAgent(options => { ... });
+app.UseHsSqlAgent();                    // API-only
+// app.UseHsSqlAgent().ServeAdminUi();  // with Admin UI
 ```
 
-_Works with **Claude Desktop**, **VS Code (Cline/Roo)**, and **Cursor**._
+> The Admin UI is embedded in the DLL — no external files to deploy. See the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/NuGet-Package) for details.
 
----
+## 📖 Documentation
 
-## 🛠️ Detailed Tool Information
+Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki):
 
-<details>
-<summary><b>Data Query (DQL)</b></summary>
+| Topic | Link |
+|-------|------|
+| 🚀 Getting Started | [Getting-Started](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Getting-Started) |
+| ✨ Features | [Features](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Features) |
+| 📘 MCP Tools | [MCP-Tools-Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/MCP-Tools-Reference) |
+| 🖥️ Admin Panel | [Admin-Panel](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Admin-Panel) |
+| ⚙️ Configuration | [Configuration](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Configuration) |
+| 🐳 Deployment | [Deployment](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Deployment) |
+| 🏠 Development | [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) |
+| 📡 API Reference | [API-Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/API-Reference) |
+| ❓ FAQ | [FAQ](https://github.com/tse-wei-chen/hs-sql-agent/wiki/FAQ) |
 
-- **execute_query_safe**
-  - **Description**: Execute a complex query (supports joins, grouping, CTEs, etc.).
-  - **Parameters**: `tableName`, `selectColumns`, `whereConditions`, `joins`, `groupBy`, etc.
-  - **Read-only**: True
+## 🤝 Contributing
 
-- **get_columns**
-  - **Description**: Get column names and types for a specific table.
-  - **Read-only**: True
-
-- **get_tables / get_schemas**
-  - **Description**: Discover the database structure.
-  - **Read-only**: True
-
-</details>
-
-<details>
-<summary><b>Data Manipulation (DML)</b></summary>
-
-- **execute_dml_safe**
-  - **Description**: Execute INSERT, UPDATE, or DELETE with a two-step confirmation process.
-  - **Safety**: Requires a `ConfirmToken` from a dry-run call before committing changes.
-  - **Read-only**: False
-
-</details>
-
----
-
-## 🏠 Local Development
-
-### Prerequisites
-
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [Node.js 20+](https://nodejs.org/)
-- [pnpm](https://pnpm.io/)
-
-### Setup
-
-1. **Clone**:
-
-```bash
-git clone https://github.com/tse-wei-chen/hs-sql-agent.git
-
-git submodule update --init --recursive
-```
-
-2. **Backend**:
-
-```bash
-cp backend/src/ToolBox/appsettings.Example.json backend/src/ToolBox/appsettings.json
-dotnet run --project backend/src/ToolBox
-```
-
-3. **Frontend**:
-
-```bash
-cd frontend
-
-pnpm install
-
-pnpm run dev
-```
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) wiki page.
 
 ## 📜 License
 

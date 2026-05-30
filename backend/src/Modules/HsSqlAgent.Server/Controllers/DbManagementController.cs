@@ -1,5 +1,3 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Text;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
@@ -11,7 +9,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
 
-namespace ToolBox.Controllers;
+namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -20,58 +18,42 @@ public class DbManagementController(
     IDbManagementService dbManagementService,
     IAuditService auditService) : ControllerBase
 {
-    private readonly IDbManagementService _dbManagementService = dbManagementService;
-    private readonly IAuditService _auditService = auditService;
-
     [HttpPost]
     public async Task<IActionResult> CreateDb([FromBody] DbManagementRequest request, CancellationToken cancellationToken)
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Name))
-        {
             return BadRequest("Name is required.");
-        }
-
-        var result = await _dbManagementService.CreateDbAsync(request, cancellationToken);
-        await _auditService.WriteLogAsync("db.management.created", result.Id.ToString(), "success", $"Name: {result.Name}", cancellationToken);
+        var result = await dbManagementService.CreateDbAsync(request, cancellationToken);
+        await auditService.WriteLogAsync("db.management.created", result.Id.ToString(), "success", $"Name: {result.Name}", cancellationToken);
         return Ok(result);
     }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> GetDbById(int id, CancellationToken cancellationToken)
     {
-        var result = await _dbManagementService.GetDbByIdAsync(id, false, cancellationToken);
-        if (result == null)
-        {
-            return NotFound();
-        }
-        return Ok(result);
+        var result = await dbManagementService.GetDbByIdAsync(id, false, cancellationToken);
+        return result == null ? NotFound() : Ok(result);
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAllDbs(CancellationToken cancellationToken)
-    {
-        var result = await _dbManagementService.GetAllDbsAsync(cancellationToken);
-        return Ok(result);
-    }
+        => Ok(await dbManagementService.GetAllDbsAsync(cancellationToken));
 
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateDb(int id, [FromBody] DbManagementRequest request, CancellationToken cancellationToken)
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Name))
-        {
             return BadRequest("Name is required.");
-        }
-
-        await _dbManagementService.UpdateDbAsync(id, request, cancellationToken);
-        await _auditService.WriteLogAsync("db.management.updated", id.ToString(), "success", $"Name: {request.Name}", cancellationToken);
+        await dbManagementService.UpdateDbAsync(id, request, cancellationToken);
+        await auditService.WriteLogAsync("db.management.updated", id.ToString(), "success", $"Name: {request.Name}", cancellationToken);
         return NoContent();
     }
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteDb(int id, CancellationToken cancellationToken)
     {
-        await _dbManagementService.DeleteDbAsync(id, cancellationToken);
-        await _auditService.WriteLogAsync("db.management.deleted", id.ToString(), "success", null, cancellationToken);
+        await dbManagementService.DeleteDbAsync(id, cancellationToken);
+        await auditService.WriteLogAsync("db.management.deleted", id.ToString(), "success", null, cancellationToken);
         return NoContent();
     }
 
@@ -80,17 +62,14 @@ public class DbManagementController(
         int id,
         [FromServices] ISqlStrategyFactory sqlStrategyFactory,
         [FromServices] ICryptoService cryptoService,
-        [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
+        [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
     {
-        if (await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
-
-        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
-            return BadRequest("Invalid SqlProvider");
+        if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
-
         var strategy = sqlStrategyFactory.GetStrategy(dbType);
         var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
         {
@@ -102,27 +81,22 @@ public class DbManagementController(
             ExtraSettings = db.ExtraSettings
         });
 
-        var schemas = await strategy.GetSchemasAsync(connectionString, cancellationToken);
-        return Ok(schemas);
+        return Ok(await strategy.GetSchemasAsync(connectionString, cancellationToken));
     }
 
     [HttpGet("{id}/tables")]
     public async Task<IActionResult> GetTables(
-        int id,
-        [FromQuery] string? schema,
+        int id, [FromQuery] string? schema,
         [FromServices] ISqlStrategyFactory sqlStrategyFactory,
         [FromServices] ICryptoService cryptoService,
-        [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
+        [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
     {
-        if (await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
-
-        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
-            return BadRequest("Invalid SqlProvider");
+        if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
-
         var strategy = sqlStrategyFactory.GetStrategy(dbType);
         var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
         {
@@ -134,31 +108,23 @@ public class DbManagementController(
             ExtraSettings = db.ExtraSettings
         });
 
-        var tables = await strategy.GetTablesAsync(connectionString, schema ?? string.Empty, cancellationToken);
-        return Ok(tables);
+        return Ok(await strategy.GetTablesAsync(connectionString, schema ?? string.Empty, cancellationToken));
     }
 
     [HttpGet("{id}/columns")]
     public async Task<IActionResult> GetColumns(
-        int id,
-        [FromQuery] string? schema,
-        [FromQuery] string table,
+        int id, [FromQuery] string? schema, [FromQuery] string table,
         [FromServices] ISqlStrategyFactory sqlStrategyFactory,
         [FromServices] ICryptoService cryptoService,
-        [FromServices] IOptions<Admin.Service.Models.McpKeySettings> mcpKeySettings,
+        [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(table))
-            return BadRequest("Table name is required.");
-
-        if (await _dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
-
-        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
-            return BadRequest("Invalid SqlProvider");
+        if (string.IsNullOrWhiteSpace(table)) return BadRequest("Table name is required.");
+        if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
-
         var strategy = sqlStrategyFactory.GetStrategy(dbType);
         var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
         {
@@ -170,7 +136,6 @@ public class DbManagementController(
             ExtraSettings = db.ExtraSettings
         });
 
-        var columns = await strategy.GetColumnsAsync(connectionString, schema ?? string.Empty, table, cancellationToken);
-        return Ok(columns);
+        return Ok(await strategy.GetColumnsAsync(connectionString, schema ?? string.Empty, table, cancellationToken));
     }
 }
