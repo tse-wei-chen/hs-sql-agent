@@ -38,15 +38,15 @@ jobs:
       - name: Pack
         run: |
           if [ -n "${{ github.event.inputs.version_suffix }}" ]; then
-            dotnet pack -c Release --version-suffix "${{ github.event.inputs.version_suffix }}" -o ./nupkg
+            dotnet pack -c Release --version-suffix "${{ github.event.inputs.version_suffix }}" -o "${{ github.workspace }}/nupkg"
           else
-            dotnet pack -c Release -o ./nupkg
+            dotnet pack -c Release -o "${{ github.workspace }}/nupkg"
           fi
         working-directory: backend/src/Modules/HsSqlAgent.Server
 
       - name: Push to NuGet.org
         run: |
-          dotnet nuget push ./nupkg/*.nupkg \
+          dotnet nuget push "${{ github.workspace }}/nupkg/*.nupkg" \
             --api-key ${{ secrets.NUGET_API_KEY }} \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
