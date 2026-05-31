@@ -20,7 +20,7 @@ Most "Chat with your Data" tools ask the LLM to write raw SQL — a recipe for h
 | Use case | Description |
 |----------|-------------|
 | **Cursor / Claude Desktop** | Let devs query dev/test DBs in natural language from their AI IDE. |
-| **Multi-DB agents** | One MCP server, many databases — switch between PostgreSQL, MySQL, Oracle, etc. per API key. |
+| **Multi-DB agents** | One MCP server per database, each secured with its own API key. The agent aggregates multiple MCP connections to seamlessly orchestrate workflows across PostgreSQL, MySQL, and Oracle. |
 | **Enterprise chatbots** | Connect internal AI agents to ERP/CRM systems with table-level permission isolation. |
 | **Legacy modernization** | Bridge modern AI to decades-old databases via the semantic layer. |
 
