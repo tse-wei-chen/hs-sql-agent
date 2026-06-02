@@ -44,10 +44,13 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         try
         {
             ValidateToolAccess("execute_query_safe");
+            if (definition == null)
+                return "Error: Query definition is missing.";
+
             ValidateAllTableAccess(definition.TableName, definition.Joins, definition.CombineConditions, definition.CteConditions, definition.FromQuery, definition.SelectColumns, definition.WhereColumnsAndValues, definition.Alias);
             var result = await strategy.ExecuteQueryAsync(definition, sqlConfig.ConnectionString);
 
-            await _auditService.WriteLogAsync("mcp.query.executed", definition?.TableName ?? "unknown", "success", $"Provider: {dbType}");
+            await _auditService.WriteLogAsync("mcp.query.executed", definition.TableName ?? "unknown", "success", $"Provider: {dbType}");
             return result;
         }
         catch (Exception ex)
