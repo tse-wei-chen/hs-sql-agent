@@ -56,12 +56,16 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(tableName) || tableName.Any(c => !char.IsLetterOrDigit(c) && c != '_'))
-                return [];
+            var checkSql = "SELECT name FROM sqlite_master WHERE type='table' AND name = @tbl;";
+            var verifiedTableName = await connection.QueryFirstOrDefaultAsync<string>(checkSql, new { tbl = tableName });
 
-            var result = await connection.QueryAsync(new CommandDefinition(
-                $"SELECT name AS COLUMN_NAME, type AS DATA_TYPE FROM pragma_table_info('{tableName.Replace("'", "''")}') ORDER BY cid",
-                cancellationToken: cancellationToken));
+            if (string.IsNullOrEmpty(verifiedTableName))
+            {
+                return [];
+            }
+            var sql = $"SELECT name AS COLUMN_NAME, type AS DATA_TYPE FROM pragma_table_info('{verifiedTableName}') ORDER BY cid";
+
+            var result = await connection.QueryAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
             return [.. result.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
         }
         catch (Exception ex)
