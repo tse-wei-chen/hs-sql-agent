@@ -47,14 +47,12 @@ public static class HsSqlAgentApplicationExtensions
     public static HsSqlAgentBuilder MapAdminEndpoint(this HsSqlAgentBuilder builder, string prefix)
     {
         builder.Options.AdminApiPrefix = prefix;
-        RegisterEndpoints(builder);
         return builder;
     }
 
     public static HsSqlAgentBuilder MapMcpEndpoint(this HsSqlAgentBuilder builder, string endpoint)
     {
         builder.Options.McpEndpoint = endpoint;
-        RegisterEndpoints(builder);
         return builder;
     }
 
@@ -64,7 +62,7 @@ public static class HsSqlAgentApplicationExtensions
         builder.Options.AdminUiRequestPath = requestPath;
         builder.Options.AdminUiRootPath = rootPath;
         TryServeAdminUi(builder.App, builder.Options);
-        RegisterEndpoints(builder);
+        RegisterAdminUiFallback(builder);
         return builder;
     }
 
@@ -78,20 +76,23 @@ public static class HsSqlAgentApplicationExtensions
                .RequireRateLimiting("mcp-policy");
 
             endpoints.MapControllers();
+        }
+    }
 
-            if (options.ServeAdminUi)
+    private static void RegisterAdminUiFallback(HsSqlAgentBuilder builder)
+    {
+        if (builder.App is IEndpointRouteBuilder endpoints)
+        {
+            var fileProvider = ResolveUiFileProvider(builder.Options);
+            if (fileProvider == null) return;
+
+            var requestPath = GetFormatRequestPath(builder.Options.AdminUiRequestPath);
+
+            endpoints.MapFallbackToFile("index.html", new StaticFileOptions
             {
-                var fileProvider = ResolveUiFileProvider(options);
-                if (fileProvider == null) return;
-
-                var requestPath = GetFormatRequestPath(options.AdminUiRequestPath);
-
-                endpoints.MapFallbackToFile("index.html", new StaticFileOptions
-                {
-                    FileProvider = fileProvider,
-                    RequestPath = requestPath
-                });
-            }
+                FileProvider = fileProvider,
+                RequestPath = requestPath
+            });
         }
     }
 
