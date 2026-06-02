@@ -56,11 +56,12 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            string safeTableName = tableName.Replace("'", "''");
-            var result = await connection.QueryAsync(new CommandDefinition($@"
-                SELECT name AS COLUMN_NAME, type AS DATA_TYPE 
-                FROM pragma_table_info('{safeTableName}')
-                ORDER BY cid", cancellationToken: cancellationToken));
+            if (string.IsNullOrWhiteSpace(tableName) || tableName.Any(c => !char.IsLetterOrDigit(c) && c != '_'))
+                return [];
+
+            var result = await connection.QueryAsync(new CommandDefinition(
+                $"SELECT name AS COLUMN_NAME, type AS DATA_TYPE FROM pragma_table_info('{tableName.Replace("'", "''")}') ORDER BY cid",
+                cancellationToken: cancellationToken));
             return [.. result.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
         }
         catch (Exception ex)
