@@ -149,7 +149,7 @@ When issuing an MCP access key, you can configure:
 
 ## Connecting from AI Clients
 
-The MCP endpoint accepts Bearer tokens or `X-MCP-Server-Key` header:
+The MCP endpoint accepts `X-MCP-Server-Key` header:
 
 ```json
 {
@@ -157,7 +157,7 @@ The MCP endpoint accepts Bearer tokens or `X-MCP-Server-Key` header:
     "hs-sql-agent": {
       "url": "http://localhost:8080/mcp",
       "headers": {
-        "Authorization": "Bearer <mcp-access-key>"
+        "X-MCP-Server-Key": "<mcp-access-key>"
       }
     }
   }

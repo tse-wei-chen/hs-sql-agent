@@ -1,6 +1,17 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.8.2-alpha] - 2026-06-02
+## What's Changed
+* fix: add missing Dapper package reference causing runtime assembly load failure by @Copilot in https://github.com/tse-wei-chen/hs-sql-agent/pull/54
+* fix: move assignment of issuedPlaintextKey to after form reset for co… by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/56
+* fix: error 500 for connect to mcp endpoint by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/58
+
+## New Contributors
+* @Copilot made their first contribution in https://github.com/tse-wei-chen/hs-sql-agent/pull/54
+
+**Full Changelog**: https://github.com/tse-wei-chen/hs-sql-agent/compare/v1.8.1-alpha...v1.8.2-alpha
+
 ## [1.8.1-alpha] - 2026-05-30
 
 ### NuGet Package Release
