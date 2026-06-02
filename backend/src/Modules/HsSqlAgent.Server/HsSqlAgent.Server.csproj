@@ -38,6 +38,7 @@
          PrivateAssets=All on ProjectReferences hides these from the nuspec; re-declaring them here ensures
          consumers resolve the correct versions. -->
     <PackageReference Include="BCrypt.Net-Next" />
+    <PackageReference Include="dapper" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
     <PackageReference Include="MySql.Data" />
     <PackageReference Include="Npgsql" />
