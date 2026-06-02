@@ -226,9 +226,9 @@ const issue = async () => {
           : null,
     });
 
-    issuedPlaintextKey.value = result.plaintextKey || "";
     resetForm()
     await load();
+    issuedPlaintextKey.value = result.plaintextKey || "";
   } catch (error: any) {
     alert(error?.response?.data || "Failed to issue MCP key.");
   } finally {
