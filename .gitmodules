@@ -1,6 +1,3 @@
 [submodule "backend/src/Modules/SqlKata.Service"]
 	path = backend/src/Modules/SqlKata.Service
 	url = https://github.com/tse-wei-chen/hs-sql-agent.querybuilder
-[submodule "frontend/hs-sql-agent.wiki"]
-	path = frontend/hs-sql-agent.wiki
-	url = https://github.com/tse-wei-chen/hs-sql-agent.wiki.git
