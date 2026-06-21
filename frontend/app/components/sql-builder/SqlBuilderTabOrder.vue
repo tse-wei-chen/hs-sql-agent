@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Plus } from "lucide-vue-next";
+import { Trash2, Plus } from "@lucide/vue";
 import { Field, FieldLabel } from "@/components/ui/field";
 import ComboboxInput from "@/components/ComboboxInput.vue";
 import SqlBuilderSection from "./SqlBuilderSection.vue";

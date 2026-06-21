@@ -1,5 +1,5 @@
 <script setup>
-import { Sun, Moon } from "lucide-vue-next";
+import { Sun, Moon } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 const colorMode = useColorMode()
 

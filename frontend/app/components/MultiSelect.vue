@@ -4,7 +4,7 @@
   generic="T extends { value: string; label: string; [key: string]: any }"
 >
 import { computed, ref } from "vue";
-import { CheckIcon, ChevronDownIcon, XIcon } from "lucide-vue-next";
+import { CheckIcon, ChevronDownIcon, XIcon } from "@lucide/vue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

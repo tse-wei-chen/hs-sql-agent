@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Command, LifeBuoy, Send } from "lucide-vue-next";
+import { Command, LifeBuoy, Send } from "@lucide/vue";
 import NavSecondary from "@/components/NavSecondary.vue";
 import NavUser from "@/components/NavUser.vue";
 import {
