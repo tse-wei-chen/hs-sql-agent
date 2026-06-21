@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2 } from "lucide-vue-next";
+import { Trash2 } from "@lucide/vue";
 import ComboboxInput from "@/components/ComboboxInput.vue";
 import SqlBuilderSection from "./SqlBuilderSection.vue";
 import type { WhereItem } from "@/composables/useSqlBuilder";

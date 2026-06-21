@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-vue-next";
+import { Plus } from "@lucide/vue";
 
 defineProps<{
   title: string;

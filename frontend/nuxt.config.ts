@@ -56,7 +56,7 @@ export default defineNuxtConfig({
         "@codemirror/language",
         "@codemirror/lint",
         "@codemirror/theme-one-dark",
-        "lucide-vue-next"
+        "@lucide/vue"
       ],
     },
   },

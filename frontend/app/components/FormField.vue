@@ -6,7 +6,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CircleAlert, CircleCheck } from "lucide-vue-next";
+import { CircleAlert, CircleCheck } from "@lucide/vue";
 import { useFormContext } from "vee-validate";
 
 defineOptions({

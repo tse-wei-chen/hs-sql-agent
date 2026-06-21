@@ -18,7 +18,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { CircleAlert, CircleCheck, KeyRound , CircleQuestionMark  } from "lucide-vue-next";
+import { CircleAlert, CircleCheck, KeyRound , CircleQuestionMark  } from "@lucide/vue";
 import {
   issueMcpKey,
   listMcpKeys,

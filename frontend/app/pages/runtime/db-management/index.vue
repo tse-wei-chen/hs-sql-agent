@@ -34,7 +34,7 @@ import { CircleAlert, CircleCheck,
   Trash2,
   Edit2,
   Save,
-  Library } from "lucide-vue-next";
+  Library } from "@lucide/vue";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {

@@ -24,7 +24,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CircleAlert, CircleCheck, Plus, Trash2, Edit2, Save, X, Wand2  } from "lucide-vue-next";
+import { CircleAlert, CircleCheck, Plus, Trash2, Edit2, Save, X, Wand2  } from "@lucide/vue";
 import {
   listCustomSqlTools,
   createCustomSqlTool,
