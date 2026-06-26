@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.8.3] - 2026-06-26
+## What's Changed
+* Remove outdated documentation files: Architecture, Configuration, Dep… by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/59
+* Add cover image to README by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/61
+* upgrade package by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/62
+* fux Vulnerabilities by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/63
+
+
+**Full Changelog**: https://github.com/tse-wei-chen/hs-sql-agent/compare/v1.8.2-alpha...v1.8.3
+
 ## [1.8.2-alpha] - 2026-06-02
 ## What's Changed
 * fix: add missing Dapper package reference causing runtime assembly load failure by @Copilot in https://github.com/tse-wei-chen/hs-sql-agent/pull/54
