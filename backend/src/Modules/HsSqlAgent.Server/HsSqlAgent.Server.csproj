@@ -12,8 +12,7 @@
 
   <PropertyGroup>
     <PackageId>HsSqlAgent.Server</PackageId>
-    <VersionPrefix>1.8.2</VersionPrefix>
-    <VersionSuffix>alpha</VersionSuffix>
+    <VersionPrefix>1.8.3</VersionPrefix>
     <Authors>tse-wei-chen</Authors>
     <Company>hs-sql-agent</Company>
     <Description>Embeddable MCP SQL Agent server for ASP.NET Core. Add HsSqlAgent to any existing ASP.NET Core app with AddHsSqlAgent() / UseHsSqlAgent().</Description>
