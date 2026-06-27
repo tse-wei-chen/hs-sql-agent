@@ -50,7 +50,7 @@ const data = ref({
   ],
   navMain: [
     {
-      title: "Runtime Admin",
+      title: "Runtime Management",
       url: "#",
       items: [
         {
@@ -73,6 +73,22 @@ const data = ref({
         {
           title: "Audit",
           url: "/runtime/audit",
+        },
+      ],
+    },
+    {
+      title: "Auth Management",
+      url: "#",
+      items: [
+        {
+          title: "Role Management",
+          url: "/auth/role",
+          isActive: true,
+        },
+        {
+          title: "User Management",
+          url: "/auth/user",
+          isActive: true,
         },
       ],
     },

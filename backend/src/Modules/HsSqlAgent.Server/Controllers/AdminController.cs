@@ -1,7 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Auth.Service.Data;
 using Admin.Service.Interfaces;
-using Admin.Service.Models;
+using Auth.Service.Interfaces;
+using Auth.Service.Models;
 using HsSqlAgent.Server.Attributes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,12 +12,12 @@ namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AdminController(ILogger<AdminController> logger, IAdminService adminService, IAuditService auditService) : ControllerBase
+public class AdminController(ILogger<AdminController> logger, IAuthService authService, IAuditService auditService) : ControllerBase
 {
     [HttpGet("first-run")]
     [AllowAnonymous]
     public async Task<IActionResult> CheckFirstRunAsync()
-        => Ok(await adminService.IsFirstRunAsync());
+        => Ok(await authService.IsFirstRunAsync());
 
     [HttpPost("sign-in")]
     [AllowAnonymous]
@@ -24,7 +26,7 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
         try
         {
-            var result = await adminService.SignInAsync(request);
+            var result = await authService.SignInAsync(request);
             await auditService.WriteLogAsync("admin.signin", request.Email, "success");
             return Ok(result);
         }
@@ -49,7 +51,7 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
         try
         {
-            var result = await adminService.SignUpAsync(request);
+            var result = await authService.SignUpFirstAdminAsync(request);
             await auditService.WriteLogAsync("admin.signup", request.Email, "success");
             return Ok(result);
         }
@@ -75,7 +77,7 @@ public class AdminController(ILogger<AdminController> logger, IAdminService admi
             return Unauthorized("User ID is required.");
         try
         {
-            var result = await adminService.RefreshTokenAsync(id);
+            var result = await authService.RefreshTokenAsync(id);
             return Ok(result);
         }
         catch (UnauthorizedAccessException ex)

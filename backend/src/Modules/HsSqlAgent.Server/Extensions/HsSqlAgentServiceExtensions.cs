@@ -8,6 +8,9 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using Admin.Service.Validators;
+using Auth.Service.Data;
+using Auth.Service.Interfaces;
+using Auth.Service.Services;
 using Common.Interfaces;
 using Common.Services;
 using FluentValidation;
@@ -28,6 +31,8 @@ using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
+using Auth.Service.Models;
+using Auth.Service.Validators;
 
 namespace HsSqlAgent.Server.Extensions;
 
@@ -54,10 +59,14 @@ public static class HsSqlAgentServiceExtensions
         services.AddMemoryCache();
         services.AddDbContext<AdminContext>(db => db.UseSqlite(options.AdminConnectionString));
         services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
+        services.AddDbContext<AuthContext>(db => db.UseSqlite(options.AdminConnectionString));
+        services.AddScoped<IAuthContext>(sp => sp.GetRequiredService<AuthContext>());
 
-        services.AddScoped<IAdminService, AdminService>();
+        services.AddScoped<IAuthService, AuthService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
+        services.AddScoped<IMemberService, MemberService>();
+        services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<ICustomSqlToolService, CustomSqlToolService>();
         services.AddScoped<IDbManagementService, DbManagementService>();
@@ -255,6 +264,7 @@ public static class HsSqlAgentServiceExtensions
             json.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
         });
         services.AddFluentValidationAutoValidation();
+        services.AddValidatorsFromAssemblyContaining<IssueMcpAccessKeyRequestValidator>();
         services.AddValidatorsFromAssemblyContaining<SignInRequestValidator>();
 
         // --- Exception handling ---

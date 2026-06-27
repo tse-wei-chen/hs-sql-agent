@@ -44,13 +44,14 @@
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" />
     <PackageReference Include="FirebirdSql.Data.FirebirdClient" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
-    <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" />
+    <!-- <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" /> -->
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Common\Common.csproj" PrivateAssets="All" />
     <ProjectReference Include="..\Admin.Service\Admin.Service.csproj" PrivateAssets="All" />
+    <ProjectReference Include="..\Auth.Service\Auth.Service.csproj" PrivateAssets="All" />
     <ProjectReference Include="..\SqlAgent.Service\SqlAgent.Service.csproj" PrivateAssets="All" />
   </ItemGroup>
 
