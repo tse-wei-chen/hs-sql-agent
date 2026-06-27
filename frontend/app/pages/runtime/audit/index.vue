@@ -13,6 +13,7 @@ import { getRuntimeAudit } from "@/api/runtime";
 
 definePageMeta({
   layout: "default",
+  permission: "/runtime/audit.view",
 });
 
 interface AuditItem {

@@ -15,7 +15,6 @@ public class MemberController(
     IMemberService memberService,
     IAuditService auditService) : ControllerBase
 {
-    [Authorize(Roles = "SuperUser")]
     [HttpPost]
     public async Task<IActionResult> CreateMemberAsync([FromBody] CreateMemberRequest request)
     {
@@ -40,7 +39,6 @@ public class MemberController(
         }
     }
 
-    [Authorize(Roles = "SuperUser")]
     [HttpGet]
     public async Task<IActionResult> GetUsersAsync()
     {
@@ -48,7 +46,6 @@ public class MemberController(
         return Ok(users);
     }
 
-    [Authorize(Roles = "SuperUser")]
     [HttpPut("{id:int}/roles")]
     public async Task<IActionResult> UpdateUserRolesAsync(int id, [FromBody] UpdateMemberRolesRequest request)
     {
@@ -73,7 +70,6 @@ public class MemberController(
         }
     }
 
-    [Authorize(Roles = "SuperUser")]
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteUserAsync(int id)
     {

@@ -43,6 +43,7 @@ import { useForm } from "vee-validate";
 
 definePageMeta({
   layout: "default",
+  permission: "/runtime/mcp-keys.view",
 });
 
 interface McpKeyItem {
@@ -557,6 +558,7 @@ onMounted(load);
               type="submit"
               :disabled="!meta.valid || issuing"
               class="w-full md:w-auto"
+              v-permission="'create'"
             >
               <KeyRound />
               {{ issuing ? "Issuing..." : "Issue Key" }}
@@ -618,6 +620,7 @@ onMounted(load);
               variant="destructive"
               :disabled="!key.isActive"
               @click="revoke(key.id)"
+              v-permission="'revoke'"
               >Revoke</Button
             >
           </div>

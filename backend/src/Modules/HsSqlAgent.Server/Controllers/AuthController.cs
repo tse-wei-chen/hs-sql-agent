@@ -12,7 +12,7 @@ namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AdminController(ILogger<AdminController> logger, IAuthService authService, IAuditService auditService) : ControllerBase
+public class AuthController(ILogger<AuthController> logger, IAuthService authService, IAuditService auditService) : ControllerBase
 {
     [HttpGet("first-run")]
     [AllowAnonymous]

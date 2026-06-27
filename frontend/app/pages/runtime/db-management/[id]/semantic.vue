@@ -42,6 +42,7 @@ import { ChevronLeft, Save, Loader2, Database } from "@lucide/vue";
 
 definePageMeta({
   layout: "default",
+  permission: "/runtime/db-management.view",
 });
 
 const route = useRoute();

@@ -25,11 +25,12 @@ import {
   type Permission,
   type PermissionActionTemplate,
   type Role,
-} from "@/api/auth";
+} from "~/api/role";
 import { useForm } from "vee-validate";
 
 definePageMeta({
   layout: "default",
+  permission: "/auth/role.view",
 });
 
 interface RoleFormValues {
@@ -276,7 +277,7 @@ onMounted(load);
             <Button v-if="editingId" type="button" variant="ghost" @click="resetForm">
               <X class="mr-2 size-4" /> Cancel
             </Button>
-            <Button type="submit" :disabled="!meta.valid || saving">
+            <Button type="submit" :disabled="!meta.valid || saving" v-permission="[editingId ? 'edit' : 'create']">
               <Save v-if="!saving" class="mr-2 size-4" />
               {{ saving ? "Saving..." : editingId ? "Update Role" : "Create Role" }}
             </Button>
@@ -312,10 +313,10 @@ onMounted(load);
               </div>
               <div v-if="role.name !== 'SuperUser'"
                 class="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(role)">
+                <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(role)" v-permission="'edit'">
                   <Edit2 class="size-4" />
                 </Button>
-                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(role)">
+                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(role)" v-permission="'delete'">
                   <Trash2 class="size-4" />
                 </Button>
               </div>

@@ -10,12 +10,10 @@ namespace HsSqlAgent.Server.Controllers;
 [Route("api/[controller]")]
 public class RoleController(ILogger<RoleController> logger, IRoleService roleService, IAuditService auditService) : ControllerBase
 {
-    [Authorize(Roles = "SuperUser")]
     [HttpGet]
     public async Task<IActionResult> GetRolesAsync()
         => Ok(await roleService.GetRolesAsync());
 
-    [Authorize(Roles = "SuperUser")]
     [HttpPost]
     public async Task<IActionResult> CreateRoleAsync([FromBody] RolePayload request)
     {
@@ -40,7 +38,6 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
         }
     }
 
-    [Authorize(Roles = "SuperUser")]
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateRoleAsync(int id, [FromBody] RolePayload request)
     {
@@ -65,7 +62,6 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
         }
     }
 
-    [Authorize(Roles = "SuperUser")]
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> RemoveRoleAsync(int id)
     {
@@ -89,7 +85,6 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
         }
     }
 
-    [Authorize(Roles = "SuperUser")]
     [HttpGet("permission-action-templates")]
     public async Task<IActionResult> GetPermissionActionTemplatesAsync()
         => Ok(await roleService.GetPermissionActionTemplatesAsync());

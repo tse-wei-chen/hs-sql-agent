@@ -20,11 +20,13 @@ import {
   createMember,
   deleteMember,
   listMembers,
-  listRoles,
   updateMemberRoles,
   type Member,
+} from "~/api/member";
+import {
+  listRoles,
   type Role,
-} from "@/api/auth";
+} from "~/api/role";
 import { useForm } from "vee-validate";
 
 const currentUserId = (() => {
@@ -42,6 +44,7 @@ const currentUserId = (() => {
 
 definePageMeta({
   layout: "default",
+  permission: "/auth/user.view",
 });
 
 interface UserFormValues {
@@ -254,7 +257,7 @@ onMounted(load);
             <Button v-if="editingId" type="button" variant="ghost" @click="resetForm">
               <X class="mr-2 size-4" /> Cancel
             </Button>
-            <Button type="submit" :disabled="(!editingId && !meta.valid) || saving">
+            <Button type="submit" :disabled="(!editingId && !meta.valid) || saving" v-permission="[editingId ? 'edit' : 'create']">
               <Save v-if="!saving" class="mr-2 size-4" />
               {{ saving ? "Saving..." : editingId ? "Update Roles" : "Create User" }}
             </Button>
@@ -292,10 +295,10 @@ onMounted(load);
                 </p>
               </div>
               <div v-if="member.id !== currentUserId" class="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(member)">
+                <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(member)" v-permission="'edit'">
                   <Edit2 class="size-4" />
                 </Button>
-                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(member)">
+                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(member)" v-permission="'delete'">
                   <Trash2 class="size-4" />
                 </Button>
               </div>

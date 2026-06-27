@@ -144,23 +144,7 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         IReadOnlyCollection<string> roles,
         CancellationToken cancellationToken)
     {
-        if (roles.Contains(SuperUserRoleName, StringComparer.OrdinalIgnoreCase))
-        {
-            var rows = await _context.PermissionActions
-                .AsNoTracking()
-                .Select(x => new PermissionActionGrantRow(
-                    x.Permission.Id,
-                    x.Permission.Name,
-                    x.Permission.Path,
-                    x.Action.Id,
-                    x.Action.Code,
-                    x.Action.Name))
-                .ToListAsync(cancellationToken);
-
-            return ToPermissionGrants(rows);
-        }
-
-        var grantedRows = await _context.PermissionActions
+        var rows = await _context.PermissionActions
             .AsNoTracking()
             .Where(x => roles.Contains(x.Role.Name))
             .Select(x => new PermissionActionGrantRow(
@@ -173,30 +157,22 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             .Distinct()
             .ToListAsync(cancellationToken);
 
-        return ToPermissionGrants(grantedRows);
-    }
-
-    private static IReadOnlyCollection<PermissionGrant> ToPermissionGrants(IEnumerable<PermissionActionGrantRow> rows)
-    {
-        return rows
-            .GroupBy(x => new { x.Id, x.Name, x.Path })
+        return [.. rows.GroupBy(x => new { x.Id, x.Name, x.Path })
             .Select(x => new PermissionGrant
             {
                 PermissionId = x.Key.Id,
                 Name = x.Key.Name,
                 Path = x.Key.Path,
-                Actions = x
+                Actions = [.. x
                     .OrderBy(a => a.ActionCode)
                     .Select(a => new ActionGrant
                     {
                         ActionId = a.ActionId,
                         Code = a.ActionCode,
                         Name = a.ActionName
-                    })
-                    .ToList()
+                    })]
             })
-            .OrderBy(x => x.Path)
-            .ToList();
+            .OrderBy(x => x.Path)];
     }
 
     private sealed record PermissionActionGrantRow(

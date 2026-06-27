@@ -53,6 +53,7 @@ import { useForm } from "vee-validate";
 
 definePageMeta({
   layout: "default",
+  permission: "/runtime/db-management.view",
 });
 
 interface DbFormValues {
@@ -400,7 +401,7 @@ onMounted(load);
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            <Button type="submit" :disabled="!meta.valid || saving">
+            <Button type="submit" :disabled="!meta.valid || saving" v-permission="[editingId ? 'edit' : 'create']">
               <Save v-if="!saving" class="size-4 mr-2" />
               {{
                 saving
@@ -494,6 +495,7 @@ onMounted(load);
                   size="icon"
                   class="h-8 w-8"
                   @click="startEdit(db)"
+                  v-permission="'edit'"
                 >
                   <Edit2 class="size-4" />
                 </Button>
@@ -502,6 +504,7 @@ onMounted(load);
                   size="icon"
                   class="h-8 w-8 text-destructive"
                   @click="remove(db.id)"
+                  v-permission="'delete'"
                 >
                   <Trash2 class="size-4" />
                 </Button>

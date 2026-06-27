@@ -16,6 +16,16 @@ import {
 } from "@/components/ui/sidebar";
 
 const route = useRoute();
+const { $can } = useNuxtApp();
+
+const navMain = computed(() =>
+  data.value.navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => $can(`${item.url}.view`)),
+    }))
+    .filter((group) => group.items.length > 0),
+);
 
 const props = defineProps<{
   side?: "left" | "right";
@@ -48,48 +58,24 @@ const data = ref({
       icon: Send,
     },
   ],
-  navMain: [
+  navGroups: [
     {
       title: "Runtime Management",
       url: "#",
       items: [
-        {
-          title: "Overview",
-          url: "/home",
-        },
-        {
-          title: "MCP Keys",
-          url: "/runtime/mcp-keys",
-        },
-
-        {
-          title: "Custom Tools",
-          url: "/runtime/custom-tools",
-        },
-        {
-          title: "DB Management",
-          url: "/runtime/db-management",
-        },
-        {
-          title: "Audit",
-          url: "/runtime/audit",
-        },
+        { title: "Overview", url: "/home" },
+        { title: "MCP Keys", url: "/runtime/mcp-keys" },
+        { title: "Custom Tools", url: "/runtime/custom-tools" },
+        { title: "DB Management", url: "/runtime/db-management" },
+        { title: "Audit", url: "/runtime/audit" },
       ],
     },
     {
       title: "Auth Management",
       url: "#",
       items: [
-        {
-          title: "Role Management",
-          url: "/auth/role",
-          isActive: true,
-        },
-        {
-          title: "User Management",
-          url: "/auth/user",
-          isActive: true,
-        },
+        { title: "Role Management", url: "/auth/role", isActive: true },
+        { title: "User Management", url: "/auth/user", isActive: true },
       ],
     },
   ],
@@ -119,7 +105,7 @@ const data = ref({
       </SidebarMenu>
     </SidebarHeader>
     <SidebarContent>
-      <SidebarGroup v-for="item in data.navMain" :key="item.title">
+      <SidebarGroup v-for="item in navMain" :key="item.title">
         <SidebarGroupLabel>{{ item.title }}</SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>

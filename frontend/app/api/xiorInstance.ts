@@ -1,5 +1,5 @@
 import xior from "xior";
-import { refreshToken } from "./admin";
+import { refreshToken } from "./auth";
 
 let refreshPromise: Promise<any> | null = null;
 
@@ -71,6 +71,9 @@ xiorInstanceToken.interceptors.response.use(
       console.warn("⚠️ Forbidden (403), signing out...");
       localStorage.removeItem("accessToken");
       localStorage.removeItem("refreshToken");
+      localStorage.removeItem("permissions");
+      localStorage.removeItem("userEmail");
+      localStorage.removeItem("userName");
       navigateTo("/login");
     }
     return Promise.reject(error);
@@ -96,6 +99,9 @@ xiorInstanceRefreshToken.interceptors.response.use(
   (error) => {
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
+    localStorage.removeItem("permissions");
+    localStorage.removeItem("userEmail");
+    localStorage.removeItem("userName");
     navigateTo("/login");
     return Promise.reject(error);
   },

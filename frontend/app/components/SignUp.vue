@@ -6,7 +6,7 @@ import { FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
-import { checkFirstRun, signUp } from "~/api/admin";
+import { checkFirstRun, signUp } from "~/api/auth";
 
 const props = defineProps<{
   class?: HTMLAttributes["class"];
