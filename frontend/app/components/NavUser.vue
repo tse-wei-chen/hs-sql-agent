@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import {
   BadgeCheck,
-  Bell,
   ChevronsUpDown,
-  CreditCard,
   LogOut,
-  Sparkles,
 } from "@lucide/vue";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";

@@ -305,7 +305,9 @@ onMounted(load);
                 <div class="flex items-center gap-2">
                   <ShieldCheck class="size-4 text-muted-foreground" />
                   <span class="font-bold text-sm">{{ role.name }}</span>
-                  <Badge v-if="role.name === 'SuperUser'"class="h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors bg-green-100 text-green-700 border-green-200">Built-in</Badge>
+                  <Badge v-if="role.name === 'SuperUser'"
+                    class="h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors bg-green-100 text-green-700 border-green-200">
+                    Built-in</Badge>
                 </div>
                 <p class="mt-1 text-xs text-muted-foreground">
                   {{ role.description || "No description" }}
@@ -316,7 +318,8 @@ onMounted(load);
                 <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(role)" v-permission="'edit'">
                   <Edit2 class="size-4" />
                 </Button>
-                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(role)" v-permission="'delete'">
+                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(role)"
+                  v-permission="'delete'">
                   <Trash2 class="size-4" />
                 </Button>
               </div>
@@ -331,7 +334,8 @@ onMounted(load);
                   variant="outline" class="font-mono text-[0.65rem]">
                   {{ permissionActionLabelBySelection(item.permissionId, item.actionId) }}
                 </Badge>
-                <Badge v-if="role.permissionActions.length > 8" class="h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors bg-green-100 text-green-700 border-green-200">
+                <Badge v-if="role.permissionActions.length > 8"
+                  class="h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors bg-green-100 text-green-700 border-green-200">
                   +{{ role.permissionActions.length - 8 }}
                 </Badge>
               </div>
