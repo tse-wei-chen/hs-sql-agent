@@ -2,19 +2,16 @@
 using Auth.Service.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace Auth.Service.Migrations
+namespace Auth.Service.Data.Migrations
 {
     [DbContext(typeof(AuthContext))]
-    [Migration("20260627120431_InitAuthContext")]
-    partial class InitAuthContext
+    partial class AuthContextModelSnapshot : ModelSnapshot
     {
-        /// <inheritdoc />
-        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
@@ -184,6 +181,12 @@ namespace Auth.Service.Migrations
                             Id = 7,
                             Name = "User Management",
                             Path = "/auth/user"
+                        },
+                        new
+                        {
+                            Id = 8,
+                            Name = "Semantic Layer",
+                            Path = "/runtime/db-management/semantic"
                         });
                 });
 
@@ -361,6 +364,18 @@ namespace Auth.Service.Migrations
                             Id = 21,
                             ActionId = 4,
                             PermissionId = 7
+                        },
+                        new
+                        {
+                            Id = 22,
+                            ActionId = 1,
+                            PermissionId = 8
+                        },
+                        new
+                        {
+                            Id = 23,
+                            ActionId = 3,
+                            PermissionId = 8
                         });
                 });
 

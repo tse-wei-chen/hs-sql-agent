@@ -4,7 +4,7 @@
 
 #pragma warning disable CA1814 // Prefer jagged arrays over multidimensional
 
-namespace Auth.Service.Migrations
+namespace Auth.Service.Data.Migrations
 {
     /// <inheritdoc />
     public partial class InitAuthContext : Migration
@@ -175,7 +175,8 @@ namespace Auth.Service.Migrations
                     { 4, "DB Management", "/runtime/db-management" },
                     { 5, "Audit", "/runtime/audit" },
                     { 6, "Role Management", "/auth/role" },
-                    { 7, "User Management", "/auth/user" }
+                    { 7, "User Management", "/auth/user" },
+                    { 8, "Semantic Layer", "/runtime/db-management/semantic" }
                 });
 
             migrationBuilder.InsertData(
@@ -203,7 +204,9 @@ namespace Auth.Service.Migrations
                     { 18, 1, 7 },
                     { 19, 2, 7 },
                     { 20, 3, 7 },
-                    { 21, 4, 7 }
+                    { 21, 4, 7 },
+                    { 22, 1, 8 },
+                    { 23, 3, 8 }
                 });
 
             migrationBuilder.CreateIndex(

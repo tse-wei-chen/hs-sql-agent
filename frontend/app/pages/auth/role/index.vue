@@ -297,7 +297,7 @@ onMounted(load);
         <div v-else-if="roles.length === 0" class="py-8 text-center text-sm text-muted-foreground">
           No roles defined yet.
         </div>
-        <div v-else class="grid gap-4 md:grid-cols-2">
+        <div v-else class="grid gap-4 lg:grid-cols-2">
           <div v-for="role in roles" :key="role.id"
             class="group flex flex-col rounded-lg border bg-card p-4 shadow-sm transition-colors hover:border-primary/50">
             <div class="mb-3 flex items-start justify-between gap-3">

@@ -13,13 +13,17 @@ defineOptions({
   inheritAttrs: false,
 });
 
-const props = defineProps<{
-  name: string;
-  rules?: string;
-  label?: string;
-  class?: string;
-  helpText?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    name: string;
+    rules?: string;
+    label?: string;
+    class?: string;
+    helpText?: string;
+    rightAddon?: boolean;
+  }>(),
+  { rightAddon: false },
+);
 
 const formContext = useFormContext();
 const submitCount = computed(() => formContext?.submitCount ?? 0);
@@ -45,7 +49,7 @@ const showError = (
         <TooltipProvider v-if="showError(errorMessage, fieldMeta)">
           <Tooltip>
             <TooltipTrigger as-child>
-              <div class="absolute right-0 top-1/2 -translate-y-1/2 pr-3">
+              <div :class="['absolute top-1/2 -translate-y-1/2 pr-3', rightAddon ? 'right-6' : 'right-0']">
                 <CircleAlert class="size-4 text-destructive" />
               </div>
             </TooltipTrigger>
@@ -56,7 +60,7 @@ const showError = (
         </TooltipProvider>
         <div
           v-else-if="fieldMeta.touched && fieldMeta.valid"
-          class="absolute right-0 top-1/2 -translate-y-1/2 pr-3"
+          :class="['absolute top-1/2 -translate-y-1/2 pr-3', rightAddon ? 'right-6' : 'right-0']"
         >
           <CircleCheck class="size-4 text-green-500" />
         </div>

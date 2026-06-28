@@ -379,7 +379,7 @@ onMounted(async () => {
         <div v-else-if="tools.length === 0" class="py-8 text-sm text-muted-foreground text-center">
           No custom tools defined yet.
         </div>
-        <div v-else class="grid gap-4 md:grid-cols-2">
+        <div v-else class="grid gap-4 lg:grid-cols-2">
           <div v-for="tool in tools" :key="tool.id"
             class="flex flex-col rounded-lg border bg-card p-4 shadow-sm group hover:border-primary/50 transition-colors">
             <div class="flex items-start justify-between mb-2">

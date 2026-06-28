@@ -68,7 +68,7 @@ const submit = async (values: any) => {
           </template>
         </FormField>
 
-        <FormField name="password" rules="required" label="Password" class="relative">
+        <FormField name="password" rules="required" label="Password" class="relative" rightAddon>
           <template #default="{ field }">
             <PasswordInput v-bind="field" id="password" />
           </template>

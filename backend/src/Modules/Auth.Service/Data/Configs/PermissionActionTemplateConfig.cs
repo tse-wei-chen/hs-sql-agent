@@ -45,7 +45,9 @@ public class PermissionActionTemplateConfig : IEntityTypeConfiguration<Permissio
             new PermissionActionTemplate { Id = 18, PermissionId = 7, ActionId = 1},
             new PermissionActionTemplate { Id = 19, PermissionId = 7, ActionId = 2},
             new PermissionActionTemplate { Id = 20, PermissionId = 7, ActionId = 3},
-            new PermissionActionTemplate { Id = 21, PermissionId = 7, ActionId = 4}
+            new PermissionActionTemplate { Id = 21, PermissionId = 7, ActionId = 4},
+            new PermissionActionTemplate { Id = 22, PermissionId = 8, ActionId = 1},
+            new PermissionActionTemplate { Id = 23, PermissionId = 8, ActionId = 3}
         );
     }
 }

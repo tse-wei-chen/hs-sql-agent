@@ -191,7 +191,7 @@ onMounted(load);
               </template>
             </FormField>
 
-            <FormField v-if="!editingId" name="password" rules="required|min:8" label="Password" class="md:col-span-2">
+            <FormField v-if="!editingId" name="password" rules="required|min:8" label="Password" class="md:col-span-2" rightAddon>
               <template #default="{ field }">
                 <PasswordInput v-bind="field" id="password" placeholder="At least 8 characters" />
               </template>
@@ -277,7 +277,7 @@ onMounted(load);
         <div v-else-if="members.length === 0" class="py-8 text-center text-sm text-muted-foreground">
           No users defined yet.
         </div>
-        <div v-else class="grid gap-4 md:grid-cols-2">
+        <div v-else class="grid gap-4 lg:grid-cols-2">
           <div
             v-for="member in members"
             :key="member.id"

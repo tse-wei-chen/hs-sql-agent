@@ -268,25 +268,25 @@ onMounted(load);
             </VeeField>
 
             <template v-if="['Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(values.sqlProvider)">
-              <FormField name="host" label="Host">
+              <FormField name="host" label="Host" rightAddon>
                 <template #default="{ field }">
                   <PasswordInput v-bind="field" id="host" placeholder="e.g., localhost or 192.168.1.100" />
                 </template>
               </FormField>
 
-              <FormField name="port" label="Port" rules="numeric">
+              <FormField name="port" label="Port" rules="numeric" rightAddon>
                 <template #default="{ field }">
                   <PasswordInput v-bind="field" id="port" placeholder="e.g., 3306" />
                 </template>
               </FormField>
 
-              <FormField name="username" label="Username">
+              <FormField name="username" label="Username" rightAddon>
                 <template #default="{ field }">
                   <PasswordInput v-bind="field" id="username" placeholder="Database user" />
                 </template>
               </FormField>
 
-              <FormField name="password" label="Password" :helpText="editingId ? 'Leave blank to keep existing password intact.' : undefined">
+              <FormField name="password" label="Password" rightAddon :helpText="editingId ? 'Leave blank to keep existing password intact.' : undefined">
                 <template #default="{ field }">
                   <PasswordInput v-bind="field" id="password" placeholder="Database password" />
                 </template>
@@ -295,7 +295,7 @@ onMounted(load);
 
             <FormField
               v-if="['Sqlite', 'Postgres', 'MySQL', 'MsSqlServer', 'Oracle', 'Firebird'].includes(values.sqlProvider)"
-              name="database" label="Database">
+              name="database" label="Database" rightAddon>
               <template #default="{ field }">
                 <PasswordInput v-bind="field" id="database" placeholder="e.g., my_app_db" />
               </template>
@@ -434,7 +434,7 @@ onMounted(load);
         >
           No database connections defined yet.
         </div>
-        <div v-else class="grid gap-4 md:grid-cols-2">
+        <div v-else class="grid gap-4 lg:grid-cols-2">
           <div
             v-for="db in dbs"
             :key="db.id"
