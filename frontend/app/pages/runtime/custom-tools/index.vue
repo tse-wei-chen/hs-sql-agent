@@ -44,6 +44,7 @@ import { useForm } from "vee-validate";
 
 definePageMeta({
   layout: "default",
+  permission: "/runtime/custom-tools.view",
 });
 
 interface ToolFormValues {
@@ -355,7 +356,7 @@ onMounted(async () => {
             <Button v-if="editingId" type="button" variant="ghost" @click="resetForm">
               Cancel
             </Button>
-            <Button type="submit" :disabled="!meta.valid || saving">
+            <Button type="submit" :disabled="!meta.valid || saving" v-permission="[editingId ? 'edit' : 'create']">
               <Save v-if="!saving" class="size-4 mr-2" />
               {{
                 saving ? "Saving..." : editingId ? "Update Tool" : "Create Tool"
@@ -378,7 +379,7 @@ onMounted(async () => {
         <div v-else-if="tools.length === 0" class="py-8 text-sm text-muted-foreground text-center">
           No custom tools defined yet.
         </div>
-        <div v-else class="grid gap-4 md:grid-cols-2">
+        <div v-else class="grid gap-4 lg:grid-cols-2">
           <div v-for="tool in tools" :key="tool.id"
             class="flex flex-col rounded-lg border bg-card p-4 shadow-sm group hover:border-primary/50 transition-colors">
             <div class="flex items-start justify-between mb-2">
@@ -397,10 +398,10 @@ onMounted(async () => {
                 </p>
               </div>
               <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(tool)">
+                <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(tool)" v-permission="'edit'">
                   <Edit2 class="size-4" />
                 </Button>
-                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(tool.id)">
+                <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="remove(tool.id)" v-permission="'delete'">
                   <Trash2 class="size-4" />
                 </Button>
               </div>

@@ -4,7 +4,6 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -25,7 +24,7 @@ public class McpAccessKeyAuthMiddlewareTests
     private readonly Mock<IDbManagementService> _dbManagementServiceMock;
     private readonly Mock<IDbSetterService> _dbSetterServiceMock;
     private readonly Mock<ICryptoService> _cryptoServiceMock;
-    private readonly IMemoryCache _cache;
+    private readonly Mock<ICacheService> _cacheMock;
     private readonly IOptions<McpKeySettings> _settings;
     private readonly Mock<ILogger<McpAccessKeyAuthMiddleware>> _loggerMock;
     private readonly McpAccessKeyAuthMiddleware _middleware;
@@ -35,7 +34,7 @@ public class McpAccessKeyAuthMiddlewareTests
         _keyServiceMock = new Mock<IMcpAccessKeyService>();
         _auditServiceMock = new Mock<IAuditService>();
         _lastUsedQueueMock = new Mock<IMcpAccessKeyLastUsedQueue>();
-        _cache = new MemoryCache(new MemoryCacheOptions());
+        _cacheMock = new Mock<ICacheService>();
         _dbManagementServiceMock = new Mock<IDbManagementService>();
         _dbSetterServiceMock = new Mock<IDbSetterService>();
         _cryptoServiceMock = new Mock<ICryptoService>();
@@ -49,7 +48,7 @@ public class McpAccessKeyAuthMiddlewareTests
             _keyServiceMock.Object,
             _auditServiceMock.Object,
             _lastUsedQueueMock.Object,
-            _cache,
+            _cacheMock.Object,
             configMock.Object,
             _dbManagementServiceMock.Object,
             _dbSetterServiceMock.Object,

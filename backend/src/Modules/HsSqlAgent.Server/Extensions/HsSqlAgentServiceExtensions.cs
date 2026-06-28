@@ -8,6 +8,9 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using Admin.Service.Validators;
+using Auth.Service.Data;
+using Auth.Service.Interfaces;
+using Auth.Service.Services;
 using Common.Interfaces;
 using Common.Services;
 using FluentValidation;
@@ -16,6 +19,7 @@ using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Tools;
+using Infrastructure.Caching;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -28,6 +32,8 @@ using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
+using Auth.Service.Models;
+using Auth.Service.Validators;
 
 namespace HsSqlAgent.Server.Extensions;
 
@@ -50,14 +56,19 @@ public static class HsSqlAgentServiceExtensions
         if (string.IsNullOrWhiteSpace(options.JwtSecretKey) || Encoding.UTF8.GetByteCount(options.JwtSecretKey) < 32)
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
 
-        // --- Core services ---
-        services.AddMemoryCache();
+        // --- Cache ---
+        services.AddCacheProvider(options.CacheProvider, options.CacheConnectionString);
         services.AddDbContext<AdminContext>(db => db.UseSqlite(options.AdminConnectionString));
         services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
+        services.AddDbContext<AuthContext>(db => db.UseSqlite(options.AdminConnectionString));
+        services.AddScoped<IAuthContext>(sp => sp.GetRequiredService<AuthContext>());
 
-        services.AddScoped<IAdminService, AdminService>();
+        services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
+        services.AddScoped<IMemberService, MemberService>();
+        services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<ICustomSqlToolService, CustomSqlToolService>();
         services.AddScoped<IDbManagementService, DbManagementService>();
@@ -154,6 +165,7 @@ public static class HsSqlAgentServiceExtensions
         services.AddSingleton<IAuditQueue, AuditQueue>();
         services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
         services.AddHostedService<AuditBackgroundService>();
+        services.AddHostedService<TokenBlacklistCleanupService>();
         services.AddScoped<SqlAgentTool>();
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
@@ -255,6 +267,7 @@ public static class HsSqlAgentServiceExtensions
             json.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
         });
         services.AddFluentValidationAutoValidation();
+        services.AddValidatorsFromAssemblyContaining<IssueMcpAccessKeyRequestValidator>();
         services.AddValidatorsFromAssemblyContaining<SignInRequestValidator>();
 
         // --- Exception handling ---
@@ -309,3 +322,5 @@ internal class CustomAIFunction : AIFunction
     protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         => await _handler(arguments, cancellationToken);
 }
+
+

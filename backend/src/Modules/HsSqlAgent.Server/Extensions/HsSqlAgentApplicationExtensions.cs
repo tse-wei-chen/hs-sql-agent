@@ -13,8 +13,11 @@ public static class HsSqlAgentApplicationExtensions
         var options = builder.Options;
         using (var scope = app.ApplicationServices.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<Admin.Service.Data.AdminContext>();
-            db.Database.Migrate();
+            var authDb = scope.ServiceProvider.GetRequiredService<Auth.Service.Data.AuthContext>();
+            authDb.Database.Migrate();
+
+            var adminDb = scope.ServiceProvider.GetRequiredService<Admin.Service.Data.AdminContext>();
+            adminDb.Database.Migrate();
         }
 
         if (options.ServeAdminUi)
@@ -36,6 +39,7 @@ public static class HsSqlAgentApplicationExtensions
             branch =>
             {
                 branch.UseAuthentication();
+                branch.UseMiddleware<TokenRevocationMiddleware>();
                 branch.UseAuthorization();
             });
 

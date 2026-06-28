@@ -6,7 +6,7 @@ import { FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
-import { checkFirstRun, signIn } from "~/api/admin";
+import { checkFirstRun, signIn } from "~/api/auth";
 
 const props = defineProps<{
   class?: HTMLAttributes["class"];
@@ -38,6 +38,7 @@ const submit = async (values: any) => {
       localStorage.setItem("refreshToken", response.refreshToken);
       localStorage.setItem("userEmail", response.email);
       localStorage.setItem("userName", response.userName);
+      localStorage.setItem("permissions", JSON.stringify(response.permissions))
       return await navigateTo("/home");
     }
 
@@ -67,7 +68,7 @@ const submit = async (values: any) => {
           </template>
         </FormField>
 
-        <FormField name="password" rules="required" label="Password" class="relative">
+        <FormField name="password" rules="required" label="Password" class="relative" rightAddon>
           <template #default="{ field }">
             <PasswordInput v-bind="field" id="password" />
           </template>

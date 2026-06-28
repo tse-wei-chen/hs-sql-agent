@@ -42,6 +42,7 @@ import { ChevronLeft, Save, Loader2, Database } from "@lucide/vue";
 
 definePageMeta({
   layout: "default",
+  permission: "/runtime/db-management/semantic.view",
 });
 
 const route = useRoute();
@@ -195,7 +196,7 @@ const save = async () => {
           </p>
         </div>
       </div>
-      <Button :disabled="saving || !selectedTable" @click="save">
+      <Button :disabled="saving || !selectedTable" @click="save" v-permission="'/runtime/db-management/semantic.edit'">
         <Loader2 v-if="saving" class="mr-2 size-4 animate-spin" />
         <Save v-else class="mr-2 size-4" />
         Save Annotations

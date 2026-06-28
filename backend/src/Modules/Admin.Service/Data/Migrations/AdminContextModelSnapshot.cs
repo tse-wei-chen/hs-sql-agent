@@ -284,29 +284,6 @@ namespace Admin.Service.Data.Migrations
                     b.ToTable("McpAccessKeys");
                 });
 
-            modelBuilder.Entity("Admin.Service.Data.Entites.SuperUser", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Mail")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PasswordHash")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Username")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("SuperUsers");
-                });
-
             modelBuilder.Entity("Admin.Service.Data.Entites.DbSemantic", b =>
                 {
                     b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")

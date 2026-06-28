@@ -6,7 +6,7 @@ import { FieldGroup } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
-import { checkFirstRun, signUp } from "~/api/admin";
+import { checkFirstRun, signUp } from "~/api/auth";
 
 const props = defineProps<{
   class?: HTMLAttributes["class"];
@@ -42,7 +42,8 @@ const submit = async (values: any) => {
       localStorage.setItem("refreshToken", response.refreshToken);
       localStorage.setItem("userEmail", response.email);
       localStorage.setItem("userName", response.userName);
-      return navigateTo("/home");
+      localStorage.setItem("permissions", JSON.stringify(response.permissions))
+      return await navigateTo("/home");
     }
     alert("Sign up failed. Please try again.");
   } catch (error: any) {
@@ -69,13 +70,13 @@ const submit = async (values: any) => {
           </template>
         </FormField>
 
-        <FormField name="password" rules="required|min:8" label="Password" class="relative">
+        <FormField name="password" rules="required|min:8" label="Password" class="relative" rightAddon>
           <template #default="{ field }">
             <PasswordInput v-bind="field" id="password" placeholder="Min 8 characters" />
           </template>
         </FormField>
 
-        <FormField name="confirmPassword" rules="required|confirmed:@password" label="Confirm Password" class="relative">
+        <FormField name="confirmPassword" rules="required|confirmed:@password" label="Confirm Password" class="relative" rightAddon>
           <template #default="{ field }">
             <PasswordInput v-bind="field" id="confirmPassword" placeholder="Repeat your password" />
           </template>

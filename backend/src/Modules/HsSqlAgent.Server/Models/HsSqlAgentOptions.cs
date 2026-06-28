@@ -16,6 +16,9 @@ public class HsSqlAgentServiceOptions
     public int RateLimitPermitLimit { get; set; }
     public int RateLimitWindowSeconds { get; set; }
     public int RateLimitQueueLimit { get; set; }
+
+    public string CacheProvider { get; set; } = "IMemoryCache";
+    public string CacheConnectionString { get; set; } = string.Empty;
 }
 
 /// <summary>

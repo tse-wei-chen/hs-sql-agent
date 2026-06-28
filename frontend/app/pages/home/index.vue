@@ -28,6 +28,7 @@ import { Donut } from "@unovis/ts";
 
 definePageMeta({
   layout: "default",
+  permission: "/home.view",
 });
 
 interface McpKeyItem {
