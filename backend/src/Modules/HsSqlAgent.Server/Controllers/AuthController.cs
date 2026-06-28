@@ -12,7 +12,11 @@ namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AuthController(ILogger<AuthController> logger, IAuthService authService, IAuditService auditService) : ControllerBase
+public class AuthController(
+    ILogger<AuthController> logger,
+    IAuthService authService,
+    IAuditService auditService,
+    ITokenRevocationService tokenRevocationService) : ControllerBase
 {
     [HttpGet("first-run")]
     [AllowAnonymous]
@@ -90,5 +94,44 @@ public class AuthController(ILogger<AuthController> logger, IAuthService authSer
             logger.LogWarning(ex, "Invalid token refresh request.");
             return BadRequest(ex.Message);
         }
+    }
+
+    [HttpPost("sign-out")]
+    public async Task<IActionResult> SignOutAsync([FromBody] SignOutRequest? request)
+    {
+        var accessJti = User.FindFirstValue(JwtRegisteredClaimNames.Jti);
+
+        if (!string.IsNullOrWhiteSpace(accessJti))
+        {
+            var expClaim = User.FindFirstValue(JwtRegisteredClaimNames.Exp);
+            if (long.TryParse(expClaim, out var expUnix))
+            {
+                var expDate = DateTimeOffset.FromUnixTimeSeconds(expUnix).UtcDateTime;
+                await tokenRevocationService.RevokeAsync(accessJti, expDate);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(request?.RefreshToken))
+        {
+            try
+            {
+                var handler = new JwtSecurityTokenHandler();
+                var refreshToken = handler.ReadJwtToken(request.RefreshToken);
+                var refreshJti = refreshToken.Claims
+                    .FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Jti)?.Value;
+
+                if (!string.IsNullOrWhiteSpace(refreshJti))
+                {
+                    await tokenRevocationService.RevokeAsync(refreshJti, refreshToken.ValidTo);
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogWarning(ex, "Invalid refresh token provided during sign-out.");
+            }
+        }
+
+        await auditService.WriteLogAsync("admin.signout", User.FindFirstValue(JwtRegisteredClaimNames.Email) ?? "unknown", "success");
+        return Ok();
     }
 }

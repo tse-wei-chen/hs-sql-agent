@@ -209,7 +209,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             new(JwtRegisteredClaimNames.Typ, tokenType),
             new(JwtRegisteredClaimNames.Sub, memberId.ToString()),
             new(JwtRegisteredClaimNames.UniqueName, userName),
-            new(JwtRegisteredClaimNames.Email, email)
+            new(JwtRegisteredClaimNames.Email, email),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
         claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));

@@ -12,5 +12,6 @@ public interface IAuthContext
     DbSet<PermissionAction> PermissionActions { get; }
     DbSet<PermissionActionTemplate> PermissionActionTemplates { get; }
     DbSet<Role> Roles { get; }
+    DbSet<TokenBlacklistEntry> TokenBlacklistEntries { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

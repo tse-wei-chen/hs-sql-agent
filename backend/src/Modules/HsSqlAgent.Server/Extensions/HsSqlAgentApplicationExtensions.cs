@@ -39,6 +39,7 @@ public static class HsSqlAgentApplicationExtensions
             branch =>
             {
                 branch.UseAuthentication();
+                branch.UseMiddleware<TokenRevocationMiddleware>();
                 branch.UseAuthorization();
             });
 

@@ -158,7 +158,7 @@ public class CustomToolProxyTests
             .ReturnsAsync(tool);
 
         _queryValueParserMock.Setup(q => q.UnwrapJsonElement(It.IsAny<JsonElement>()))
-            .Returns((object?)null);
+            .Returns(null!);
 
         var strategyMock = new Mock<ISqlStrategy>();
         strategyMock.Setup(s => s.ExecuteQueryAsync(It.IsAny<QueryDefinition>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

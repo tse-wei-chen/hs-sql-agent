@@ -7,7 +7,6 @@ using Admin.Service.Models;
 using Common.Interfaces;
 using Common.Models;
 using HsSqlAgent.Server.Background;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
@@ -18,7 +17,7 @@ public class McpAccessKeyAuthMiddleware(
     IMcpAccessKeyService keyService,
     IAuditService auditService,
     IMcpAccessKeyLastUsedQueue lastUsedQueue,
-    IMemoryCache cache,
+    ICacheService cache,
     IConfiguration configuration,
     IDbManagementService dbManagementService,
     IDbSetterService dbSetterService,
@@ -45,7 +44,7 @@ public class McpAccessKeyAuthMiddleware(
     private readonly IMcpAccessKeyService _keyService = keyService;
     private readonly IAuditService _auditService = auditService;
     private readonly IMcpAccessKeyLastUsedQueue _lastUsedQueue = lastUsedQueue;
-    private readonly IMemoryCache _cache = cache;
+    private readonly ICacheService _cache = cache;
     private readonly IConfiguration _configuration = configuration;
     private readonly IDbManagementService _dbManagementService = dbManagementService;
     private readonly IDbSetterService _dbSetterService = dbSetterService;
@@ -334,9 +333,10 @@ public class McpAccessKeyAuthMiddleware(
         var keyHash = ComputeKeyHash(rawKey);
         var cacheKey = $"mcp_auth_v2_{keyHash}";
 
-        if (_cache.TryGetValue(cacheKey, out McpAccessKeyValidationResult? cachedResult) && cachedResult is not null)
+        var cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
+        if (cached is not null)
         {
-            return cachedResult;
+            return cached;
         }
 
         var lockIndex = Math.Abs(cacheKey.GetHashCode()) % StripedLocks.Length;
@@ -345,15 +345,16 @@ public class McpAccessKeyAuthMiddleware(
         await semaphore.WaitAsync(ct);
         try
         {
-            if (_cache.TryGetValue(cacheKey, out cachedResult) && cachedResult is not null)
+            cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
+            if (cached is not null)
             {
-                return cachedResult;
+                return cached;
             }
 
             var result = await _keyService.ValidateAsync(rawKey, ct);
 
             var expiry = result.IsValid ? CacheExpiry : NegativeCacheExpiry;
-            _cache.Set(cacheKey, result, expiry);
+            await _cache.SetAsync(cacheKey, result, expiry, ct);
 
             return result;
         }

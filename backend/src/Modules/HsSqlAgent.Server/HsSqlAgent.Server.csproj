@@ -12,7 +12,7 @@
 
   <PropertyGroup>
     <PackageId>HsSqlAgent.Server</PackageId>
-    <VersionPrefix>1.8.3</VersionPrefix>
+    <VersionPrefix>1.9.0</VersionPrefix>
     <Authors>tse-wei-chen</Authors>
     <Company>hs-sql-agent</Company>
     <Description>Embeddable MCP SQL Agent server for ASP.NET Core. Add HsSqlAgent to any existing ASP.NET Core app with AddHsSqlAgent() / UseHsSqlAgent().</Description>
@@ -44,12 +44,14 @@
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" />
     <PackageReference Include="FirebirdSql.Data.FirebirdClient" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
     <!-- <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" /> -->
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Common\Common.csproj" PrivateAssets="All" />
+    <ProjectReference Include="..\..\Infrastructure\Infrastructure.csproj" PrivateAssets="All" />
     <ProjectReference Include="..\Admin.Service\Admin.Service.csproj" PrivateAssets="All" />
     <ProjectReference Include="..\Auth.Service\Auth.Service.csproj" PrivateAssets="All" />
     <ProjectReference Include="..\SqlAgent.Service\SqlAgent.Service.csproj" PrivateAssets="All" />

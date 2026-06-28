@@ -29,6 +29,9 @@ builder.Services.AddHsSqlAgent(options =>
         options.RateLimitWindowSeconds = ws;
     if (int.TryParse(builder.Configuration["RateLimiting:QueueLimit"], out var ql))
         options.RateLimitQueueLimit = ql;
+
+    options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "IMemoryCache";
+    options.CacheConnectionString = builder.Configuration["CacheConfig:ConnectionString"] ?? string.Empty;
 });
 
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:8080");

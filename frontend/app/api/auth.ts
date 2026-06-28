@@ -50,3 +50,14 @@ export const refreshToken = async () => {
     throw error;
   }
 };
+
+export const signOut = async () => {
+  try {
+    const refreshToken = localStorage.getItem("refreshToken");
+    await xiorInstance.post("/auth/sign-out", {
+      refreshToken: refreshToken || undefined,
+    });
+  } catch (error) {
+    console.error("Error signing out:", error);
+  }
+};

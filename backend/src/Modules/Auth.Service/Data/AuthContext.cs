@@ -12,6 +12,7 @@ public class AuthContext(DbContextOptions<AuthContext> options) : DbContext(opti
     public DbSet<PermissionAction> PermissionActions { get; set; } = null!;
     public DbSet<PermissionActionTemplate> PermissionActionTemplates { get; set; } = null!;
     public DbSet<Role> Roles { get; set; } = null!;
+    public DbSet<TokenBlacklistEntry> TokenBlacklistEntries { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

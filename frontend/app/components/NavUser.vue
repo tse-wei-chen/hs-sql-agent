@@ -24,6 +24,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { signOut } from "~/api/auth";
 
 const props = defineProps<{
   user: {
@@ -35,7 +36,8 @@ const props = defineProps<{
 
 const { isMobile } = useSidebar();
 
-const logOut = () => {
+const logOut = async () => {
+  await signOut();
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
   localStorage.removeItem("permissions");
