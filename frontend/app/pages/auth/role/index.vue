@@ -26,6 +26,7 @@ import {
   type PermissionActionTemplate,
   type Role,
 } from "~/api/role";
+import { toast } from "vue-sonner"
 import { useForm } from "vee-validate";
 
 definePageMeta({
@@ -181,7 +182,7 @@ const save = async () => {
     resetForm();
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to save role.");
+    toast.error(error?.response?.data || "Failed to save role.");
   } finally {
     saving.value = false;
   }
@@ -196,7 +197,7 @@ const remove = async (role: Role) => {
     await deleteRole(role.id);
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to delete role.");
+    toast.error(error?.response?.data || "Failed to delete role.");
   }
 };
 

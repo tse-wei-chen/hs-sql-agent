@@ -2,10 +2,11 @@
 import type { HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { FieldGroup } from "@/components/ui/field";
+import { FieldGroup, Field as UIField } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
+import { toast } from "vue-sonner"
 import { checkFirstRun, signUp } from "~/api/auth";
 
 const props = defineProps<{
@@ -22,8 +23,7 @@ onMounted(async () => {
       await navigateTo("/login");
       return;
     }
-  } catch (error) {
-    console.error("Failed to check first run status:", error);
+  } catch {
     return;
   } finally {
     checkingFirstRun.value = false;
@@ -45,9 +45,9 @@ const submit = async (values: any) => {
       localStorage.setItem("permissions", JSON.stringify(response.permissions))
       return await navigateTo("/home");
     }
-    alert("Sign up failed. Please try again.");
+    toast.error("Sign up failed. Please try again.");
   } catch (error: any) {
-    alert(error?.response?.data || "Sign up failed. Please try again.");
+    toast.error(error?.response?.data || "Sign up failed. Please try again.");
   } finally {
     submitting.value = false;
   }

@@ -39,6 +39,7 @@ import Transfer from "~/components/Transfer.vue";
 
 
 import FormField from "@/components/FormField.vue";
+import { toast } from "vue-sonner"
 import { useForm } from "vee-validate";
 
 definePageMeta({
@@ -112,8 +113,7 @@ watch(
         if (availableSchemas.value.length > 0) {
           selectedSchema.value = availableSchemas.value[0];
         }
-      } catch (e) {
-        console.error("Failed to fetch schemas", e);
+      } catch {
         availableSchemas.value = [];
       } finally {
         fetchingSchemas.value = false;
@@ -134,8 +134,7 @@ watch(
           detail.value.dbManagementId,
           newVal,
         );
-      } catch (e) {
-        console.error("Failed to fetch tables", e);
+      } catch {
         availableTables.value = [];
       } finally {
         fetchingTables.value = false;
@@ -231,7 +230,7 @@ const issue = async () => {
     await load();
     issuedPlaintextKey.value = result.plaintextKey || "";
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to issue MCP key.");
+    toast.error(error?.response?.data || "Failed to issue MCP key.");
   } finally {
     issuing.value = false;
   }
@@ -265,7 +264,7 @@ const revoke = async (id: number) => {
     await revokeMcpKey(id);
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to revoke key.");
+    toast.error(error?.response?.data || "Failed to revoke key.");
   }
 };
 

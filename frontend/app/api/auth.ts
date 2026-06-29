@@ -4,60 +4,32 @@ import {
 } from "./xiorInstance";
 
 export const checkFirstRun = async () => {
-  try {
-    const response = await xiorInstance.get("/auth/first-run");
-    return response.data;
-  } catch (error) {
-    console.error("Error checking first run:", error);
-    throw error;
-  }
+  const response = await xiorInstance.get("/auth/first-run");
+  return response.data;
 };
 
 export const signIn = async (email: string, password: string) => {
-  try {
-    const response = await xiorInstance.post("/auth/sign-in", {
-      email: email,
-      password: password,
-    });
-    return response.data;
-  } catch (error) {
-    console.error("Error signing in:", error);
-    throw error;
-  }
+  const response = await xiorInstance.post("/auth/sign-in", { email, password });
+  return response.data;
 };
 
 export const signUp = async (email: string, password: string) => {
-  try {
-    const response = await xiorInstance.post("/auth/sign-up", {
-      email: email,
-      password: password,
-    });
-    return response.data;
-  } catch (error) {
-    console.error("Error signing up:", error);
-    throw error;
-  }
+  const response = await xiorInstance.post("/auth/sign-up", { email, password });
+  return response.data;
 };
 
 export const refreshToken = async () => {
-  try {
-    const response = await xiorInstanceRefreshToken.post(
-      "/auth/refresh-token",
-    );
-    return response.data;
-  } catch (error) {
-    console.error("Error refreshing token:", error);
-    throw error;
-  }
+  const response = await xiorInstanceRefreshToken.post("/auth/refresh-token");
+  return response.data;
 };
 
 export const signOut = async () => {
+  const refreshTokenVal = localStorage.getItem("refreshToken");
   try {
-    const refreshToken = localStorage.getItem("refreshToken");
     await xiorInstance.post("/auth/sign-out", {
-      refreshToken: refreshToken || undefined,
+      refreshToken: refreshTokenVal || undefined,
     });
-  } catch (error) {
-    console.error("Error signing out:", error);
+  } catch {
+    // ignore
   }
 };

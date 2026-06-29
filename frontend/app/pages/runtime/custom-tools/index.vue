@@ -40,6 +40,7 @@ import {
 import { json } from "@codemirror/lang-json";
 import { oneDark } from "@codemirror/theme-one-dark";
 import FormField from "@/components/FormField.vue";
+import { toast } from "vue-sonner"
 import { useForm } from "vee-validate";
 
 definePageMeta({
@@ -76,8 +77,8 @@ const dbs = ref<DbManagement[]>([]);
 const loadDbs = async () => {
   try {
     dbs.value = await listDbManagements();
-  } catch (e) {
-    console.error("Failed to load DBs", e);
+  } catch (e: any) {
+    toast.error(e?.response?.data || "Failed to load databases.");
   }
 };
 
@@ -142,7 +143,7 @@ const startEdit = (tool: CustomSqlTool) => {
 
 const save = async () => {
   if (parameters.value.some((p) => !p.name.trim())) {
-    alert("All parameters must have a name.");
+    toast.error("All parameters must have a name.");
     return;
   }
 
@@ -169,7 +170,7 @@ const save = async () => {
     resetForm();
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to save tool.");
+    toast.error(error?.response?.data || "Failed to save tool.");
   } finally {
     saving.value = false;
   }
@@ -183,7 +184,7 @@ const remove = async (id: number) => {
     await deleteCustomSqlTool(id);
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to delete tool.");
+    toast.error(error?.response?.data || "Failed to delete tool.");
   }
 };
 

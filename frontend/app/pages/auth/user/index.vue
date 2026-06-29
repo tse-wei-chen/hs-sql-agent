@@ -27,6 +27,7 @@ import {
   listRoles,
   type Role,
 } from "~/api/role";
+import { toast } from "vue-sonner"
 import { useForm } from "vee-validate";
 
 const currentUserId = (() => {
@@ -145,7 +146,7 @@ const save = async () => {
     resetForm();
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to save user.");
+    toast.error(error?.response?.data || "Failed to save user.");
   } finally {
     saving.value = false;
   }
@@ -160,7 +161,7 @@ const remove = async (member: Member) => {
     await deleteMember(member.id);
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to delete user.");
+    toast.error(error?.response?.data || "Failed to delete user.");
   }
 };
 

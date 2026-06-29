@@ -38,6 +38,7 @@ import {
   deleteSemantic,
   type DbSemantic,
 } from "@/api/db-semantic";
+import { toast } from "vue-sonner"
 import { ChevronLeft, Save, Loader2, Database } from "@lucide/vue";
 
 definePageMeta({
@@ -82,8 +83,8 @@ const loadInitialData = async () => {
     if (schemas.value.length > 0) {
       selectedSchema.value = schemas.value[0] ?? "";
     }
-  } catch (error) {
-    console.error("Failed to load database info", error);
+  } catch (e: any) {
+    toast.error(e?.response?.data || "Failed to load database info.");
   } finally {
     loading.value = false;
   }
@@ -172,8 +173,8 @@ const save = async () => {
 
     // Refresh semantics
     semantics.value = await getSemanticsByDbId(dbId);
-  } catch (error) {
-    console.error("Failed to save semantics", error);
+  } catch (e: any) {
+    toast.error(e?.response?.data || "Failed to save semantics.");
   } finally {
     saving.value = false;
   }
