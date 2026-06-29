@@ -6,6 +6,7 @@ using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
+using SqlAgent.Service.Validation;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;
@@ -65,11 +66,13 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnValidJson()
     {
-        var json = await Strategy.ExecuteQueryAsync(new QueryDefinition
+        var qd = new QueryDefinition
         {
             TableName = TestTableName,
             Limit = 1
-        },
+        };
+        ValidateQuery(qd);
+        var json = await Strategy.ExecuteQueryAsync(qd,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -79,27 +82,29 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldTriggerHint_WhenTableNotFound()
+    public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = "NON_EXISTENT_TABLE_HS"
-            },
+        var qd = new QueryDefinition
+        {
+            TableName = "NON_EXISTENT_TABLE_HS"
+        };
+        ValidateQuery(qd);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(qd,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains($"code={TableNotFoundErrorCode}", ex.Message);
     }
 
     [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldTriggerHint_WhenColumnNotFound()
+    public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenColumnNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = TestTableName,
-                SelectColumns = [new FieldSelectCondition { FieldName = $"{TestTableName}.NON_EXISTENT_COL_HS" }]
-            },
+        var qd = new QueryDefinition
+        {
+            TableName = TestTableName,
+            SelectColumns = [new FieldSelectCondition { FieldName = $"{TestTableName}.NON_EXISTENT_COL_HS" }]
+        };
+        ValidateQuery(qd);
+        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(qd,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains($"code={ColumnNotFoundErrorCode}", ex.Message);
@@ -109,6 +114,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     public virtual async Task ExecuteDmlAsync_ShouldPerformValidInsert()
     {
         var dml = CreateInsertDml();
+        ValidateDml(dml);
         var dryRun = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
 
         var tokenStart = dryRun.IndexOf("TokenRequired=");
@@ -657,6 +663,18 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.Single(rows);
         Assert.True(TryGetPropertyIgnoreCase(rows[0], alias, out var totalSales), $"Expected property '{alias}' in result: {rows[0]}");
         Assert.InRange(totalSales.GetDecimal(), 37.65m, 37.66m);
+    }
+
+    protected static void ValidateQuery(QueryDefinition qd)
+    {
+        var errors = DefinitionValidator.Validate(qd);
+        Assert.True(errors.Count == 0, $"QueryDefinition validation failed:\n" + string.Join("\n", errors));
+    }
+
+    protected static void ValidateDml(DmlDefinition dml)
+    {
+        var errors = DefinitionValidator.Validate(dml);
+        Assert.True(errors.Count == 0, $"DmlDefinition validation failed:\n" + string.Join("\n", errors));
     }
 
     protected abstract string TableNotFoundErrorCode { get; }

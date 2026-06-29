@@ -80,33 +80,7 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
     protected override string BuildExecutionErrorMessage(Exception ex, string type)
     {
         var code = ex is SqliteException sqliteEx ? $"SQLITE_{sqliteEx.SqliteErrorCode}" : null;
-        var hint = BuildHint(code, ex.Message);
 
-        return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
-    }
-
-    protected override string BuildHint(string? code, string message)
-    {
-        if (message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
-            return "Table not found. Check 'TableName' and ensure the SQLite database file is correct. For CTEs, use the 'CteConditions' list.";
-
-        if (message.Contains("no such column", StringComparison.OrdinalIgnoreCase))
-            return "Column not found. Verify column names in 'SelectColumns', 'WhereConditions', or 'OrderBy'. For complex logic, use 'Arithmetic' or 'CaseWhen' instead of raw SQL in 'Field'.";
-
-        if (message.Contains("syntax error", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("near", StringComparison.OrdinalIgnoreCase))
-            return "SQL syntax issue. Check 'Operator' values (e.g., '=', 'IN', 'LIKE'), verify 'CombineConditions' types, and ensure 'SubQuery' has a valid structure.";
-
-        if (message.Contains("datatype mismatch", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("type mismatch", StringComparison.OrdinalIgnoreCase))
-            return "Data type mismatch. Ensure 'Value' type matches the column type. For date comparisons, set 'IsDate': true in the condition.";
-
-        if (message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase))
-            return "Constraint violation. The insert/update violates a table constraint (e.g., NOT NULL, UNIQUE, FOREIGN KEY).";
-
-        if (message.Contains("unable to open database", StringComparison.OrdinalIgnoreCase))
-            return "Cannot open the SQLite database. Verify the connection string DataSource points to a valid database file path.";
-
-        return base.BuildHint(code, message);
+        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
     }
 }
