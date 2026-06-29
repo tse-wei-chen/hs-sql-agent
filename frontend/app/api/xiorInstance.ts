@@ -1,5 +1,6 @@
 import xior from "xior";
-import { refreshToken } from "./auth";
+import { refreshToken, signOut } from "./auth";
+import { toast } from "vue-sonner";
 
 let refreshPromise: Promise<any> | null = null;
 
@@ -39,8 +40,6 @@ xiorInstanceToken.interceptors.response.use(
   (response) => response,
   async (error: any) => {
     if (error.response?.status === 401) {
-      console.log("🔄 Token expired, refreshing...");
-
       if (!refreshPromise) {
         refreshPromise = refreshToken().finally(() => {
           refreshPromise = null;
@@ -50,7 +49,6 @@ xiorInstanceToken.interceptors.response.use(
       const response = await refreshPromise;
 
       if (!response?.accessToken) {
-        console.error("❌ Failed to refresh token");
         return Promise.reject(error);
       }
 
@@ -68,13 +66,14 @@ xiorInstanceToken.interceptors.response.use(
       return xior.request(updatedConfig);
     }
     if (error.response?.status === 403) {
-      console.warn("⚠️ Forbidden (403), signing out...");
+      toast.error("Permission denied. You have been logged out.");
+      await signOut();
       localStorage.removeItem("accessToken");
       localStorage.removeItem("refreshToken");
       localStorage.removeItem("permissions");
       localStorage.removeItem("userEmail");
       localStorage.removeItem("userName");
-      navigateTo("/login");
+      await navigateTo("/login");
     }
     return Promise.reject(error);
   },
@@ -96,13 +95,15 @@ xiorInstanceRefreshToken.interceptors.response.use(
     // You can handle responses globally here
     return response;
   },
-  (error) => {
+  async (error) => {
+    toast.error("Permission denied. You have been logged out.");
+    await signOut();
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
     localStorage.removeItem("permissions");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userName");
-    navigateTo("/login");
+    await navigateTo("/login");
     return Promise.reject(error);
   },
 );

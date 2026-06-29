@@ -15,6 +15,7 @@ using Common.Interfaces;
 using Common.Services;
 using FluentValidation;
 using FluentValidation.AspNetCore;
+using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
@@ -132,6 +133,9 @@ public static class HsSqlAgentServiceExtensions
                 policy.RequireAuthenticatedUser();
                 policy.RequireClaim("typ", "refresh");
             });
+
+        services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
+        services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         // --- Rate Limiting ---
         services.AddRateLimiter(rl =>

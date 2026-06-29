@@ -49,6 +49,7 @@ import { PROVIDER_OPTIONS } from "~/constants/providerOptions";
 import PasswordInput from "@/components/PasswordInput.vue";
 import { testDbConnection } from "~/api/runtime";
 import FormField from "@/components/FormField.vue";
+import { toast } from "vue-sonner"
 import { useForm } from "vee-validate";
 
 definePageMeta({
@@ -151,7 +152,7 @@ const save = async () => {
     resetForm();
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to save DB connection.");
+    toast.error(error?.response?.data || "Failed to save DB connection.");
   } finally {
     saving.value = false;
   }
@@ -166,7 +167,7 @@ const remove = async (id: number) => {
     await deleteDbManagement(id);
     await load();
   } catch (error: any) {
-    alert(error?.response?.data || "Failed to delete DB connection.");
+    toast.error(error?.response?.data || "Failed to delete DB connection.");
   }
 };
 

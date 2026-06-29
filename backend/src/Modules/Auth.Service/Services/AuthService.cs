@@ -119,34 +119,37 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             .FirstOrDefaultAsync(x => x.Id == memberId, cancellationToken)
             ?? throw new UnauthorizedAccessException("User not found.");
 
-        var roles = await _context.MemberRoles
+        var roleInfos = await _context.MemberRoles
             .AsNoTracking()
             .Where(x => x.MemberId == memberId)
-            .Select(x => x.Role.Name)
+            .Select(x => new { x.Role.Id, x.Role.Name })
             .Distinct()
-            .OrderBy(x => x)
+            .OrderBy(x => x.Name)
             .ToListAsync(cancellationToken);
 
-        var permissions = await GetPermissionGrantsAsync(roles, cancellationToken);
+        var roleIds = roleInfos.Select(r => r.Id).ToList();
+        var roleNames = roleInfos.Select(r => r.Name).ToList();
+
+        var permissions = await GetPermissionGrantsAsync(roleIds, cancellationToken);
 
         return new AuthResult
         {
             UserName = member.Username,
             Email = member.Mail,
-            Roles = roles,
+            Roles = roleNames,
             Permissions = permissions,
-            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, roles),
-            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, roles)
+            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, roleIds, roleNames),
+            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, roleIds, roleNames)
         };
     }
 
     private async Task<IReadOnlyCollection<PermissionGrant>> GetPermissionGrantsAsync(
-        IReadOnlyCollection<string> roles,
+        IReadOnlyCollection<int> roleIds,
         CancellationToken cancellationToken)
     {
         var rows = await _context.PermissionActions
             .AsNoTracking()
-            .Where(x => roles.Contains(x.Role.Name))
+            .Where(x => roleIds.Contains(x.RoleId))
             .Select(x => new PermissionActionGrantRow(
                 x.Permission.Id,
                 x.Permission.Name,
@@ -183,17 +186,18 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         string ActionCode,
         string ActionName);
 
-    private string GenerateAccessToken(int memberId, string userName, string email, IReadOnlyCollection<string> roles)
-        => GenerateToken(memberId, userName, email, roles, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
+    private string GenerateAccessToken(int memberId, string userName, string email, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, roleIds, roleNames, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
 
-    private string GenerateRefreshToken(int memberId, string userName, string email, IReadOnlyCollection<string> roles)
-        => GenerateToken(memberId, userName, email, roles, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
+    private string GenerateRefreshToken(int memberId, string userName, string email, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, roleIds, roleNames, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
 
     private string GenerateToken(
         int memberId,
         string userName,
         string email,
-        IReadOnlyCollection<string> roles,
+        IReadOnlyCollection<int> roleIds,
+        IReadOnlyCollection<string> roleNames,
         string tokenType,
         DateTime expires)
     {
@@ -213,7 +217,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
-        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+        claims.AddRange(roleNames.Select(n => new Claim(ClaimTypes.Role, n)));
+        claims.AddRange(roleIds.Select(id => new Claim("role_id", id.ToString())));
 
         var token = new JwtSecurityToken(
             issuer: _jwtSettings.Issuer,

@@ -14,7 +14,7 @@ using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using Xunit;
 
-namespace ToolBox.Test.Middleware;
+namespace HsSqlAgent.Server.Test.Middleware;
 
 public class McpAccessKeyAuthMiddlewareTests
 {

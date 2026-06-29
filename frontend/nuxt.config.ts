@@ -14,7 +14,7 @@ export default defineNuxtConfig({
     classSuffix: ''
   },
 
-  css: ["~/assets/css/tailwind.css"],
+  css: ["~/assets/css/tailwind.css", "vue-sonner/style.css"],
 
   // 2.
   nitro: {
@@ -56,7 +56,8 @@ export default defineNuxtConfig({
         "@codemirror/language",
         "@codemirror/lint",
         "@codemirror/theme-one-dark",
-        "@lucide/vue"
+        "@lucide/vue",
+        "vue-sonner"
       ],
     },
   },

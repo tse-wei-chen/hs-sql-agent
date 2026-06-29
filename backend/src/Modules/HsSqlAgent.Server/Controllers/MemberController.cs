@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Admin.Service.Interfaces;
 using Auth.Service.Interfaces;
 using Auth.Service.Models;
+using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,6 +17,7 @@ public class MemberController(
     IAuditService auditService) : ControllerBase
 {
     [HttpPost]
+    [HasPermission("/auth/user", "create")]
     public async Task<IActionResult> CreateMemberAsync([FromBody] CreateMemberRequest request)
     {
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
@@ -40,6 +42,7 @@ public class MemberController(
     }
 
     [HttpGet]
+    [HasPermission("/auth/user", "view")]
     public async Task<IActionResult> GetUsersAsync()
     {
         var users = await memberService.GetMembersAsync();
@@ -47,6 +50,7 @@ public class MemberController(
     }
 
     [HttpPut("{id:int}/roles")]
+    [HasPermission("/auth/user", "edit")]
     public async Task<IActionResult> UpdateUserRolesAsync(int id, [FromBody] UpdateMemberRolesRequest request)
     {
         var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
@@ -71,6 +75,7 @@ public class MemberController(
     }
 
     [HttpDelete("{id:int}")]
+    [HasPermission("/auth/user", "delete")]
     public async Task<IActionResult> DeleteUserAsync(int id)
     {
         var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);

@@ -4,6 +4,7 @@ using System.Text;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -27,12 +28,14 @@ public class RuntimeAdminController(
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
     [HttpGet("mcp-keys")]
+    [HasPermission("/runtime/mcp-keys", "view")]
     public async Task<IActionResult> ListKeys(CancellationToken cancellationToken)
     {
         return Ok(await keyService.ListKeysAsync(cancellationToken));
     }
 
     [HttpPost("mcp-keys")]
+    [HasPermission("/runtime/mcp-keys", "create")]
     public async Task<IActionResult> IssueKey([FromBody] IssueMcpAccessKeyRequest request, CancellationToken cancellationToken)
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Name))
@@ -56,6 +59,7 @@ public class RuntimeAdminController(
     }
 
     [HttpPost("mcp-keys/{id:int}/revoke")]
+    [HasPermission("/runtime/mcp-keys", "revoke")]
     public async Task<IActionResult> RevokeKey(int id, CancellationToken cancellationToken)
     {
         var success = await keyService.RevokeKeyAsync(id,
@@ -90,6 +94,7 @@ public class RuntimeAdminController(
         return Ok(new { success = result.IsSuccess, errorMessage = result.ErrorMessage });
     }
 
+    [HasPermission("/runtime/audit", "view")]
     [HttpGet("audit")]
     public async Task<IActionResult> GetAudit(
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
@@ -99,6 +104,7 @@ public class RuntimeAdminController(
         return Ok(await auditService.QueryAsync(page, pageSize, action, keyword, cancellationToken));
     }
 
+    [HasPermission("/runtime/audit", "view")]
     [HttpGet("audit/daily-summary")]
     public async Task<IActionResult> GetAuditDailySummary([FromQuery] int days = 7, CancellationToken cancellationToken = default)
     {
