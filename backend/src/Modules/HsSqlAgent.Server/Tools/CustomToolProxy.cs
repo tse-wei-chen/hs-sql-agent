@@ -8,6 +8,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Tools;
 
@@ -79,6 +80,15 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     return result;
                 }
                 ValidateAllTableAccess(queryDef);
+
+                var qErrors = DefinitionValidator.Validate(queryDef);
+                if (qErrors.Count > 0)
+                {
+                    result = "Validation failed:\n" + string.Join("\n", qErrors);
+                    await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", result);
+                    return result;
+                }
+
                 result = await strategy.ExecuteQueryAsync(queryDef, sqlConfig.ConnectionString);
             }
             else if (isDml)
@@ -91,6 +101,15 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     return result;
                 }
                 ValidateAllTableAccess(dmlDef);
+
+                var dmlErrors = DefinitionValidator.Validate(dmlDef);
+                if (dmlErrors.Count > 0)
+                {
+                    result = "Validation failed:\n" + string.Join("\n", dmlErrors);
+                    await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", result);
+                    return result;
+                }
+
                 result = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dmlDef);
             }
             else
