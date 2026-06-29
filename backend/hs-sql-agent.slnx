@@ -9,7 +9,7 @@
     <Project Path="src/ToolBox/ToolBox.csproj" />
     <Project Path="src/UnitTest/Admin.Test/Admin.Test.csproj" />
     <Project Path="src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj" />
-    <Project Path="src/UnitTest/ToolBox.Test/ToolBox.Test.csproj" />
+    <Project Path="src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj" />
     <Project Path="src/UnitTest/Common.Test/Common.Test.csproj" />
     <Project Path="src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj" />
   </Folder>

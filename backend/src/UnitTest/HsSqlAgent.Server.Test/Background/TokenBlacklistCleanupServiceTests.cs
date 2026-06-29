@@ -6,7 +6,7 @@ using Moq.EntityFrameworkCore;
 using HsSqlAgent.Server.Background;
 using Xunit;
 
-namespace ToolBox.Test.Background;
+namespace HsSqlAgent.Server.Test.Background;
 
 public class TokenBlacklistCleanupServiceTests
 {

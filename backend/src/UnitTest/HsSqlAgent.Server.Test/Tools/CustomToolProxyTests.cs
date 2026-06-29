@@ -12,7 +12,7 @@ using SqlAgent.Service.Strategies;
 using HsSqlAgent.Server.Tools;
 using Xunit;
 
-namespace ToolBox.Test.Tools;
+namespace HsSqlAgent.Server.Test.Tools;
 
 public class CustomToolProxyTests
 {
