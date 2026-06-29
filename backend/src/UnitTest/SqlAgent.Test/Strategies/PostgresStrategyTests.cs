@@ -61,6 +61,16 @@ public class PostgresFixture : IDbFixture
             (1, 150.0, '2023-01-10'),
             (1, 200.0, '2023-02-15'),
             (2, 50.0, '2023-03-20');
+
+            CREATE TABLE IF NOT EXISTS public.order_details (
+                id SERIAL PRIMARY KEY,
+                unit_price DOUBLE PRECISION,
+                quantity INTEGER,
+                discount DOUBLE PRECISION
+            );
+            INSERT INTO public.order_details (unit_price, quantity, discount) VALUES
+            (10.123, 2, 0.1),
+            (20.456, 1, 0.05);
         ";
         await cmd.ExecuteNonQueryAsync();
     }
@@ -263,4 +273,5 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         Assert.Single(rows);
         Assert.Equal(133.33m, rows[0].GetProperty("avg_amount").GetDecimal());
     }
+
 }
