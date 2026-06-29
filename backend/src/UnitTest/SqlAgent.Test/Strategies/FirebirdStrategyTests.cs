@@ -69,6 +69,21 @@ public class FirebirdFixture : IDbFixture
         await cmd.ExecuteNonQueryAsync();
         cmd.CommandText = "INSERT INTO ORDERS (ID, USER_ID, AMOUNT, ORDER_DATE) VALUES (103, 2, 50.0, '2023-03-20')";
         await cmd.ExecuteNonQueryAsync();
+
+        cmd.CommandText = @"
+            CREATE TABLE ORDER_DETAILS (
+                ID INTEGER PRIMARY KEY,
+                UNIT_PRICE DOUBLE PRECISION,
+                QUANTITY INTEGER,
+                DISCOUNT DOUBLE PRECISION
+            )
+        ";
+        await cmd.ExecuteNonQueryAsync();
+
+        cmd.CommandText = "INSERT INTO ORDER_DETAILS (ID, UNIT_PRICE, QUANTITY, DISCOUNT) VALUES (1, 10.123, 2, 0.1)";
+        await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "INSERT INTO ORDER_DETAILS (ID, UNIT_PRICE, QUANTITY, DISCOUNT) VALUES (2, 20.456, 1, 0.05)";
+        await cmd.ExecuteNonQueryAsync();
     }
 
     public async ValueTask DisposeAsync()
@@ -85,6 +100,10 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
 
     protected override string TestTableName => "USERS";
     protected override string TestOrdersTableName => "ORDERS";
+    protected override string TestOrderDetailsTableName => "ORDER_DETAILS";
+    protected override string TestOrderDetailsUnitPriceColumn => "UNIT_PRICE";
+    protected override string TestOrderDetailsQuantityColumn => "QUANTITY";
+    protected override string TestOrderDetailsDiscountColumn => "DISCOUNT";
     protected override string TestSchemaName => "Default";
     protected override string TestOrdersUserIdColumn => "USER_ID";
 

@@ -36,6 +36,11 @@ public class SqliteFixture : IDbFixture
                                   "(101, 1, 150.0, '2023-01-10'), " +
                                   "(102, 1, 200.0, '2023-02-15'), " +
                                   "(103, 2, 50.0, '2023-03-20');");
+
+        await _masterConnection.ExecuteAsync("CREATE TABLE OrderDetails (Id INTEGER PRIMARY KEY, UnitPrice REAL, Quantity INTEGER, Discount REAL);");
+        await _masterConnection.ExecuteAsync("INSERT INTO OrderDetails (Id, UnitPrice, Quantity, Discount) VALUES " +
+                                  "(1, 10.123, 2, 0.1), " +
+                                  "(2, 20.456, 1, 0.05);");
     }
 
     public async ValueTask DisposeAsync()
@@ -54,6 +59,10 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
 
     protected override string TestTableName => "Users";
     protected override string TestOrdersTableName => "Orders";
+    protected override string TestOrderDetailsTableName => "OrderDetails";
+    protected override string TestOrderDetailsUnitPriceColumn => "UnitPrice";
+    protected override string TestOrderDetailsQuantityColumn => "Quantity";
+    protected override string TestOrderDetailsDiscountColumn => "Discount";
     protected override string TestSchemaName => "";
     protected override string TestOrdersUserIdColumn => "UserId";
 

@@ -56,6 +56,16 @@ public class MsSqlFixture : IDbFixture
             (1, 150.0, '2023-01-10'),
             (1, 200.0, '2023-02-15'),
             (2, 50.0, '2023-03-20');
+
+            CREATE TABLE OrderDetails (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                UnitPrice FLOAT,
+                Quantity INT,
+                Discount FLOAT
+            );
+            INSERT INTO OrderDetails (UnitPrice, Quantity, Discount) VALUES
+            (10.123, 2, 0.1),
+            (20.456, 1, 0.05);
         ";
         await cmd.ExecuteNonQueryAsync();
     }
@@ -71,6 +81,10 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
 
     protected override string TestTableName => "Users";
     protected override string TestOrdersTableName => "Orders";
+    protected override string TestOrderDetailsTableName => "OrderDetails";
+    protected override string TestOrderDetailsUnitPriceColumn => "UnitPrice";
+    protected override string TestOrderDetailsQuantityColumn => "Quantity";
+    protected override string TestOrderDetailsDiscountColumn => "Discount";
     protected override string TestSchemaName => "dbo";
     protected override string TestOrdersUserIdColumn => "UserId";
 

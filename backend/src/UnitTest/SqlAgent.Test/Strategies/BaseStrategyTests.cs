@@ -34,6 +34,10 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
     protected abstract string TestTableName { get; }
     protected abstract string TestOrdersTableName { get; }
+    protected virtual string TestOrderDetailsTableName => "order_details";
+    protected virtual string TestOrderDetailsUnitPriceColumn => "unit_price";
+    protected virtual string TestOrderDetailsQuantityColumn => "quantity";
+    protected virtual string TestOrderDetailsDiscountColumn => "discount";
     protected abstract string TestSchemaName { get; }
     protected virtual string TestOrdersUserIdColumn => "user_id";
 
@@ -598,7 +602,79 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.Equal(2, rows.Count);
     }
 
+    [Fact]
+    public virtual async Task ExecuteQueryAsync_ShouldSupportRoundedAggregatedNestedArithmeticExpression()
+    {
+        const string alias = "total_sales";
+        var tableAlias = "od";
+
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestOrderDetailsTableName,
+                Alias = tableAlias,
+                SelectColumns =
+                [
+                    new FunctionSelectCondition
+                    {
+                        Alias = alias,
+                        FunctionName = "ROUND",
+                        Arguments =
+                        [
+                            new FunctionSelectCondition
+                            {
+                                FunctionName = "SUM",
+                                Arguments =
+                                [
+                                    new OperationSelectCondition
+                                    {
+                                        Left = new OperationSelectCondition
+                                        {
+                                            Left = new FieldSelectCondition { FieldName = $"{tableAlias}.{TestOrderDetailsUnitPriceColumn}" },
+                                            Operator = ArithmeticOperator.Multiply,
+                                            Right = new FieldSelectCondition { FieldName = $"{tableAlias}.{TestOrderDetailsQuantityColumn}" }
+                                        },
+                                        Operator = ArithmeticOperator.Multiply,
+                                        Right = new OperationSelectCondition
+                                        {
+                                            Left = new ConstantSelectCondition { Constant = 1 },
+                                            Operator = ArithmeticOperator.Subtract,
+                                            Right = new FieldSelectCondition { FieldName = $"{tableAlias}.{TestOrderDetailsDiscountColumn}" }
+                                        }
+                                    }
+                                ]
+                            },
+                            new ConstantSelectCondition { Constant = 2 }
+                        ]
+                    }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.True(TryGetPropertyIgnoreCase(rows[0], alias, out var totalSales), $"Expected property '{alias}' in result: {rows[0]}");
+        Assert.InRange(totalSales.GetDecimal(), 37.65m, 37.66m);
+    }
+
     protected abstract string TableNotFoundErrorCode { get; }
     protected abstract string ColumnNotFoundErrorCode { get; }
     protected abstract DmlDefinition CreateInsertDml();
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement row, string propertyName, out JsonElement value)
+    {
+        foreach (var property in row.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
 }

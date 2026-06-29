@@ -61,6 +61,16 @@ public class MySqlFixture : IDbFixture
             (1, 150.0, '2023-01-10'),
             (1, 200.0, '2023-02-15'),
             (2, 50.0, '2023-03-20');
+
+            CREATE TABLE IF NOT EXISTS order_details (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                unit_price DOUBLE,
+                quantity INT,
+                discount DOUBLE
+            );
+            INSERT INTO order_details (unit_price, quantity, discount) VALUES
+            (10.123, 2, 0.1),
+            (20.456, 1, 0.05);
         ";
         await cmd.ExecuteNonQueryAsync();
     }
