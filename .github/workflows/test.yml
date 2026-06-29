@@ -9,6 +9,32 @@ on:
     types: [published]
 
 jobs:
+  infrastructure-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet test backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
+
+  auth-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet test backend/src/UnitTest/Auth.Test/Auth.Test.csproj
+
   admin-test:
     runs-on: ubuntu-latest
     permissions:
@@ -22,7 +48,7 @@ jobs:
           dotnet-version: "10.0.x"
       - run: dotnet test backend/src/UnitTest/Admin.Test/Admin.Test.csproj
 
-  toolbox-test:
+  server-test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,7 +59,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/ToolBox.Test/ToolBox.Test.csproj
+      - run: dotnet test backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
 
   sqlagent-test:
     runs-on: ubuntu-latest
