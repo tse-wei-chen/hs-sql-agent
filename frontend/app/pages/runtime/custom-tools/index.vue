@@ -74,11 +74,23 @@ const isAdvancedBuilderOpen = ref(false);
 
 const dbs = ref<DbManagement[]>([]);
 
+const getErrorMessage = (error: any, fallback: string) => {
+  const data = error?.response?.data;
+  if (!data) return fallback;
+  if (typeof data === "string") return data;
+  if (Array.isArray(data.errors)) {
+    return [data.error, ...data.errors].filter(Boolean).join("\n");
+  }
+  if (data.error) return data.error;
+  if (data.title) return data.title;
+  return fallback;
+};
+
 const loadDbs = async () => {
   try {
     dbs.value = await listDbManagements();
   } catch (e: any) {
-    toast.error(e?.response?.data || "Failed to load databases.");
+    toast.error(getErrorMessage(e, "Failed to load databases."));
   }
 };
 
@@ -170,7 +182,7 @@ const save = async () => {
     resetForm();
     await load();
   } catch (error: any) {
-    toast.error(error?.response?.data || "Failed to save tool.");
+    toast.error(getErrorMessage(error, "Failed to save tool."));
   } finally {
     saving.value = false;
   }
@@ -184,7 +196,7 @@ const remove = async (id: number) => {
     await deleteCustomSqlTool(id);
     await load();
   } catch (error: any) {
-    toast.error(error?.response?.data || "Failed to delete tool.");
+    toast.error(getErrorMessage(error, "Failed to delete tool."));
   }
 };
 
