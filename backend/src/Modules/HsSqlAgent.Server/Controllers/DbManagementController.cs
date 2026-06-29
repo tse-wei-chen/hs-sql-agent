@@ -2,6 +2,7 @@ using System.Text;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -19,6 +20,7 @@ public class DbManagementController(
     IAuditService auditService) : ControllerBase
 {
     [HttpPost]
+    [HasPermission("/runtime/db-management", "create")]
     public async Task<IActionResult> CreateDb([FromBody] DbManagementRequest request, CancellationToken cancellationToken)
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Name))
@@ -29,6 +31,7 @@ public class DbManagementController(
     }
 
     [HttpGet("{id}")]
+    [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetDbById(int id, CancellationToken cancellationToken)
     {
         var result = await dbManagementService.GetDbByIdAsync(id, false, cancellationToken);
@@ -36,10 +39,12 @@ public class DbManagementController(
     }
 
     [HttpGet]
+    [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetAllDbs(CancellationToken cancellationToken)
         => Ok(await dbManagementService.GetAllDbsAsync(cancellationToken));
 
     [HttpPut("{id}")]
+    [HasPermission("/runtime/db-management", "edit")]
     public async Task<IActionResult> UpdateDb(int id, [FromBody] DbManagementRequest request, CancellationToken cancellationToken)
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Name))
@@ -50,6 +55,7 @@ public class DbManagementController(
     }
 
     [HttpDelete("{id}")]
+    [HasPermission("/runtime/db-management", "delete")]
     public async Task<IActionResult> DeleteDb(int id, CancellationToken cancellationToken)
     {
         await dbManagementService.DeleteDbAsync(id, cancellationToken);
@@ -58,6 +64,7 @@ public class DbManagementController(
     }
 
     [HttpGet("{id}/schemas")]
+    [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetSchemas(
         int id,
         [FromServices] ISqlStrategyFactory sqlStrategyFactory,
@@ -85,6 +92,7 @@ public class DbManagementController(
     }
 
     [HttpGet("{id}/tables")]
+    [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetTables(
         int id, [FromQuery] string? schema,
         [FromServices] ISqlStrategyFactory sqlStrategyFactory,
@@ -112,6 +120,7 @@ public class DbManagementController(
     }
 
     [HttpGet("{id}/columns")]
+    [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetColumns(
         int id, [FromQuery] string? schema, [FromQuery] string table,
         [FromServices] ISqlStrategyFactory sqlStrategyFactory,

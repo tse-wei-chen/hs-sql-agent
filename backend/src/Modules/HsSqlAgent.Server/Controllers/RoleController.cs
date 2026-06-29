@@ -1,6 +1,7 @@
 using Admin.Service.Interfaces;
 using Auth.Service.Interfaces;
 using Auth.Service.Models;
+using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,10 +12,12 @@ namespace HsSqlAgent.Server.Controllers;
 public class RoleController(ILogger<RoleController> logger, IRoleService roleService, IAuditService auditService) : ControllerBase
 {
     [HttpGet]
+    [HasPermission("/auth/role", "view")]
     public async Task<IActionResult> GetRolesAsync()
         => Ok(await roleService.GetRolesAsync());
 
     [HttpPost]
+    [HasPermission("/auth/role", "create")]
     public async Task<IActionResult> CreateRoleAsync([FromBody] RolePayload request)
     {
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
@@ -39,6 +42,7 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
     }
 
     [HttpPut("{id:int}")]
+    [HasPermission("/auth/role", "edit")]
     public async Task<IActionResult> UpdateRoleAsync(int id, [FromBody] RolePayload request)
     {
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
@@ -63,6 +67,7 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
     }
 
     [HttpDelete("{id:int}")]
+    [HasPermission("/auth/role", "delete")]
     public async Task<IActionResult> RemoveRoleAsync(int id)
     {
         try
@@ -86,6 +91,7 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
     }
 
     [HttpGet("permission-action-templates")]
+    [HasPermission("/auth/role", "view")]
     public async Task<IActionResult> GetPermissionActionTemplatesAsync()
         => Ok(await roleService.GetPermissionActionTemplatesAsync());
 }
