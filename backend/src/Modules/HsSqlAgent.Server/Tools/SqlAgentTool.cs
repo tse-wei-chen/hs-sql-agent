@@ -7,6 +7,7 @@ using ModelContextProtocol.Server;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Tools;
 
@@ -48,6 +49,11 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 return "Error: Query definition is missing.";
 
             ValidateAllTableAccess(definition.TableName, definition.Joins, definition.CombineConditions, definition.CteConditions, definition.FromQuery, definition.SelectColumns, definition.WhereColumnsAndValues, definition.Alias);
+
+            var validationErrors = DefinitionValidator.Validate(definition);
+            if (validationErrors.Count > 0)
+                return "Validation failed:\n" + string.Join("\n", validationErrors);
+
             var result = await strategy.ExecuteQueryAsync(definition, sqlConfig.ConnectionString);
 
             await _auditService.WriteLogAsync("mcp.query.executed", definition.TableName ?? "unknown", "success", $"Provider: {dbType}");
@@ -78,6 +84,11 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+
+            var dmlErrors = DefinitionValidator.Validate(dml);
+            if (dmlErrors.Count > 0)
+                return "Validation failed:\n" + string.Join("\n", dmlErrors);
+
             var result = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
 
             await _auditService.WriteLogAsync("mcp.dml.executed", dml?.TableName ?? "unknown", "success", $"Operation: {dml?.Operation}");
