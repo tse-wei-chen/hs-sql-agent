@@ -107,10 +107,9 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     protected override string TestSchemaName => "Default";
     protected override string TestOrdersUserIdColumn => "USER_ID";
 
-    // Firebird returns SQL code -204 for both table-not-found and column-not-found errors.
-    // The strategy extracts this as "FB_SQL_-204" from the exception message.
+    // Firebird returns SQL code -204 for table-not-found and -206 for column-not-found errors.
     protected override string TableNotFoundErrorCode => "FB_SQL_-204";
-    protected override string ColumnNotFoundErrorCode => "FB_SQL_-204";
+    protected override string ColumnNotFoundErrorCode => "FB_SQL_-206";
 
     // Firebird uppercases unquoted identifiers, so result properties are UPPERCASE.
     private const string PropUname = "UNAME";
@@ -120,7 +119,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     private const string PropUserType = "USER_TYPE";
 
     [Fact]
-    public override async Task ExecuteQueryAsync_ShouldTriggerHint_WhenTableNotFound()
+    public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -129,11 +128,13 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains("Table does not exist", ex.Message);
+        Assert.Contains($"code={TableNotFoundErrorCode}", ex.Message);
+        Assert.Contains("message=", ex.Message);
+        Assert.Contains("table", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public override async Task ExecuteQueryAsync_ShouldTriggerHint_WhenColumnNotFound()
+    public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenColumnNotFound()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -143,7 +144,9 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains("Column not found", ex.Message);
+        Assert.Contains($"code={ColumnNotFoundErrorCode}", ex.Message);
+        Assert.Contains("message=", ex.Message);
+        Assert.Contains("column", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

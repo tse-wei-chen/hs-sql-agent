@@ -132,7 +132,7 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger102Hint_WhenSyntaxIsInvalid()
+    public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenConversionIsInvalid()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -144,6 +144,7 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("code=245", ex.Message);
-        Assert.Contains("Data type conversion error", ex.Message);
+        Assert.Contains("message=", ex.Message);
+        Assert.Contains("conversion", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

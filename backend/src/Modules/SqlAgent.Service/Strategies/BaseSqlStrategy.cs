@@ -1377,37 +1377,7 @@ public abstract partial class BaseSqlStrategy(
 
     protected virtual string BuildExecutionErrorMessage(Exception ex, string type)
     {
-        return $"Error executing query | {ex}";
-    }
-
-    protected virtual string BuildHint(string? code, string message)
-    {
-        if (message.Contains("divide by zero", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("division by zero", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("divisor is equal to zero", StringComparison.OrdinalIgnoreCase))
-            return "Division by zero error. Check that divisor values in 'Arithmetic' expressions are not zero, or use NULLIF to guard against zero denominators.";
-
-        if (message.Contains("constraint", StringComparison.OrdinalIgnoreCase)
-            && message.Contains("violat", StringComparison.OrdinalIgnoreCase))
-            return "Constraint violation. Verify that the data satisfies table constraints (e.g., unique, foreign key, check).";
-
-        if (message.Contains("unique", StringComparison.OrdinalIgnoreCase)
-            && message.Contains("constraint", StringComparison.OrdinalIgnoreCase))
-            return "Unique constraint violation. The value already exists in a column with a UNIQUE constraint.";
-
-        if (message.Contains("foreign key", StringComparison.OrdinalIgnoreCase)
-            && (message.Contains("violat", StringComparison.OrdinalIgnoreCase) || message.Contains("not found", StringComparison.OrdinalIgnoreCase)))
-            return "Foreign key violation. Ensure referenced records exist before inserting or updating.";
-
-        if (message.Contains("conversion", StringComparison.OrdinalIgnoreCase)
-            && (message.Contains("type", StringComparison.OrdinalIgnoreCase) || message.Contains("failed", StringComparison.OrdinalIgnoreCase)))
-            return "Data type conversion error. Ensure 'Value' / 'Constant' types match the column type. For dates, set 'IsDate': true.";
-
-        if (message.Contains("out of range", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("overflow", StringComparison.OrdinalIgnoreCase))
-            return "Numeric overflow or out of range. Check arithmetic expressions or values exceed column precision.";
-
-        return "Unexpected SQL error. Review query structure: verify table/column names, data types, and expression syntax. Use 'SelectColumns' for fields, 'WhereConditions' for filters, 'Arithmetic' for calculations, and proper 'Join' conditions.";
+        return $"Error executing query | message={ex.GetBaseException().Message}";
     }
 
     // =====================================================================

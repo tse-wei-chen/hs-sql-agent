@@ -98,73 +98,8 @@ public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfig
     protected override string BuildExecutionErrorMessage(Exception ex, string type)
     {
         var code = ex is MySqlException mysqlEx2 ? mysqlEx2.Number.ToString() : TryExtractMySqlCode(ex.Message);
-        var hint = BuildHint(code, ex.Message);
 
-        return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
-    }
-
-    protected override string BuildHint(string? code, string message)
-    {
-        if (string.Equals(code, "1064", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(code, "42000", StringComparison.OrdinalIgnoreCase))
-        {
-            if (message.Contains("date", StringComparison.OrdinalIgnoreCase) || message.Contains("time", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Date comparison syntax error. Fix: Use 'IsDate': true in WhereCondition, or ensure your 'Value' is a valid ISO date string (e.g., '2024-01-01').";
-            }
-
-            return "SQL syntax error. Tips: 1. Use 'Arithmetic' object for math instead of raw strings in 'Field'. 2. Check 'Operator' compatibility (e.g., '=', 'IN', 'LIKE'). 3. Ensure 'CombineConditions' (UNION/INTERSECT) have matching column counts. 4. Verify 'SubQuery' has a valid 'TableName'.";
-        }
-
-        if (string.Equals(code, "42S02", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Table or CTE not found. Check 'TableName'. Note: If using 'FromQuery' (subquery in FROM), ensure you provide an 'Alias'. For CTEs, use 'CteConditions' list.";
-        }
-
-        if (string.Equals(code, "42S22", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("Unknown column", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Column not found. Tips: 1. For complex logic, use 'CaseWhen' or 'Arithmetic' instead of writing raw SQL in 'Field'. 2. In Joins/OrderBy/GroupBy, use 'TableAlias.ColumnName' to avoid ambiguity. 3. Verify column name spelling matches the table definition.";
-        }
-
-        if (string.Equals(code, "1292", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(code, "1525", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Truncated or incorrect value. Check if your 'Value' matches the column data type (e.g., passing a string to an Integer field, or using an invalid date format like '2024/13/01').";
-        }
-
-        if (string.Equals(code, "1054", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Unknown column in field list. Verify column names in 'SelectColumns'. For derived columns, use 'Alias' and reference the alias in 'OrderBy' or 'GroupBy'.";
-        }
-
-        if (string.Equals(code, "1146", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Table does not exist. Check 'TableName' and schema prefix. Ensure the table was created in the connected database.";
-        }
-
-        if (string.Equals(code, "1062", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Duplicate entry for a UNIQUE constraint. The insert/update value conflicts with an existing row. Check your 'Values' for uniqueness.";
-        }
-
-        if (string.Equals(code, "1452", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Foreign key constraint fails. The referenced record does not exist. Ensure related data is inserted first.";
-        }
-
-        if (string.Equals(code, "1366", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Incorrect integer/date value. The 'Value' type does not match the column type. Check that numeric fields receive numbers, and date fields receive valid date strings with 'IsDate': true.";
-        }
-
-        if (message.Contains("Operand should contain 1 column", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Subquery returns too many columns. When using 'SubQuery' in a WhereCondition, ensure the inner 'SelectColumns' list has only ONE column.";
-        }
-
-        return base.BuildHint(code, message);
+        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
     }
 
     private static string? TryExtractMySqlCode(string message)

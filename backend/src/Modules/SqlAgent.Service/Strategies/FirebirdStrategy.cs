@@ -102,36 +102,8 @@ public partial class FirebirdStrategy(IQueryValueParserService valueParser, ICon
     {
         var iscCode = ex is FbException fbEx ? fbEx.ErrorCode.ToString() : null;
         var code = TryExtractFbSqlCode(ex.Message) ?? iscCode;
-        var hint = BuildHint(code, ex.Message);
 
-        return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
-    }
-
-    protected override string BuildHint(string? code, string message)
-    {
-        if (message.Contains("Table unknown", StringComparison.OrdinalIgnoreCase))
-            return "Table does not exist. Check 'TableName'. Firebird table names are case-sensitive; ensure the table was created in the connected database.";
-
-        if (message.Contains("Column unknown", StringComparison.OrdinalIgnoreCase))
-            return "Column not found. Verify column names in 'SelectColumns' / 'WhereConditions'. Firebird column names are case-sensitive (use UPPERCASE for unquoted identifiers). For complex expressions, use 'Arithmetic' or 'CaseWhen' instead of raw SQL in 'Field'.";
-
-        if (message.Contains("conversion error", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("expression evaluation", StringComparison.OrdinalIgnoreCase))
-            return "Data type conversion error. Ensure 'Value' types match the column types. For date comparisons, use 'IsDate': true in the condition.";
-
-        if (message.Contains("violation of", StringComparison.OrdinalIgnoreCase)
-            && message.Contains("constraint", StringComparison.OrdinalIgnoreCase))
-            return "Constraint violation. The operation violates a PRIMARY KEY, UNIQUE, or FOREIGN KEY constraint. Check your data values.";
-
-        if (message.Contains("arithmetic exception", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("divide by zero", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("division by zero", StringComparison.OrdinalIgnoreCase))
-            return "Division by zero or numeric overflow. Check 'Arithmetic' expressions for zero divisors or values exceeding numeric precision.";
-
-        if (message.Contains("overflow", StringComparison.OrdinalIgnoreCase))
-            return "Numeric overflow. A value exceeds the column's numeric range. Check numeric values in 'Values' or 'Arithmetic' expressions.";
-
-        return base.BuildHint(code, message);
+        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
     }
 
     private static string? TryExtractFbSqlCode(string message)

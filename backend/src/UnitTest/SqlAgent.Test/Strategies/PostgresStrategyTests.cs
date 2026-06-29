@@ -138,7 +138,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger22P02Hint_WhenValueFormatIsInvalid()
+    public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenValueFormatIsInvalid()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -153,7 +153,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger42883Hint_WhenOperatorOrTypeMismatch()
+    public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenOperatorOrTypeMismatch()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -172,11 +172,12 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("code=42883", ex.Message);
-        Assert.Contains("Operator", ex.Message);
+        Assert.Contains("message=", ex.Message);
+        Assert.Contains("operator", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger42702Hint_WhenColumnIsAmbiguous()
+    public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenColumnIsAmbiguous()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -202,7 +203,8 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("code=42702", ex.Message);
-        Assert.Contains("Ambiguous column", ex.Message);
+        Assert.Contains("message=", ex.Message);
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

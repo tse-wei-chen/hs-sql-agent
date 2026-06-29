@@ -133,7 +133,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger1292Hint_WhenValueFormatIsIncorrect()
+    public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenValueFormatIsIncorrect()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -148,7 +148,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldTrigger1064Hint_WhenSyntaxIsInvalid()
+    public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenSyntaxIsInvalid()
     {
         var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
@@ -160,6 +160,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("code=1064", ex.Message);
-        Assert.Contains("SQL syntax error", ex.Message);
+        Assert.Contains("message=", ex.Message);
+        Assert.Contains("syntax", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

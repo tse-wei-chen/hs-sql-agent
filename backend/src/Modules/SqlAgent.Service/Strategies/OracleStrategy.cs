@@ -90,60 +90,8 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
     protected override string BuildExecutionErrorMessage(Exception ex, string type)
     {
         var code = TryExtractOracleCode(ex.Message);
-        var hint = BuildHint(code, ex.Message);
 
-        return $"Error executing query | code={code ?? "unknown"} | hint={hint}";
-    }
-
-    protected override string BuildHint(string? code, string message)
-    {
-        if (string.Equals(code, "ORA-00942", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Table or view does not exist. Check 'TableName' and schema ownership (schema prefix may be required, e.g., 'SCHEMA.TABLE'). For CTEs, use 'CteConditions'.";
-        }
-        if (string.Equals(code, "ORA-00904", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Invalid identifier (column not found). Check column names in 'SelectColumns', 'WhereConditions', etc. Oracle identifiers are case-sensitive when quoted; use uppercase unquoted names. For complex expressions, use 'Arithmetic' or 'CaseWhen' instead of raw strings in 'Field'.";
-        }
-        if (string.Equals(code, "ORA-00923", StringComparison.OrdinalIgnoreCase))
-        {
-            return "FROM keyword not found where expected. Ensure 'TableName' is specified and the query structure is valid.";
-        }
-        if (string.Equals(code, "ORA-00933", StringComparison.OrdinalIgnoreCase))
-        {
-            return "SQL command not properly ended. Check 'CombineConditions' (UNION/INTERSECT) structure, or trailing ORDER BY/LIMIT usage.";
-        }
-        if (string.Equals(code, "ORA-00920", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Invalid relational operator. Check 'Operator' values in 'WhereConditions' (e.g., '=', '>', '<', 'LIKE', 'IN').";
-        }
-        if (string.Equals(code, "ORA-01722", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Invalid number. The 'Value' cannot be converted to a number. Ensure numeric fields receive numeric values (not strings).";
-        }
-        if (string.Equals(code, "ORA-01843", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(code, "ORA-01861", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Invalid date format. Ensure date values are in valid Oracle date format (e.g., 'YYYY-MM-DD'). Set 'IsDate': true for date comparisons in 'WhereConditions'.";
-        }
-        if (string.Equals(code, "ORA-00001", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Unique constraint violation. The insert/update would create a duplicate value. Check your 'Values' for uniqueness.";
-        }
-        if (string.Equals(code, "ORA-02291", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(code, "ORA-02292", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Integrity constraint violation (foreign key). Ensure the referenced record exists before inserting, or that no child records exist before deleting.";
-        }
-        if (string.Equals(code, "ORA-01476", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Division by zero error. Check 'Arithmetic' expressions for division where the divisor could be zero.";
-        }
-        if (string.Equals(code, "ORA-00918", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Ambiguous column. Use 'TableAlias.ColumnName' in 'Field' properties and 'Join' conditions to qualify the column.";
-        }
-        return base.BuildHint(code, message);
+        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
     }
 
     private static string? TryExtractOracleCode(string message)
