@@ -23,7 +23,8 @@ public class JoinCondition
     [Description("Join type: 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS'")]
     public JoinType Type { get; set; } = JoinType.Inner;
 
-    [Description(@"CRITICAL: The ON join conditions. You MUST provide at least one condition.
-    - Always use 'column_compare' for matching columns (e.g., o.id = od.order_id).")]
+    [Description(@"CRITICAL: The ON join conditions. You MUST provide at least one condition unless type is 'CROSS'.
+    - Always use 'column_compare' for matching columns (e.g., o.id = od.order_id).
+    - For CROSS JOIN, leave this empty.")]
     public List<WhereCondition> OnConditions { get; set; } = new();
 }

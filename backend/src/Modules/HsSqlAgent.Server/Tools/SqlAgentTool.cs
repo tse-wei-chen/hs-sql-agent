@@ -7,6 +7,7 @@ using ModelContextProtocol.Server;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Tools;
@@ -21,20 +22,15 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     private readonly IDbSemanticService _semanticService = semanticService;
 
     [McpServerTool, Description(@"
-        Execute a complex SELECT query strictly using the structured definition block.
+        Execute one SELECT SQL statement. The server parses SQL into a QueryDefinition, validates it,
+        applies table whitelist checks, then executes it through the configured SQL strategy.
 
-        CRITICAL RULES FOR LLM GENERATION:
-        1. NO RAW MATH IN FIELDS: Never put arithmetic operators (+, -, *, /) inside a 'field' node's fieldName.
-        2. FUNCTION ARGUMENTS: Every argument inside a function's 'arguments' list MUST explicitly declare its 'type'.
-        3. STRICT TABLE ALIASES: If you define an 'alias', use it consistently.
-        4. COLUMN REUSE: An aliased column cannot be referenced by its alias in WHERE.
-        5. FROMQUERY SCOPE: Outer query can only reference subquery output columns.
-
-        Supported: JOINs, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs, Subqueries, COMBINE.
+        Use get_schemas/get_tables/get_columns first when you need database structure. Only send a single SELECT statement.
+        Supported SQL includes JOINs, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs, subqueries, and UNION/INTERSECT/EXCEPT.
     ")]
-    public async Task<string> ExecuteQuerySafe(
-        [Description("The structured complete query definition block.")]
-        QueryDefinition definition)
+    public async Task<string> ExecuteQuerySql(
+        [Description("A single SELECT SQL statement to parse, validate, and execute.")]
+        string sql)
     {
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
@@ -42,13 +38,16 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
         }
         var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+        QueryDefinition? definition = null;
         try
         {
-            ValidateToolAccess("execute_query_safe");
-            if (definition == null)
-                return "Error: Query definition is missing.";
+            ValidateToolAccess("execute_query_sql");
+            if (string.IsNullOrWhiteSpace(sql))
+                return "Error: SQL is missing.";
 
-            ValidateAllTableAccess(definition.TableName, definition.Joins, definition.CombineConditions, definition.CteConditions, definition.FromQuery, definition.SelectColumns, definition.WhereColumnsAndValues, definition.Alias);
+            definition = SqlDefinitionParser.ParseQuery(sql);
+
+            ValidateAllTableAccess(definition);
 
             var validationErrors = DefinitionValidator.Validate(definition);
             if (validationErrors.Count > 0)
@@ -67,17 +66,28 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     }
 
     [McpServerTool, Description(@"
-        Execute a DML operation (INSERT, UPDATE, DELETE).
-        Two-step safety: first call (without ConfirmToken) does dry-run; second call (with ConfirmToken) commits.
+        Execute one DML SQL statement (INSERT, UPDATE, DELETE). The server parses SQL into a DmlDefinition,
+        validates it, applies table whitelist checks, then uses a dry-run confirmation token before execution.
+
+        First call this tool with only sql to get TokenRequired. Review the dry-run result, then call again with the
+        same sql and confirmToken to execute.
     ")]
-    public async Task<string> ExecuteDmlSafe(
-        [Description("The DML definition (operation, table, values, conditions).")]
-        DmlDefinition dml)
+    public async Task<string> ExecuteDmlSql(
+        [Description("A single INSERT, UPDATE, or DELETE SQL statement to parse and validate.")]
+        string sql,
+        [Description("Optional confirmation token returned by the first dry-run call. Omit it to preview and receive TokenRequired.")]
+        string? confirmToken = null)
     {
+        DmlDefinition? dml = null;
         try
         {
-            ValidateToolAccess("execute_dml_safe");
-            ValidateAllTableAccess(dml?.TableName, null, null, null, dml?.FromQuery, null, dml?.WhereConditions);
+            ValidateToolAccess("execute_dml_sql");
+            if (string.IsNullOrWhiteSpace(sql))
+                return "Error: SQL is missing.";
+
+            dml = SqlDefinitionParser.ParseDml(sql);
+            dml.ConfirmToken = string.IsNullOrWhiteSpace(confirmToken) ? null : confirmToken;
+            ValidateAllTableAccess(dml.TableName, null, null, null, dml.FromQuery, null, dml.WhereConditions);
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
             {
@@ -349,6 +359,18 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
 
+    private void ValidateAllTableAccess(QueryDefinition queryDef)
+    {
+        var whitelist = ResolveTableWhitelist();
+        if (whitelist is null or { Count: 0 }) return;
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        CollectFromQueryDefinition(queryDef, referenced, aliases);
+        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        if (violations.Count > 0)
+            throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
+    }
+
     internal static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (qd == null) return;
@@ -411,6 +433,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 {
                     CollectFromWheres(funcSel.FilterWhereConditions, referenced, aliases);
                     CollectFromExpressions(funcSel.Arguments, referenced, aliases);
+                    CollectFromWindowDefinition(funcSel.Window, referenced, aliases);
                 }
                 else if (s is OperationSelectCondition opSel)
                 {
@@ -443,6 +466,11 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             if (h is FunctionHavingCondition funcHaving)
                 CollectFromSqlFunctionCondition(funcHaving.LeftFunction, referenced, aliases);
+            else if (h is ExpressionHavingCondition exprHaving)
+            {
+                CollectFromExpression(exprHaving.LeftExpression, referenced, aliases);
+                CollectFromExpression(exprHaving.RightExpression, referenced, aliases);
+            }
             else if (h is GroupHavingCondition groupHaving)
                 CollectFromHavingConditions(groupHaving.Groups, referenced, aliases);
         }
@@ -488,6 +516,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
             CollectFromExpressions(func.Arguments, referenced, aliases);
+            CollectFromWindowDefinition(func.Window, referenced, aliases);
         }
         else if (condition is OperationSelectCondition op)
         {
@@ -496,6 +525,27 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
         else if (condition is CaseWhenSelectCondition cw)
             CollectFromCaseWhenClauses(cw.CaseWhen, referenced, aliases);
+        else if (condition is SubQuerySelectCondition sq)
+        {
+            var qd = new QueryDefinition
+            {
+                TableName = sq.TableName,
+                FromQuery = sq.FromQuery,
+                Alias = sq.Alias,
+                Distinct = sq.Distinct,
+                SelectColumns = sq.SelectColumns,
+                WhereColumnsAndValues = sq.WhereColumnsAndValues,
+                OrderByColumns = sq.OrderByColumns,
+                GroupByConditions = sq.GroupByConditions,
+                HavingConditions = sq.HavingConditions,
+                Joins = sq.Joins,
+                CombineConditions = sq.CombineConditions,
+                CteConditions = sq.CteConditions,
+                Limit = sq.Limit,
+                Offset = sq.Offset
+            };
+            CollectFromQueryDefinition(qd, referenced, aliases);
+        }
     }
 
     internal static void CollectFromExpressions(List<SelectCondition>? args, HashSet<string> referenced, HashSet<string> aliases)

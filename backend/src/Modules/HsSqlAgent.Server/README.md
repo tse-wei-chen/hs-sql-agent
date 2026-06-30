@@ -6,8 +6,8 @@ An embeddable MCP (Model Context Protocol) SQL Agent server for ASP.NET Core. In
 
 - **MCP Server** — Exposes SQL database tools over the Model Context Protocol for AI agents (Claude Desktop, etc.)
 - **Multi-DB Support** — SQLite, PostgreSQL, MySQL, SQL Server, Oracle, Firebird
-- **Structured Query Execution** — Safe, structured query definitions prevent SQL injection
-- **Two-Step DML Safety** — Dry-run first, then confirm; prevents accidental mutations
+- **SQL Query Execution** — Parses raw SQL into validated query definitions before execution
+- **DML Safety** — Parses INSERT/UPDATE/DELETE SQL into validated DML definitions before execution
 - **Access Key Auth** — HMAC-signed MCP access keys with fine-grained permissions
 - **Admin API** — JWT-based admin panel (sign-in, sign-up, token refresh)
 - **DB Management** — CRUD for database connections with encrypted passwords
@@ -70,12 +70,42 @@ Exposed to AI agents via the MCP endpoint:
 
 | Tool | Description |
 |------|-------------|
-| `execute_query_safe` | Execute a structured SELECT query (JSON definition block) |
-| `execute_dml_safe` | Two-step DML: dry-run first, then confirm with `ConfirmToken` |
+| `execute_query_sql` | Execute one SELECT SQL statement after parser, validation, and whitelist checks |
+| `execute_dml_sql` | Dry-run one INSERT/UPDATE/DELETE SQL statement first, then execute with the returned confirmation token |
 | `get_columns` | Get column names and types for a table |
 | `get_schemas` | List all schemas in the database |
 | `get_tables` | List all tables in a schema |
 | `update_semantic_layer` | Upsert semantic metadata (display names, descriptions) for tables/columns |
+
+## SQL Execution Flow
+
+```mermaid
+flowchart TD
+    LLM["LLM / MCP Client"] -->|Call tool with raw SQL| MCP["HsSqlAgent MCP Server"]
+    MCP --> AUTH["Access key auth<br/>allowed tools + DB binding + table whitelist"]
+    AUTH --> ROUTE{"Tool"}
+
+    ROUTE -->|execute_query_sql(sql)| QPARSE["Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
+    QPARSE --> QDEF["QueryDefinition"]
+    QDEF --> QVALID["DefinitionValidator<br/>+ table whitelist checks"]
+    QVALID --> QSTRATEGY["SQL Strategy<br/>SQLite / PostgreSQL / MySQL / SQL Server / Oracle / Firebird"]
+    QSTRATEGY --> QEXEC["Execute SELECT"]
+    QEXEC --> QRESULT["Rows / JSON result"]
+
+    ROUTE -->|execute_dml_sql(sql)| DPARSE["Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
+    DPARSE --> DDEF["DmlDefinition"]
+    DDEF --> DVALID["DefinitionValidator<br/>+ table whitelist checks"]
+    DVALID --> DRYRUN{"confirmToken provided?"}
+    DRYRUN -->|No| TOKEN["Dry-run preview<br/>returns TokenRequired"]
+    TOKEN -->|LLM reviews and calls again<br/>same SQL + confirmToken| DPARSE
+    DRYRUN -->|Yes| DSTRATEGY["SQL Strategy validates token"]
+    DSTRATEGY --> DEXEC["Execute INSERT / UPDATE / DELETE"]
+    DEXEC --> DRESULT["Affected rows result"]
+
+    QRESULT --> AUDIT["Async audit log"]
+    TOKEN --> AUDIT
+    DRESULT --> AUDIT
+```
 
 ## Admin API Endpoints
 

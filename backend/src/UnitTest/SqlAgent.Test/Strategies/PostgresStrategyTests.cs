@@ -276,4 +276,192 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         Assert.Equal(133.33m, rows[0].GetProperty("avg_amount").GetDecimal());
     }
 
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportSelectWindowFunction()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "user_id" },
+                    new FieldSelectCondition { FieldName = "order_date" },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "LAG",
+                        Arguments = [new FieldSelectCondition { FieldName = "order_date" }],
+                        Alias = "previous_order_date",
+                        Window = new WindowDefinition
+                        {
+                            PartitionBy = [new FieldGroupByCondition { FieldName = "user_id" }],
+                            OrderBy = [new FieldOrderByCondition { FieldName = "order_date" }]
+                        }
+                    }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new BasicWhereCondition { FieldName = "user_id", Operator = "=", Value = 1 }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "order_date", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(JsonValueKind.Null, rows[0].GetProperty("previous_order_date").ValueKind);
+        Assert.Contains("2023-01-10", rows[1].GetProperty("previous_order_date").ToString());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldTranslatePortableDateFormat()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "DATE_FORMAT",
+                        Arguments =
+                        [
+                            new FieldSelectCondition { FieldName = "order_date" },
+                            new ConstantSelectCondition { Constant = "%Y-%m" }
+                        ],
+                        Alias = "order_month"
+                    },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "COUNT",
+                        Arguments = [new FieldSelectCondition { FieldName = "id" }],
+                        Alias = "total_orders"
+                    }
+                ],
+                GroupByConditions =
+                [
+                    new FunctionGroupByCondition
+                    {
+                        FunctionName = "DATE_FORMAT",
+                        Arguments =
+                        [
+                            new FieldSelectCondition { FieldName = "order_date" },
+                            new ConstantSelectCondition { Constant = "%Y-%m" }
+                        ]
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "order_month", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Equal(3, rows.Count);
+        Assert.Equal("2023-01", rows[0].GetProperty("order_month").GetString());
+        Assert.Equal(1, rows[0].GetProperty("total_orders").GetInt64());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldTranslatePortableDateDiff()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "id" },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "DATEDIFF",
+                        Arguments =
+                        [
+                            new ConstantSelectCondition { Constant = "2023-02-15" },
+                            new FieldSelectCondition { FieldName = "order_date" }
+                        ],
+                        Alias = "days_until"
+                    }
+                ],
+                WhereColumnsAndValues =
+                [
+                    new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 1 }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.Equal(36, rows[0].GetProperty("days_until").GetInt32());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportExpressionHavingWithAggregateArithmetic()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FieldSelectCondition { FieldName = "user_id" },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "SUM",
+                        Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                        Alias = "total_amount"
+                    }
+                ],
+                GroupByConditions =
+                [
+                    new FieldGroupByCondition { FieldName = "user_id" }
+                ],
+                HavingConditions =
+                [
+                    new ExpressionHavingCondition
+                    {
+                        LeftExpression = new OperationSelectCondition
+                        {
+                            Left = new FunctionSelectCondition
+                            {
+                                FunctionName = "SUM",
+                                Arguments = [new FieldSelectCondition { FieldName = "amount" }]
+                            },
+                            Operator = ArithmeticOperator.Subtract,
+                            Right = new ConstantSelectCondition { Constant = 100 }
+                        },
+                        Operator = ">",
+                        RightExpression = new ConstantSelectCondition { Constant = 0 }
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "user_id", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+        Assert.Equal(1, rows[0].GetProperty("user_id").GetInt32());
+        Assert.Equal(350m, rows[0].GetProperty("total_amount").GetDecimal());
+    }
+
 }

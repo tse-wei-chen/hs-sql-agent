@@ -104,7 +104,7 @@ public class McpAccessKeyAuthMiddlewareTests
             KeyId = 1,
             Name = "Test Key",
             DbManagementId = 10,
-            AllowedTools = "execute_query_safe,get_tables",
+            AllowedTools = "execute_query_sql,get_tables",
             CorsAllowedOrigins = "http://localhost:3000",
             TableWhitelist = "dbo.users,dbo.orders"
         };
@@ -138,7 +138,7 @@ public class McpAccessKeyAuthMiddlewareTests
             Assert.Equal("Host=localhost;Port=5432;Database=testdb;Username=admin;Password=decrypted", ctx.Items[Common.Models.McpContextItemKeys.SqlConnectionString]);
             Assert.Equal(1, ctx.Items[Common.Models.McpContextItemKeys.AccessKeyId]);
             Assert.Equal(10, ctx.Items[Common.Models.McpContextItemKeys.DbManagementId]);
-            Assert.Equal("execute_query_safe,get_tables", ctx.Items[Common.Models.McpContextItemKeys.AllowedTools]);
+            Assert.Equal("execute_query_sql,get_tables", ctx.Items[Common.Models.McpContextItemKeys.AllowedTools]);
             Assert.Equal("dbo.users,dbo.orders", ctx.Items[Common.Models.McpContextItemKeys.TableWhitelist]);
             return Task.CompletedTask;
         };

@@ -7,6 +7,7 @@ namespace SqlAgent.Service.Models;
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(BasicHavingCondition), "basic")]
 [JsonDerivedType(typeof(FunctionHavingCondition), "function_compare")]
+[JsonDerivedType(typeof(ExpressionHavingCondition), "expression")]
 [JsonDerivedType(typeof(GroupHavingCondition), "group")]
 public abstract class HavingCondition
 {
@@ -38,6 +39,18 @@ public class FunctionHavingCondition : HavingCondition
 
     [Description("The expected threshold value, e.g., 50000")]
     public object? Value { get; set; }
+}
+
+public class ExpressionHavingCondition : HavingCondition
+{
+    [Description("The left-hand side expression (field, operation, function, etc.).")]
+    public SelectCondition LeftExpression { get; set; } = null!;
+
+    [Description("Comparison operator, e.g., '>', '<=', '=', 'IS'.")]
+    public string Operator { get; set; } = ">";
+
+    [Description("The optional right-hand side expression. Leave null for IS NULL / IS NOT NULL.")]
+    public SelectCondition? RightExpression { get; set; }
 }
 
 public class GroupHavingCondition : HavingCondition

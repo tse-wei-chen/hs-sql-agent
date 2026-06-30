@@ -63,6 +63,36 @@ Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wik
 | 📡 API Reference | [API-Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/API-Reference) |
 | ❓ FAQ | [FAQ](https://github.com/tse-wei-chen/hs-sql-agent/wiki/FAQ) |
 
+## SQL Execution Flow
+
+```mermaid
+flowchart TD
+    LLM["LLM / MCP Client"] -->|Call tool with raw SQL| MCP["HsSqlAgent MCP Server"]
+    MCP --> AUTH["Access key auth<br/>allowed tools + DB binding + table whitelist"]
+    AUTH --> ROUTE{"Tool"}
+
+    ROUTE -->|execute_query_sql(sql)| QPARSE["Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
+    QPARSE --> QDEF["QueryDefinition"]
+    QDEF --> QVALID["DefinitionValidator<br/>+ table whitelist checks"]
+    QVALID --> QSTRATEGY["SQL Strategy<br/>SQLite / PostgreSQL / MySQL / SQL Server / Oracle / Firebird"]
+    QSTRATEGY --> QEXEC["Execute SELECT"]
+    QEXEC --> QRESULT["Rows / JSON result"]
+
+    ROUTE -->|execute_dml_sql(sql)| DPARSE["Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
+    DPARSE --> DDEF["DmlDefinition"]
+    DDEF --> DVALID["DefinitionValidator<br/>+ table whitelist checks"]
+    DVALID --> DRYRUN{"confirmToken provided?"}
+    DRYRUN -->|No| TOKEN["Dry-run preview<br/>returns TokenRequired"]
+    TOKEN -->|LLM reviews and calls again<br/>same SQL + confirmToken| DPARSE
+    DRYRUN -->|Yes| DSTRATEGY["SQL Strategy validates token"]
+    DSTRATEGY --> DEXEC["Execute INSERT / UPDATE / DELETE"]
+    DEXEC --> DRESULT["Affected rows result"]
+
+    QRESULT --> AUDIT["Async audit log"]
+    TOKEN --> AUDIT
+    DRESULT --> AUDIT
+```
+
 ## 🤝 Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) wiki page.

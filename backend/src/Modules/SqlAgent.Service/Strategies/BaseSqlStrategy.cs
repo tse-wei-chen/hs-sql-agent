@@ -22,8 +22,8 @@ public abstract partial class BaseSqlStrategy(
     private readonly IQueryValueParserService _valueParser = valueParser;
 
     private static SqlFunctionCondition ToFunc(
-        string name, List<SelectCondition>? args, bool distinct, List<WhereCondition>? filter) =>
-        new() { FunctionName = name, Arguments = args, IsDistinct = distinct, FilterWhereConditions = filter };
+        string name, List<SelectCondition>? args, bool distinct, List<WhereCondition>? filter, WindowDefinition? window = null) =>
+        new() { FunctionName = name, Arguments = args, IsDistinct = distinct, FilterWhereConditions = filter, Window = window };
     protected readonly IConfiguration _configuration = configuration;
 
     public abstract SqlAgentToolType DbType { get; }
@@ -417,7 +417,7 @@ public abstract partial class BaseSqlStrategy(
             {
                 OperationSelectCondition opCol => MapArithmetic(opCol),
                 ConstantSelectCondition constCol => MapArithmetic(constCol),
-                FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
+                FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window)),
                 CaseWhenSelectCondition caseWhenCol => MapCaseWhen(caseWhenCol.CaseWhen, caseWhenCol.ElseValue),
                 SubQuerySelectCondition subQueryCol => MapSubQueryColumn(subQueryCol),
                 FieldSelectCondition fieldCol when !string.IsNullOrWhiteSpace(fieldCol.FieldName)
@@ -516,7 +516,7 @@ public abstract partial class BaseSqlStrategy(
                 Operator = GetOperatorString(op.Operator)
             },
 
-            FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
+            FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window)),
 
             ConstantSelectCondition cst => MapConstantValue(cst.Constant),
 
@@ -652,7 +652,7 @@ public abstract partial class BaseSqlStrategy(
         return argument switch
         {
             OperationSelectCondition a => MapArithmetic(a),
-            FunctionSelectCondition nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions)),
+            FunctionSelectCondition nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions, nf.Window)),
             ConstantSelectCondition constantArg => MapConstantValue(constantArg.Constant),
             CaseWhenSelectCondition caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
             FieldSelectCondition fieldArg when !string.IsNullOrWhiteSpace(fieldArg.FieldName)
@@ -686,6 +686,7 @@ public abstract partial class BaseSqlStrategy(
             SubQueryWhereCondition s => ApplySubQueryWhere(query, s),
             BasicWhereCondition b => ApplyBasicWhere(query, b),
             ColumnCompareWhereCondition c => ApplyColumnCompareWhere(query, c),
+            ExpressionWhereCondition e => ApplyExpressionWhere(query, e),
             _ => query
         };
     }
@@ -792,6 +793,28 @@ public abstract partial class BaseSqlStrategy(
             return query.Not().WhereColumns(c.LeftFieldName, op, c.RightFieldName);
 
         return query.WhereColumns(c.LeftFieldName, op, c.RightFieldName);
+    }
+
+    private Q ApplyExpressionWhere<Q>(Q query, ExpressionWhereCondition c)
+        where Q : BaseQuery<Q>
+    {
+        if (c.LeftExpression == null)
+            return query;
+
+        var bindings = new List<object>();
+        var leftSql = BuildHavingArgPart(c.LeftExpression, bindings);
+        var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
+        var rightSql = c.RightExpression != null
+            ? BuildHavingArgPart(c.RightExpression, bindings)
+            : "?";
+
+        var sql = $"({leftSql}) {op} ({rightSql})";
+
+        if (c.IsOr)
+            return query.OrWhereRaw(sql, [.. bindings]);
+        if (c.IsNot)
+            return query.Not().WhereRaw(sql, [.. bindings]);
+        return query.WhereRaw(sql, [.. bindings]);
     }
 
     private void ApplySimpleWhere<Q>(Q query, string field, string op, object? val)
@@ -924,7 +947,7 @@ public abstract partial class BaseSqlStrategy(
 
                 query = query.Join(
                     sub.As(alias),
-                    j => { ApplyOnConditions(j, join); return j; },
+                    j => ApplyOnConditions(j, join),
                     sqlJoinType
                 );
             }
@@ -936,7 +959,7 @@ public abstract partial class BaseSqlStrategy(
                 {
                     query = query.Join(
                         $"{tableName} AS {join.Alias}",
-                        j => { ApplyOnConditions(j, join); return j; },
+                        j => ApplyOnConditions(j, join),
                         sqlJoinType
                     );
                 }
@@ -944,7 +967,7 @@ public abstract partial class BaseSqlStrategy(
                 {
                     query = query.Join(
                         tableName,
-                        j => { ApplyOnConditions(j, join); return j; },
+                        j => ApplyOnConditions(j, join),
                         sqlJoinType
                     );
                 }
@@ -967,17 +990,21 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
-    private void ApplyOnConditions(Join j, JoinCondition join)
+    private Join ApplyOnConditions(Join j, JoinCondition join)
     {
+        if (join.Type == JoinType.Cross && (join.OnConditions == null || join.OnConditions.Count == 0))
+        {
+            return j;
+        }
+
         if (join.OnConditions != null && join.OnConditions.Count > 0)
         {
             ApplyWhereConditions(j, join.OnConditions);
+            return j;
         }
-        else
-        {
-            throw new InvalidOperationException(
-                $"Join on '{join.Alias ?? join.Table}' must have at least one OnCondition.");
-        }
+
+        throw new InvalidOperationException(
+            $"Join on '{join.Alias ?? join.Table}' must have at least one OnCondition.");
     }
 
     // =====================================================================
@@ -1024,6 +1051,7 @@ public abstract partial class BaseSqlStrategy(
             GroupHavingCondition g => ApplyGroupHaving(query, g),
             BasicHavingCondition b => ApplyBasicHaving(query, b),
             FunctionHavingCondition f => ApplyFunctionHaving(query, f),
+            ExpressionHavingCondition e => ApplyExpressionHaving(query, e),
             _ => query
         };
     }
@@ -1091,6 +1119,34 @@ public abstract partial class BaseSqlStrategy(
         return baseQuery.HavingRaw($"{expr} {sqlOp} ?", [.. bindings]);
     }
 
+    private Query ApplyExpressionHaving(Query query, ExpressionHavingCondition c)
+    {
+        if (c.LeftExpression == null)
+            return query;
+
+        var bindings = new List<object>();
+        var leftSql = BuildHavingArgPart(c.LeftExpression, bindings);
+        var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
+        var sqlOp = op switch
+        {
+            "is" or "isnull" => "IS NULL",
+            "isnot" or "isnotnull" => "IS NOT NULL",
+            _ => op
+        };
+
+        var baseQuery = c.IsOr ? query.Or() : query;
+        baseQuery = c.IsNot ? baseQuery.Not() : baseQuery;
+
+        if (sqlOp is "IS NULL" or "IS NOT NULL")
+            return baseQuery.HavingRaw($"{leftSql} {sqlOp}", [.. bindings]);
+
+        var rightSql = c.RightExpression != null
+            ? BuildHavingArgPart(c.RightExpression, bindings)
+            : "?";
+
+        return baseQuery.HavingRaw($"{leftSql} {sqlOp} {rightSql}", [.. bindings]);
+    }
+
     private string BuildHavingFuncExpr(SqlFunctionCondition func, List<object> bindings)
     {
         var argParts = func.Arguments?.Select(a => BuildHavingArgPart(a, bindings)).ToList() ?? [];
@@ -1133,6 +1189,14 @@ public abstract partial class BaseSqlStrategy(
         {
             FieldSelectCondition f => f.FieldName,
             ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            FunctionSelectCondition fn => BuildHavingFuncExpr(new SqlFunctionCondition
+            {
+                FunctionName = fn.FunctionName,
+                Arguments = fn.Arguments,
+                IsDistinct = fn.IsDistinct,
+                FilterWhereConditions = fn.FilterWhereConditions,
+                Window = fn.Window,
+            }, bindings),
             OperationSelectCondition nested => BuildHavingArithPart(nested, bindings),
             _ => "?"
         };
@@ -1140,6 +1204,14 @@ public abstract partial class BaseSqlStrategy(
         {
             FieldSelectCondition f => f.FieldName,
             ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            FunctionSelectCondition fn => BuildHavingFuncExpr(new SqlFunctionCondition
+            {
+                FunctionName = fn.FunctionName,
+                Arguments = fn.Arguments,
+                IsDistinct = fn.IsDistinct,
+                FilterWhereConditions = fn.FilterWhereConditions,
+                Window = fn.Window,
+            }, bindings),
             OperationSelectCondition nested => BuildHavingArithPart(nested, bindings),
             _ => "?"
         };

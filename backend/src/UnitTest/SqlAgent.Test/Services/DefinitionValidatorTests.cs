@@ -275,6 +275,58 @@ public class DefinitionValidatorTests
     }
 
     [Fact]
+    public void Validate_SelectColumnFunctionWindowNullPartitionBy_ReturnsError()
+    {
+        var qd = new QueryDefinition
+        {
+            TableName = "orders",
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "LAG",
+                    Arguments = [new FieldSelectCondition { FieldName = "order_date" }],
+                    Window = new WindowDefinition
+                    {
+                        PartitionBy = [null!],
+                        OrderBy = [new FieldOrderByCondition { FieldName = "order_date" }]
+                    }
+                }
+            ]
+        };
+
+        var errors = DefinitionValidator.Validate(qd);
+
+        Assert.Contains(errors, e => e.Contains("selectColumns[0].window.partitionBy[0]") && e.Contains("null"));
+    }
+
+    [Fact]
+    public void Validate_SelectColumnFunctionWindowValid_ReturnsNoErrors()
+    {
+        var qd = new QueryDefinition
+        {
+            TableName = "orders",
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "LAG",
+                    Arguments = [new FieldSelectCondition { FieldName = "order_date" }],
+                    Window = new WindowDefinition
+                    {
+                        PartitionBy = [new FieldGroupByCondition { FieldName = "customer_id" }],
+                        OrderBy = [new FieldOrderByCondition { FieldName = "order_date" }]
+                    }
+                }
+            ]
+        };
+
+        var errors = DefinitionValidator.Validate(qd);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void Validate_SelectColumnCaseWhenEmptyCases_ReturnsError()
     {
         var qd = new QueryDefinition
@@ -653,6 +705,28 @@ public class DefinitionValidatorTests
         };
         var errors = DefinitionValidator.Validate(qd);
         Assert.Contains(errors, e => e.Contains("joins[0]") && e.Contains("onConditions"));
+    }
+
+    [Fact]
+    public void Validate_CrossJoinNoOnConditions_ReturnsNoErrors()
+    {
+        var qd = new QueryDefinition
+        {
+            TableName = "users",
+            Joins =
+            [
+                new JoinCondition
+                {
+                    Table = "system_max",
+                    Type = JoinType.Cross,
+                    OnConditions = []
+                }
+            ]
+        };
+
+        var errors = DefinitionValidator.Validate(qd);
+
+        Assert.Empty(errors);
     }
 
     [Fact]

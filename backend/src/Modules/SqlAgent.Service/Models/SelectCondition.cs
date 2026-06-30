@@ -61,6 +61,9 @@ public class FunctionSelectCondition : SelectCondition
 
     [Description("Optional. Filter clause for aggregate functions (e.g., COUNT(*) FILTER (WHERE ...)). Put the WHERE conditions here.")]
     public List<WhereCondition>? FilterWhereConditions { get; set; }
+
+    [Description("Optional. Window definition for SELECT window functions, e.g., LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date).")]
+    public WindowDefinition? Window { get; set; }
 }
 
 public class CaseWhenSelectCondition : SelectCondition
