@@ -48,6 +48,11 @@ public class ConstantSelectCondition : SelectCondition
     public object Constant { get; set; } = string.Empty;
 }
 
+internal class TemplateSqlTokenSelectCondition : SelectCondition
+{
+    public string Token { get; set; } = string.Empty;
+}
+
 public class FunctionSelectCondition : SelectCondition
 {
     [Description("SQL function name in UPPERCASE. e.g., 'COUNT', 'SUM', 'AVG', 'ROUND', 'NULLIF', 'COALESCE'.")]

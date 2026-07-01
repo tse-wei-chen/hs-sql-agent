@@ -11,9 +11,53 @@ using System.Text.RegularExpressions;
 
 namespace SqlAgent.Service.Strategies;
 
-public partial class PostgresStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class PostgresStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
+
+    protected override IReadOnlyDictionary<string, string> FunctionNameMappings => new Dictionary<string, string>
+    {
+        ["DATE_FORMAT"] = "TO_CHAR",
+        ["FORMAT"] = "TO_CHAR",
+        ["IFNULL"] = "COALESCE",
+        ["NVL"] = "COALESCE",
+        ["ISNULL"] = "COALESCE",
+        ["RAND"] = "RANDOM",
+        ["LEN"] = "LENGTH",
+        ["CEILING"] = "CEIL",
+        ["REPLICATE"] = "REPEAT",
+        ["LISTAGG"] = "STRING_AGG",
+        ["LIST"] = "STRING_AGG",
+    };
+
+    protected override IReadOnlyDictionary<string, string> FunctionTemplates => new Dictionary<string, string>
+    {
+        ["NOW"] = "@CurrentTimestamp",
+        ["SYSDATE"] = "@CurrentTimestamp",
+        ["GETDATE"] = "@CurrentTimestamp",
+
+        // DATEDIFF — date subtraction returns integer days in PG
+        ["DATEDIFF($1, $2)"] = "$1 - $2",
+        ["DATEDIFF($1, $2, $3)"] = "$2 - $3",
+
+        // Date part extraction — use DATE_PART (comma-separated args, engine-safe)
+        ["YEAR($1)"] = "DATE_PART('year', $1)",
+        ["MONTH($1)"] = "DATE_PART('month', $1)",
+        ["DAY($1)"] = "DATE_PART('day', $1)",
+
+        // LOCATE/INSTR/CHARINDEX → STRPOS — all need arg reversal vs STRPOS(str,substr)
+        ["LOCATE($1, $2)"] = "STRPOS($2, $1)",
+        ["INSTR($1, $2)"] = "STRPOS($1, $2)",    // INSTR(str,substr) same order as STRPOS
+        ["CHARINDEX($1, $2)"] = "STRPOS($2, $1)", // CHARINDEX(substr,str) reversed
+
+        // SQLite STRFTIME(fmt, date) → TO_CHAR(date, fmt) — reversed args
+        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1)",
+
+        // GROUP_CONCAT → STRING_AGG (separator required in PG)
+        ["GROUP_CONCAT($1)"] = "STRING_AGG($1, ',')",
+        ["GROUP_CONCAT($1, $2)"] = "STRING_AGG($1, $2)",
+    };
+
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
     {
         var builder = new NpgsqlConnectionStringBuilder

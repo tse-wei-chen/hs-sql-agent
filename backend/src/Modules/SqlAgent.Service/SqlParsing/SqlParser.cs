@@ -487,7 +487,7 @@ public class SqlParser(Token[] tokens)
         if (PeekKeyword("IS"))
         {
             Advance();
-            if (PeekKeyword("NOT")) { Advance(); return new BasicWhereCondition { FieldName = ExtractFieldName(leftExpr), Operator = "IS", Value = null, IsNot = true }; }
+            if (PeekKeyword("NOT")) { Advance(); ExpectKeyword("NULL"); return new BasicWhereCondition { FieldName = ExtractFieldName(leftExpr), Operator = "IS", Value = null, IsNot = true }; }
             ExpectKeyword("NULL");
             return new BasicWhereCondition { FieldName = ExtractFieldName(leftExpr), Operator = "IS", Value = null };
         }
@@ -1111,6 +1111,7 @@ public class SqlParser(Token[] tokens)
         if (fnName == "COUNT" && Peek().Type == TokenType.Operator && Peek().Value == "*")
         {
             Advance();
+            args.Add(new FieldSelectCondition { FieldName = "*" });
         }
         else if (Peek().Type != TokenType.RParen)
         {
@@ -1208,18 +1209,33 @@ public class SqlParser(Token[] tokens)
     private SelectCondition ParseCaseExpr()
     {
         Advance();
-        var caseExpr = Peek().Type != TokenType.Keyword && PeekKeyword("WHEN") ? null : ParseExpr();
+        var caseExpr = Peek().Type == TokenType.Keyword && PeekKeyword("WHEN") ? null : ParseExpr();
         var cases = new List<CaseWhenClause>();
 
         while (PeekKeyword("WHEN"))
         {
             Advance();
-            var whenExpr = ParseExpr();
+            WhereCondition condition;
+            if (caseExpr != null)
+            {
+                var whenExpr = ParseExpr();
+                // CASE expr WHEN val → compare expr = val
+                condition = new ExpressionWhereCondition
+                {
+                    LeftExpression = caseExpr,
+                    Operator = "=",
+                    RightExpression = whenExpr,
+                };
+            }
+            else
+            {
+                condition = ParseWhereOrExpr();
+            }
             ExpectKeyword("THEN");
             var thenExpr = ParseExprWithAlias(out _);
             cases.Add(new CaseWhenClause
             {
-                Condition = ConvertSelectToWhereCondition(whenExpr),
+                Condition = condition,
                 Value = thenExpr,
             });
         }

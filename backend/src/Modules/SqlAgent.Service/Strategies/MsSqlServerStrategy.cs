@@ -14,6 +14,44 @@ public partial class MsSqlServerStrategy(IQueryValueParserService valueParser, I
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
+    protected override IReadOnlyDictionary<string, string> FunctionNameMappings => new Dictionary<string, string>
+    {
+        ["DATE_FORMAT"] = "FORMAT",
+        ["TO_CHAR"] = "FORMAT",
+        ["IFNULL"] = "ISNULL",
+        ["NVL"] = "ISNULL",
+        ["LENGTH"] = "LEN",
+        ["LOCATE"] = "CHARINDEX",
+        ["CEIL"] = "CEILING",
+        ["REPEAT"] = "REPLICATE",
+        ["RANDOM"] = "RAND",
+        ["SYSDATE"] = "GETDATE",
+        ["LISTAGG"] = "STRING_AGG",
+        ["LIST"] = "STRING_AGG",
+    };
+
+    protected override IReadOnlyDictionary<string, string> FunctionTemplates => new Dictionary<string, string>
+    {
+        // 2-arg DATEDIFF(date1,date2) → needs DAY unit + arg reorder for MSSQL
+        ["DATEDIFF($1, $2)"] = "DATEDIFF(@Day, $2, $1)",
+
+        // EXTRACT(year FROM date) → DATEPART(year, date)
+        // Note: YEAR/MONTH/DAY shorthands are native in MSSQL — no translation needed
+
+        // SQLite STRFTIME(fmt, date) → FORMAT(date, fmt) — reversed
+        ["STRFTIME($1, $2)"] = "FORMAT($2, $1)",
+
+        // GROUP_CONCAT → STRING_AGG (separator required in MSSQL)
+        ["GROUP_CONCAT($1)"] = "STRING_AGG($1, ',')",
+        ["GROUP_CONCAT($1, $2)"] = "STRING_AGG($1, $2)",
+
+        // STRPOS(str,substr) → CHARINDEX(substr,str) reversed
+        ["STRPOS($1, $2)"] = "CHARINDEX($2, $1)",
+
+        // INSTR(str,substr) → CHARINDEX(substr,str) reversed
+        ["INSTR($1, $2)"] = "CHARINDEX($2, $1)",
+    };
+
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
     {
         var builder = new SqlConnectionStringBuilder

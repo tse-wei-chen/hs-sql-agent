@@ -1,11 +1,13 @@
 using System.Data.Common;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using SqlKata;
 using SqlKata.Compilers;
 using SqlKata.Execution;
@@ -16,6 +18,13 @@ public abstract partial class BaseSqlStrategy(
     IQueryValueParserService valueParser,
     IConfiguration configuration) : ISqlStrategy
 {
+    private enum TemplateSqlToken
+    {
+        Day,
+        CurrentTimestamp,
+        Sysdate,
+    }
+
     [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")]
     private static partial Regex SafeFunctionNamePattern();
 
@@ -488,24 +497,60 @@ public abstract partial class BaseSqlStrategy(
             caseCol.Cases.Add(new global::SqlKata.CaseWhenClause
             {
                 ConditionQuery = whenQuery,
-                Value = c.Value is JsonElement je
-                    ? _valueParser.UnwrapJsonElement(je)
-                    : c.Value
+                Value = MapCaseWhenValue(c.Value)
             });
         }
 
-        caseCol.ElseValue = elseValue is JsonElement eje
-            ? _valueParser.UnwrapJsonElement(eje)
-            : elseValue;
+        caseCol.ElseValue = MapCaseWhenValue(elseValue);
 
         return caseCol;
+    }
+
+    private object? MapCaseWhenValue(object? val)
+    {
+        if (val is JsonElement je)
+        {
+            if (je.ValueKind == JsonValueKind.Object && je.TryGetProperty("type", out var typeProp)
+                && typeProp.GetString() == "constant"
+                && je.TryGetProperty("constant", out var constProp))
+            {
+                return UnwrapNumericConstant(constProp);
+            }
+            return _valueParser.UnwrapJsonElement(je);
+        }
+        if (val is ConstantSelectCondition cs)
+        {
+            var raw = cs.Constant is JsonElement csJe
+                ? _valueParser.UnwrapJsonElement(csJe)
+                : cs.Constant;
+            return raw is sbyte or byte or short or ushort or int or uint or long or ulong
+                ? Convert.ToDecimal(raw, CultureInfo.InvariantCulture)
+                : raw;
+        }
+        if (val is SelectCondition sc)
+            return MapArithmetic(sc);
+        return val;
+    }
+
+    private static object? UnwrapNumericConstant(JsonElement constProp)
+    {
+        if (constProp.ValueKind == JsonValueKind.Number)
+        {
+            if (constProp.TryGetInt64(out var l)) return l is >= int.MinValue and <= int.MaxValue ? (int)l : l;
+            return constProp.GetDouble();
+        }
+        if (constProp.ValueKind == JsonValueKind.String)
+            return constProp.GetString()!;
+        if (constProp.ValueKind == JsonValueKind.True) return true;
+        if (constProp.ValueKind == JsonValueKind.False) return false;
+        return constProp.ToString();
     }
 
     // =====================================================================
     // Arithmetic expressions
     // =====================================================================
 
-    private AbstractColumn MapArithmetic(SelectCondition? expr)
+    protected AbstractColumn MapArithmetic(SelectCondition? expr)
     {
         return expr switch
         {
@@ -520,9 +565,13 @@ public abstract partial class BaseSqlStrategy(
 
             ConstantSelectCondition cst => MapConstantValue(cst.Constant),
 
+            TemplateSqlTokenSelectCondition token => MapTemplateSqlToken(token),
+
             FieldSelectCondition field => new Column { Name = field.FieldName.Trim() },
 
             CaseWhenSelectCondition cs => MapCaseWhen(cs.CaseWhen, cs.ElseValue),
+
+            SubQuerySelectCondition subQuery => MapSubQueryColumn(subQuery),
 
             null => throw new InvalidOperationException("Expression is null."),
 
@@ -584,17 +633,50 @@ public abstract partial class BaseSqlStrategy(
     }
 
     // =====================================================================
-    // SQL Functions
+    // SQL Functions — dialect normalization
     // =====================================================================
 
-    private FunctionColumn MapFunction(SqlFunctionCondition function)
+    /// <summary>
+    /// Simple 1-to-1 function name remapping: key (UPPER) → target name.
+    /// DATE_FORMAT → TO_CHAR, etc.
+    /// </summary>
+    protected virtual IReadOnlyDictionary<string, string> FunctionNameMappings =>
+        new Dictionary<string, string>();
+
+    /// <summary>
+    /// Declarative template-based function translation.
+    /// Key (UPPER) → template string with $1..$N as positional arg refs.
+    /// Examples:
+    ///   "DATEDIFF" → "DATE_PART('day', $1 - $2)"         (PostgreSQL)
+    ///   "DATEDIFF" → "JULIANDAY($1) - JULIANDAY($2)"      (SQLite)
+    ///   "DATEADD"  → "$3 + INTERVAL '$2 $1'"              (PostgreSQL)
+    /// </summary>
+    protected virtual IReadOnlyDictionary<string, string> FunctionTemplates =>
+        new Dictionary<string, string>();
+
+    protected AbstractColumn MapFunction(SqlFunctionCondition function)
     {
+        var translated = ApplyFunctionTranslation(function);
+        if (translated != null)
+        {
+            // Template translations bypass ApplyWindowAndFilter below.
+            // Re-apply window/filter if the result is a FunctionColumn.
+            if (translated is FunctionColumn fc)
+                ApplyWindowAndFilter(function, fc);
+            return translated;
+        }
+
         var functionName = function.FunctionName?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(functionName) || !SafeFunctionNamePattern().IsMatch(functionName))
             throw new InvalidOperationException($"Invalid function name: {function.FunctionName}");
 
         var args = function.Arguments?.Select(MapFunctionArgument).ToList() ?? [];
+
+        if (args.Count == 0 && functionName == "COUNT")
+        {
+            args = [new RawColumn { Expression = "*", Bindings = [] }];
+        }
 
         var result = new FunctionColumn
         {
@@ -603,6 +685,64 @@ public abstract partial class BaseSqlStrategy(
             IsDistinct = function.IsDistinct
         };
 
+        ApplyWindowAndFilter(function, result);
+        return result;
+    }
+
+    private AbstractColumn? ApplyFunctionTranslation(SqlFunctionCondition function)
+    {
+        var fnName = function.FunctionName?.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(fnName))
+            return null;
+
+        var argCount = function.Arguments?.Count ?? 0;
+
+        // 1. Try signature-pattern match: "FUNCNAME($1, $2, ...)" (disambiguates same name, different arg count)
+        if (argCount > 0)
+        {
+            var sigKey = BuildSignatureKey(fnName, argCount);
+            if (FunctionTemplates.TryGetValue(sigKey, out var sigTemplate))
+            {
+                var engine = new FunctionTemplateEngine(sigTemplate);
+                var selectResult = engine.Translate(function.Arguments);
+                if (selectResult != null)
+                    return MapArithmetic(selectResult);
+            }
+        }
+
+        // 2. Try name-only template match (original behavior)
+        if (FunctionTemplates.TryGetValue(fnName, out var template))
+        {
+            var engine = new FunctionTemplateEngine(template);
+            var selectResult = engine.Translate(function.Arguments);
+            if (selectResult != null)
+                return MapArithmetic(selectResult);
+        }
+
+        // 3. Try name-only remapping
+        if (FunctionNameMappings.TryGetValue(fnName, out var mappedName))
+        {
+            function.FunctionName = mappedName;
+        }
+
+        return null; // fall through to default
+    }
+
+    private static string BuildSignatureKey(string fnName, int argCount)
+    {
+        var sb = new StringBuilder(fnName);
+        sb.Append('(');
+        for (var i = 1; i <= argCount; i++)
+        {
+            if (i > 1) sb.Append(", ");
+            sb.Append('$').Append(i);
+        }
+        sb.Append(')');
+        return sb.ToString();
+    }
+
+    private void ApplyWindowAndFilter(SqlFunctionCondition function, FunctionColumn result)
+    {
         if (function.FilterWhereConditions?.Count > 0)
         {
             var filterQuery = new Query();
@@ -642,9 +782,14 @@ public abstract partial class BaseSqlStrategy(
                     .Where(x => x.Item1 != null)
                     .Select(x => (x.Item1!, x.Item2))];
             }
+
+            // Empty OVER () → force SqlKata to emit OVER (PARTITION BY 1)
+            if (result.OverPartitionBy == null && result.OverOrderBy == null)
+            {
+                result.OverPartitionBy = [new RawColumn { Expression = "1", Bindings = [] }];
+            }
         }
 
-        return result;
     }
 
     private AbstractColumn MapFunctionArgument(SelectCondition argument)
@@ -654,9 +799,12 @@ public abstract partial class BaseSqlStrategy(
             OperationSelectCondition a => MapArithmetic(a),
             FunctionSelectCondition nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions, nf.Window)),
             ConstantSelectCondition constantArg => MapConstantValue(constantArg.Constant),
+            TemplateSqlTokenSelectCondition tokenArg => MapTemplateSqlToken(tokenArg),
             CaseWhenSelectCondition caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
             FieldSelectCondition fieldArg when !string.IsNullOrWhiteSpace(fieldArg.FieldName)
-                => new Column { Name = fieldArg.FieldName.Trim() },
+                => fieldArg.FieldName.Trim() == "*"
+                    ? new RawColumn { Expression = "*", Bindings = [] }
+                    : new Column { Name = fieldArg.FieldName.Trim() },
             _ => throw new InvalidOperationException(
                 $"Unsupported or invalid function argument type: {argument?.GetType().Name ?? "null"}")
         };
@@ -1056,6 +1204,23 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
+    private static RawColumn MapTemplateSqlToken(TemplateSqlTokenSelectCondition token)
+    {
+        var value = token.Token.Replace("_", string.Empty).Trim();
+        if (!Enum.TryParse<TemplateSqlToken>(value, ignoreCase: true, out var parsed))
+            throw new InvalidOperationException($"Unsupported SQL token in function template: {token.Token}");
+
+        var expression = parsed switch
+        {
+            TemplateSqlToken.Day => "DAY",
+            TemplateSqlToken.CurrentTimestamp => "CURRENT_TIMESTAMP",
+            TemplateSqlToken.Sysdate => "SYSDATE",
+            _ => throw new InvalidOperationException($"Unsupported SQL token in function template: {token.Token}")
+        };
+
+        return new RawColumn { Expression = expression, Bindings = [] };
+    }
+
     private Query ApplyGroupHaving(Query query, GroupHavingCondition g)
     {
         if (g.Groups?.Count == 0)
@@ -1368,7 +1533,7 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
-    private static Query ApplyOrderByFunction(Query query, FunctionColumn function, SortDirection direction)
+    private static Query ApplyOrderByFunction(Query query, AbstractColumn function, SortDirection direction)
     {
         return direction switch
         {
