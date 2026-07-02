@@ -4,7 +4,9 @@ using System.Text.RegularExpressions;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Models;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using static ModelContextProtocol.Protocol.ElicitRequestParams;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -14,7 +16,7 @@ using SqlAgent.Service.Validation;
 namespace HsSqlAgent.Server.Tools;
 
 [McpServerToolType]
-public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IDbSemanticService semanticService)
+public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IDbSemanticService semanticService)
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
@@ -68,17 +70,17 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     }
 
     [McpServerTool, Description(@"
-        Execute one DML SQL statement (INSERT, UPDATE, DELETE). The server parses SQL into a DmlDefinition,
-        validates it, applies table whitelist checks, then uses a dry-run confirmation token before execution.
+        Execute one DML SQL statement (INSERT, UPDATE, DELETE). The server parses SQL,
+        validates it, applies table whitelist checks, then runs it inside a transaction
+        (dry-run) and presents the result to you for approval via an interactive prompt.
 
-        First call this tool with only sql to get TokenRequired. Review the dry-run result, then call again with the
-        same sql and confirmToken to execute.
+        You will see how many rows would be affected before deciding to commit or cancel.
     ")]
     public async Task<string> ExecuteDmlSql(
         [Description("A single INSERT, UPDATE, or DELETE SQL statement to parse and validate.")]
         string sql,
-        [Description("Optional confirmation token returned by the first dry-run call. Omit it to preview and receive TokenRequired.")]
-        string? confirmToken = null)
+        McpServer server,
+        CancellationToken cancellationToken)
     {
         DmlDefinition? dml = null;
         try
@@ -87,24 +89,70 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             if (string.IsNullOrWhiteSpace(sql))
                 return "Error: SQL is missing.";
 
+            if (server.ClientCapabilities?.Elicitation == null)
+                return "Error: This MCP client does not support the interactive confirmation required for DML execution.";
+
             dml = SqlDefinitionParser.ParseDml(sql);
-            dml.ConfirmToken = string.IsNullOrWhiteSpace(confirmToken) ? null : confirmToken;
             ValidateAllTableAccess(dml.TableName, null, null, null, dml.FromQuery, null, dml.WhereConditions);
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-            {
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
-            }
+
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 
             var dmlErrors = DefinitionValidator.Validate(dml);
             if (dmlErrors.Count > 0)
                 return "Validation failed:\n" + string.Join("\n", dmlErrors);
 
-            var result = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
+            // ── Dry-run ──────────────────────────────────────────────────────
 
-            await _auditService.WriteLogAsync("mcp.dml.executed", dml?.TableName ?? "unknown", "success", $"Operation: {dml?.Operation}");
-            return result;
+            dml.ConfirmToken = null;
+            var dryRunResult = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml, cancellationToken);
+
+            if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
+                return dryRunResult;
+
+            var affectedMatch = AffectedMatchRegex().Match(dryRunResult);
+            var tokenMatch = TokenMatchRegex().Match(dryRunResult);
+            if (!affectedMatch.Success || !tokenMatch.Success)
+                return dryRunResult;
+
+            var affectedRows = affectedMatch.Groups[1].Value;
+            var detToken = tokenMatch.Groups[1].Value;
+
+            // ── Present to user for approval via Elicitation ─────────────────
+
+            var elicitSchema = new RequestSchema
+            {
+                Properties =
+                {
+                    ["approve"] = new BooleanSchema
+                    {
+                        Title = "Approve execution",
+                        Description = $"This will {dml.Operation.ToString().ToLowerInvariant()} {affectedRows} row(s) in {dml.TableName}"
+                    }
+                }
+            };
+
+            var elicitResult = await server.ElicitAsync(new ElicitRequestParams
+            {
+                Message = $"{dml.Operation} on {dml.TableName} — {affectedRows} row(s) affected\n\nSQL: {sql}",
+                RequestedSchema = elicitSchema
+            }, cancellationToken);
+
+            if (elicitResult.Action != "accept" || elicitResult.Content?.TryGetValue("approve", out var approveEl) != true || approveEl.ValueKind != JsonValueKind.True)
+            {
+                await _auditService.WriteLogAsync("mcp.dml.executed", dml.TableName, "cancelled", $"Operation: {dml.Operation} (cancelled by user)", cancellationToken);
+                return "DML execution cancelled by user.";
+            }
+
+            // ── Execute for real ──────────────────────────────────────────────
+
+            dml.ConfirmToken = detToken;
+            var finalResult = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml, cancellationToken);
+
+            await _auditService.WriteLogAsync("mcp.dml.executed", dml.TableName, "success", $"Operation: {dml.Operation} (committed after user approval)", cancellationToken);
+            return finalResult;
         }
         catch (Exception ex)
         {
@@ -586,4 +634,9 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         CollectFromExpressions(func.Arguments, referenced, aliases);
         if (func.Window != null) CollectFromWindowDefinition(func.Window, referenced, aliases);
     }
+
+    [GeneratedRegex(@"TokenRequired=(\S+)")]
+    private static partial Regex TokenMatchRegex();
+    [GeneratedRegex(@"affectedRows=(\d+)")]
+    private static partial Regex AffectedMatchRegex();
 }

@@ -8,9 +8,9 @@
 
 ## 🤔 Why hs-sql-agent?
 
-Most "Chat with your Data" tools ask the LLM to write raw SQL — a recipe for hallucinations, dialect confusion, and injection risks. **hs-sql-agent flips the model**: the LLM only extracts logical parameters (tables, columns, conditions), and a deterministic engine ([SqlKata](https://sqlkata.com)) constructs the final SQL. Zero hallucinated syntax, zero injection surface.
+Most "Chat with your Data" tools ask the LLM to write raw SQL — a recipe for hallucinations, dialect confusion, and injection risks. **hs-sql-agent takes a structured approach**: the AI can write SQL, the server parses it into structured definitions, validates the result, and rebuilds the final query through the SQL builder before execution. Zero hallucinated syntax, zero direct string injection into the database.
 
-- **Deterministic Accuracy** — The LLM never writes raw SQL. No made-up tables, no wrong functions, no dialect mix-ups between PostgreSQL and Oracle.
+- **Structured SQL Pipeline** — The AI can write SQL, but the server parses it into structured definitions, validates it, and rebuilds the final query through the SQL builder before execution.
 - **Universal DB Support** — One agent for SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird. The same MCP endpoint switches engines transparently.
 - **Enterprise Governance** — Built-in Admin Web UI, key-level connection mapping, table whitelisting, per-key CORS, rate limiting, and full audit logs.
 - **Semantic Layer** — Map cryptic legacy column names to business-friendly labels so the LLM understands your schema.
@@ -67,31 +67,36 @@ Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wik
 
 ```mermaid
 flowchart TD
-    LLM["LLM / MCP Client"] -->|Call tool with raw SQL| MCP["HsSqlAgent MCP Server"]
+    LLM["LLM / MCP Client"] -->|Call tool with SQL| MCP["HsSqlAgent MCP Server"]
     MCP --> AUTH["Access key auth<br/>allowed tools + DB binding + table whitelist"]
     AUTH --> ROUTE{"Tool"}
 
     ROUTE -->|execute_query_sql(sql)| QPARSE["Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
     QPARSE --> QDEF["QueryDefinition"]
     QDEF --> QVALID["DefinitionValidator<br/>+ table whitelist checks"]
-    QVALID --> QSTRATEGY["SQL Strategy<br/>SQLite / PostgreSQL / MySQL / SQL Server / Oracle / Firebird"]
-    QSTRATEGY --> QEXEC["Execute SELECT"]
+    QVALID --> QBUILD["SQL builder / strategy compile"]
+    QBUILD --> QEXEC["Execute SELECT"]
     QEXEC --> QRESULT["Rows / JSON result"]
 
     ROUTE -->|execute_dml_sql(sql)| DPARSE["Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
     DPARSE --> DDEF["DmlDefinition"]
     DDEF --> DVALID["DefinitionValidator<br/>+ table whitelist checks"]
-    DVALID --> DRYRUN{"confirmToken provided?"}
-    DRYRUN -->|No| TOKEN["Dry-run preview<br/>returns TokenRequired"]
-    TOKEN -->|LLM reviews and calls again<br/>same SQL + confirmToken| DPARSE
-    DRYRUN -->|Yes| DSTRATEGY["SQL Strategy validates token"]
-    DSTRATEGY --> DEXEC["Execute INSERT / UPDATE / DELETE"]
-    DEXEC --> DRESULT["Affected rows result"]
+    DVALID --> DRYRUN["Dry-run inside uncommitted transaction"]
+    DRYRUN --> ELICIT["MCP Elicitation<br/>user approves in client UI"]
+    ELICIT --> DECIDE{"User response"}
+    DECIDE -->|Accept| DEXEC["Commit transaction"]
+    DECIDE -->|Decline / Cancel| DROLLBACK["Rollback transaction"]
 
     QRESULT --> AUDIT["Async audit log"]
-    TOKEN --> AUDIT
-    DRESULT --> AUDIT
+    DEXEC --> AUDIT
+    DROLLBACK --> AUDIT
 ```
+
+### DML Approval Prompt
+
+This is what the human-in-the-loop approval step looks like during `execute_dml_sql`:
+
+<img src="miscellaneous/dml-approval-prompt.png" width="550" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
 
 ## 🤝 Contributing
 

@@ -48,3 +48,17 @@ Frontend is pre-built and served as static files from `ToolBox.dll`'s `wwwroot/`
 - **Testcontainers tests**: `SqlAgent.Test` spins up real DB containers (Sqlite, Postgres, MySql, SqlServer, Oracle, Firebird). Docker must be running.
 - **Nuxt config**: `ssr: false`, dev proxy `/api/**` → `http://localhost:8080/api/**`.
 - **Env vars**: Backend reads from both `appsettings.json` and environment variables (Docker Compose overrides).
+- **`execute_dml_sql` tool signature**: Takes `string sql` from the caller. `McpServer server` and `CancellationToken cancellationToken` are injected by the MCP framework automatically (not caller-provided).
+
+## DML Elicitation (Human-in-the-Loop)
+
+`execute_dml_sql` uses **MCP Elicitation** (`McpServer.ElicitAsync`) to enforce human approval:
+
+1. Server dry-runs the DML (executes inside transaction, then rolls back)
+2. Server calls `ElicitAsync()` — MCP Client shows an interactive prompt to the human user
+3. User sees affected rows and decides Accept / Decline
+4. Server commits or cancels accordingly
+
+**Critical constraint**: The AI agent CANNOT bypass this flow. The tool handler blocks on `ElicitAsync()` and only resumes after the user responds through the client UI. There is no token-based two-call workaround.
+
+If the MCP client does not support Elicitation, the tool returns an error and refuses to execute any DML.
