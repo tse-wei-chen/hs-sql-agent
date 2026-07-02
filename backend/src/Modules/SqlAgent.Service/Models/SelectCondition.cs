@@ -35,7 +35,7 @@ public class OperationSelectCondition : SelectCondition
     public SelectCondition Left { get; set; } = null!;
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
-    [Description("Must be one of the enum values: 'Add', 'Subtract', 'Multiply', 'Divide'")]
+    [Description("Must be one of the enum values: 'Add', 'Subtract', 'Multiply', 'Divide', 'Concat'")]
     public ArithmeticOperator Operator { get; set; } = ArithmeticOperator.Add;
 
     [Description("The right operand. Supports all SelectCondition types.")]

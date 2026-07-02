@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Models;
@@ -45,6 +46,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             if (string.IsNullOrWhiteSpace(sql))
                 return "Error: SQL is missing.";
 
+            sql = NormalizeSql(sql);
             definition = SqlDefinitionParser.ParseQuery(sql);
 
             ValidateAllTableAccess(definition);
@@ -281,6 +283,23 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             await _auditService.WriteLogAsync("mcp.update_semantic_layer", "semantic_layer", "failed", ex.Message);
             return $"Error updating semantic layer: {ex.Message}";
         }
+    }
+
+    private static readonly Regex ExtractPattern = new(
+        @"EXTRACT\s*\(\s*(\w+)\s+FROM\s+([^()]+)\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+    private static readonly Regex ExtractQuarterPattern = new(
+        @"EXTRACT\s*\(\s*QUARTER\s+FROM\s+([^()]+)\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+    private static string NormalizeSql(string sql)
+    {
+        sql = ExtractQuarterPattern.Replace(sql, m =>
+            $"CEIL(MONTH({m.Groups[1].Value.Trim()}) / 3.0)");
+        sql = ExtractPattern.Replace(sql, m =>
+            $"{m.Groups[1].Value.ToUpperInvariant()}({m.Groups[2].Value.Trim()})");
+        return sql;
     }
 
     private static bool CheckProviderAndConnectionString(SqlRuntimeConfig sqlConfig, out SqlAgentToolType dbType)

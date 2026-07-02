@@ -608,6 +608,11 @@ public abstract partial class BaseSqlStrategy(
                 Value = new UnsafeLiteral(b ? "true" : "false", replaceQuotes: false)
             },
 
+            DateTime dt => new NumberColumn
+            {
+                Value = new UnsafeLiteral($"'{dt:yyyy-MM-dd HH:mm:ss}'", replaceQuotes: false)
+            },
+
             float or double or decimal or sbyte or byte or short or ushort
                 or int or uint or long or ulong => new NumberColumn
                 {
@@ -628,6 +633,7 @@ public abstract partial class BaseSqlStrategy(
             ArithmeticOperator.Subtract => "-",
             ArithmeticOperator.Multiply => "*",
             ArithmeticOperator.Divide => "/",
+            ArithmeticOperator.Concat => "||",
             _ => throw new ArgumentOutOfRangeException(nameof(op), $"Unknown operator: {op}")
         };
     }
@@ -968,6 +974,13 @@ public abstract partial class BaseSqlStrategy(
     private void ApplySimpleWhere<Q>(Q query, string field, string op, object? val)
         where Q : BaseQuery<Q>
     {
+        // Auto-detect date-like strings and use WhereDate for proper type casting
+        if (val is string strVal && _valueParser.TryToDateTime(strVal, out _))
+        {
+            ApplyDateWhere(query, field, op, strVal, false);
+            return;
+        }
+
         switch (op)
         {
             case "is":
@@ -1226,9 +1239,33 @@ public abstract partial class BaseSqlStrategy(
         if (g.Groups?.Count == 0)
             return query;
 
-        return g.IsOr
-            ? query.OrHaving(q => ApplyHavingConditions(q, g.Groups))
-            : query.Having(q => ApplyHavingConditions(q, g.Groups));
+        if (g.Groups.Count == 1)
+            return ApplySingleHaving(query, g.Groups[0]);
+
+        if (g.IsOr)
+        {
+            return query.Having(q =>
+            {
+                var first = true;
+                foreach (var c in g.Groups)
+                {
+                    if (first)
+                    {
+                        ApplySingleHaving(q, c);
+                        first = false;
+                    }
+                    else
+                    {
+                        c.IsOr = true;
+                        ApplySingleHaving(q, c);
+                        c.IsOr = false;
+                    }
+                }
+                return q;
+            });
+        }
+
+        return query.Having(q => ApplyHavingConditions(q, g.Groups));
     }
 
     private Query ApplyBasicHaving(Query query, BasicHavingCondition c)
@@ -1280,6 +1317,13 @@ public abstract partial class BaseSqlStrategy(
             return baseQuery.HavingRaw($"{expr} {sqlOp}");
         }
 
+        // Auto-convert date-like strings to DateTime for proper type handling
+        if (val is string strVal && _valueParser.TryToDateTime(strVal, out var dtVal))
+        {
+            bindings.Add(dtVal);
+            return baseQuery.HavingRaw($"{expr} {sqlOp} ?::date", [.. bindings]);
+        }
+
         bindings.Add(val!);
         return baseQuery.HavingRaw($"{expr} {sqlOp} ?", [.. bindings]);
     }
@@ -1314,8 +1358,42 @@ public abstract partial class BaseSqlStrategy(
 
     private string BuildHavingFuncExpr(SqlFunctionCondition func, List<object> bindings)
     {
+        var fnName = func.FunctionName?.Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(fnName))
+        {
+            var argCount = func.Arguments?.Count ?? 0;
+            var translated = TryApplyFunctionTemplate(fnName, argCount, func.Arguments, bindings);
+            if (translated != null)
+                return translated;
+        }
+
         var argParts = func.Arguments?.Select(a => BuildHavingArgPart(a, bindings)).ToList() ?? [];
         return $"{func.FunctionName}({string.Join(", ", argParts)})";
+    }
+
+    private string? TryApplyFunctionTemplate(string fnName, int argCount, List<SelectCondition>? arguments, List<object> bindings)
+    {
+        if (argCount > 0)
+        {
+            var sigKey = BuildSignatureKey(fnName, argCount);
+            if (FunctionTemplates.TryGetValue(sigKey, out var sigTemplate))
+            {
+                var engine = new FunctionTemplateEngine(sigTemplate);
+                var selectResult = engine.Translate(arguments);
+                if (selectResult != null)
+                    return BuildHavingArgPart(selectResult, bindings);
+            }
+        }
+
+        if (FunctionTemplates.TryGetValue(fnName, out var template))
+        {
+            var engine = new FunctionTemplateEngine(template);
+            var selectResult = engine.Translate(arguments);
+            if (selectResult != null)
+                return BuildHavingArgPart(selectResult, bindings);
+        }
+
+        return null;
     }
 
     private string BuildHavingArgPart(SelectCondition arg, List<object> bindings)

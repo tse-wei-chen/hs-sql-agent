@@ -28,7 +28,8 @@ public class SqlTokenizer(string sql)
         "EXCEPT", "WITH", "RECURSIVE", "CASE", "WHEN", "THEN", "ELSE", "END",
         "TRUE", "FALSE", "EXISTS", "OVER", "PARTITION", "FILTER", "SET",
         "ROW", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT",
-        "LATERAL", "USING", "NATURAL", "SOME", "ANY"
+        "LATERAL", "USING", "NATURAL", "SOME", "ANY",
+        "NULLS", "FIRST", "LAST", "INTERVAL"
     };
 
     private static readonly HashSet<string> ScalarFuncs = new(StringComparer.OrdinalIgnoreCase)
@@ -40,7 +41,6 @@ public class SqlTokenizer(string sql)
         "RANK", "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
         "NTH_VALUE", "NTILE", "CUME_DIST", "PERCENT_RANK",
         "DATE_TRUNC", "EXTRACT", "DATEADD", "DATEDIFF", "DATEPART",
-        "YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND",
         "NOW", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
         "FORMAT", "LEFT", "RIGHT", "REPLICATE", "CHARINDEX", "PATINDEX",
         "DATE_FORMAT", "STR_TO_DATE", "TO_DATE", "TO_CHAR",
@@ -176,6 +176,12 @@ public class SqlTokenizer(string sql)
                     if (_pos + 1 < _sql.Length && _sql[_pos + 1] == '=')
                     { tokens.Add(new Token(TokenType.Operator, "!=", _pos)); _pos += 2; }
                     else { tokens.Add(new Token(TokenType.Operator, "!", _pos)); _pos++; }
+                    break;
+                case '|':
+                    if (_pos + 1 < _sql.Length && _sql[_pos + 1] == '|')
+                    { tokens.Add(new Token(TokenType.Operator, "||", _pos)); _pos += 2; }
+                    else
+                        throw new SqlParseException($"Unexpected character '|' at position {_pos}. Did you mean '||' (string concatenation)?");
                     break;
                 default:
                     _pos++;
