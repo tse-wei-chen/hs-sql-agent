@@ -672,6 +672,17 @@ public abstract partial class BaseSqlStrategy(
             return translated;
         }
 
+        return MapFunctionCore(function);
+    }
+
+    /// <summary>
+    /// Builds a FunctionColumn directly from a SqlFunctionCondition,
+    /// WITHOUT going through template lookup (ApplyFunctionTranslation).
+    /// Used by template-expansion paths to prevent infinite recursion when
+    /// a template expands into the same function name (e.g. TO_CHAR → TO_CHAR).
+    /// </summary>
+    private FunctionColumn MapFunctionCore(SqlFunctionCondition function)
+    {
         var functionName = function.FunctionName?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(functionName) || !SafeFunctionNamePattern().IsMatch(functionName))
@@ -695,6 +706,19 @@ public abstract partial class BaseSqlStrategy(
         return result;
     }
 
+    /// <summary>
+    /// Like <see cref="MapArithmetic"/>, but routes FunctionSelectCondition through
+    /// <see cref="MapFunctionCore"/> (skipping template lookup) to break the cycle
+    /// that arises when a template expands into the same function it was matched on.
+    /// All other expression types fall through to the normal MapArithmetic path.
+    /// </summary>
+    private AbstractColumn MapArithmeticFromTemplate(SelectCondition? expr)
+    {
+        if (expr is FunctionSelectCondition f)
+            return MapFunctionCore(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window));
+        return MapArithmetic(expr);
+    }
+
     private AbstractColumn? ApplyFunctionTranslation(SqlFunctionCondition function)
     {
         var fnName = function.FunctionName?.Trim().ToUpperInvariant();
@@ -712,7 +736,10 @@ public abstract partial class BaseSqlStrategy(
                 var engine = new FunctionTemplateEngine(sigTemplate);
                 var selectResult = engine.Translate(function.Arguments);
                 if (selectResult != null)
-                    return MapArithmetic(selectResult);
+                    // Use MapArithmeticFromTemplate (not MapArithmetic) to prevent infinite
+                    // recursion when the template expands into the same function signature
+                    // (e.g. TO_CHAR($1,$2) → TO_CHAR($1, 'YYYY-MM-DD') on Postgres/Oracle).
+                    return MapArithmeticFromTemplate(selectResult);
             }
         }
 
@@ -722,7 +749,7 @@ public abstract partial class BaseSqlStrategy(
             var engine = new FunctionTemplateEngine(template);
             var selectResult = engine.Translate(function.Arguments);
             if (selectResult != null)
-                return MapArithmetic(selectResult);
+                return MapArithmeticFromTemplate(selectResult);
         }
 
         // 3. Try name-only remapping
