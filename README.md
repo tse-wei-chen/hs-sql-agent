@@ -2,7 +2,7 @@
 > **The high-performance MCP server for instant SQL interaction and secure enterprise governance.**
 <img src="miscellaneous\coverImage.png" />
 
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml) [![Deploy on Zeabur](https://img.shields.io/badge/Deploy_on-Zeabur-blueviolet?logo=zeabur)](https://zeabur.com/templates/RFPWDU)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![NuGet](https://img.shields.io/badge/NuGet-Install-0956cc?logo=nuget)](https://www.nuget.org/packages/HsSqlAgent.Server) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml) [![Deploy on Zeabur](https://img.shields.io/badge/Deploy_on-Zeabur-blueviolet?logo=zeabur)](https://zeabur.com/templates/RFPWDU)
 
 `hs-sql-agent` is an HTTP MCP server for relational databases (SQLite, PostgreSQL, MySQL, SQL Server, Oracle, Firebird) with a built-in Admin Panel for governance.
 
@@ -69,36 +69,33 @@ Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wik
 %%{init: {
   'theme': 'base',
   'themeVariables': {
-    'primaryColor': '#E3F2FD',
-    'primaryTextColor': '#0D47A1',
-    'primaryBorderColor': '#64B5F6',
-    'lineColor': '#455A64',
-    'secondaryColor': '#E8F5E9',
-    'tertiaryColor': '#ECEFF1',
-    'mainBkg': '#FFFFFF'
+    'primaryColor': '#18181B',
+    'primaryTextColor': '#FAFAFA',
+    'primaryBorderColor': '#27272A',
+    'lineColor': '#52525B',
+    'secondaryColor': '#27272A',
+    'tertiaryColor': '#09090B',
+    'mainBkg': '#09090B'
   }
 }}%%
 
 flowchart TD
-    %% 1. 先定義節點形狀與文字 (使用標準單組雙引號與轉義字元)
-    LLM(["🤖 LLM / MCP Client"])
-    MCP["🔌 HsSqlAgent MCP Server"]
-    AUTH["🛡️ Access key auth<br/>allowed tools + DB binding + table whitelist"]
-    ROUTE{"🔀 Tool Route"}
+    LLM(["Client :: LLM / MCP Client"])
+    MCP["Server :: HsSqlAgent"]
+    AUTH["Middleware :: Authentication<br/>Access Key | DB Binding | Whitelist"]
+    ROUTE{"Gateway :: Router"}
 
-    %% 2. 建立節點之間的連接關係
     LLM -->|Call tool with SQL| MCP
     MCP --> AUTH
     AUTH --> ROUTE
 
-    %% SELECT 查詢流程
-    subgraph Query_Flow ["🔍 SELECT Query Pipeline"]
-        QPARSE["📝 Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
-        QDEF["📦 QueryDefinition<br/>AST Structure Data"]
-        QVALID["✅ DefinitionValidator<br/>+ table whitelist checks"]
-        QBUILD["⚙️ SQL builder / strategy compile"]
-        QEXEC["🚀 Execute SELECT"]
-        QRESULT(["📊 Rows / JSON result"])
+    subgraph Query_Flow [" 🔍 Query Pipeline (SELECT) "]
+        QPARSE["Parse Query SQL<br/>SqlDefinitionParser.ParseQuery"]
+        QDEF["QueryDefinition<br/>AST Structure Data"]
+        QVALID["DefinitionValidator<br/>Rule Verification"]
+        QBUILD["SQL Strategy Compiler<br/>Compile Strategy"]
+        QEXEC["Execution Engine<br/>Execute SELECT"]
+        QRESULT(["Result :: Rows / JSON"])
         
         QPARSE --> QDEF
         QDEF --> QVALID
@@ -107,16 +104,15 @@ flowchart TD
         QEXEC --> QRESULT
     end
 
-    %% DML 異動流程
-    subgraph DML_Flow ["✏️ DML Data Modification Pipeline"]
-        DPARSE["📝 Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
-        DDEF["📦 DmlDefinition<br/>AST Structure Data"]
-        DVALID["✅ DefinitionValidator<br/>+ table whitelist checks"]
-        DRYRUN["🧪 Dry-run inside<br/>uncommitted transaction"]
-        ELICIT["💡 MCP Elicitation<br/>user approves in client UI"]
-        DECIDE{"❓ User response"}
-        DEXEC["💚 Commit transaction"]
-        DROLLBACK["💔 Rollback transaction"]
+    subgraph DML_Flow [" ✏️ Mutation Pipeline (DML) "]
+        DPARSE["Parse Mutation SQL<br/>SqlDefinitionParser.ParseDml"]
+        DDEF["DmlDefinition<br/>AST Structure Data"]
+        DVALID["DefinitionValidator<br/>Rule Verification"]
+        DRYRUN["Transaction Dry-run<br/>Uncommitted State"]
+        ELICIT["MCP Elicitation<br/>User Approval Prompt"]
+        DECIDE{" Action :: Decision"}
+        DEXEC["Transaction :: Commit<br/>Apply Changes"]
+        DROLLBACK["Transaction :: Rollback<br/>Discard Changes"]
         
         DPARSE --> DDEF
         DDEF --> DVALID
@@ -124,30 +120,28 @@ flowchart TD
         DRYRUN --> ELICIT
         ELICIT --> DECIDE
         
-        DECIDE -->|Accept| DEXEC
-        DECIDE -->|Decline / Cancel| DROLLBACK
+        DECIDE -->|Allowed| DEXEC
+        DECIDE -->|Denied| DROLLBACK
     end
 
-    %% 路由分流
     ROUTE -->|execute_query_sql| QPARSE
     ROUTE -->|execute_dml_sql| DPARSE
 
-    %% 審計日誌
-    AUDIT[("📋 Async audit log")]
+    AUDIT[("Storage :: Async Audit Log")]
     
     QRESULT --> AUDIT
     DEXEC --> AUDIT
     DROLLBACK --> AUDIT
 
-    %% 3. 獨立定義自訂樣式 (Class Styles)
-    classDef client fill:#E0F7FA,stroke:#00ACC1,stroke-width:2px,color:#006064;
-    classDef server fill:#EDE7F6,stroke:#5E35B1,stroke-width:2px,color:#311B92;
-    classDef auth fill:#FFF9C4,stroke:#FBC02D,stroke-width:2px,color:#F57F17;
-    classDef cond fill:#FFE0B2,stroke:#FB8C00,stroke-width:2px,color:#E65100;
-    classDef danger fill:#FFEBEE,stroke:#E53935,stroke-width:2px,color:#B71C1C;
-    classDef success fill:#E8F5E9,stroke:#43A047,stroke-width:2px,color:#1B5E20;
+    classDef default fill:#18181B,stroke:#27272A,stroke-width:1px,color:#E4E4E7;
+    classDef client fill:#FAFAFA,stroke:#FAFAFA,stroke-width:1px,color:#09090B;
+    classDef server fill:#27272A,stroke:#3F3F46,stroke-width:1px,color:#F4F4F5;
+    classDef auth fill:#09090B,stroke:#27272A,stroke-width:1px,color:#A1A1AA;
+    classDef cond fill:#18181B,stroke:#FAFAFA,stroke-width:1.5px,color:#FAFAFA;
+    
+    classDef danger fill:#451A03,stroke:#7F1D1D,stroke-width:1px,color:#FCA5A5;
+    classDef success fill:#022C22,stroke:#064E3B,stroke-width:1px,color:#86EFAC;
 
-    %% 4. 將樣式套用到對應的節點上
     class LLM client;
     class MCP,AUDIT server;
     class AUTH auth;
