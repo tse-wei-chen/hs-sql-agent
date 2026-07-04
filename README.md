@@ -66,37 +66,101 @@ Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wik
 ## SQL Execution Flow
 
 ```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#E3F2FD',
+    'primaryTextColor': '#0D47A1',
+    'primaryBorderColor': '#64B5F6',
+    'lineColor': '#455A64',
+    'secondaryColor': '#E8F5E9',
+    'tertiaryColor': '#ECEFF1',
+    'mainBkg': '#FFFFFF'
+  }
+}}%%
+
 flowchart TD
-    LLM["LLM / MCP Client"] -->|Call tool with SQL| MCP["HsSqlAgent MCP Server"]
-    MCP --> AUTH["Access key auth<br/>allowed tools + DB binding + table whitelist"]
-    AUTH --> ROUTE{"Tool"}
+    %% 1. 先定義節點形狀與文字 (使用標準單組雙引號與轉義字元)
+    LLM(["🤖 LLM / MCP Client"])
+    MCP["🔌 HsSqlAgent MCP Server"]
+    AUTH["🛡️ Access key auth<br/>allowed tools + DB binding + table whitelist"]
+    ROUTE{"🔀 Tool Route"}
 
-    ROUTE -->|execute_query_sql| QPARSE["Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
-    QPARSE --> QDEF["QueryDefinition"]
-    QDEF --> QVALID["DefinitionValidator<br/>+ table whitelist checks"]
-    QVALID --> QBUILD["SQL builder / strategy compile"]
-    QBUILD --> QEXEC["Execute SELECT"]
-    QEXEC --> QRESULT["Rows / JSON result"]
+    %% 2. 建立節點之間的連接關係
+    LLM -->|Call tool with SQL| MCP
+    MCP --> AUTH
+    AUTH --> ROUTE
 
-    ROUTE -->|execute_dml_sql| DPARSE["Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
-    DPARSE --> DDEF["DmlDefinition"]
-    DDEF --> DVALID["DefinitionValidator<br/>+ table whitelist checks"]
-    DVALID --> DRYRUN["Dry-run inside uncommitted transaction"]
-    DRYRUN --> ELICIT["MCP Elicitation<br/>user approves in client UI"]
-    ELICIT --> DECIDE{"User response"}
-    DECIDE -->|Accept| DEXEC["Commit transaction"]
-    DECIDE -->|Decline / Cancel| DROLLBACK["Rollback transaction"]
+    %% SELECT 查詢流程
+    subgraph Query_Flow ["🔍 SELECT Query Pipeline"]
+        QPARSE["📝 Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
+        QDEF["📦 QueryDefinition<br/>AST Structure Data"]
+        QVALID["✅ DefinitionValidator<br/>+ table whitelist checks"]
+        QBUILD["⚙️ SQL builder / strategy compile"]
+        QEXEC["🚀 Execute SELECT"]
+        QRESULT(["📊 Rows / JSON result"])
+        
+        QPARSE --> QDEF
+        QDEF --> QVALID
+        QVALID --> QBUILD
+        QBUILD --> QEXEC
+        QEXEC --> QRESULT
+    end
 
-    QRESULT --> AUDIT["Async audit log"]
+    %% DML 異動流程
+    subgraph DML_Flow ["✏️ DML Data Modification Pipeline"]
+        DPARSE["📝 Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
+        DDEF["📦 DmlDefinition<br/>AST Structure Data"]
+        DVALID["✅ DefinitionValidator<br/>+ table whitelist checks"]
+        DRYRUN["🧪 Dry-run inside<br/>uncommitted transaction"]
+        ELICIT["💡 MCP Elicitation<br/>user approves in client UI"]
+        DECIDE{"❓ User response"}
+        DEXEC["💚 Commit transaction"]
+        DROLLBACK["💔 Rollback transaction"]
+        
+        DPARSE --> DDEF
+        DDEF --> DVALID
+        DVALID --> DRYRUN
+        DRYRUN --> ELICIT
+        ELICIT --> DECIDE
+        
+        DECIDE -->|Accept| DEXEC
+        DECIDE -->|Decline / Cancel| DROLLBACK
+    end
+
+    %% 路由分流
+    ROUTE -->|execute_query_sql| QPARSE
+    ROUTE -->|execute_dml_sql| DPARSE
+
+    %% 審計日誌
+    AUDIT[("📋 Async audit log")]
+    
+    QRESULT --> AUDIT
     DEXEC --> AUDIT
     DROLLBACK --> AUDIT
+
+    %% 3. 獨立定義自訂樣式 (Class Styles)
+    classDef client fill:#E0F7FA,stroke:#00ACC1,stroke-width:2px,color:#006064;
+    classDef server fill:#EDE7F6,stroke:#5E35B1,stroke-width:2px,color:#311B92;
+    classDef auth fill:#FFF9C4,stroke:#FBC02D,stroke-width:2px,color:#F57F17;
+    classDef cond fill:#FFE0B2,stroke:#FB8C00,stroke-width:2px,color:#E65100;
+    classDef danger fill:#FFEBEE,stroke:#E53935,stroke-width:2px,color:#B71C1C;
+    classDef success fill:#E8F5E9,stroke:#43A047,stroke-width:2px,color:#1B5E20;
+
+    %% 4. 將樣式套用到對應的節點上
+    class LLM client;
+    class MCP,AUDIT server;
+    class AUTH auth;
+    class ROUTE,DECIDE cond;
+    class QRESULT,DEXEC success;
+    class DROLLBACK danger;
 ```
 
 ### DML Approval Prompt
 
 This is what the human-in-the-loop approval step looks like during `execute_dml_sql`:
 
-<img src="miscellaneous/dml-approval-prompt.png" width="550" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+<img src="miscellaneous/dml-approval-prompt.png" />
 
 ## 🤝 Contributing
 
