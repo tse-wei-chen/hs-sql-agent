@@ -39,3 +39,42 @@ export const updateCustomSqlTool = async (
 export const deleteCustomSqlTool = async (id: number): Promise<void> => {
   await xiorInstanceToken.delete(`/CustomSqlTool/${id}`);
 };
+
+export interface ParseSqlResult {
+  success: boolean;
+  data?: string;
+  error?: string;
+}
+
+export const parseSqlCustomSqlTool = async (
+  sql: string,
+): Promise<ParseSqlResult> => {
+  const response = await xiorInstanceToken.post(
+    "/CustomSqlTool/parse-sql",
+    { sql },
+  );
+  return response.data;
+};
+
+export interface TestExecuteRequest {
+  definitionJson: string;
+  type: "Query" | "DML";
+  dbId: number;
+  parameters?: Record<string, string>;
+}
+
+export interface TestExecuteResult {
+  success: boolean;
+  data?: string;
+  error?: string;
+}
+
+export const testExecuteCustomSqlTool = async (
+  payload: TestExecuteRequest,
+): Promise<TestExecuteResult> => {
+  const response = await xiorInstanceToken.post(
+    "/CustomSqlTool/test-execute",
+    payload,
+  );
+  return response.data;
+};

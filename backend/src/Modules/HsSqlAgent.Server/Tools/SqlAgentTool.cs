@@ -1,18 +1,22 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Models;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using static ModelContextProtocol.Protocol.ElicitRequestParams;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Tools;
 
 [McpServerToolType]
-public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IDbSemanticService semanticService)
+public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IDbSemanticService semanticService)
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
@@ -21,20 +25,15 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     private readonly IDbSemanticService _semanticService = semanticService;
 
     [McpServerTool, Description(@"
-        Execute a complex SELECT query strictly using the structured definition block.
+        Execute one SELECT SQL statement. The server parses SQL into a QueryDefinition, validates it,
+        applies table whitelist checks, then executes it through the configured SQL strategy.
 
-        CRITICAL RULES FOR LLM GENERATION:
-        1. NO RAW MATH IN FIELDS: Never put arithmetic operators (+, -, *, /) inside a 'field' node's fieldName.
-        2. FUNCTION ARGUMENTS: Every argument inside a function's 'arguments' list MUST explicitly declare its 'type'.
-        3. STRICT TABLE ALIASES: If you define an 'alias', use it consistently.
-        4. COLUMN REUSE: An aliased column cannot be referenced by its alias in WHERE.
-        5. FROMQUERY SCOPE: Outer query can only reference subquery output columns.
-
-        Supported: JOINs, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs, Subqueries, COMBINE.
+        Use get_schemas/get_tables/get_columns first when you need database structure. Only send a single SELECT statement.
+        Supported SQL includes JOINs, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs, subqueries, and UNION/INTERSECT/EXCEPT.
     ")]
-    public async Task<string> ExecuteQuerySafe(
-        [Description("The structured complete query definition block.")]
-        QueryDefinition definition)
+    public async Task<string> ExecuteQuerySql(
+        [Description("A single SELECT SQL statement to parse, validate, and execute.")]
+        string sql)
     {
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
@@ -42,13 +41,17 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
         }
         var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+        QueryDefinition? definition = null;
         try
         {
-            ValidateToolAccess("execute_query_safe");
-            if (definition == null)
-                return "Error: Query definition is missing.";
+            ValidateToolAccess("execute_query_sql");
+            if (string.IsNullOrWhiteSpace(sql))
+                return "Error: SQL is missing.";
 
-            ValidateAllTableAccess(definition.TableName, definition.Joins, definition.CombineConditions, definition.CteConditions, definition.FromQuery, definition.SelectColumns, definition.WhereColumnsAndValues, definition.Alias);
+            sql = NormalizeSql(sql);
+            definition = SqlDefinitionParser.ParseQuery(sql);
+
+            ValidateAllTableAccess(definition);
 
             var validationErrors = DefinitionValidator.Validate(definition);
             if (validationErrors.Count > 0)
@@ -67,32 +70,89 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
     }
 
     [McpServerTool, Description(@"
-        Execute a DML operation (INSERT, UPDATE, DELETE).
-        Two-step safety: first call (without ConfirmToken) does dry-run; second call (with ConfirmToken) commits.
+        Execute one DML SQL statement (INSERT, UPDATE, DELETE). The server parses SQL,
+        validates it, applies table whitelist checks, then runs it inside a transaction
+        (dry-run) and presents the result to you for approval via an interactive prompt.
+
+        You will see how many rows would be affected before deciding to commit or cancel.
     ")]
-    public async Task<string> ExecuteDmlSafe(
-        [Description("The DML definition (operation, table, values, conditions).")]
-        DmlDefinition dml)
+    public async Task<string> ExecuteDmlSql(
+        [Description("A single INSERT, UPDATE, or DELETE SQL statement to parse and validate.")]
+        string sql,
+        McpServer server,
+        CancellationToken cancellationToken)
     {
+        DmlDefinition? dml = null;
         try
         {
-            ValidateToolAccess("execute_dml_safe");
-            ValidateAllTableAccess(dml?.TableName, null, null, null, dml?.FromQuery, null, dml?.WhereConditions);
+            ValidateToolAccess("execute_dml_sql");
+            if (string.IsNullOrWhiteSpace(sql))
+                return "Error: SQL is missing.";
+
+            if (server.ClientCapabilities?.Elicitation == null)
+                return "Error: This MCP client does not support the interactive confirmation required for DML execution.";
+
+            dml = SqlDefinitionParser.ParseDml(sql);
+            ValidateAllTableAccess(dml.TableName, null, null, null, dml.FromQuery, null, dml.WhereConditions);
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-            {
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
-            }
+
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 
             var dmlErrors = DefinitionValidator.Validate(dml);
             if (dmlErrors.Count > 0)
                 return "Validation failed:\n" + string.Join("\n", dmlErrors);
 
-            var result = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml);
+            // ── Dry-run ──────────────────────────────────────────────────────
 
-            await _auditService.WriteLogAsync("mcp.dml.executed", dml?.TableName ?? "unknown", "success", $"Operation: {dml?.Operation}");
-            return result;
+            dml.ConfirmToken = null;
+            var dryRunResult = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml, cancellationToken);
+
+            if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
+                return dryRunResult;
+
+            var affectedMatch = AffectedMatchRegex().Match(dryRunResult);
+            var tokenMatch = TokenMatchRegex().Match(dryRunResult);
+            if (!affectedMatch.Success || !tokenMatch.Success)
+                return dryRunResult;
+
+            var affectedRows = affectedMatch.Groups[1].Value;
+            var detToken = tokenMatch.Groups[1].Value;
+
+            // ── Present to user for approval via Elicitation ─────────────────
+
+            var elicitSchema = new RequestSchema
+            {
+                Properties =
+                {
+                    ["approve"] = new BooleanSchema
+                    {
+                        Title = "Approve execution",
+                        Description = $"This will {dml.Operation.ToString().ToLowerInvariant()} {affectedRows} row(s) in {dml.TableName}"
+                    }
+                }
+            };
+
+            var elicitResult = await server.ElicitAsync(new ElicitRequestParams
+            {
+                Message = $"{dml.Operation} on {dml.TableName} — {affectedRows} row(s) affected\n\nSQL: {sql}",
+                RequestedSchema = elicitSchema
+            }, cancellationToken);
+
+            if (elicitResult.Action != "accept" || elicitResult.Content?.TryGetValue("approve", out var approveEl) != true || approveEl.ValueKind != JsonValueKind.True)
+            {
+                await _auditService.WriteLogAsync("mcp.dml.executed", dml.TableName, "cancelled", $"Operation: {dml.Operation} (cancelled by user)", cancellationToken);
+                return "DML execution cancelled by user.";
+            }
+
+            // ── Execute for real ──────────────────────────────────────────────
+
+            dml.ConfirmToken = detToken;
+            var finalResult = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml, cancellationToken);
+
+            await _auditService.WriteLogAsync("mcp.dml.executed", dml.TableName, "success", $"Operation: {dml.Operation} (committed after user approval)", cancellationToken);
+            return finalResult;
         }
         catch (Exception ex)
         {
@@ -273,6 +333,23 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
     }
 
+    private static readonly Regex ExtractPattern = new(
+        @"EXTRACT\s*\(\s*(\w+)\s+FROM\s+([^()]+)\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+    private static readonly Regex ExtractQuarterPattern = new(
+        @"EXTRACT\s*\(\s*QUARTER\s+FROM\s+([^()]+)\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+    private static string NormalizeSql(string sql)
+    {
+        sql = ExtractQuarterPattern.Replace(sql, m =>
+            $"CEIL(MONTH({m.Groups[1].Value.Trim()}) / 3.0)");
+        sql = ExtractPattern.Replace(sql, m =>
+            $"{m.Groups[1].Value.ToUpperInvariant()}({m.Groups[2].Value.Trim()})");
+        return sql;
+    }
+
     private static bool CheckProviderAndConnectionString(SqlRuntimeConfig sqlConfig, out SqlAgentToolType dbType)
     {
         dbType = default;
@@ -349,6 +426,18 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
 
+    private void ValidateAllTableAccess(QueryDefinition queryDef)
+    {
+        var whitelist = ResolveTableWhitelist();
+        if (whitelist is null or { Count: 0 }) return;
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        CollectFromQueryDefinition(queryDef, referenced, aliases);
+        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        if (violations.Count > 0)
+            throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
+    }
+
     internal static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (qd == null) return;
@@ -411,6 +500,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
                 {
                     CollectFromWheres(funcSel.FilterWhereConditions, referenced, aliases);
                     CollectFromExpressions(funcSel.Arguments, referenced, aliases);
+                    CollectFromWindowDefinition(funcSel.Window, referenced, aliases);
                 }
                 else if (s is OperationSelectCondition opSel)
                 {
@@ -443,6 +533,11 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             if (h is FunctionHavingCondition funcHaving)
                 CollectFromSqlFunctionCondition(funcHaving.LeftFunction, referenced, aliases);
+            else if (h is ExpressionHavingCondition exprHaving)
+            {
+                CollectFromExpression(exprHaving.LeftExpression, referenced, aliases);
+                CollectFromExpression(exprHaving.RightExpression, referenced, aliases);
+            }
             else if (h is GroupHavingCondition groupHaving)
                 CollectFromHavingConditions(groupHaving.Groups, referenced, aliases);
         }
@@ -488,6 +583,7 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         {
             CollectFromWheres(func.FilterWhereConditions, referenced, aliases);
             CollectFromExpressions(func.Arguments, referenced, aliases);
+            CollectFromWindowDefinition(func.Window, referenced, aliases);
         }
         else if (condition is OperationSelectCondition op)
         {
@@ -496,6 +592,27 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         }
         else if (condition is CaseWhenSelectCondition cw)
             CollectFromCaseWhenClauses(cw.CaseWhen, referenced, aliases);
+        else if (condition is SubQuerySelectCondition sq)
+        {
+            var qd = new QueryDefinition
+            {
+                TableName = sq.TableName,
+                FromQuery = sq.FromQuery,
+                Alias = sq.Alias,
+                Distinct = sq.Distinct,
+                SelectColumns = sq.SelectColumns,
+                WhereColumnsAndValues = sq.WhereColumnsAndValues,
+                OrderByColumns = sq.OrderByColumns,
+                GroupByConditions = sq.GroupByConditions,
+                HavingConditions = sq.HavingConditions,
+                Joins = sq.Joins,
+                CombineConditions = sq.CombineConditions,
+                CteConditions = sq.CteConditions,
+                Limit = sq.Limit,
+                Offset = sq.Offset
+            };
+            CollectFromQueryDefinition(qd, referenced, aliases);
+        }
     }
 
     internal static void CollectFromExpressions(List<SelectCondition>? args, HashSet<string> referenced, HashSet<string> aliases)
@@ -517,4 +634,9 @@ public class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor htt
         CollectFromExpressions(func.Arguments, referenced, aliases);
         if (func.Window != null) CollectFromWindowDefinition(func.Window, referenced, aliases);
     }
+
+    [GeneratedRegex(@"TokenRequired=(\S+)")]
+    private static partial Regex TokenMatchRegex();
+    [GeneratedRegex(@"affectedRows=(\d+)")]
+    private static partial Regex AffectedMatchRegex();
 }

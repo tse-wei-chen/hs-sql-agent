@@ -35,7 +35,7 @@ public class OperationSelectCondition : SelectCondition
     public SelectCondition Left { get; set; } = null!;
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
-    [Description("Must be one of the enum values: 'Add', 'Subtract', 'Multiply', 'Divide'")]
+    [Description("Must be one of the enum values: 'Add', 'Subtract', 'Multiply', 'Divide', 'Concat'")]
     public ArithmeticOperator Operator { get; set; } = ArithmeticOperator.Add;
 
     [Description("The right operand. Supports all SelectCondition types.")]
@@ -46,6 +46,11 @@ public class ConstantSelectCondition : SelectCondition
 {
     [Description("Pure literal values ONLY (numbers, strings, booleans). NO SQL code/functions allowed here.")]
     public object Constant { get; set; } = string.Empty;
+}
+
+internal class TemplateSqlTokenSelectCondition : SelectCondition
+{
+    public string Token { get; set; } = string.Empty;
 }
 
 public class FunctionSelectCondition : SelectCondition
@@ -61,6 +66,9 @@ public class FunctionSelectCondition : SelectCondition
 
     [Description("Optional. Filter clause for aggregate functions (e.g., COUNT(*) FILTER (WHERE ...)). Put the WHERE conditions here.")]
     public List<WhereCondition>? FilterWhereConditions { get; set; }
+
+    [Description("Optional. Window definition for SELECT window functions, e.g., LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date).")]
+    public WindowDefinition? Window { get; set; }
 }
 
 public class CaseWhenSelectCondition : SelectCondition

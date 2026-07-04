@@ -143,9 +143,10 @@ public static class DefinitionValidator
                     AddError(errors, joinPath, "must have either `table` or `subQuery`.");
                 if (join.SubQuery != null)
                     ValidateQueryDefinition(join.SubQuery, AppendPath(joinPath, "subQuery"), errors);
-                if (join.OnConditions == null || join.OnConditions.Count == 0)
+                var requiresOnConditions = join.Type != JoinType.Cross;
+                if (requiresOnConditions && (join.OnConditions == null || join.OnConditions.Count == 0))
                     AddError(errors, joinPath, "must have at least one `onConditions` entry.");
-                else
+                else if (join.OnConditions?.Count > 0)
                 {
                     for (int j = 0; j < join.OnConditions.Count; j++)
                     {
@@ -276,6 +277,7 @@ public static class DefinitionValidator
                         ValidateWhereCondition(func.FilterWhereConditions[i], AppendPath(path, $"filterWhereConditions[{i}]"), errors);
                     }
                 }
+                ValidateWindowDefinition(func.Window, AppendPath(path, "window"), errors);
                 break;
 
             case CaseWhenSelectCondition caseWhen:
@@ -328,6 +330,13 @@ public static class DefinitionValidator
                     AddError(errors, AppendPath(path, "rightFieldName"), "must not be empty for type: 'column_compare'.");
                 break;
 
+            case ExpressionWhereCondition ex:
+                if (ex.LeftExpression == null)
+                    AddError(errors, AppendPath(path, "leftExpression"), "must not be null for type: 'expression'.");
+                if (string.IsNullOrWhiteSpace(ex.Operator))
+                    AddError(errors, AppendPath(path, "operator"), "must not be empty for type: 'expression'.");
+                break;
+
             case SubQueryWhereCondition sq:
                 if (string.IsNullOrWhiteSpace(sq.Operator))
                     AddError(errors, AppendPath(path, "operator"), "must not be empty for type: 'subquery'.");
@@ -374,6 +383,17 @@ public static class DefinitionValidator
                     ValidateFunctionCondition(func.LeftFunction, AppendPath(path, "leftFunction"), errors);
                 if (string.IsNullOrWhiteSpace(func.Operator))
                     AddError(errors, AppendPath(path, "operator"), "must not be empty for type: 'function_compare'.");
+                break;
+
+            case ExpressionHavingCondition ex:
+                if (ex.LeftExpression == null)
+                    AddError(errors, AppendPath(path, "leftExpression"), "must not be null for type: 'expression'.");
+                else
+                    ValidateSelectCondition(ex.LeftExpression, AppendPath(path, "leftExpression"), errors);
+                if (string.IsNullOrWhiteSpace(ex.Operator))
+                    AddError(errors, AppendPath(path, "operator"), "must not be empty for type: 'expression'.");
+                if (ex.RightExpression != null)
+                    ValidateSelectCondition(ex.RightExpression, AppendPath(path, "rightExpression"), errors);
                 break;
 
             case GroupHavingCondition group:
@@ -503,31 +523,35 @@ public static class DefinitionValidator
                 ValidateWhereCondition(func.FilterWhereConditions[i], AppendPath(path, $"filterWhereConditions[{i}]"), errors);
             }
         }
-        if (func.Window != null)
+        ValidateWindowDefinition(func.Window, AppendPath(path, "window"), errors);
+    }
+
+    private static void ValidateWindowDefinition(WindowDefinition? window, string path, List<string> errors)
+    {
+        if (window != null)
         {
-            var winPath = AppendPath(path, "window");
-            if (func.Window.PartitionBy?.Count > 0)
+            if (window.PartitionBy?.Count > 0)
             {
-                for (int i = 0; i < func.Window.PartitionBy.Count; i++)
+                for (int i = 0; i < window.PartitionBy.Count; i++)
                 {
-                    if (func.Window.PartitionBy[i] == null)
+                    if (window.PartitionBy[i] == null)
                     {
-                        AddError(errors, AppendPath(winPath, $"partitionBy[{i}]"), "must not be null.");
+                        AddError(errors, AppendPath(path, $"partitionBy[{i}]"), "must not be null.");
                         continue;
                     }
-                    ValidateGroupByCondition(func.Window.PartitionBy[i], AppendPath(winPath, $"partitionBy[{i}]"), errors);
+                    ValidateGroupByCondition(window.PartitionBy[i], AppendPath(path, $"partitionBy[{i}]"), errors);
                 }
             }
-            if (func.Window.OrderBy?.Count > 0)
+            if (window.OrderBy?.Count > 0)
             {
-                for (int i = 0; i < func.Window.OrderBy.Count; i++)
+                for (int i = 0; i < window.OrderBy.Count; i++)
                 {
-                    if (func.Window.OrderBy[i] == null)
+                    if (window.OrderBy[i] == null)
                     {
-                        AddError(errors, AppendPath(winPath, $"orderBy[{i}]"), "must not be null.");
+                        AddError(errors, AppendPath(path, $"orderBy[{i}]"), "must not be null.");
                         continue;
                     }
-                    ValidateOrderByCondition(func.Window.OrderBy[i], AppendPath(winPath, $"orderBy[{i}]"), errors);
+                    ValidateOrderByCondition(window.OrderBy[i], AppendPath(path, $"orderBy[{i}]"), errors);
                 }
             }
         }

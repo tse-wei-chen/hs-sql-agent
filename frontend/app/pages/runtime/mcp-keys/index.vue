@@ -73,7 +73,7 @@ const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = u
 
 const initialDetail: McpKeyDetail = {
   expiresAt: null,
-  allowedTools: ["get_columns", "get_schemas", "get_tables", "execute_query_safe"],
+  allowedTools: ["get_columns", "get_schemas", "get_tables", "execute_query_sql"],
   corsAllowedOrigins: "",
   dbManagementId: null,
   tableWhitelist: [],
@@ -153,11 +153,11 @@ const tableOptions = computed(() => {
 });
 
 const baseToolOptions = [
-  { label: "Execute Query", value: "execute_query_safe", risk: "medium" },
+  { label: "Execute Query", value: "execute_query_sql", risk: "medium" },
   { label: "Get Columns", value: "get_columns", risk: "low" },
   { label: "Get Schemas", value: "get_schemas", risk: "low" },
   { label: "Get Tables", value: "get_tables", risk: "low" },
-  { label: "Execute DML", value: "execute_dml_safe", risk: "high" },
+  { label: "Execute DML", value: "execute_dml_sql", risk: "high" },
 ];
 
 const toolOptions = computed(() => {

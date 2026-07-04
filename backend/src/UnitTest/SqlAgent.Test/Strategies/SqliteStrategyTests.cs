@@ -386,6 +386,69 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     }
 
     [Fact]
+    public async Task ExecuteQueryAsync_ShouldSupportCrossJoinWithoutOnConditions()
+    {
+        var qd = new QueryDefinition
+        {
+            TableName = "Users",
+            Alias = "u",
+            CteConditions =
+            [
+                new CteCondition
+                {
+                    CteAliasName = "SystemMax",
+                    Query = new QueryDefinition
+                    {
+                        TableName = "Orders",
+                        SelectColumns =
+                        [
+                            new FunctionSelectCondition
+                            {
+                                FunctionName = "MAX",
+                                Arguments = [new FieldSelectCondition { FieldName = "OrderDate" }],
+                                Alias = "MaxOrderDate"
+                            }
+                        ]
+                    }
+                }
+            ],
+            Joins =
+            [
+                new JoinCondition
+                {
+                    Table = "SystemMax",
+                    Alias = "sm",
+                    Type = JoinType.Cross,
+                    OnConditions = []
+                }
+            ],
+            SelectColumns =
+            [
+                new FieldSelectCondition { FieldName = "u.Name", Alias = "Name" },
+                new FieldSelectCondition { FieldName = "sm.MaxOrderDate", Alias = "MaxOrderDate" }
+            ],
+            OrderByColumns =
+            [
+                new FieldOrderByCondition { FieldName = "u.Id", Direction = SortDirection.Asc }
+            ]
+        };
+
+        ValidateQuery(qd);
+
+        var json = await Strategy.ExecuteQueryAsync(
+            qd,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Equal(3, rows.Count);
+        Assert.Equal("Alice", rows[0].GetProperty("Name").GetString());
+        Assert.Equal("2023-03-20", rows[0].GetProperty("MaxOrderDate").GetString());
+    }
+
+    [Fact]
     public async Task ExecuteQueryAsync_ShouldSupportArithmeticInFunctionArguments()
     {
         var json = await Strategy.ExecuteQueryAsync(

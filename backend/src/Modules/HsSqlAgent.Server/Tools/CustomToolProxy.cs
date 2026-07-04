@@ -126,7 +126,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         {
             await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", ex.Message);
             var toolType = tool?.Type ?? "Unknown";
-            var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase) ? "execute_query_safe" : "execute_dml_safe";
+            var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase) ? "execute_query_sql" : "execute_dml_sql";
             return $"Error: {ex.Message}\nerror definition: {finalDefinitionJson}\nplease fix the parameters or definition and use '{suggestedTool}' tools to try again.";
         }
     }

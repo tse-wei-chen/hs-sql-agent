@@ -1,11 +1,13 @@
 using System.Data.Common;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using SqlKata;
 using SqlKata.Compilers;
 using SqlKata.Execution;
@@ -16,14 +18,21 @@ public abstract partial class BaseSqlStrategy(
     IQueryValueParserService valueParser,
     IConfiguration configuration) : ISqlStrategy
 {
+    private enum TemplateSqlToken
+    {
+        Day,
+        CurrentTimestamp,
+        Sysdate,
+    }
+
     [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")]
     private static partial Regex SafeFunctionNamePattern();
 
     private readonly IQueryValueParserService _valueParser = valueParser;
 
     private static SqlFunctionCondition ToFunc(
-        string name, List<SelectCondition>? args, bool distinct, List<WhereCondition>? filter) =>
-        new() { FunctionName = name, Arguments = args, IsDistinct = distinct, FilterWhereConditions = filter };
+        string name, List<SelectCondition>? args, bool distinct, List<WhereCondition>? filter, WindowDefinition? window = null) =>
+        new() { FunctionName = name, Arguments = args, IsDistinct = distinct, FilterWhereConditions = filter, Window = window };
     protected readonly IConfiguration _configuration = configuration;
 
     public abstract SqlAgentToolType DbType { get; }
@@ -189,7 +198,7 @@ public abstract partial class BaseSqlStrategy(
         }
     }
 
-    private HashSet<string> CollectInnerJoinAliases(QueryDefinition subQuery)
+    private static HashSet<string> CollectInnerJoinAliases(QueryDefinition subQuery)
     {
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(subQuery.Alias))
@@ -240,7 +249,7 @@ public abstract partial class BaseSqlStrategy(
         }
     }
 
-    private void CheckFieldNameLeak(string? fieldName, string context, HashSet<string> innerAliases, string subAlias)
+    private static void CheckFieldNameLeak(string? fieldName, string context, HashSet<string> innerAliases, string subAlias)
     {
         if (string.IsNullOrWhiteSpace(fieldName)) return;
 
@@ -253,8 +262,8 @@ public abstract partial class BaseSqlStrategy(
         int lastDot = trimmed.LastIndexOf('.');
         if (firstDot != lastDot) return;
 
-        var prefix = trimmed.Slice(0, firstDot);
-        var columnName = trimmed.Slice(firstDot + 1);
+        var prefix = trimmed[..firstDot];
+        var columnName = trimmed[(firstDot + 1)..];
 
         if (prefix.Equals(subAlias.AsSpan(), StringComparison.OrdinalIgnoreCase)) return;
         string prefixStr = prefix.ToString();
@@ -264,7 +273,7 @@ public abstract partial class BaseSqlStrategy(
                 $"Field '{fieldName.Trim()}' in {context} references table alias '{prefixStr}', " +
                 $"which is defined only inside a subquery (FromQuery). " +
                 $"The outer query can only see the subquery's output columns, " +
-                $"not its internal tables. Use '{subAlias}.{columnName.ToString()}' instead " +
+                $"not its internal tables. Use '{subAlias}.{columnName}' instead " +
                 $"or reference the column via its alias from the subquery.");
         }
     }
@@ -417,7 +426,7 @@ public abstract partial class BaseSqlStrategy(
             {
                 OperationSelectCondition opCol => MapArithmetic(opCol),
                 ConstantSelectCondition constCol => MapArithmetic(constCol),
-                FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
+                FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window)),
                 CaseWhenSelectCondition caseWhenCol => MapCaseWhen(caseWhenCol.CaseWhen, caseWhenCol.ElseValue),
                 SubQuerySelectCondition subQueryCol => MapSubQueryColumn(subQueryCol),
                 FieldSelectCondition fieldCol when !string.IsNullOrWhiteSpace(fieldCol.FieldName)
@@ -488,24 +497,60 @@ public abstract partial class BaseSqlStrategy(
             caseCol.Cases.Add(new global::SqlKata.CaseWhenClause
             {
                 ConditionQuery = whenQuery,
-                Value = c.Value is JsonElement je
-                    ? _valueParser.UnwrapJsonElement(je)
-                    : c.Value
+                Value = MapCaseWhenValue(c.Value)
             });
         }
 
-        caseCol.ElseValue = elseValue is JsonElement eje
-            ? _valueParser.UnwrapJsonElement(eje)
-            : elseValue;
+        caseCol.ElseValue = MapCaseWhenValue(elseValue);
 
         return caseCol;
+    }
+
+    private object? MapCaseWhenValue(object? val)
+    {
+        if (val is JsonElement je)
+        {
+            if (je.ValueKind == JsonValueKind.Object && je.TryGetProperty("type", out var typeProp)
+                && typeProp.GetString() == "constant"
+                && je.TryGetProperty("constant", out var constProp))
+            {
+                return UnwrapNumericConstant(constProp);
+            }
+            return _valueParser.UnwrapJsonElement(je);
+        }
+        if (val is ConstantSelectCondition cs)
+        {
+            var raw = cs.Constant is JsonElement csJe
+                ? _valueParser.UnwrapJsonElement(csJe)
+                : cs.Constant;
+            return raw is sbyte or byte or short or ushort or int or uint or long or ulong
+                ? Convert.ToDecimal(raw, CultureInfo.InvariantCulture)
+                : raw;
+        }
+        if (val is SelectCondition sc)
+            return MapArithmetic(sc);
+        return val;
+    }
+
+    private static object? UnwrapNumericConstant(JsonElement constProp)
+    {
+        if (constProp.ValueKind == JsonValueKind.Number)
+        {
+            if (constProp.TryGetInt64(out var l)) return l is >= int.MinValue and <= int.MaxValue ? (int)l : l;
+            return constProp.GetDouble();
+        }
+        if (constProp.ValueKind == JsonValueKind.String)
+            return constProp.GetString()!;
+        if (constProp.ValueKind == JsonValueKind.True) return true;
+        if (constProp.ValueKind == JsonValueKind.False) return false;
+        return constProp.ToString();
     }
 
     // =====================================================================
     // Arithmetic expressions
     // =====================================================================
 
-    private AbstractColumn MapArithmetic(SelectCondition? expr)
+    protected AbstractColumn MapArithmetic(SelectCondition? expr)
     {
         return expr switch
         {
@@ -516,13 +561,17 @@ public abstract partial class BaseSqlStrategy(
                 Operator = GetOperatorString(op.Operator)
             },
 
-            FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
+            FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window)),
 
             ConstantSelectCondition cst => MapConstantValue(cst.Constant),
+
+            TemplateSqlTokenSelectCondition token => MapTemplateSqlToken(token),
 
             FieldSelectCondition field => new Column { Name = field.FieldName.Trim() },
 
             CaseWhenSelectCondition cs => MapCaseWhen(cs.CaseWhen, cs.ElseValue),
+
+            SubQuerySelectCondition subQuery => MapSubQueryColumn(subQuery),
 
             null => throw new InvalidOperationException("Expression is null."),
 
@@ -559,6 +608,11 @@ public abstract partial class BaseSqlStrategy(
                 Value = new UnsafeLiteral(b ? "true" : "false", replaceQuotes: false)
             },
 
+            DateTime dt => new NumberColumn
+            {
+                Value = new UnsafeLiteral($"'{dt:yyyy-MM-dd HH:mm:ss}'", replaceQuotes: false)
+            },
+
             float or double or decimal or sbyte or byte or short or ushort
                 or int or uint or long or ulong => new NumberColumn
                 {
@@ -579,15 +633,55 @@ public abstract partial class BaseSqlStrategy(
             ArithmeticOperator.Subtract => "-",
             ArithmeticOperator.Multiply => "*",
             ArithmeticOperator.Divide => "/",
+            ArithmeticOperator.Concat => "||",
             _ => throw new ArgumentOutOfRangeException(nameof(op), $"Unknown operator: {op}")
         };
     }
 
     // =====================================================================
-    // SQL Functions
+    // SQL Functions — dialect normalization
     // =====================================================================
 
-    private FunctionColumn MapFunction(SqlFunctionCondition function)
+    /// <summary>
+    /// Simple 1-to-1 function name remapping: key (UPPER) → target name.
+    /// DATE_FORMAT → TO_CHAR, etc.
+    /// </summary>
+    protected virtual IReadOnlyDictionary<string, string> FunctionNameMappings =>
+        new Dictionary<string, string>();
+
+    /// <summary>
+    /// Declarative template-based function translation.
+    /// Key (UPPER) → template string with $1..$N as positional arg refs.
+    /// Examples:
+    ///   "DATEDIFF" → "DATE_PART('day', $1 - $2)"         (PostgreSQL)
+    ///   "DATEDIFF" → "JULIANDAY($1) - JULIANDAY($2)"      (SQLite)
+    ///   "DATEADD"  → "$3 + INTERVAL '$2 $1'"              (PostgreSQL)
+    /// </summary>
+    protected virtual IReadOnlyDictionary<string, string> FunctionTemplates =>
+        new Dictionary<string, string>();
+
+    protected AbstractColumn MapFunction(SqlFunctionCondition function)
+    {
+        var translated = ApplyFunctionTranslation(function);
+        if (translated != null)
+        {
+            // Template translations bypass ApplyWindowAndFilter below.
+            // Re-apply window/filter if the result is a FunctionColumn.
+            if (translated is FunctionColumn fc)
+                ApplyWindowAndFilter(function, fc);
+            return translated;
+        }
+
+        return MapFunctionCore(function);
+    }
+
+    /// <summary>
+    /// Builds a FunctionColumn directly from a SqlFunctionCondition,
+    /// WITHOUT going through template lookup (ApplyFunctionTranslation).
+    /// Used by template-expansion paths to prevent infinite recursion when
+    /// a template expands into the same function name (e.g. TO_CHAR → TO_CHAR).
+    /// </summary>
+    private FunctionColumn MapFunctionCore(SqlFunctionCondition function)
     {
         var functionName = function.FunctionName?.Trim() ?? string.Empty;
 
@@ -596,6 +690,11 @@ public abstract partial class BaseSqlStrategy(
 
         var args = function.Arguments?.Select(MapFunctionArgument).ToList() ?? [];
 
+        if (args.Count == 0 && functionName == "COUNT")
+        {
+            args = [new RawColumn { Expression = "*", Bindings = [] }];
+        }
+
         var result = new FunctionColumn
         {
             Name = functionName,
@@ -603,6 +702,80 @@ public abstract partial class BaseSqlStrategy(
             IsDistinct = function.IsDistinct
         };
 
+        ApplyWindowAndFilter(function, result);
+        return result;
+    }
+
+    /// <summary>
+    /// Like <see cref="MapArithmetic"/>, but routes FunctionSelectCondition through
+    /// <see cref="MapFunctionCore"/> (skipping template lookup) to break the cycle
+    /// that arises when a template expands into the same function it was matched on.
+    /// All other expression types fall through to the normal MapArithmetic path.
+    /// </summary>
+    private AbstractColumn MapArithmeticFromTemplate(SelectCondition? expr)
+    {
+        if (expr is FunctionSelectCondition f)
+            return MapFunctionCore(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window));
+        return MapArithmetic(expr);
+    }
+
+    private AbstractColumn? ApplyFunctionTranslation(SqlFunctionCondition function)
+    {
+        var fnName = function.FunctionName?.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(fnName))
+            return null;
+
+        var argCount = function.Arguments?.Count ?? 0;
+
+        // 1. Try signature-pattern match: "FUNCNAME($1, $2, ...)" (disambiguates same name, different arg count)
+        if (argCount > 0)
+        {
+            var sigKey = BuildSignatureKey(fnName, argCount);
+            if (FunctionTemplates.TryGetValue(sigKey, out var sigTemplate))
+            {
+                var engine = new FunctionTemplateEngine(sigTemplate);
+                var selectResult = engine.Translate(function.Arguments);
+                if (selectResult != null)
+                    // Use MapArithmeticFromTemplate (not MapArithmetic) to prevent infinite
+                    // recursion when the template expands into the same function signature
+                    // (e.g. TO_CHAR($1,$2) → TO_CHAR($1, 'YYYY-MM-DD') on Postgres/Oracle).
+                    return MapArithmeticFromTemplate(selectResult);
+            }
+        }
+
+        // 2. Try name-only template match (original behavior)
+        if (FunctionTemplates.TryGetValue(fnName, out var template))
+        {
+            var engine = new FunctionTemplateEngine(template);
+            var selectResult = engine.Translate(function.Arguments);
+            if (selectResult != null)
+                return MapArithmeticFromTemplate(selectResult);
+        }
+
+        // 3. Try name-only remapping
+        if (FunctionNameMappings.TryGetValue(fnName, out var mappedName))
+        {
+            function.FunctionName = mappedName;
+        }
+
+        return null; // fall through to default
+    }
+
+    private static string BuildSignatureKey(string fnName, int argCount)
+    {
+        var sb = new StringBuilder(fnName);
+        sb.Append('(');
+        for (var i = 1; i <= argCount; i++)
+        {
+            if (i > 1) sb.Append(", ");
+            sb.Append('$').Append(i);
+        }
+        sb.Append(')');
+        return sb.ToString();
+    }
+
+    private void ApplyWindowAndFilter(SqlFunctionCondition function, FunctionColumn result)
+    {
         if (function.FilterWhereConditions?.Count > 0)
         {
             var filterQuery = new Query();
@@ -642,9 +815,14 @@ public abstract partial class BaseSqlStrategy(
                     .Where(x => x.Item1 != null)
                     .Select(x => (x.Item1!, x.Item2))];
             }
+
+            // Empty OVER () → force SqlKata to emit OVER (PARTITION BY 1)
+            if (result.OverPartitionBy == null && result.OverOrderBy == null)
+            {
+                result.OverPartitionBy = [new RawColumn { Expression = "1", Bindings = [] }];
+            }
         }
 
-        return result;
     }
 
     private AbstractColumn MapFunctionArgument(SelectCondition argument)
@@ -652,11 +830,14 @@ public abstract partial class BaseSqlStrategy(
         return argument switch
         {
             OperationSelectCondition a => MapArithmetic(a),
-            FunctionSelectCondition nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions)),
+            FunctionSelectCondition nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions, nf.Window)),
             ConstantSelectCondition constantArg => MapConstantValue(constantArg.Constant),
+            TemplateSqlTokenSelectCondition tokenArg => MapTemplateSqlToken(tokenArg),
             CaseWhenSelectCondition caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
             FieldSelectCondition fieldArg when !string.IsNullOrWhiteSpace(fieldArg.FieldName)
-                => new Column { Name = fieldArg.FieldName.Trim() },
+                => fieldArg.FieldName.Trim() == "*"
+                    ? new RawColumn { Expression = "*", Bindings = [] }
+                    : new Column { Name = fieldArg.FieldName.Trim() },
             _ => throw new InvalidOperationException(
                 $"Unsupported or invalid function argument type: {argument?.GetType().Name ?? "null"}")
         };
@@ -686,6 +867,7 @@ public abstract partial class BaseSqlStrategy(
             SubQueryWhereCondition s => ApplySubQueryWhere(query, s),
             BasicWhereCondition b => ApplyBasicWhere(query, b),
             ColumnCompareWhereCondition c => ApplyColumnCompareWhere(query, c),
+            ExpressionWhereCondition e => ApplyExpressionWhere(query, e),
             _ => query
         };
     }
@@ -794,9 +976,38 @@ public abstract partial class BaseSqlStrategy(
         return query.WhereColumns(c.LeftFieldName, op, c.RightFieldName);
     }
 
+    private Q ApplyExpressionWhere<Q>(Q query, ExpressionWhereCondition c)
+        where Q : BaseQuery<Q>
+    {
+        if (c.LeftExpression == null)
+            return query;
+
+        var bindings = new List<object>();
+        var leftSql = BuildHavingArgPart(c.LeftExpression, bindings);
+        var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
+        var rightSql = c.RightExpression != null
+            ? BuildHavingArgPart(c.RightExpression, bindings)
+            : "?";
+
+        var sql = $"({leftSql}) {op} ({rightSql})";
+
+        if (c.IsOr)
+            return query.OrWhereRaw(sql, [.. bindings]);
+        if (c.IsNot)
+            return query.Not().WhereRaw(sql, [.. bindings]);
+        return query.WhereRaw(sql, [.. bindings]);
+    }
+
     private void ApplySimpleWhere<Q>(Q query, string field, string op, object? val)
         where Q : BaseQuery<Q>
     {
+        // Auto-detect date-like strings and use WhereDate for proper type casting
+        if (val is string strVal && _valueParser.TryToDateTime(strVal, out _))
+        {
+            ApplyDateWhere(query, field, op, strVal, false);
+            return;
+        }
+
         switch (op)
         {
             case "is":
@@ -924,7 +1135,7 @@ public abstract partial class BaseSqlStrategy(
 
                 query = query.Join(
                     sub.As(alias),
-                    j => { ApplyOnConditions(j, join); return j; },
+                    j => ApplyOnConditions(j, join),
                     sqlJoinType
                 );
             }
@@ -936,7 +1147,7 @@ public abstract partial class BaseSqlStrategy(
                 {
                     query = query.Join(
                         $"{tableName} AS {join.Alias}",
-                        j => { ApplyOnConditions(j, join); return j; },
+                        j => ApplyOnConditions(j, join),
                         sqlJoinType
                     );
                 }
@@ -944,7 +1155,7 @@ public abstract partial class BaseSqlStrategy(
                 {
                     query = query.Join(
                         tableName,
-                        j => { ApplyOnConditions(j, join); return j; },
+                        j => ApplyOnConditions(j, join),
                         sqlJoinType
                     );
                 }
@@ -967,17 +1178,21 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
-    private void ApplyOnConditions(Join j, JoinCondition join)
+    private Join ApplyOnConditions(Join j, JoinCondition join)
     {
+        if (join.Type == JoinType.Cross && (join.OnConditions == null || join.OnConditions.Count == 0))
+        {
+            return j;
+        }
+
         if (join.OnConditions != null && join.OnConditions.Count > 0)
         {
             ApplyWhereConditions(j, join.OnConditions);
+            return j;
         }
-        else
-        {
-            throw new InvalidOperationException(
-                $"Join on '{join.Alias ?? join.Table}' must have at least one OnCondition.");
-        }
+
+        throw new InvalidOperationException(
+            $"Join on '{join.Alias ?? join.Table}' must have at least one OnCondition.");
     }
 
     // =====================================================================
@@ -1024,8 +1239,26 @@ public abstract partial class BaseSqlStrategy(
             GroupHavingCondition g => ApplyGroupHaving(query, g),
             BasicHavingCondition b => ApplyBasicHaving(query, b),
             FunctionHavingCondition f => ApplyFunctionHaving(query, f),
+            ExpressionHavingCondition e => ApplyExpressionHaving(query, e),
             _ => query
         };
+    }
+
+    private static RawColumn MapTemplateSqlToken(TemplateSqlTokenSelectCondition token)
+    {
+        var value = token.Token.Replace("_", string.Empty).Trim();
+        if (!Enum.TryParse<TemplateSqlToken>(value, ignoreCase: true, out var parsed))
+            throw new InvalidOperationException($"Unsupported SQL token in function template: {token.Token}");
+
+        var expression = parsed switch
+        {
+            TemplateSqlToken.Day => "DAY",
+            TemplateSqlToken.CurrentTimestamp => "CURRENT_TIMESTAMP",
+            TemplateSqlToken.Sysdate => "SYSDATE",
+            _ => throw new InvalidOperationException($"Unsupported SQL token in function template: {token.Token}")
+        };
+
+        return new RawColumn { Expression = expression, Bindings = [] };
     }
 
     private Query ApplyGroupHaving(Query query, GroupHavingCondition g)
@@ -1033,9 +1266,33 @@ public abstract partial class BaseSqlStrategy(
         if (g.Groups?.Count == 0)
             return query;
 
-        return g.IsOr
-            ? query.OrHaving(q => ApplyHavingConditions(q, g.Groups))
-            : query.Having(q => ApplyHavingConditions(q, g.Groups));
+        if (g.Groups?.Count == 1)
+            return ApplySingleHaving(query, g.Groups[0]);
+
+        if (g.IsOr)
+        {
+            return query.Having(q =>
+            {
+                var first = true;
+                foreach (var c in g.Groups ?? [])
+                {
+                    if (first)
+                    {
+                        ApplySingleHaving(q, c);
+                        first = false;
+                    }
+                    else
+                    {
+                        c.IsOr = true;
+                        ApplySingleHaving(q, c);
+                        c.IsOr = false;
+                    }
+                }
+                return q;
+            });
+        }
+
+        return query.Having(q => ApplyHavingConditions(q, g.Groups));
     }
 
     private Query ApplyBasicHaving(Query query, BasicHavingCondition c)
@@ -1087,14 +1344,83 @@ public abstract partial class BaseSqlStrategy(
             return baseQuery.HavingRaw($"{expr} {sqlOp}");
         }
 
+        // Auto-convert date-like strings to DateTime for proper type handling
+        if (val is string strVal && _valueParser.TryToDateTime(strVal, out var dtVal))
+        {
+            bindings.Add(dtVal);
+            return baseQuery.HavingRaw($"{expr} {sqlOp} ?::date", [.. bindings]);
+        }
+
         bindings.Add(val!);
         return baseQuery.HavingRaw($"{expr} {sqlOp} ?", [.. bindings]);
     }
 
+    private Query ApplyExpressionHaving(Query query, ExpressionHavingCondition c)
+    {
+        if (c.LeftExpression == null)
+            return query;
+
+        var bindings = new List<object>();
+        var leftSql = BuildHavingArgPart(c.LeftExpression, bindings);
+        var op = (c.Operator ?? "=").ToLowerInvariant().Replace(" ", "").Trim();
+        var sqlOp = op switch
+        {
+            "is" or "isnull" => "IS NULL",
+            "isnot" or "isnotnull" => "IS NOT NULL",
+            _ => op
+        };
+
+        var baseQuery = c.IsOr ? query.Or() : query;
+        baseQuery = c.IsNot ? baseQuery.Not() : baseQuery;
+
+        if (sqlOp is "IS NULL" or "IS NOT NULL")
+            return baseQuery.HavingRaw($"{leftSql} {sqlOp}", [.. bindings]);
+
+        var rightSql = c.RightExpression != null
+            ? BuildHavingArgPart(c.RightExpression, bindings)
+            : "?";
+
+        return baseQuery.HavingRaw($"{leftSql} {sqlOp} {rightSql}", [.. bindings]);
+    }
+
     private string BuildHavingFuncExpr(SqlFunctionCondition func, List<object> bindings)
     {
+        var fnName = func.FunctionName?.Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(fnName))
+        {
+            var argCount = func.Arguments?.Count ?? 0;
+            var translated = TryApplyFunctionTemplate(fnName, argCount, func.Arguments, bindings);
+            if (translated != null)
+                return translated;
+        }
+
         var argParts = func.Arguments?.Select(a => BuildHavingArgPart(a, bindings)).ToList() ?? [];
         return $"{func.FunctionName}({string.Join(", ", argParts)})";
+    }
+
+    private string? TryApplyFunctionTemplate(string fnName, int argCount, List<SelectCondition>? arguments, List<object> bindings)
+    {
+        if (argCount > 0)
+        {
+            var sigKey = BuildSignatureKey(fnName, argCount);
+            if (FunctionTemplates.TryGetValue(sigKey, out var sigTemplate))
+            {
+                var engine = new FunctionTemplateEngine(sigTemplate);
+                var selectResult = engine.Translate(arguments);
+                if (selectResult != null)
+                    return BuildHavingArgPart(selectResult, bindings);
+            }
+        }
+
+        if (FunctionTemplates.TryGetValue(fnName, out var template))
+        {
+            var engine = new FunctionTemplateEngine(template);
+            var selectResult = engine.Translate(arguments);
+            if (selectResult != null)
+                return BuildHavingArgPart(selectResult, bindings);
+        }
+
+        return null;
     }
 
     private string BuildHavingArgPart(SelectCondition arg, List<object> bindings)
@@ -1133,6 +1459,14 @@ public abstract partial class BaseSqlStrategy(
         {
             FieldSelectCondition f => f.FieldName,
             ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            FunctionSelectCondition fn => BuildHavingFuncExpr(new SqlFunctionCondition
+            {
+                FunctionName = fn.FunctionName,
+                Arguments = fn.Arguments,
+                IsDistinct = fn.IsDistinct,
+                FilterWhereConditions = fn.FilterWhereConditions,
+                Window = fn.Window,
+            }, bindings),
             OperationSelectCondition nested => BuildHavingArithPart(nested, bindings),
             _ => "?"
         };
@@ -1140,6 +1474,14 @@ public abstract partial class BaseSqlStrategy(
         {
             FieldSelectCondition f => f.FieldName,
             ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            FunctionSelectCondition fn => BuildHavingFuncExpr(new SqlFunctionCondition
+            {
+                FunctionName = fn.FunctionName,
+                Arguments = fn.Arguments,
+                IsDistinct = fn.IsDistinct,
+                FilterWhereConditions = fn.FilterWhereConditions,
+                Window = fn.Window,
+            }, bindings),
             OperationSelectCondition nested => BuildHavingArithPart(nested, bindings),
             _ => "?"
         };
@@ -1296,7 +1638,7 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
-    private static Query ApplyOrderByFunction(Query query, FunctionColumn function, SortDirection direction)
+    private static Query ApplyOrderByFunction(Query query, AbstractColumn function, SortDirection direction)
     {
         return direction switch
         {

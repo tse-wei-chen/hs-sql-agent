@@ -9,6 +9,7 @@ namespace SqlAgent.Service.Models;
 [JsonDerivedType(typeof(ColumnCompareWhereCondition), "column_compare")]
 [JsonDerivedType(typeof(SubQueryWhereCondition), "subquery")]
 [JsonDerivedType(typeof(GroupWhereCondition), "group")]
+[JsonDerivedType(typeof(ExpressionWhereCondition), "expression")]
 public abstract class WhereCondition
 {
     [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
@@ -41,6 +42,16 @@ public class ColumnCompareWhereCondition : WhereCondition
 
     [Description("The right-hand side column reference. e.g., 'o.customer_id'")]
     public string RightFieldName { get; set; } = string.Empty;
+}
+
+public class ExpressionWhereCondition : WhereCondition
+{
+    [Description("The left-hand side expression (field, operation, function, etc.).")]
+    public SelectCondition LeftExpression { get; set; } = null!;
+    [Description("Comparison operator: '=', '>', '<', '>=', '<=', '<>', 'LIKE', 'ILIKE'")]
+    public string Operator { get; set; } = "=";
+    [Description("The optional right-hand side expression. If set, Value is ignored.")]
+    public SelectCondition? RightExpression { get; set; }
 }
 
 public class SubQueryWhereCondition : WhereCondition

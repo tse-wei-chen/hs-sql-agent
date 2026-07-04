@@ -15,6 +15,41 @@ public partial class FirebirdStrategy(IQueryValueParserService valueParser, ICon
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
 
+    protected override IReadOnlyDictionary<string, string> FunctionNameMappings => new Dictionary<string, string>
+    {
+        ["IFNULL"] = "COALESCE",
+        ["NVL"] = "COALESCE",
+        ["ISNULL"] = "COALESCE",
+        ["LOCATE"] = "POSITION",
+        ["LEN"] = "CHAR_LENGTH",
+        ["CEILING"] = "CEIL",
+        ["RANDOM"] = "RAND",
+        ["STRING_AGG"] = "LIST",
+        ["LISTAGG"] = "LIST",
+    };
+
+    protected override IReadOnlyDictionary<string, string> FunctionTemplates => new Dictionary<string, string>
+    {
+        ["GETDATE"] = "@CurrentTimestamp",
+        ["SYSDATE"] = "@CurrentTimestamp",
+
+        // 2-arg DATEDIFF → needs unit + arg reorder
+        ["DATEDIFF($1, $2)"] = "DATEDIFF(@Day, $2, $1)",
+
+        // STRPOS(str,substr) → POSITION(substr,str) reversed
+        ["STRPOS($1, $2)"] = "POSITION($2, $1)",
+
+        // INSTR(str,substr) → POSITION(substr,str) reversed
+        ["INSTR($1, $2)"] = "POSITION($2, $1)",
+
+        // CHARINDEX(substr,str) → POSITION(substr,str)
+        ["CHARINDEX($1, $2)"] = "POSITION($1, $2)",
+
+        // GROUP_CONCAT → LIST
+        ["GROUP_CONCAT($1)"] = "LIST($1, ',')",
+        ["GROUP_CONCAT($1, $2)"] = "LIST($1, $2)",
+    };
+
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
     {
         var builder = new FbConnectionStringBuilder

@@ -9,6 +9,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -24,19 +32,22 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CircleAlert, CircleCheck, Plus, Trash2, Edit2, Save, X, Wand2  } from "@lucide/vue";
+import { CircleAlert, CircleCheck, Plus, Trash2, Edit2, Save, X, Play } from "@lucide/vue";
 import {
   listCustomSqlTools,
   createCustomSqlTool,
   updateCustomSqlTool,
   deleteCustomSqlTool,
+  testExecuteCustomSqlTool,
   type CustomSqlTool,
+  type TestExecuteResult,
 } from "@/api/custom-tools";
 import {
   listDbManagements,
   type DbManagement,
 } from "@/api/db-management";
 
+import { parseSqlCustomSqlTool } from "@/api/custom-tools";
 import { json } from "@codemirror/lang-json";
 import { oneDark } from "@codemirror/theme-one-dark";
 import FormField from "@/components/FormField.vue";
@@ -70,9 +81,44 @@ const saving = ref(false);
 const editingId = ref<number | null>(null);
 const colorMode = useColorMode();
 const parameters = ref<{ name: string; type: string; description: string }[]>([]);
-const isAdvancedBuilderOpen = ref(false);
 
 const dbs = ref<DbManagement[]>([]);
+
+// Test Execute state
+const isTestDialogOpen = ref(false);
+const testDbId = ref<number | null>(null);
+const testParamValues = ref<Record<string, string>>({});
+const testExecuting = ref(false);
+const testResult = ref<TestExecuteResult | null>(null);
+
+const openTestDialog = () => {
+  testDbId.value = dbs.value?.[0]?.id ?? null;
+  testParamValues.value = {};
+  testResult.value = null;
+  isTestDialogOpen.value = true;
+};
+
+const runTestExecute = async () => {
+  if (!testDbId.value) {
+    toast.error("Please select a database.");
+    return;
+  }
+  testExecuting.value = true;
+  testResult.value = null;
+  try {
+    const result = await testExecuteCustomSqlTool({
+      definitionJson: values.definitionJson,
+      type: values.type,
+      dbId: testDbId.value,
+      parameters: Object.keys(testParamValues.value).length > 0 ? testParamValues.value : undefined,
+    });
+    testResult.value = result;
+  } catch (error: any) {
+    testResult.value = { success: false, error: getErrorMessage(error, "Failed to execute test.") };
+  } finally {
+    testExecuting.value = false;
+  }
+};
 
 const getErrorMessage = (error: any, fallback: string) => {
   const data = error?.response?.data;
@@ -94,11 +140,6 @@ const loadDbs = async () => {
   }
 };
 
-const onAdvancedBuilderApply = (json: string) => {
-  setFieldValue("definitionJson", json);
-  formatJson();
-};
-
 const isJsonValid = computed(() => {
   if (!values.definitionJson) return true;
   try {
@@ -115,6 +156,21 @@ const formatJson = () => {
       const parsed = JSON.parse(values.definitionJson);
       setFieldValue("definitionJson", JSON.stringify(parsed, null, 2));
     } catch {}
+  }
+};
+
+const parseSql = async () => {
+  if (!values.definitionJson) return;
+  try {
+    const result = await parseSqlCustomSqlTool(values.definitionJson);
+    if (result.success) {
+      setFieldValue("definitionJson", JSON.stringify(JSON.parse(result.data!), null, 2));
+      toast.success("SQL parsed to QueryDefinition JSON");
+    } else {
+      toast.error(`Parse error: ${result.error}`);
+    }
+  } catch (e: any) {
+    toast.error(`Parse error: ${e.message}`);
   }
 };
 
@@ -206,7 +262,6 @@ watch(
     if (newVal !== oldVal) {
       setFieldValue("definitionJson", "");
       parameters.value = [];
-      isAdvancedBuilderOpen.value = false;
     }
   },
 );
@@ -263,14 +318,20 @@ onMounted(async () => {
                 <div class="flex items-center justify-between mb-2">
                   <FieldLabel for="definition" class="mb-0">SQL Definition (JSON)</FieldLabel>
                   <div class="flex items-center gap-2">
-                    <Button v-if="values.type === 'Query'" variant="default" size="sm"
-                      class="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
-                      @click="isAdvancedBuilderOpen = true" type="button">
-                      <Wand2 class="size-3 mr-1" /> Open Advanced Builder
+                    <Button v-if="values.type === 'Query'" variant="outline" size="sm"
+                      class="h-7 text-[0.65rem] px-2" @click="parseSql" type="button"
+                      :disabled="!values.definitionJson">
+                      Parse SQL
                     </Button>
                     <Button variant="outline" size="sm" class="h-7 text-[0.65rem] px-2" @click="formatJson" type="button"
                       :disabled="!isJsonValid || !values.definitionJson">
                       Format JSON
+                    </Button>
+                    <Button variant="default" size="sm"
+                      class="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                      @click="openTestDialog" type="button"
+                      :disabled="!isJsonValid || !values.definitionJson">
+                      <Play class="size-3 mr-1" /> Test Execute
                     </Button>
                   </div>
                 </div>
@@ -288,9 +349,14 @@ onMounted(async () => {
                       }" placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }' />
                   </div>
                   <div class="flex justify-between items-start">
-                    <p class="text-[0.7rem] text-muted-foreground" v-pre>
-                      Use {{ parameterName }} as placeholders in values.
-                    </p>
+                    <div class="space-y-1 text-[0.7rem] text-muted-foreground">
+                      <p>
+                        You can paste SQL here, then click Parse SQL to convert it into QueryDefinition JSON.
+                      </p>
+                      <p v-pre>
+                        Use {{ parameterName }} as placeholders in values.
+                      </p>
+                    </div>
                     <TooltipProvider v-if="errorMessage && fieldMeta.touched">
                       <Tooltip>
                         <TooltipTrigger as-child>
@@ -439,7 +505,61 @@ onMounted(async () => {
       </CardContent>
     </Card>
 
-    <AdvancedJsonBuilderDialog v-model:open="isAdvancedBuilderOpen" :type="values.type as any" :dbs="dbs"
-      @apply="onAdvancedBuilderApply" />
+    <!-- Test Execute Dialog -->
+    <Dialog v-model:open="isTestDialogOpen">
+      <DialogContent class="sm:max-w-2xl max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Test Execute Tool</DialogTitle>
+          <DialogDescription>
+            Run this tool definition against a selected database with test parameters.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="flex-1 overflow-y-auto space-y-4 py-4">
+          <Field>
+            <FieldLabel>Target Database</FieldLabel>
+            <Select v-model="testDbId">
+              <SelectTrigger>
+                <SelectValue placeholder="Select a database..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="db in dbs" :key="db.id" :value="db.id">
+                  {{ db.name }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+
+          <div v-if="parameters.length > 0" class="space-y-3">
+            <h4 class="text-sm font-medium">Parameters</h4>
+            <div v-for="p in parameters" :key="p.name" class="grid grid-cols-4 gap-2 items-center">
+              <span class="text-xs font-mono text-muted-foreground col-span-1">
+                {{ '{' + '{' }}{{ p.name }}{{ '}' + '}' }}
+              </span>
+              <Input
+                class="col-span-3 h-8 text-xs"
+                :placeholder="`${p.description} (${p.type})`"
+                :modelValue="testParamValues[p.name] ?? ''"
+                @update:modelValue="(v: any) => { testParamValues[p.name] = v ?? '' }"
+              />
+            </div>
+          </div>
+
+          <div v-if="testResult" class="space-y-2">
+            <h4 class="text-sm font-medium" :class="testResult.success ? 'text-green-600' : 'text-red-600'">
+              {{ testResult.success ? 'Success' : 'Error' }}
+            </h4>
+            <pre class="border rounded-md p-3 text-xs bg-muted/20 overflow-auto max-h-60 whitespace-pre-wrap font-mono">{{ testResult.success ? testResult.data : testResult.error }}</pre>
+          </div>
+        </div>
+
+        <DialogFooter class="border-t pt-4">
+          <Button variant="outline" @click="isTestDialogOpen = false">Close</Button>
+          <Button @click="runTestExecute" :disabled="testExecuting || !testDbId">
+            {{ testExecuting ? "Executing..." : "Execute" }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

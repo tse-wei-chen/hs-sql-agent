@@ -1,112 +1,109 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <OutputType>Library</OutputType>
-    <IsPackable>true</IsPackable>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+		<OutputType>Library</OutputType>
+		<IsPackable>true</IsPackable>
+	</PropertyGroup>
 
-  <PropertyGroup>
-    <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <EmbedUntrackedSources>true</EmbedUntrackedSources>
-    <DebugType>portable</DebugType>
-    <Deterministic>true</Deterministic>
-    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
-  </PropertyGroup>
+	<PropertyGroup>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+		<EmbedUntrackedSources>true</EmbedUntrackedSources>
+		<DebugType>portable</DebugType>
+		<Deterministic>true</Deterministic>
+		<ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+	</PropertyGroup>
 
-  <PropertyGroup>
-    <PackageId>HsSqlAgent.Server</PackageId>
-    <VersionPrefix>1.9.1</VersionPrefix>
-    <Authors>tse-wei-chen</Authors>
-    <Company>hs-sql-agent</Company>
-    <Description>Embeddable MCP SQL Agent server for ASP.NET Core. Add HsSqlAgent to any existing ASP.NET Core app with AddHsSqlAgent() / UseHsSqlAgent().</Description>
-    <PackageTags>sql;mcp;ai;database;aspnetcore;hangfire-style</PackageTags>
-    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-  </PropertyGroup>
+	<PropertyGroup>
+		<PackageId>HsSqlAgent.Server</PackageId>
+		<VersionPrefix>1.10.0</VersionPrefix>
+		<Authors>tse-wei-chen</Authors>
+		<Company>hs-sql-agent</Company>
+		<Description>Embeddable MCP SQL Agent server for ASP.NET Core. Add HsSqlAgent to any existing ASP.NET Core app with AddHsSqlAgent() / UseHsSqlAgent().</Description>
+		<PackageTags>sql;mcp;ai;database;aspnetcore;hangfire-style</PackageTags>
+		<PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+		<PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
-    <PackageReference Include="ModelContextProtocol.AspNetCore" />
-    <PackageReference Include="ModelContextProtocol" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
-    <PackageReference Include="FluentValidation.AspNetCore" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
-    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
-    <!-- Embedded ProjectReference runtime deps: add here when added to Admin.Service/SqlAgent.Service/Common.
-         PrivateAssets=All on ProjectReferences hides these from the nuspec; re-declaring them here ensures
+	<ItemGroup>
+		<PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+		<PackageReference Include="ModelContextProtocol.AspNetCore" />
+		<PackageReference Include="ModelContextProtocol" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+		<PackageReference Include="FluentValidation.AspNetCore" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+		<PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
+		<!-- Embedded ProjectReference runtime deps: add here when added to Admin.Service/SqlAgent.Service/Common. PrivateAssets=All on ProjectReferences hides these from the nuspec; re-declaring them here ensures
          consumers resolve the correct versions. -->
-    <PackageReference Include="BCrypt.Net-Next" />
-    <PackageReference Include="dapper" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
-    <PackageReference Include="MySql.Data" />
-    <PackageReference Include="Npgsql" />
-    <PackageReference Include="Microsoft.Data.SqlClient" />
-    <PackageReference Include="Oracle.ManagedDataAccess.Core" />
-    <PackageReference Include="FirebirdSql.Data.FirebirdClient" />
-    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
-    <!-- <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+		<PackageReference Include="BCrypt.Net-Next" />
+		<PackageReference Include="dapper" />
+		<PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+		<PackageReference Include="MySql.Data" />
+		<PackageReference Include="Npgsql" />
+		<PackageReference Include="Microsoft.Data.SqlClient" />
+		<PackageReference Include="Oracle.ManagedDataAccess.Core" />
+		<PackageReference Include="FirebirdSql.Data.FirebirdClient" />
+		<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+		<!-- <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" /> -->
-  </ItemGroup>
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\Common\Common.csproj" PrivateAssets="All" />
-    <ProjectReference Include="..\..\Infrastructure\Infrastructure.csproj" PrivateAssets="All" />
-    <ProjectReference Include="..\Admin.Service\Admin.Service.csproj" PrivateAssets="All" />
-    <ProjectReference Include="..\Auth.Service\Auth.Service.csproj" PrivateAssets="All" />
-    <ProjectReference Include="..\SqlAgent.Service\SqlAgent.Service.csproj" PrivateAssets="All" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\..\Common\Common.csproj" PrivateAssets="All" />
+		<ProjectReference Include="..\..\Infrastructure\Infrastructure.csproj" PrivateAssets="All" />
+		<ProjectReference Include="..\Admin.Service\Admin.Service.csproj" PrivateAssets="All" />
+		<ProjectReference Include="..\Auth.Service\Auth.Service.csproj" PrivateAssets="All" />
+		<ProjectReference Include="..\SqlAgent.Service\SqlAgent.Service.csproj" PrivateAssets="All" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" Visible="false" />
-  </ItemGroup>
+	<ItemGroup>
+		<None Include="..\..\..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+		<None Include="..\..\..\..\miscellaneous\dml-approval-prompt.png" Pack="true" PackagePath="miscellaneous\" Visible="false" />
+	</ItemGroup>
 
-  <PropertyGroup>
-    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
+	</PropertyGroup>
 
-  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
-    <ItemGroup>
-      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)" Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'" />
-    </ItemGroup>
-  </Target>
+	<Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
+		<ItemGroup>
+			<BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)" Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'" />
+		</ItemGroup>
+	</Target>
 
 
 
-  <Target Name="CompileFrontend" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release'">
-    <Message Importance="high" Text="[HsSqlAgent] Checking frontend dist status..." />
+	<Target Name="CompileFrontend" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release'">
+		<Message Importance="high" Text="[HsSqlAgent] Checking frontend dist status..." />
 
-    <!-- skip pnpm build if wwwroot already exists (e.g., pre-populated in Docker) -->
-    <PropertyGroup>
-      <_FrontendExists Condition="Exists('wwwroot\index.html')">true</_FrontendExists>
-    </PropertyGroup>
+		<!-- skip pnpm build if wwwroot already exists (e.g., pre-populated in Docker) -->
+		<PropertyGroup>
+			<_FrontendExists Condition="Exists('wwwroot\index.html')">true</_FrontendExists>
+		</PropertyGroup>
 
-    <Exec Command="pnpm install" WorkingDirectory="../../../../frontend" Condition="'$(_FrontendExists)' != 'true'" />
-    <Exec Command="pnpm generate" WorkingDirectory="../../../../frontend" EnvironmentVariables="NODE_ENV=production" Condition="'$(_FrontendExists)' != 'true'" />
+		<Exec Command="pnpm install" WorkingDirectory="../../../../frontend" Condition="'$(_FrontendExists)' != 'true'" />
+		<Exec Command="pnpm generate" WorkingDirectory="../../../../frontend" EnvironmentVariables="NODE_ENV=production" Condition="'$(_FrontendExists)' != 'true'" />
 
-    <ItemGroup Condition="'$(_FrontendExists)' != 'true'">
-      <FrontendDistFiles Include="../../../../frontend/dist\**\*.*" />
-    </ItemGroup>
+		<ItemGroup Condition="'$(_FrontendExists)' != 'true'">
+			<FrontendDistFiles Include="../../../../frontend/dist\**\*.*" />
+		</ItemGroup>
 
-    <MakeDir Directories="wwwroot" Condition="'$(_FrontendExists)' != 'true'" />
+		<MakeDir Directories="wwwroot" Condition="'$(_FrontendExists)' != 'true'" />
 
-    <Copy SourceFiles="@(FrontendDistFiles)" 
-          DestinationFiles="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" 
-          SkipUnchangedFiles="true"
-          Condition="'$(_FrontendExists)' != 'true'" />
+		<Copy SourceFiles="@(FrontendDistFiles)" DestinationFiles="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" SkipUnchangedFiles="true" Condition="'$(_FrontendExists)' != 'true'" />
 
-    <!-- Embed frontend files as assembly resources (for use with EmbeddedFileProvider) -->
-    <ItemGroup>
-      <EmbeddedResource Include="wwwroot\**" />
-    </ItemGroup>
-  </Target>
+		<!-- Embed frontend files as assembly resources (for use with EmbeddedFileProvider) -->
+		<ItemGroup>
+			<EmbeddedResource Include="wwwroot\**" />
+		</ItemGroup>
+	</Target>
 </Project>
