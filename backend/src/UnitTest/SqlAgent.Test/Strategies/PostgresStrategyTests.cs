@@ -464,4 +464,56 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         Assert.Equal(350m, rows[0].GetProperty("total_amount").GetDecimal());
     }
 
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldTranslateDialectSpecificDateFormat()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = "orders",
+                SelectColumns =
+                [
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "FORMAT",
+                        Arguments =
+                        [
+                            new FieldSelectCondition { FieldName = "order_date" },
+                            new ConstantSelectCondition { Constant = "yyyy-MM" }
+                        ],
+                        Alias = "order_month"
+                    },
+                    new FunctionSelectCondition
+                    {
+                        FunctionName = "COUNT",
+                        Arguments = [new FieldSelectCondition { FieldName = "id" }],
+                        Alias = "total_orders"
+                    }
+                ],
+                GroupByConditions =
+                [
+                    new FunctionGroupByCondition
+                    {
+                        FunctionName = "FORMAT",
+                        Arguments =
+                        [
+                            new FieldSelectCondition { FieldName = "order_date" },
+                            new ConstantSelectCondition { Constant = "yyyy-MM" }
+                        ]
+                    }
+                ],
+                OrderByColumns =
+                [
+                    new FieldOrderByCondition { FieldName = "order_month", Direction = SortDirection.Asc }
+                ]
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+
+        Assert.NotNull(rows);
+        Assert.Equal(3, rows.Count);
+        Assert.Equal("2023-01", rows[0].GetProperty("order_month").GetString());
+    }
 }

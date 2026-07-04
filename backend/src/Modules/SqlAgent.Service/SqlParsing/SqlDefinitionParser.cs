@@ -4,7 +4,7 @@ using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.SqlParsing;
 
-public static class SqlDefinitionParser
+public static partial class SqlDefinitionParser
 {
     public static QueryDefinition ParseQuery(string sql)
     {
@@ -18,11 +18,11 @@ public static class SqlDefinitionParser
         RejectMultipleStatements(sql);
         var normalized = TrimTrailingSemicolon(sql.Trim());
 
-        if (Regex.IsMatch(normalized, @"^\s*insert\s+", RegexOptions.IgnoreCase))
+        if (IsInsertRegex().IsMatch(normalized))
             return ParseInsertSql(normalized);
-        if (Regex.IsMatch(normalized, @"^\s*update\s+", RegexOptions.IgnoreCase))
+        if (IsUpdateRegex().IsMatch(normalized))
             return ParseUpdateSql(normalized);
-        if (Regex.IsMatch(normalized, @"^\s*delete\s+", RegexOptions.IgnoreCase))
+        if (IsDeleteRegex().IsMatch(normalized))
             return ParseDeleteSql(normalized);
 
         throw new SqlParseException("Expected INSERT, UPDATE, or DELETE DML statement.");
@@ -30,7 +30,7 @@ public static class SqlDefinitionParser
 
     private static DmlDefinition ParseInsertSql(string sql)
     {
-        var match = Regex.Match(sql, @"^\s*insert\s+into\s+(?<table>[^\s(]+)\s*(?:\((?<columns>[^)]*)\))?\s+values\s*\((?<values>.*)\)\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var match = InsertRegex().Match(sql);
         if (!match.Success)
             throw new SqlParseException("Only INSERT INTO table (columns...) VALUES (...) is supported for execute_dml_sql.");
 
@@ -46,17 +46,17 @@ public static class SqlDefinitionParser
         {
             Operation = DmlOperation.Insert,
             TableName = match.Groups["table"].Value,
-            Values = columns.Select((column, i) => new NameValuePair
+            Values = [.. columns.Select((column, i) => new NameValuePair
             {
                 FieldName = column.Trim(),
                 Value = values[i]
-            }).ToList()
+            })]
         };
     }
 
     private static DmlDefinition ParseUpdateSql(string sql)
     {
-        var match = Regex.Match(sql, @"^\s*update\s+(?<table>[^\s]+)\s+set\s+(?<set>.*?)(?:\s+where\s+(?<where>.*))?\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var match = UpdateRegex().Match(sql);
         if (!match.Success)
             throw new SqlParseException("Only UPDATE table SET column = value [, ...] [WHERE ...] is supported for execute_dml_sql.");
 
@@ -64,14 +64,14 @@ public static class SqlDefinitionParser
         {
             Operation = DmlOperation.Update,
             TableName = match.Groups["table"].Value,
-            Values = SplitSqlList(match.Groups["set"].Value).Select(ParseAssignment).ToList(),
+            Values = [.. SplitSqlList(match.Groups["set"].Value).Select(ParseAssignment)],
             WhereConditions = ParseDmlWhere(match.Groups["where"].Value)
         };
     }
 
     private static DmlDefinition ParseDeleteSql(string sql)
     {
-        var match = Regex.Match(sql, @"^\s*delete\s+from\s+(?<table>[^\s]+)(?:\s+where\s+(?<where>.*))?\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var match = DeleteRegex().Match(sql);
         if (!match.Success)
             throw new SqlParseException("Only DELETE FROM table [WHERE ...] is supported for execute_dml_sql.");
 
@@ -86,14 +86,13 @@ public static class SqlDefinitionParser
     private static NameValuePair ParseAssignment(string assignment)
     {
         var parts = SplitFirstOperator(assignment, "=");
-        if (parts == null)
-            throw new SqlParseException($"Invalid assignment: {assignment}");
-
-        return new NameValuePair
-        {
-            FieldName = parts.Value.Left.Trim(),
-            Value = ParseSqlLiteral(parts.Value.Right.Trim())
-        };
+        return parts == null
+            ? throw new SqlParseException($"Invalid assignment: {assignment}")
+            : new NameValuePair
+            {
+                FieldName = parts.Value.Left.Trim(),
+                Value = ParseSqlLiteral(parts.Value.Right.Trim())
+            };
     }
 
     private static List<WhereCondition>? ParseDmlWhere(string where)
@@ -182,7 +181,7 @@ public static class SqlDefinitionParser
             start = i + keyword.Length;
         }
         parts.Add(input[start..].Trim());
-        return parts.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+        return [.. parts.Where(p => !string.IsNullOrWhiteSpace(p))];
     }
 
     private static int IndexOfTopLevel(string input, string value)
@@ -238,4 +237,16 @@ public static class SqlDefinitionParser
 
     private static string TrimTrailingSemicolon(string sql)
         => sql.EndsWith(';') ? sql[..^1].TrimEnd() : sql;
+    [GeneratedRegex(@"^\s*insert\s+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex IsInsertRegex();
+    [GeneratedRegex(@"^\s*update\s+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex IsUpdateRegex();
+    [GeneratedRegex(@"^\s*delete\s+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex IsDeleteRegex();
+    [GeneratedRegex(@"^\s*insert\s+into\s+(?<table>[^\s(]+)\s*(?:\((?<columns>[^)]*)\))?\s+values\s*\((?<values>.*)\)\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant)]
+    private static partial Regex InsertRegex();
+    [GeneratedRegex(@"^\s*update\s+(?<table>[^\s]+)\s+set\s+(?<set>.*?)(?:\s+where\s+(?<where>.*))?\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant)]
+    private static partial Regex UpdateRegex();
+    [GeneratedRegex(@"^\s*delete\s+from\s+(?<table>[^\s]+)(?:\s+where\s+(?<where>.*))?\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant)]
+    private static partial Regex DeleteRegex();
 }

@@ -6,7 +6,7 @@ namespace SqlAgent.Service.SqlParsing;
 public class SqlParser(Token[] tokens)
 {
     private int _pos;
-    private readonly Dictionary<string, string> _tableAliases = new();
+    private readonly Dictionary<string, string> _tableAliases = [];
 
     public QueryDefinition Parse()
     {
@@ -177,7 +177,7 @@ public class SqlParser(Token[] tokens)
             {
                 var tblName = qd.TableName;
                 var lastDot = tblName.LastIndexOf('.');
-                var shortName = lastDot >= 0 ? tblName.Substring(lastDot + 1) : tblName;
+                var shortName = lastDot >= 0 ? tblName[(lastDot + 1)..] : tblName;
                 _tableAliases[shortName] = qd.Alias;
                 _tableAliases[qd.Alias] = qd.Alias;
             }
@@ -252,11 +252,13 @@ public class SqlParser(Token[] tokens)
         if (join.Alias != null)
         {
             _tableAliases[join.Alias] = join.Alias;
-            var tblName = join.Table;
-            var lastDot = tblName.LastIndexOf('.');
-            var shortName = lastDot >= 0 ? tblName.Substring(lastDot + 1) : tblName;
-            if (!_tableAliases.ContainsKey(shortName))
-                _tableAliases[shortName] = join.Alias;
+            if (join.Table != null)
+            {
+                var lastDot = join.Table.LastIndexOf('.');
+                var shortName = lastDot >= 0 ? join.Table[(lastDot + 1)..] : join.Table;
+                if (!_tableAliases.ContainsKey(shortName))
+                    _tableAliases[shortName] = join.Alias;
+            }
         }
 
         if (PeekKeyword("ON"))
@@ -708,7 +710,7 @@ public class SqlParser(Token[] tokens)
         };
     }
 
-    private HavingCondition MakeHaving(SelectCondition leftExpr, string op, object? value, bool isNot)
+    private static HavingCondition MakeHaving(SelectCondition leftExpr, string op, object? value, bool isNot)
     {
         if (leftExpr is FunctionSelectCondition fn)
         {
@@ -1100,7 +1102,7 @@ public class SqlParser(Token[] tokens)
         if (Peek().Type == TokenType.String)
         {
             var val = Advance().Value;
-            return new ConstantSelectCondition { Constant = val.Substring(1, val.Length - 2) };
+            return new ConstantSelectCondition { Constant = val[1..^1] };
         }
 
         if (Peek().Type == TokenType.Operator && Peek().Value == "*")
@@ -1117,7 +1119,7 @@ public class SqlParser(Token[] tokens)
         {
             var typeKw = Advance().Value;
             var strVal = Advance().Value;
-            var raw = strVal.Substring(1, strVal.Length - 2);
+            var raw = strVal[1..^1];
             if (System.DateTime.TryParse(raw, out var dt))
                 return new ConstantSelectCondition { Constant = dt };
             return new ConstantSelectCondition { Constant = raw };
@@ -1129,7 +1131,7 @@ public class SqlParser(Token[] tokens)
         {
             Advance();
             var strVal = Advance().Value;
-            var raw = strVal.Substring(1, strVal.Length - 2);
+            var raw = strVal[1..^1];
             return new ConstantSelectCondition { Constant = raw };
         }
 
@@ -1146,7 +1148,7 @@ public class SqlParser(Token[] tokens)
         return ParseColumnRef();
     }
 
-    private SelectCondition ParseFunction()
+    private FunctionSelectCondition ParseFunction()
     {
         var fnName = Advance().Value.ToUpper();
         Expect(TokenType.LParen);
@@ -1255,7 +1257,7 @@ public class SqlParser(Token[] tokens)
         return window;
     }
 
-    private SelectCondition ParseCaseExpr()
+    private CaseWhenSelectCondition ParseCaseExpr()
     {
         Advance();
         var caseExpr = Peek().Type == TokenType.Keyword && PeekKeyword("WHEN") ? null : ParseExpr();
@@ -1431,7 +1433,7 @@ public class SqlParser(Token[] tokens)
         if (Peek().Type == TokenType.String)
         {
             var val = Advance().Value;
-            return val.Substring(1, val.Length - 2);
+            return val[1..^1];
         }
         if (PeekKeyword("NULL")) { Advance(); return null; }
         if (PeekKeyword("TRUE")) { Advance(); return true; }
@@ -1440,7 +1442,7 @@ public class SqlParser(Token[] tokens)
         return idVal;
     }
 
-    private WhereCondition ConvertSelectToWhereCondition(SelectCondition expr)
+    private static WhereCondition ConvertSelectToWhereCondition(SelectCondition expr)
     {
         if (expr is FieldSelectCondition f)
             return new BasicWhereCondition { FieldName = f.FieldName, Operator = "=", Value = true };

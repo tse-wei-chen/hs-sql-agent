@@ -22,12 +22,13 @@ public class SqlAgentToolTests
         Assert.Contains("SELECT SQL", queryDescription);
         Assert.Equal(typeof(string), queryParam.ParameterType);
         Assert.Equal("sql", queryParam.Name);
-        Assert.Equal(2, dmlParams.Length);
+        Assert.Equal(3, dmlParams.Length);
         Assert.Equal(typeof(string), dmlParams[0].ParameterType);
         Assert.Equal("sql", dmlParams[0].Name);
-        Assert.Equal(typeof(string), dmlParams[1].ParameterType);
-        Assert.True(dmlParams[1].HasDefaultValue);
-        Assert.Equal("confirmToken", dmlParams[1].Name);
+        Assert.Equal(typeof(ModelContextProtocol.Server.McpServer), dmlParams[1].ParameterType);
+        Assert.Equal("server", dmlParams[1].Name);
+        Assert.Equal(typeof(System.Threading.CancellationToken), dmlParams[2].ParameterType);
+        Assert.Equal("cancellationToken", dmlParams[2].Name);
     }
 
     [Fact]

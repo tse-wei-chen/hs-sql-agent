@@ -50,8 +50,13 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         ["INSTR($1, $2)"] = "STRPOS($1, $2)",    // INSTR(str,substr) same order as STRPOS
         ["CHARINDEX($1, $2)"] = "STRPOS($2, $1)", // CHARINDEX(substr,str) reversed
 
-        // SQLite STRFTIME(fmt, date) → TO_CHAR(date, fmt) — reversed args
-        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1)",
+        // Date formatting: always produce TO_CHAR with Postgres-native format,
+        // regardless of which dialect the LLM used. The :date_format('...') arg
+        // pins the output format directly — no runtime conversion needed.
+        ["DATE_FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
+        ["FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
+        ["TO_CHAR($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
+        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1:date_format('YYYY-MM-DD'))",
 
         // GROUP_CONCAT → STRING_AGG (separator required in PG)
         ["GROUP_CONCAT($1)"] = "STRING_AGG($1, ',')",

@@ -36,10 +36,11 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
 
         ["DATEDIFF($1, $2)"] = "JULIANDAY($1) - JULIANDAY($2)",
 
-        // STRFTIME(fmt, date) — arg order reversed vs DATE_FORMAT(date, fmt)
-        ["DATE_FORMAT($1, $2)"] = "STRFTIME($2, $1)",
-        ["TO_CHAR($1, $2)"] = "STRFTIME($2, $1)",
-        ["FORMAT($1, $2)"] = "STRFTIME($2, $1)",
+        // Date formatting: always produce STRFTIME with SQLite-native %-style format.
+        // LLM may use MySQL/Oracle/MSSQL format strings; :date_format('%Y-%m-%d') pins the target.
+        ["DATE_FORMAT($1, $2)"] = "STRFTIME($2:date_format('%Y-%m-%d'), $1)",
+        ["TO_CHAR($1, $2)"] = "STRFTIME($2:date_format('%Y-%m-%d'), $1)",
+        ["FORMAT($1, $2)"] = "STRFTIME($2:date_format('%Y-%m-%d'), $1)",
 
         // Date part extraction
         ["YEAR($1)"] = "STRFTIME('%Y', $1)",

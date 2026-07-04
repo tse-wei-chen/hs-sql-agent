@@ -79,7 +79,7 @@ public class SqlTokenizer(string sql)
                     else if (_sql[_pos] == '\'') { _pos++; break; }
                     else _pos++;
                 }
-                tokens.Add(new Token(TokenType.String, _sql.Substring(start, _pos - start), start));
+                tokens.Add(new Token(TokenType.String, _sql[start.._pos], start));
                 continue;
             }
 
@@ -89,7 +89,7 @@ public class SqlTokenizer(string sql)
                 _pos++;
                 while (_pos < _sql.Length && _sql[_pos] != '"') _pos++;
                 if (_pos < _sql.Length) _pos++;
-                tokens.Add(new Token(TokenType.Identifier, _sql.Substring(start, _pos - start), start));
+                tokens.Add(new Token(TokenType.Identifier, _sql[start.._pos], start));
                 continue;
             }
 
@@ -99,7 +99,7 @@ public class SqlTokenizer(string sql)
                 _pos++;
                 while (_pos < _sql.Length && _sql[_pos] != '`') _pos++;
                 if (_pos < _sql.Length) _pos++;
-                tokens.Add(new Token(TokenType.Identifier, _sql.Substring(start, _pos - start), start));
+                tokens.Add(new Token(TokenType.Identifier, _sql[start.._pos], start));
                 continue;
             }
 
@@ -109,7 +109,7 @@ public class SqlTokenizer(string sql)
                 _pos++;
                 while (_pos < _sql.Length && _sql[_pos] != ']') _pos++;
                 if (_pos < _sql.Length) _pos++;
-                tokens.Add(new Token(TokenType.Identifier, _sql.Substring(start, _pos - start), start));
+                tokens.Add(new Token(TokenType.Identifier, _sql[start.._pos], start));
                 continue;
             }
 
@@ -119,7 +119,7 @@ public class SqlTokenizer(string sql)
                 _pos += 2;
                 while (_pos < _sql.Length && !(_sql[_pos] == '}' && _pos + 1 < _sql.Length && _sql[_pos + 1] == '}')) _pos++;
                 if (_pos + 1 < _sql.Length) _pos += 2;
-                tokens.Add(new Token(TokenType.Parameter, _sql.Substring(start, _pos - start), start));
+                tokens.Add(new Token(TokenType.Parameter, _sql[start.._pos], start));
                 continue;
             }
 
@@ -128,7 +128,7 @@ public class SqlTokenizer(string sql)
                 var start = _pos;
                 if (c == '.') _pos++;
                 while (_pos < _sql.Length && (char.IsDigit(_sql[_pos]) || _sql[_pos] == '.')) _pos++;
-                tokens.Add(new Token(TokenType.Number, _sql.Substring(start, _pos - start), start));
+                tokens.Add(new Token(TokenType.Number, _sql[start.._pos], start));
                 continue;
             }
 
@@ -136,7 +136,7 @@ public class SqlTokenizer(string sql)
             {
                 var start = _pos;
                 while (_pos < _sql.Length && (char.IsLetterOrDigit(_sql[_pos]) || _sql[_pos] == '_' || _sql[_pos] == '@')) _pos++;
-                var word = _sql.Substring(start, _pos - start);
+                var word = _sql[start.._pos];
                 var type = Keywords.Contains(word) ? TokenType.Keyword
                     : ScalarFuncs.Contains(word) ? TokenType.Keyword
                     : TokenType.Identifier;
@@ -156,7 +156,11 @@ public class SqlTokenizer(string sql)
                     { tokens.Add(new Token(TokenType.Operator, "::", _pos)); _pos += 2; }
                     else _pos++;
                     break;
-                case '+': case '-': case '*': case '/': case '%':
+                case '+':
+                case '-':
+                case '*':
+                case '/':
+                case '%':
                     tokens.Add(new Token(TokenType.Operator, c.ToString(), _pos)); _pos++; break;
                 case '=':
                     tokens.Add(new Token(TokenType.Operator, "=", _pos)); _pos++; break;
@@ -189,6 +193,6 @@ public class SqlTokenizer(string sql)
             }
         }
         tokens.Add(new Token(TokenType.EOF, "", _sql.Length));
-        return tokens.ToArray();
+        return [.. tokens];
     }
 }

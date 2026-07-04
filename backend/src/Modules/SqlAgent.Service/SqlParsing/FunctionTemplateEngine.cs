@@ -7,16 +7,30 @@ namespace SqlAgent.Service.SqlParsing;
 /// Parses a lightweight template expression into a SelectCondition tree.
 /// Template syntax: $1..$N (arg refs), @SQL_TOKEN (dialect grammar token), FUNC(args), expr OP expr, 'string', 123, (expr)
 /// </summary>
-public class FunctionTemplateEngine
+public class FunctionTemplateEngine(string template)
 {
-    private readonly string _template;
+    private readonly string _template = template.Trim();
     private int _pos;
     private const char EOF = '\0';
 
-    public FunctionTemplateEngine(string template)
+    private static readonly Dictionary<string, Func<SelectCondition, IList<SelectCondition>?, SelectCondition>> Modifiers = new(StringComparer.OrdinalIgnoreCase)
     {
-        _template = template.Trim();
-    }
+        // date_format: replaces the $N node's value with the format string supplied as
+        // the modifier argument, e.g. $2:date_format('YYYY-MM-DD').
+        // The original LLM-supplied format is discarded — we always use the pinned target.
+        // If no modifier arg is provided, the node is returned unchanged (no-op).
+        ["date_format"] = (node, modifierArgs) =>
+        {
+            if (modifierArgs is { Count: > 0 } && modifierArgs[0] is ConstantSelectCondition fmtArg && fmtArg.Constant is string literalFmt)
+            {
+                if (node is ConstantSelectCondition constNode)
+                    constNode.Constant = literalFmt;
+                else
+                    return new ConstantSelectCondition { Constant = literalFmt };
+            }
+            return node;
+        }
+    };
 
     public SelectCondition? Translate(IList<SelectCondition>? sourceArgs)
     {
@@ -29,14 +43,29 @@ public class FunctionTemplateEngine
         return ResolveArgs(result, sourceArgs);
     }
 
-    private SelectCondition ResolveArgs(SelectCondition node, IList<SelectCondition>? args)
+    private static SelectCondition ResolveArgs(SelectCondition node, IList<SelectCondition>? args)
     {
         switch (node)
         {
             case ArgRefSelectCondition arg:
                 if (args == null || arg.Index < 0 || arg.Index >= args.Count)
                     return node;
-                return args[arg.Index];
+                var resolvedNode = args[arg.Index];
+                if (!string.IsNullOrEmpty(arg.Modifier))
+                {
+                    if (Modifiers.TryGetValue(arg.Modifier, out var modifierFunc))
+                    {
+                        // Clone the node to prevent mutation of the original AST argument
+                        if (resolvedNode is ConstantSelectCondition constNode)
+                        {
+                            resolvedNode = new ConstantSelectCondition { Constant = constNode.Constant };
+                        }
+                        // Resolve any modifier args (they may themselves reference $N)
+                        var resolvedModifierArgs = arg.ModifierArgs?.Select(a => ResolveArgs(a, args)).ToList();
+                        resolvedNode = modifierFunc(resolvedNode, resolvedModifierArgs);
+                    }
+                }
+                return resolvedNode;
 
             case OperationSelectCondition op:
                 op.Left = ResolveArgs(op.Left, args);
@@ -96,7 +125,7 @@ public class FunctionTemplateEngine
         return left;
     }
 
-    // primary = '$' digit+ | '@' sql-token | FUNC '(' expr (',' expr)* ')' | '\'' string '\'' | number | '(' expr ')'
+    // primary = '$' digit+ [ ':' modifier ] | @' sql-token | FUNC '(' expr (',' expr)* ')' | '\'' string '\'' | number | '(' expr ')'
     private SelectCondition ParsePrimary()
     {
         SkipWs();
@@ -110,7 +139,39 @@ public class FunctionTemplateEngine
             while (char.IsDigit(Peek()))
                 numStr += Advance();
             if (numStr.Length == 0) throw new FormatException("Expected digit after $ in template");
-            return new ArgRefSelectCondition { Index = int.Parse(numStr) - 1 };
+            var index = int.Parse(numStr) - 1;
+
+            string? modifier = null;
+            List<SelectCondition>? modifierArgs = null;
+            if (Peek() == ':')
+            {
+                Advance(); // Skip ':'
+                modifier = "";
+                while (char.IsLetterOrDigit(Peek()) || Peek() == '_')
+                    modifier += Advance();
+
+                // Optional modifier arguments: $1:date_format('yyyy-MM-dd')
+                if (Peek() == '(')
+                {
+                    Advance(); // consume '('
+                    modifierArgs = [];
+                    SkipWs();
+                    if (Peek() != ')')
+                    {
+                        modifierArgs.Add(ParseExpr());
+                        while (Peek() == ',')
+                        {
+                            Advance();
+                            SkipWs();
+                            modifierArgs.Add(ParseExpr());
+                        }
+                    }
+                    SkipWs();
+                    if (Peek() == ')') Advance();
+                }
+            }
+
+            return new ArgRefSelectCondition { Index = index, Modifier = modifier, ModifierArgs = modifierArgs };
         }
 
         // Dialect grammar token for keywords that must not be parameterized, e.g. @Day or @CurrentTimestamp.
@@ -213,5 +274,8 @@ public class FunctionTemplateEngine
     private class ArgRefSelectCondition : SelectCondition
     {
         public int Index { get; set; }
+        public string? Modifier { get; set; }
+        /// <summary>Parsed arguments to the modifier, e.g. the 'yyyy-MM-dd' in $1:date_format('yyyy-MM-dd').</summary>
+        public List<SelectCondition>? ModifierArgs { get; set; }
     }
 }

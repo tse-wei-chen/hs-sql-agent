@@ -198,7 +198,7 @@ public abstract partial class BaseSqlStrategy(
         }
     }
 
-    private HashSet<string> CollectInnerJoinAliases(QueryDefinition subQuery)
+    private static HashSet<string> CollectInnerJoinAliases(QueryDefinition subQuery)
     {
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(subQuery.Alias))
@@ -249,7 +249,7 @@ public abstract partial class BaseSqlStrategy(
         }
     }
 
-    private void CheckFieldNameLeak(string? fieldName, string context, HashSet<string> innerAliases, string subAlias)
+    private static void CheckFieldNameLeak(string? fieldName, string context, HashSet<string> innerAliases, string subAlias)
     {
         if (string.IsNullOrWhiteSpace(fieldName)) return;
 
@@ -262,8 +262,8 @@ public abstract partial class BaseSqlStrategy(
         int lastDot = trimmed.LastIndexOf('.');
         if (firstDot != lastDot) return;
 
-        var prefix = trimmed.Slice(0, firstDot);
-        var columnName = trimmed.Slice(firstDot + 1);
+        var prefix = trimmed[..firstDot];
+        var columnName = trimmed[(firstDot + 1)..];
 
         if (prefix.Equals(subAlias.AsSpan(), StringComparison.OrdinalIgnoreCase)) return;
         string prefixStr = prefix.ToString();
@@ -273,7 +273,7 @@ public abstract partial class BaseSqlStrategy(
                 $"Field '{fieldName.Trim()}' in {context} references table alias '{prefixStr}', " +
                 $"which is defined only inside a subquery (FromQuery). " +
                 $"The outer query can only see the subquery's output columns, " +
-                $"not its internal tables. Use '{subAlias}.{columnName.ToString()}' instead " +
+                $"not its internal tables. Use '{subAlias}.{columnName}' instead " +
                 $"or reference the column via its alias from the subquery.");
         }
     }
@@ -1239,7 +1239,7 @@ public abstract partial class BaseSqlStrategy(
         if (g.Groups?.Count == 0)
             return query;
 
-        if (g.Groups.Count == 1)
+        if (g.Groups?.Count == 1)
             return ApplySingleHaving(query, g.Groups[0]);
 
         if (g.IsOr)
@@ -1247,7 +1247,7 @@ public abstract partial class BaseSqlStrategy(
             return query.Having(q =>
             {
                 var first = true;
-                foreach (var c in g.Groups)
+                foreach (var c in g.Groups ?? [])
                 {
                     if (first)
                     {

@@ -54,8 +54,11 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
         ["MONTH($1)"] = "TO_CHAR($1, 'MM')",
         ["DAY($1)"] = "TO_CHAR($1, 'DD')",
 
-        // SQLite STRFTIME(fmt, date) → TO_CHAR(date, fmt) — reversed args
-        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1)",
+        // Date formatting: always produce TO_CHAR with Oracle-native format.
+        ["DATE_FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
+        ["FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
+        ["TO_CHAR($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
+        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1:date_format('YYYY-MM-DD'))",
 
         // GROUP_CONCAT → LISTAGG
         ["GROUP_CONCAT($1)"] = "LISTAGG($1, ',')",
