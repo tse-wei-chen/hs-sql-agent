@@ -55,10 +55,10 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
         ["DAY($1)"] = "TO_CHAR($1, 'DD')",
 
         // Date formatting: always produce TO_CHAR with Oracle-native format.
-        ["DATE_FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
-        ["FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
-        ["TO_CHAR($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
-        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1:date_format('YYYY-MM-DD'))",
+        ["DATE_FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('oracle'))",
+        ["FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('oracle'))",
+        ["TO_CHAR($1, $2)"] = "TO_CHAR($1, $2:date_format('oracle'))",
+        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1:date_format('oracle'))",
 
         // GROUP_CONCAT → LISTAGG
         ["GROUP_CONCAT($1)"] = "LISTAGG($1, ',')",

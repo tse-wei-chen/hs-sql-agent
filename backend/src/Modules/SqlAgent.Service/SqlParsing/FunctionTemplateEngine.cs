@@ -1,5 +1,6 @@
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
+using System.Text.RegularExpressions;
 
 namespace SqlAgent.Service.SqlParsing;
 
@@ -7,29 +8,177 @@ namespace SqlAgent.Service.SqlParsing;
 /// Parses a lightweight template expression into a SelectCondition tree.
 /// Template syntax: $1..$N (arg refs), @SQL_TOKEN (dialect grammar token), FUNC(args), expr OP expr, 'string', 123, (expr)
 /// </summary>
-public class FunctionTemplateEngine(string template)
+public partial class FunctionTemplateEngine(string template)
 {
     private readonly string _template = template.Trim();
     private int _pos;
     private const char EOF = '\0';
 
+    /// <summary>
+    /// Supported date format style keys for the :date_format modifier.
+    /// Each Strategy declares which style it targets (e.g. 'pg', 'sqlite', 'mssql').
+    /// </summary>
+    private enum DateStyle { Sqlite, Mssql, Pg }
+
+    private static readonly Dictionary<string, DateStyle> DateStyleMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["sqlite"] = DateStyle.Sqlite,
+        ["mssql"]  = DateStyle.Mssql,
+        ["pg"]     = DateStyle.Pg,
+        ["oracle"] = DateStyle.Pg,     // Oracle uses same token style as Postgres (YYYY, MM, DD)
+    };
+
     private static readonly Dictionary<string, Func<SelectCondition, IList<SelectCondition>?, SelectCondition>> Modifiers = new(StringComparer.OrdinalIgnoreCase)
     {
-        // date_format: replaces the $N node's value with the format string supplied as
-        // the modifier argument, e.g. $2:date_format('YYYY-MM-DD').
-        // The original LLM-supplied format is discarded — we always use the pinned target.
-        // If no modifier arg is provided, the node is returned unchanged (no-op).
+        // date_format: translates the $N node's date format string to the target dialect.
+        // Usage: $2:date_format('pg')  — the modifier arg is a style key, NOT a format string.
+        // The style key tells the engine which dialect's tokens to emit.
+        // If the input is empty or the style key is unknown, the node is returned unchanged.
         ["date_format"] = (node, modifierArgs) =>
         {
-            if (modifierArgs is { Count: > 0 } && modifierArgs[0] is ConstantSelectCondition fmtArg && fmtArg.Constant is string literalFmt)
+            if (modifierArgs is { Count: > 0 }
+                && modifierArgs[0] is ConstantSelectCondition fmtArg
+                && fmtArg.Constant is string styleKey
+                && DateStyleMap.TryGetValue(styleKey, out var targetStyle))
             {
-                if (node is ConstantSelectCondition constNode)
-                    constNode.Constant = literalFmt;
+                string inputFormat = "";
+                if (node is ConstantSelectCondition constNode && constNode.Constant is string s)
+                {
+                    inputFormat = s;
+                }
+
+                string mappedFmt = TranslateDateFormat(inputFormat, targetStyle);
+
+                if (node is ConstantSelectCondition targetNode)
+                    targetNode.Constant = mappedFmt;
                 else
-                    return new ConstantSelectCondition { Constant = literalFmt };
+                    return new ConstantSelectCondition { Constant = mappedFmt };
             }
             return node;
         }
+    };
+
+    /// <summary>
+    /// Translates an input date format string (from any dialect) into the target dialect's token style.
+    /// Recognises two input families:
+    ///   1. %-style tokens (MySQL/SQLite): %Y, %m, %d, %H, %i, %S, etc.
+    ///   2. Named tokens (MSSQL/Postgres/Oracle): yyyy, MM, dd, HH, mm, SS, YYYY, DD, MI, etc.
+    /// Non-token characters (separators like - / : space) are preserved as-is.
+    /// </summary>
+    private static string TranslateDateFormat(string input, DateStyle target)
+    {
+        if (string.IsNullOrEmpty(input))
+            return "";
+
+        // --- Branch 1: %-style input (MySQL/SQLite) ---
+        if (input.Contains('%'))
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < input.Length; i++)
+            {
+                if (input[i] == '%' && i + 1 < input.Length)
+                {
+                    char specifier = input[i + 1];
+                    i++; // skip specifier
+                    sb.Append(MapToken(specifier, target));
+                }
+                else
+                {
+                    sb.Append(input[i]);
+                }
+            }
+            return sb.ToString();
+        }
+
+        // --- Branch 2: Named-token input (MSSQL/Postgres/Oracle) ---
+        string result = input;
+
+        // Normalize input tokens to abstract placeholders first (order matters: longest match first)
+        result = Year4Regex().Replace(result, "{Y}");
+        result = Year2Regex().Replace(result, "{y}");
+        result = Hour24Regex().Replace(result, "{H}");   // Postgres 24h — before generic HH
+        result = Hour12Regex().Replace(result, "{h}");   // Postgres 12h — before generic HH
+        result = HourHRegex().Replace(result, "{H}");
+        result = HourhRegex().Replace(result, "{h}");
+        result = MinuteMIRegex().Replace(result, "{m}");      // Postgres/Oracle minute — before MM
+        result = MonthRegex().Replace(result, "{M}");
+        result = DayRegex().Replace(result, "{D}");
+        result = MinuteMMRegex().Replace(result, "{m}");  // MSSQL minute
+        result = SecondRegex().Replace(result, "{s}");
+
+        // Map placeholders to target style
+        result = result.Replace("{Y}", Emit('Y', target));
+        result = result.Replace("{y}", Emit('y', target));
+        result = result.Replace("{M}", Emit('M', target));
+        result = result.Replace("{D}", Emit('D', target));
+        result = result.Replace("{H}", Emit('H', target));
+        result = result.Replace("{h}", Emit('h', target));
+        result = result.Replace("{m}", Emit('m', target));
+        result = result.Replace("{s}", Emit('s', target));
+
+        return result;
+    }
+
+    [GeneratedRegex("yyyy|YYYY")]
+    private static partial Regex Year4Regex();
+
+    [GeneratedRegex(@"(?<!\{)yy(?!\})|(?<!\{)YY(?!\})")]
+    private static partial Regex Year2Regex();
+
+    [GeneratedRegex("HH24")]
+    private static partial Regex Hour24Regex();
+
+    [GeneratedRegex("HH12")]
+    private static partial Regex Hour12Regex();
+
+    [GeneratedRegex("HH")]
+    private static partial Regex HourHRegex();
+
+    [GeneratedRegex("hh")]
+    private static partial Regex HourhRegex();
+
+    [GeneratedRegex("MI")]
+    private static partial Regex MinuteMIRegex();
+
+    [GeneratedRegex("MM")]
+    private static partial Regex MonthRegex();
+
+    [GeneratedRegex("dd|DD")]
+    private static partial Regex DayRegex();
+
+    [GeneratedRegex(@"(?<!\{)mm(?!\})")]
+    private static partial Regex MinuteMMRegex();
+
+    [GeneratedRegex("ss|SS")]
+    private static partial Regex SecondRegex();
+
+    /// <summary>Maps a %-style specifier char to the target dialect's token.</summary>
+    private static string MapToken(char specifier, DateStyle target) => specifier switch
+    {
+        'Y'      => Emit('Y', target),
+        'y'      => Emit('y', target),
+        'm'      => Emit('M', target),
+        'd'      => Emit('D', target),
+        'e'      => target switch { DateStyle.Sqlite => "%d", DateStyle.Mssql => "d", _ => "FMDD" },
+        'H'      => Emit('H', target),
+        'h' or 'I' => Emit('h', target),
+        'i'      => Emit('m', target),
+        's' or 'S' => Emit('s', target),
+        _        => "%" + specifier
+    };
+
+    /// <summary>Emits the canonical token for the given abstract slot in the target dialect.</summary>
+    private static string Emit(char slot, DateStyle target) => (slot, target) switch
+    {
+        ('Y', DateStyle.Sqlite) => "%Y",   ('Y', DateStyle.Mssql) => "yyyy", ('Y', _) => "YYYY",
+        ('y', DateStyle.Sqlite) => "%y",   ('y', DateStyle.Mssql) => "yy",   ('y', _) => "YY",
+        ('M', DateStyle.Sqlite) => "%m",   ('M', _)               => "MM",
+        ('D', DateStyle.Sqlite) => "%d",   ('D', DateStyle.Mssql) => "dd",   ('D', _) => "DD",
+        ('H', DateStyle.Sqlite) => "%H",   ('H', DateStyle.Mssql) => "HH",   ('H', _) => "HH24",
+        ('h', DateStyle.Sqlite) => "%I",   ('h', DateStyle.Mssql) => "hh",   ('h', _) => "HH12",
+        ('m', DateStyle.Sqlite) => "%i",   ('m', DateStyle.Mssql) => "mm",   ('m', _) => "MI",
+        ('s', DateStyle.Sqlite) => "%S",   ('s', DateStyle.Mssql) => "ss",   ('s', _) => "SS",
+        _ => ""
     };
 
     public SelectCondition? Translate(IList<SelectCondition>? sourceArgs)

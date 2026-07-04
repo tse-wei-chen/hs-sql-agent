@@ -38,9 +38,9 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
 
         // Date formatting: always produce STRFTIME with SQLite-native %-style format.
         // LLM may use MySQL/Oracle/MSSQL format strings; :date_format('%Y-%m-%d') pins the target.
-        ["DATE_FORMAT($1, $2)"] = "STRFTIME($2:date_format('%Y-%m-%d'), $1)",
-        ["TO_CHAR($1, $2)"] = "STRFTIME($2:date_format('%Y-%m-%d'), $1)",
-        ["FORMAT($1, $2)"] = "STRFTIME($2:date_format('%Y-%m-%d'), $1)",
+        ["DATE_FORMAT($1, $2)"] = "STRFTIME($2:date_format('sqlite'), $1)",
+        ["TO_CHAR($1, $2)"] = "STRFTIME($2:date_format('sqlite'), $1)",
+        ["FORMAT($1, $2)"] = "STRFTIME($2:date_format('sqlite'), $1)",
 
         // Date part extraction
         ["YEAR($1)"] = "STRFTIME('%Y', $1)",

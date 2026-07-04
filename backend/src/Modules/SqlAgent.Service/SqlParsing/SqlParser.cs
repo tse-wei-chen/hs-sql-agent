@@ -185,7 +185,7 @@ public class SqlParser(Token[] tokens)
 
         while (PeekKeyword("JOIN") || PeekKeyword("LEFT") || PeekKeyword("RIGHT") || PeekKeyword("INNER") || PeekKeyword("CROSS") || PeekKeyword("FULL") || PeekKeyword("NATURAL"))
         {
-            qd.Joins ??= new List<JoinCondition>();
+            qd.Joins ??= [];
             qd.Joins.Add(ParseJoin());
         }
 
@@ -292,8 +292,10 @@ public class SqlParser(Token[] tokens)
 
     private List<WhereCondition> ParseOnConditions()
     {
-        var conditions = new List<WhereCondition>();
-        conditions.Add(ParseSingleWhereExpr());
+        var conditions = new List<WhereCondition>
+        {
+            ParseSingleWhereExpr()
+        };
         while (PeekKeyword("AND"))
         {
             Advance();
@@ -306,15 +308,17 @@ public class SqlParser(Token[] tokens)
             group.IsOr = true;
             Advance();
             group.Groups.Add(ParseSingleWhereExpr());
-            return new List<WhereCondition> { group };
+            return [group];
         }
         return conditions;
     }
 
     private List<WhereCondition> ParseWhereExpressionList()
     {
-        var conditions = new List<WhereCondition>();
-        conditions.Add(ParseSingleWhereExpr());
+        var conditions = new List<WhereCondition>
+        {
+            ParseSingleWhereExpr()
+        };
         while (PeekKeyword("AND"))
         {
             Advance();
@@ -380,8 +384,12 @@ public class SqlParser(Token[] tokens)
         {
             Advance();
             Expect(TokenType.LParen);
-            var sub = new SubQueryWhereCondition { FieldName = null, Operator = "EXISTS" };
-            sub.SubQuery = ParseSelectStatement();
+            var sub = new SubQueryWhereCondition
+            {
+                FieldName = null,
+                Operator = "EXISTS",
+                SubQuery = ParseSelectStatement()
+            };
             Expect(TokenType.RParen);
             return sub;
         }
@@ -449,8 +457,8 @@ public class SqlParser(Token[] tokens)
                     {
                         FieldName = leftExpr is FieldSelectCondition f ? f.FieldName : null,
                         Operator = op == "<>" || op == "!=" ? "NOT IN" : "IN",
+                        SubQuery = ParseSelectStatement()
                     };
-                    sub.SubQuery = ParseSelectStatement();
                     Expect(TokenType.RParen);
                     return sub;
                 }
@@ -504,8 +512,8 @@ public class SqlParser(Token[] tokens)
                 {
                     FieldName = ExtractFieldName(leftExpr),
                     Operator = "IN",
+                    SubQuery = ParseSelectStatement()
                 };
-                sub.SubQuery = ParseSelectStatement();
                 Expect(TokenType.RParen);
                 return sub;
             }
@@ -653,8 +661,10 @@ public class SqlParser(Token[] tokens)
 
     private List<HavingCondition> ParseHavingExpressionList()
     {
-        var conditions = new List<HavingCondition>();
-        conditions.Add(ParseSingleHavingExpr());
+        var conditions = new List<HavingCondition>
+        {
+            ParseSingleHavingExpr()
+        };
         while (PeekKeyword("AND") || PeekKeyword("OR"))
         {
             var isOr = PeekKeyword("OR");
@@ -750,8 +760,10 @@ public class SqlParser(Token[] tokens)
 
     private List<GroupByCondition> ParseGroupBy()
     {
-        var groups = new List<GroupByCondition>();
-        groups.Add(ParseSingleGroupBy());
+        var groups = new List<GroupByCondition>
+        {
+            ParseSingleGroupBy()
+        };
         while (Peek().Type == TokenType.Comma)
         {
             Advance();
@@ -777,8 +789,10 @@ public class SqlParser(Token[] tokens)
 
     private List<OrderByCondition> ParseOrderBy()
     {
-        var orders = new List<OrderByCondition>();
-        orders.Add(ParseSingleOrderBy());
+        var orders = new List<OrderByCondition>
+        {
+            ParseSingleOrderBy()
+        };
         while (Peek().Type == TokenType.Comma)
         {
             Advance();
@@ -1218,8 +1232,7 @@ public class SqlParser(Token[] tokens)
         {
             Advance();
             ExpectKeyword("BY");
-            window.PartitionBy = new List<GroupByCondition>();
-            window.PartitionBy.Add(ParseSingleGroupBy());
+            window.PartitionBy = [ParseSingleGroupBy()];
             while (Peek().Type == TokenType.Comma)
             {
                 Advance();

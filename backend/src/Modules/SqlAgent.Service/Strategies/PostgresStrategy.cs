@@ -53,10 +53,10 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         // Date formatting: always produce TO_CHAR with Postgres-native format,
         // regardless of which dialect the LLM used. The :date_format('...') arg
         // pins the output format directly — no runtime conversion needed.
-        ["DATE_FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
-        ["FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
-        ["TO_CHAR($1, $2)"] = "TO_CHAR($1, $2:date_format('YYYY-MM-DD'))",
-        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1:date_format('YYYY-MM-DD'))",
+        ["DATE_FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('pg'))",
+        ["FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('pg'))",
+        ["TO_CHAR($1, $2)"] = "TO_CHAR($1, $2:date_format('pg'))",
+        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1:date_format('pg'))",
 
         // GROUP_CONCAT → STRING_AGG (separator required in PG)
         ["GROUP_CONCAT($1)"] = "STRING_AGG($1, ',')",

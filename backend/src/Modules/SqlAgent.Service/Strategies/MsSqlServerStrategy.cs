@@ -39,10 +39,10 @@ public partial class MsSqlServerStrategy(IQueryValueParserService valueParser, I
         // Note: YEAR/MONTH/DAY shorthands are native in MSSQL — no translation needed
 
         // Date formatting: always produce FORMAT with MSSQL-native .NET format.
-        ["DATE_FORMAT($1, $2)"] = "FORMAT($1, $2:date_format('yyyy-MM-dd'))",
-        ["FORMAT($1, $2)"] = "FORMAT($1, $2:date_format('yyyy-MM-dd'))",
-        ["TO_CHAR($1, $2)"] = "FORMAT($1, $2:date_format('yyyy-MM-dd'))",
-        ["STRFTIME($1, $2)"] = "FORMAT($2, $1:date_format('yyyy-MM-dd'))",
+        ["DATE_FORMAT($1, $2)"] = "FORMAT($1, $2:date_format('mssql'))",
+        ["FORMAT($1, $2)"] = "FORMAT($1, $2:date_format('mssql'))",
+        ["TO_CHAR($1, $2)"] = "FORMAT($1, $2:date_format('mssql'))",
+        ["STRFTIME($1, $2)"] = "FORMAT($2, $1:date_format('mssql'))",
 
         // GROUP_CONCAT → STRING_AGG (separator required in MSSQL)
         ["GROUP_CONCAT($1)"] = "STRING_AGG($1, ',')",
