@@ -71,14 +71,14 @@ flowchart TD
     MCP --> AUTH["Access key auth<br/>allowed tools + DB binding + table whitelist"]
     AUTH --> ROUTE{"Tool"}
 
-    ROUTE -->|execute_query_sql(sql)| QPARSE["Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
+    ROUTE -->|execute_query_sql| QPARSE["Parse SELECT SQL<br/>SqlDefinitionParser.ParseQuery"]
     QPARSE --> QDEF["QueryDefinition"]
     QDEF --> QVALID["DefinitionValidator<br/>+ table whitelist checks"]
     QVALID --> QBUILD["SQL builder / strategy compile"]
     QBUILD --> QEXEC["Execute SELECT"]
     QEXEC --> QRESULT["Rows / JSON result"]
 
-    ROUTE -->|execute_dml_sql(sql)| DPARSE["Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
+    ROUTE -->|execute_dml_sql| DPARSE["Parse DML SQL<br/>SqlDefinitionParser.ParseDml"]
     DPARSE --> DDEF["DmlDefinition"]
     DDEF --> DVALID["DefinitionValidator<br/>+ table whitelist checks"]
     DVALID --> DRYRUN["Dry-run inside uncommitted transaction"]
