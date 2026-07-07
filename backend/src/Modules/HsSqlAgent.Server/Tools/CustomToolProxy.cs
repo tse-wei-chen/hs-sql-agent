@@ -153,9 +153,15 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         if (parameters == null || parameters.Count == 0) return json;
         foreach (var param in parameters)
         {
-            var pattern = $@"\{{\{{\s*{System.Text.RegularExpressions.Regex.Escape(param.Key)}\s*\}}\}}";
-            var valueStr = param.Value?.ToString() ?? "null";
-            json = System.Text.RegularExpressions.Regex.Replace(json, pattern, valueStr.Replace("\"", "\\\""));
+            var key = System.Text.RegularExpressions.Regex.Escape(param.Key);
+
+            // "{{key}}" — placeholder inside a JSON string (lookbehind/lookahead verify quotes)
+            var innerPattern = @"\{\{\s*" + key + @"\s*\}\}";
+            var quotedPattern = @"(?<="")" + innerPattern + @"(?="")";
+            json = System.Text.RegularExpressions.Regex.Replace(json, quotedPattern, (param.Value?.ToString() ?? "null").Replace("\"", "\\\""));
+
+            // {{key}} — bare placeholder: serialize as proper JSON token (type-aware)
+            json = System.Text.RegularExpressions.Regex.Replace(json, innerPattern, System.Text.Json.JsonSerializer.Serialize(param.Value));
         }
         return json;
     }
