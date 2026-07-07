@@ -89,9 +89,11 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
 
         try
         {
+            // Sanitize {{placeholders}} → null so bare placeholders don't break JSON parsing
+            var sanitized = System.Text.RegularExpressions.Regex.Replace(tool.DefinitionJson, @"\{\{[^}]*\}\}", "null");
             var errors = IsDml(tool)
-                ? DefinitionValidator.Validate(JsonSerializer.Deserialize<DmlDefinition>(tool.DefinitionJson, JsonOptions))
-                : DefinitionValidator.Validate(JsonSerializer.Deserialize<QueryDefinition>(tool.DefinitionJson, JsonOptions));
+                ? DefinitionValidator.Validate(JsonSerializer.Deserialize<DmlDefinition>(sanitized, JsonOptions))
+                : DefinitionValidator.Validate(JsonSerializer.Deserialize<QueryDefinition>(sanitized, JsonOptions));
 
             return errors.Count == 0
                 ? null
@@ -211,9 +213,16 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         if (parameters == null || parameters.Count == 0) return json;
         foreach (var param in parameters)
         {
-            var pattern = $@"\{{\{{\s*{System.Text.RegularExpressions.Regex.Escape(param.Key)}\s*\}}\}}";
+            var key = System.Text.RegularExpressions.Regex.Escape(param.Key);
             var valueStr = param.Value ?? "null";
-            json = System.Text.RegularExpressions.Regex.Replace(json, pattern, valueStr.Replace("\"", "\\\""));
+
+            // "{{key}}" — placeholder inside a JSON string (lookbehind/lookahead verify quotes)
+            var innerPattern = @"\{\{\s*" + key + @"\s*\}\}";
+            var quotedPattern = @"(?<="")" + innerPattern + @"(?="")";
+            json = System.Text.RegularExpressions.Regex.Replace(json, quotedPattern, valueStr.Replace("\"", "\\\""));
+
+            // {{key}} — bare placeholder (e.g. "limit": {{limit}}): raw value, no extra quoting
+            json = System.Text.RegularExpressions.Regex.Replace(json, innerPattern, valueStr);
         }
         return json;
     }

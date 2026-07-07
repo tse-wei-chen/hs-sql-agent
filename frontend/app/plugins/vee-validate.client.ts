@@ -14,7 +14,8 @@ export default defineNuxtPlugin((_nuxtApp) => {
   defineRule("json", (value: string) => {
     if (!value) return true;
     try {
-      JSON.parse(value);
+      const sanitized = value.replace(/\{\{[^}]*\}\}/g, "null");
+      JSON.parse(sanitized);
       return true;
     } catch {
       return "Invalid JSON format";

@@ -143,7 +143,8 @@ const loadDbs = async () => {
 const isJsonValid = computed(() => {
   if (!values.definitionJson) return true;
   try {
-    JSON.parse(values.definitionJson);
+    const sanitized = values.definitionJson.replace(/\{\{[^}]*\}\}/g, "null");
+    JSON.parse(sanitized);
     return true;
   } catch {
     return false;
