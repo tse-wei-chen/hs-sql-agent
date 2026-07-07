@@ -20,7 +20,7 @@
 
 	<PropertyGroup>
 		<PackageId>HsSqlAgent.Server</PackageId>
-		<VersionPrefix>1.10.0</VersionPrefix>
+		<VersionPrefix>1.10.1</VersionPrefix>
 		<Authors>tse-wei-chen</Authors>
 		<Company>hs-sql-agent</Company>
 		<Description>Embeddable MCP SQL Agent server for ASP.NET Core. Add HsSqlAgent to any existing ASP.NET Core app with AddHsSqlAgent() / UseHsSqlAgent().</Description>
@@ -53,6 +53,7 @@
 		<PackageReference Include="Oracle.ManagedDataAccess.Core" />
 		<PackageReference Include="FirebirdSql.Data.FirebirdClient" />
 		<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+		<PackageReference Include="Humanizer.Core" />
 		<!-- <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" /> -->
 	</ItemGroup>
