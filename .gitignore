@@ -503,3 +503,4 @@ $RECYCLE.BIN/
 .nitro
 .cache
 dist
+.vscode/settings.json

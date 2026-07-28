@@ -36,6 +36,18 @@
 		"xior": "^0.8.3"
 	},
 	"packageManager": "pnpm@10.22.0+sha512.bf049efe995b28f527fd2b41ae0474ce29186f7edcb3bf545087bd61fbbebb2bf75362d1307fda09c2d288e1e499787ac12d4fcb617a974718a6051f2eee741c",
+	"pnpm": {
+		"overrides": {
+			"@babel/core@<7.29.6": "7.29.7",
+			"brace-expansion@<=5.0.7": "5.0.8",
+			"esbuild@>=0.27.7 <0.28.1": "0.28.1",
+			"js-yaml@>=4.0.0 <4.3.0": "4.3.0",
+			"postcss@>=8.0.0 <=8.5.17": "8.5.18",
+			"shell-quote@>=1.0.0 <1.9.0": "1.10.0",
+			"svgo@>=4.0.0 <4.0.2": "4.0.2",
+			"tar@>=7.0.0 <7.5.21": "7.5.22"
+		}
+	},
 	"devDependencies": {
 		"@nuxt/eslint": "^1.15.2",
 		"@nuxt/test-utils": "^3.15.4",
