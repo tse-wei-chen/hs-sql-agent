@@ -1,4 +1,5 @@
 export type McpKeyExpirationMode = null | 1 | 7 | 30 | "custom";
+export type McpKeyRateLimitMode = "Inherit" | "Custom" | "Unlimited";
 
 export interface McpKeyDetail {
   expiresAt: McpKeyExpirationMode;
@@ -6,6 +7,9 @@ export interface McpKeyDetail {
   corsAllowedOrigins: string;
   dbManagementId: number | null;
   tableWhitelist: string[];
+  rateLimitMode: McpKeyRateLimitMode;
+  permitLimitOverride: number;
+  windowSecondsOverride: number;
 }
 
 const DEFAULT_ALLOWED_TOOLS = [
@@ -22,6 +26,9 @@ export function createInitialMcpKeyDetail(): McpKeyDetail {
     corsAllowedOrigins: "",
     dbManagementId: null,
     tableWhitelist: [],
+    rateLimitMode: "Inherit",
+    permitLimitOverride: 120,
+    windowSecondsOverride: 60,
   };
 }
 

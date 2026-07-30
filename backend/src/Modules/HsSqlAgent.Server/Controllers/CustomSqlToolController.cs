@@ -6,6 +6,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using HsSqlAgent.Server.Authorization;
+using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -139,6 +140,8 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         [FromServices] IDbManagementService dbManagementService,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
+        [FromServices] ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+        [FromServices] ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.DefinitionJson))
@@ -171,9 +174,26 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         });
 
         var definitionJson = ReplaceParametersInline(request.DefinitionJson, request.Parameters);
+        var runtimePolicy = securityPolicyRuntimeState.GetCurrent();
+        var executionPolicy = new SqlExecutionPolicy
+        {
+            QueryMaxRows = runtimePolicy.QueryMaxRows,
+            QueryTimeoutSeconds = runtimePolicy.QueryTimeoutSeconds,
+            RequireWhereForUpdate = runtimePolicy.RequireWhereForUpdate,
+            RequireWhereForDelete = runtimePolicy.RequireWhereForDelete,
+            AllowFullTableUpdate = runtimePolicy.AllowFullTableUpdate,
+            AllowFullTableDelete = runtimePolicy.AllowFullTableDelete,
+            DmlMaxAffectedRows = runtimePolicy.DmlMaxAffectedRows
+        };
 
         try
         {
+            using var lease = sqlConcurrencyLimiter.TryAcquire();
+            if (lease is null)
+                return StatusCode(
+                    StatusCodes.Status429TooManyRequests,
+                    new { success = false, error = "Maximum concurrent SQL operations reached." });
+
             string result;
             if (isQuery)
             {
@@ -185,7 +205,11 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 if (errors.Count > 0)
                     return BadRequest(new { error = "Validation failed.", errors });
 
-                result = await strategy.ExecuteQueryAsync(queryDef, connectionString, cancellationToken);
+                result = await strategy.ExecuteQueryAsync(
+                    queryDef,
+                    connectionString,
+                    executionPolicy,
+                    cancellationToken);
             }
             else
             {
@@ -197,7 +221,11 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 if (errors.Count > 0)
                     return BadRequest(new { error = "Validation failed.", errors });
 
-                result = await strategy.ExecuteDmlAsync(connectionString, dmlDef, cancellationToken);
+                result = await strategy.ExecuteDmlAsync(
+                    connectionString,
+                    dmlDef,
+                    executionPolicy,
+                    cancellationToken);
             }
 
             return Ok(new { success = true, data = result });

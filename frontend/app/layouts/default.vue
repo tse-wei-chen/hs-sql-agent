@@ -45,6 +45,7 @@ const breadcrumbs = computed(() => {
       "mcp-keys": "MCP Keys",
       "custom-tools": "Custom Tools",
       audit: "Audit",
+      security: "Security Policy",
       home: "Overview",
       semantic: "Semantic Layer",
     };

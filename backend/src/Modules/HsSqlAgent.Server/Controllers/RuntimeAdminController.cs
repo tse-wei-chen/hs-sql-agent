@@ -49,7 +49,10 @@ public class RuntimeAdminController(
                 AllowedTools = request.AllowedTools,
                 CorsAllowedOrigins = request.CorsAllowedOrigins,
                 DbManagementId = request.DbManagementId,
-                TableWhitelist = request.TableWhitelist
+                TableWhitelist = request.TableWhitelist,
+                RateLimitMode = request.RateLimitMode,
+                PermitLimitOverride = request.PermitLimitOverride,
+                WindowSecondsOverride = request.WindowSecondsOverride
             },
             User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? User.FindFirstValue(ClaimTypes.NameIdentifier),
             cancellationToken);
@@ -68,6 +71,60 @@ public class RuntimeAdminController(
         if (!success) return NotFound("MCP key not found.");
         await auditService.WriteLogAsync("mcp.key.revoked", id.ToString(), "success", cancellationToken: cancellationToken);
         return Ok(new { success = true });
+    }
+
+    [HttpPut("mcp-keys/{id:int}")]
+    [HasPermission("/runtime/mcp-keys", "edit")]
+    public async Task<IActionResult> UpdateKey(
+        int id,
+        [FromBody] UpdateMcpAccessKeyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await keyService.UpdateKeyAsync(id, request, ResolveActorId(), cancellationToken);
+        if (result is null) return NotFound("MCP key not found.");
+        await auditService.WriteLogAsync(
+            "mcp.key.updated",
+            id.ToString(),
+            "success",
+            $"Name: {result.Name}",
+            cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("mcp-keys/{id:int}/rotate")]
+    [HasPermission("/runtime/mcp-keys", "edit")]
+    public async Task<IActionResult> RotateKey(
+        int id,
+        [FromBody] RotateMcpAccessKeyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await keyService.RotateKeyAsync(id, request, ResolveActorId(), cancellationToken);
+        if (result is null) return NotFound("MCP key not found.");
+        await auditService.WriteLogAsync(
+            "mcp.key.rotated",
+            id.ToString(),
+            "success",
+            $"ReplacementKeyId: {result.Id}; GracePeriodMinutes: {request.GracePeriodMinutes}",
+            cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("mcp-keys/{id:int}/clone")]
+    [HasPermission("/runtime/mcp-keys", "create")]
+    public async Task<IActionResult> CloneKey(
+        int id,
+        [FromBody] CloneMcpAccessKeyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await keyService.CloneKeyAsync(id, request, ResolveActorId(), cancellationToken);
+        if (result is null) return NotFound("MCP key not found.");
+        await auditService.WriteLogAsync(
+            "mcp.key.cloned",
+            id.ToString(),
+            "success",
+            $"NewKeyId: {result.Id}; Name: {result.Name}",
+            cancellationToken);
+        return Ok(result);
     }
 
     [HttpPost("mcp-keys/test-db-connection")]
@@ -103,9 +160,26 @@ public class RuntimeAdminController(
     public async Task<IActionResult> GetAudit(
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
         [FromQuery] string? action = null, [FromQuery] string? keyword = null,
+        [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null,
+        [FromQuery] string? result = null, [FromQuery] string? actor = null,
+        [FromQuery] int? dbManagementId = null, [FromQuery] int? accessKeyId = null,
+        [FromQuery] string? toolName = null,
         CancellationToken cancellationToken = default)
     {
-        return Ok(await auditService.QueryAsync(page, pageSize, action, keyword, cancellationToken));
+        return Ok(await auditService.QueryAsync(new AuditLogFilter
+        {
+            Page = page,
+            PageSize = pageSize,
+            Action = action,
+            Keyword = keyword,
+            From = from,
+            To = to,
+            Result = result,
+            Actor = actor,
+            DbManagementId = dbManagementId,
+            AccessKeyId = accessKeyId,
+            ToolName = toolName
+        }, cancellationToken));
     }
 
     [HasPermission("/runtime/audit", "view")]
@@ -115,4 +189,8 @@ public class RuntimeAdminController(
         var items = await auditService.QueryDailySummaryAsync(days, cancellationToken: cancellationToken);
         return Ok(new { days, items });
     }
+
+    private string? ResolveActorId()
+        => User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+           ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
 }

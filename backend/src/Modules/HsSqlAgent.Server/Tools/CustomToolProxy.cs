@@ -1,8 +1,10 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
+using HsSqlAgent.Server.Services;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -16,7 +18,16 @@ using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
 namespace HsSqlAgent.Server.Tools;
 
-public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolService, IHttpContextAccessor httpContextAccessor, IConfiguration configuration, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IQueryValueParserService queryValueParserService)
+public class CustomToolProxy(
+    string name,
+    ICustomSqlToolService customSqlToolService,
+    IHttpContextAccessor httpContextAccessor,
+    IConfiguration configuration,
+    ISqlStrategyFactory sqlStrategyFactory,
+    IAuditService auditService,
+    IQueryValueParserService queryValueParserService,
+    ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+    ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter)
 {
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
@@ -25,6 +36,8 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
     private readonly IAuditService _auditService = auditService;
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
+    private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
+    private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
     private static readonly JsonSerializerOptions _jsonOptions = new(McpJsonUtilities.DefaultOptions)
     {
         AllowOutOfOrderMetadataProperties = true,
@@ -51,6 +64,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         IDmlApprovalClient? approvalClient,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         var parameters = new Dictionary<string, object>();
         if (arguments.ValueKind == JsonValueKind.Object)
         {
@@ -59,6 +73,8 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         }
 
         CustomSqlTool? tool = null;
+        QueryDefinition? auditQuery = null;
+        DmlDefinition? auditDml = null;
         string finalDefinitionJson = "";
         try
         {
@@ -95,6 +111,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
             if (isQuery)
             {
                 var queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
+                auditQuery = queryDef;
                 if (queryDef == null)
                 {
                     result = "Error: Failed to deserialize QueryDefinition.";
@@ -111,11 +128,21 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     return result;
                 }
 
-                result = await strategy.ExecuteQueryAsync(queryDef, sqlConfig.ConnectionString, cancellationToken);
+                using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+                {
+                    if (lease is null)
+                        throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                    result = await strategy.ExecuteQueryAsync(
+                        queryDef,
+                        sqlConfig.ConnectionString,
+                        ResolveExecutionPolicy(),
+                        cancellationToken);
+                }
             }
             else if (isDml)
             {
                 var dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
+                auditDml = dmlDef;
                 if (dmlDef == null)
                 {
                     result = "Error: Failed to deserialize DmlDefinition.";
@@ -144,10 +171,19 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     var auditResult = result.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
                         ? "cancelled"
                         : "failed";
-                    await _auditService.WriteLogAsync(
+                    await _auditService.WriteEventAsync(
                         $"mcp.{_name}.executed",
                         _name,
                         auditResult,
+                        new AuditEventContext
+                        {
+                            ToolName = _name,
+                            Operation = dmlDef.Operation.ToString().ToLowerInvariant(),
+                            DurationMs = stopwatch.ElapsedMilliseconds,
+                            AffectedRows = ParseAffectedRows(result),
+                            ApprovalStatus = auditResult == "cancelled" ? "declined" : "not-completed",
+                            Definition = DescribeDml(dmlDef)
+                        },
                         result,
                         cancellationToken);
                     return result;
@@ -160,17 +196,44 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                 return result;
             }
 
-            await _auditService.WriteLogAsync(
+            await _auditService.WriteEventAsync(
                 $"mcp.{_name}.executed",
                 _name,
                 "success",
+                new AuditEventContext
+                {
+                    ToolName = _name,
+                    Operation = isQuery ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
+                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    ReturnedRows = isQuery ? CountJsonRows(result) : null,
+                    AffectedRows = isDml ? ParseAffectedRows(result) : null,
+                    ApprovalStatus = isDml ? "interactive-accepted" : null,
+                    Definition = isQuery && auditQuery != null
+                        ? DescribeQuery(auditQuery)
+                        : auditDml == null ? null : DescribeDml(auditDml)
+                },
                 $"Type: {tool.Type}",
                 cancellationToken);
             return result;
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", ex.Message);
+            await _auditService.WriteEventAsync(
+                $"mcp.{_name}.executed",
+                _name,
+                "failed",
+                new AuditEventContext
+                {
+                    ToolName = _name,
+                    Operation = auditQuery != null ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
+                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    ErrorCategory = ex.GetType().Name,
+                    Definition = auditQuery != null
+                        ? DescribeQuery(auditQuery)
+                        : auditDml == null ? null : DescribeDml(auditDml)
+                },
+                ex.Message,
+                cancellationToken);
             var toolType = tool?.Type ?? "Unknown";
             var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase) ? "execute_query_sql" : "execute_dml_sql";
             return $"Error: {ex.Message}\nerror definition: {finalDefinitionJson}\nplease fix the parameters or definition and use '{suggestedTool}' tools to try again.";
@@ -192,7 +255,18 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         // ConfirmToken is an internal dry-run artifact. Never trust a token
         // supplied through a stored definition or a caller-controlled parameter.
         dml.ConfirmToken = null;
-        var dryRunResult = await strategy.ExecuteDmlAsync(connectionString, dml, cancellationToken);
+        var executionPolicy = ResolveExecutionPolicy();
+        string dryRunResult;
+        using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+        {
+            if (lease is null)
+                return "Server busy: maximum concurrent SQL operations reached.";
+            dryRunResult = await strategy.ExecuteDmlAsync(
+                connectionString,
+                dml,
+                executionPolicy,
+                cancellationToken);
+        }
         if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
         {
             return dryRunResult;
@@ -240,8 +314,76 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         }
 
         dml.ConfirmToken = tokenMatch.Groups[1].Value;
-        return await strategy.ExecuteDmlAsync(connectionString, dml, cancellationToken);
+        using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+        {
+            if (lease is null)
+                return "Server busy: maximum concurrent SQL operations reached.";
+            return await strategy.ExecuteDmlAsync(
+                connectionString,
+                dml,
+                executionPolicy,
+                cancellationToken);
+        }
     }
+
+    private SqlExecutionPolicy ResolveExecutionPolicy()
+    {
+        var policy = _securityPolicyRuntimeState.GetCurrent();
+        return new SqlExecutionPolicy
+        {
+            QueryMaxRows = policy.QueryMaxRows,
+            QueryTimeoutSeconds = policy.QueryTimeoutSeconds,
+            RequireWhereForUpdate = policy.RequireWhereForUpdate,
+            RequireWhereForDelete = policy.RequireWhereForDelete,
+            AllowFullTableUpdate = policy.AllowFullTableUpdate,
+            AllowFullTableDelete = policy.AllowFullTableDelete,
+            DmlMaxAffectedRows = policy.DmlMaxAffectedRows
+        };
+    }
+
+    private static int? ParseAffectedRows(string result)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            result,
+            @"affectedRows=(\d+)",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return match.Success && int.TryParse(match.Groups[1].Value, out var rows) ? rows : null;
+    }
+
+    private static int? CountJsonRows(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Array
+                ? document.RootElement.GetArrayLength()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string DescribeQuery(QueryDefinition definition)
+        => JsonSerializer.Serialize(new
+        {
+            definition.TableName,
+            SelectColumnCount = definition.SelectColumns?.Count ?? 0,
+            WhereConditionCount = definition.WhereColumnsAndValues?.Count ?? 0,
+            JoinCount = definition.Joins?.Count ?? 0,
+            definition.Limit,
+            definition.Offset
+        });
+
+    private static string DescribeDml(DmlDefinition definition)
+        => JsonSerializer.Serialize(new
+        {
+            Operation = definition.Operation.ToString(),
+            definition.TableName,
+            ValueFields = definition.Values?.Select(x => x.FieldName).ToArray() ?? [],
+            WhereConditionCount = definition.WhereConditions?.Count ?? 0
+        });
 
     private SqlRuntimeConfig ResolveSqlConfig()
     {
