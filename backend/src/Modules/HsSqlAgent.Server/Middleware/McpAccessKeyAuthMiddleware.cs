@@ -337,7 +337,7 @@ public class McpAccessKeyAuthMiddleware(
             return await RejectIfRevokedOrExpiredAsync(cached, ct);
         }
 
-        var lockIndex = Math.Abs(cacheKey.GetHashCode()) % StripedLocks.Length;
+        var lockIndex = GetStripedLockIndex(cacheKey.GetHashCode(), StripedLocks.Length);
         var semaphore = StripedLocks[lockIndex];
 
         await semaphore.WaitAsync(ct);
@@ -361,6 +361,9 @@ public class McpAccessKeyAuthMiddleware(
             semaphore.Release();
         }
     }
+
+    internal static int GetStripedLockIndex(int hashCode, int lockCount)
+        => (int)((uint)hashCode % (uint)lockCount);
 
     private static TimeSpan GetCacheExpiry(McpAccessKeyValidationResult result)
     {

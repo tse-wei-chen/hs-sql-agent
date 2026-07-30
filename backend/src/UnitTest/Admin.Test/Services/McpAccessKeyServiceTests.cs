@@ -360,7 +360,9 @@ public class McpAccessKeyServiceTests
         _cacheMock.Verify(c => c.SetAsync(
             McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
             true,
-            null,
+            It.Is<TimeSpan?>(expiry =>
+                expiry.HasValue &&
+                expiry.Value > TimeSpan.FromMinutes(5)),
             CancellationToken.None), Times.Once);
         _cacheMock.Verify(c => c.RemoveAsync(
             McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),

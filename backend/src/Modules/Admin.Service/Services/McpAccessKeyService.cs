@@ -17,6 +17,7 @@ public class McpAccessKeyService(
     ICacheService cache) : IMcpAccessKeyService
 {
     private const int KeyPrefixLength = 8;
+    private static readonly TimeSpan RevocationTombstoneExpiry = TimeSpan.FromMinutes(10);
     private static readonly char[] CorsOriginsSeparators = [',', ';', '\n', '\r'];
     private readonly IAdminContext _context = context;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
@@ -141,12 +142,12 @@ public class McpAccessKeyService(
         await _context.SaveChangesAsync(cancellationToken);
         // The stored HMAC is also the validation cache identity, so revocation can
         // invalidate the exact cached key without retaining the plaintext secret.
-        // The permanent tombstone also closes the race where an in-flight validation
-        // read the active row before this commit and repopulates the cache afterward.
+        // Keep the tombstone longer than the validation cache TTL to close the race
+        // where an in-flight validation read the active row before this commit.
         await _cache.SetAsync(
             McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
             true,
-            absoluteExpireTime: null,
+            absoluteExpireTime: RevocationTombstoneExpiry,
             CancellationToken.None);
         await _cache.RemoveAsync(McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash), CancellationToken.None);
         return true;

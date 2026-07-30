@@ -18,6 +18,18 @@ namespace HsSqlAgent.Server.Test.Middleware;
 
 public class McpAccessKeyAuthMiddlewareTests
 {
+    [Theory]
+    [InlineData(int.MinValue)]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(int.MaxValue)]
+    public void GetStripedLockIndex_AlwaysReturnsValidIndex(int hashCode)
+    {
+        var index = McpAccessKeyAuthMiddleware.GetStripedLockIndex(hashCode, 64);
+
+        Assert.InRange(index, 0, 63);
+    }
+
     private readonly Mock<IMcpAccessKeyService> _keyServiceMock;
     private readonly Mock<IAuditService> _auditServiceMock;
     private readonly Mock<IMcpAccessKeyLastUsedQueue> _lastUsedQueueMock;
