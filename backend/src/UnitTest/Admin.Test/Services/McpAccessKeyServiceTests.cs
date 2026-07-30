@@ -37,6 +37,7 @@ public class McpAccessKeyServiceTests
 
         // Default empty DbSet to prevent null reference errors
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement>());
 
         _service = new McpAccessKeyService(
             _contextMock.Object,
@@ -102,6 +103,76 @@ public class McpAccessKeyServiceTests
         )), Times.Once);
 
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region ListKeysAsync Tests
+
+    [Fact]
+    public async Task ListKeysAsync_ShouldReportEffectiveStatusAndDatabase()
+    {
+        var keys = new List<McpAccessKey>
+        {
+            new()
+            {
+                Id = 1,
+                Name = "usable",
+                KeyPrefix = "usable01",
+                IsActive = true,
+                DbManagementId = 10,
+                CreatedAt = DateTime.UtcNow
+            },
+            new()
+            {
+                Id = 2,
+                Name = "expired",
+                KeyPrefix = "expired1",
+                IsActive = true,
+                DbManagementId = 10,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1)
+            }
+        };
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(keys);
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement>
+        {
+            new() { Id = 10, Name = "Orders", SqlProvider = "PostgreSQL" }
+        });
+
+        var result = await _service.ListKeysAsync(TestContext.Current.CancellationToken);
+
+        var usable = Assert.Single(result, x => x.Id == 1);
+        Assert.True(usable.IsActive);
+        Assert.False(usable.IsExpired);
+        Assert.Equal("Orders", usable.DbManagementName);
+        Assert.Equal("PostgreSQL", usable.SqlProvider);
+
+        var expired = Assert.Single(result, x => x.Id == 2);
+        Assert.False(expired.IsActive);
+        Assert.True(expired.IsExpired);
+    }
+
+    [Fact]
+    public async Task ListKeysAsync_ShouldKeepMissingDatabaseIdVisible()
+    {
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>
+        {
+            new()
+            {
+                Id = 1,
+                Name = "orphan",
+                KeyPrefix = "orphan01",
+                IsActive = false,
+                DbManagementId = 99,
+                CreatedAt = DateTime.UtcNow
+            }
+        });
+
+        var item = Assert.Single(await _service.ListKeysAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(99, item.DbManagementId);
+        Assert.Null(item.DbManagementName);
     }
 
     #endregion

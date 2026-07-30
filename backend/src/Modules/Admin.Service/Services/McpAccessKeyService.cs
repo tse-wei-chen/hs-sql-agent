@@ -73,7 +73,8 @@ public class McpAccessKeyService(
 
     public async Task<IReadOnlyCollection<McpAccessKeyListItem>> ListKeysAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.McpAccessKeys
+        var now = DateTime.UtcNow;
+        var items = await _context.McpAccessKeys
             .AsNoTracking()
             .OrderByDescending(x => x.CreatedAt)
             .Select(x => new McpAccessKeyListItem
@@ -81,16 +82,48 @@ public class McpAccessKeyService(
                 Id = x.Id,
                 Name = x.Name,
                 KeyPrefix = x.KeyPrefix,
-                IsActive = x.IsActive,
+                IsActive = x.IsActive && !x.RevokedAt.HasValue &&
+                    (!x.ExpiresAt.HasValue || x.ExpiresAt > now),
+                IsExpired = x.ExpiresAt.HasValue && x.ExpiresAt <= now,
                 ExpiresAt = x.ExpiresAt,
                 LastUsedAt = x.LastUsedAt,
                 AllowedTools = x.AllowedTools,
                 CorsAllowedOrigins = x.CorsAllowedOrigins,
                 SqlProvider = x.SqlProvider,
+                DbManagementId = x.DbManagementId,
                 TableWhitelist = x.TableWhitelist,
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync(cancellationToken);
+
+        var dbIds = items
+            .Where(x => x.DbManagementId.HasValue)
+            .Select(x => x.DbManagementId!.Value)
+            .Distinct()
+            .ToArray();
+
+        if (dbIds.Length == 0)
+        {
+            return items;
+        }
+
+        var databases = await _context.DbManagement
+            .AsNoTracking()
+            .Where(x => dbIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.Name, x.SqlProvider })
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+
+        foreach (var item in items)
+        {
+            if (item.DbManagementId.HasValue &&
+                databases.TryGetValue(item.DbManagementId.Value, out var database))
+            {
+                item.DbManagementName = database.Name;
+                item.SqlProvider = database.SqlProvider;
+            }
+        }
+
+        return items;
     }
 
     public async Task<bool> RevokeKeyAsync(int id, string? actorId, CancellationToken cancellationToken = default)

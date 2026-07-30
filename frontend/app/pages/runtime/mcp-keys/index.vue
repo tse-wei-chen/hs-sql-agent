@@ -59,10 +59,13 @@ interface McpKeyItem {
   name: string;
   keyPrefix: string;
   isActive: boolean;
+  isExpired: boolean;
+  expiresAt?: string | null;
   lastUsedAt?: string | null;
   corsAllowedOrigins?: string | null;
   sqlProvider?: string | null;
-  hasSqlConnectionStringOverride?: boolean;
+  dbManagementId?: number | null;
+  dbManagementName?: string | null;
   tableWhitelist?: string | null;
 }
 
@@ -591,8 +594,11 @@ onMounted(load);
             <div class="text-sm">
               <div class="font-medium">{{ key.name }}</div>
               <div class="text-muted-foreground">
-                Prefix: {{ key.keyPrefix }} | Active:
-                {{ key.isActive ? "yes" : "no" }}
+                Prefix: {{ key.keyPrefix }} | Status:
+                {{ key.isExpired ? "expired" : key.isActive ? "active" : "revoked" }}
+              </div>
+              <div class="text-muted-foreground">
+                Expires: {{ key.expiresAt || "never" }}
               </div>
               <div class="text-muted-foreground">
                 Last used: {{ key.lastUsedAt || "never" }}
@@ -601,8 +607,9 @@ onMounted(load);
                 CORS: {{ key.corsAllowedOrigins || "none" }}
               </div>
               <div class="text-muted-foreground">
-                SQL: {{ key.sqlProvider || "Global" }} / connection:
-                {{ key.hasSqlConnectionStringOverride ? "override" : "Global" }}
+                Database:
+                {{ key.dbManagementName || (key.dbManagementId ? `Missing connection #${key.dbManagementId}` : "none") }}
+                <template v-if="key.sqlProvider"> ({{ key.sqlProvider }})</template>
               </div>
               <div class="text-muted-foreground">
                 Table Whitelist: {{ key.tableWhitelist || "All" }}
