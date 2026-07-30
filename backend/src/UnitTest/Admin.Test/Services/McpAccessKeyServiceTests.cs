@@ -17,6 +17,7 @@ public class McpAccessKeyServiceTests
     private readonly Mock<IAdminContext> _contextMock;
     private readonly Mock<IOptions<McpKeySettings>> _settingsMock;
     private readonly Mock<ICryptoService> _cryptoServiceMock;
+    private readonly Mock<ICacheService> _cacheMock;
     private readonly McpAccessKeyService _service;
     private readonly string _testHmacSecret = "12345678901234567890123456789012";
 
@@ -32,11 +33,16 @@ public class McpAccessKeyServiceTests
             .Returns((string? plain, byte[] key) => plain != null ? $"ENCRYPTED_{plain}" : null);
         _cryptoServiceMock.Setup(c => c.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
             .Returns((string? cipher, byte[] key) => cipher?.Replace("ENCRYPTED_", ""));
+        _cacheMock = new Mock<ICacheService>();
 
         // Default empty DbSet to prevent null reference errors
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
 
-        _service = new McpAccessKeyService(_contextMock.Object, _settingsMock.Object, _cryptoServiceMock.Object);
+        _service = new McpAccessKeyService(
+            _contextMock.Object,
+            _settingsMock.Object,
+            _cryptoServiceMock.Object,
+            _cacheMock.Object);
     }
 
     #region IssueKeyAsync Tests
@@ -207,6 +213,7 @@ public class McpAccessKeyServiceTests
         // Arrange
         var rawKey = "12345678-secret";
         var prefix = "12345678";
+        var expiresAt = DateTime.UtcNow.AddHours(1);
 
         var keys = new List<McpAccessKey>
         {
@@ -217,6 +224,7 @@ public class McpAccessKeyServiceTests
                 KeyPrefix = prefix,
                 KeyHash = GenerateTestHash(rawKey),
                 IsActive = true,
+                ExpiresAt = expiresAt,
                 DbManagementId = 10,
                 CorsAllowedOrigins = "http://localhost:3000,http://app.com"
             }
@@ -232,6 +240,7 @@ public class McpAccessKeyServiceTests
         Assert.Equal(1, result.KeyId);
         Assert.Equal("Valid Key", result.Name);
         Assert.Equal(10, result.DbManagementId);
+        Assert.Equal(expiresAt, result.ExpiresAt);
 
         Assert.NotNull(result.CorsAllowedOriginsSet);
         Assert.Contains("http://localhost:3000", result.CorsAllowedOriginsSet);
@@ -260,7 +269,12 @@ public class McpAccessKeyServiceTests
     public async Task RevokeKeyAsync_ShouldDeactivateKeyAndReturnTrue_WhenKeyExists()
     {
         // Arrange
-        var key = new McpAccessKey { Id = 1, IsActive = true };
+        var key = new McpAccessKey
+        {
+            Id = 1,
+            IsActive = true,
+            KeyHash = GenerateTestHash("12345678-secret")
+        };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
 
         // Act
@@ -272,6 +286,14 @@ public class McpAccessKeyServiceTests
         Assert.NotNull(key.RevokedAt);
         Assert.Equal("tester", key.RevokedBy);
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
+            true,
+            null,
+            CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+            CancellationToken.None), Times.Once);
     }
 
     #endregion

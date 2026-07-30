@@ -10,13 +10,18 @@ using Microsoft.Extensions.Options;
 
 namespace Admin.Service.Services;
 
-public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings> mcpKeySettings, ICryptoService cryptoService) : IMcpAccessKeyService
+public class McpAccessKeyService(
+    IAdminContext context,
+    IOptions<McpKeySettings> mcpKeySettings,
+    ICryptoService cryptoService,
+    ICacheService cache) : IMcpAccessKeyService
 {
     private const int KeyPrefixLength = 8;
     private static readonly char[] CorsOriginsSeparators = [',', ';', '\n', '\r'];
     private readonly IAdminContext _context = context;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
     private readonly ICryptoService _cryptoService = cryptoService;
+    private readonly ICacheService _cache = cache;
 
     public async Task<McpAccessKeyIssueResult> IssueKeyAsync(
         IssueMcpAccessKeyModel request,
@@ -101,6 +106,16 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
         key.RevokedBy = actorId;
 
         await _context.SaveChangesAsync(cancellationToken);
+        // The stored HMAC is also the validation cache identity, so revocation can
+        // invalidate the exact cached key without retaining the plaintext secret.
+        // The permanent tombstone also closes the race where an in-flight validation
+        // read the active row before this commit and repopulates the cache afterward.
+        await _cache.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
+            true,
+            absoluteExpireTime: null,
+            CancellationToken.None);
+        await _cache.RemoveAsync(McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash), CancellationToken.None);
         return true;
     }
 
@@ -152,7 +167,8 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
             CorsAllowedOriginsSet = ParseCorsAllowedOrigins(entity.CorsAllowedOrigins),
             SqlProvider = entity.SqlProvider,
             DbManagementId = entity.DbManagementId,
-            TableWhitelist = entity.TableWhitelist
+            TableWhitelist = entity.TableWhitelist,
+            ExpiresAt = entity.ExpiresAt
         };
     }
 
@@ -170,8 +186,7 @@ public class McpAccessKeyService(IAdminContext context, IOptions<McpKeySettings>
 
     private static string HashKey(string rawKey, byte[] hmacSecret)
     {
-        var hash = HMACSHA256.HashData(hmacSecret, Encoding.UTF8.GetBytes(rawKey));
-        return Convert.ToBase64String(hash);
+        return McpAccessKeyCacheKeys.ComputeKeyHash(rawKey, hmacSecret);
     }
 
     private static bool VerifyKey(string rawKey, string storedHash, byte[] hmacSecret)

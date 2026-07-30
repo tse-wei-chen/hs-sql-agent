@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Admin.Service.Interfaces;
@@ -330,13 +329,12 @@ public class McpAccessKeyAuthMiddleware(
 
     private async Task<McpAccessKeyValidationResult> GetOrValidateKeyAsync(string rawKey, CancellationToken ct)
     {
-        var keyHash = ComputeKeyHash(rawKey);
-        var cacheKey = $"mcp_auth_v2_{keyHash}";
+        var cacheKey = McpAccessKeyCacheKeys.ForRawKey(rawKey, _hmacSecret);
 
         var cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
         if (cached is not null)
         {
-            return cached;
+            return await RejectIfRevokedOrExpiredAsync(cached, ct);
         }
 
         var lockIndex = Math.Abs(cacheKey.GetHashCode()) % StripedLocks.Length;
@@ -348,12 +346,12 @@ public class McpAccessKeyAuthMiddleware(
             cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
             if (cached is not null)
             {
-                return cached;
+                return await RejectIfRevokedOrExpiredAsync(cached, ct);
             }
 
-            var result = await _keyService.ValidateAsync(rawKey, ct);
+            var result = RejectIfExpired(await _keyService.ValidateAsync(rawKey, ct));
 
-            var expiry = result.IsValid ? CacheExpiry : NegativeCacheExpiry;
+            var expiry = GetCacheExpiry(result);
             await _cache.SetAsync(cacheKey, result, expiry, ct);
 
             return result;
@@ -364,11 +362,50 @@ public class McpAccessKeyAuthMiddleware(
         }
     }
 
-
-    private static string ComputeKeyHash(string rawKey)
+    private static TimeSpan GetCacheExpiry(McpAccessKeyValidationResult result)
     {
-        var inputBytes = Encoding.UTF8.GetBytes(rawKey);
-        var hashBytes = SHA256.HashData(inputBytes);
-        return Convert.ToHexString(hashBytes).ToLowerInvariant();
+        var expiry = result.IsValid ? CacheExpiry : NegativeCacheExpiry;
+        if (!result.ExpiresAt.HasValue)
+        {
+            return expiry;
+        }
+
+        var remainingLifetime = result.ExpiresAt.Value - DateTime.UtcNow;
+        return remainingLifetime > TimeSpan.Zero && remainingLifetime < expiry
+            ? remainingLifetime
+            : expiry;
+    }
+
+    private static McpAccessKeyValidationResult RejectIfExpired(McpAccessKeyValidationResult result)
+    {
+        if (!result.IsValid || !result.ExpiresAt.HasValue || result.ExpiresAt.Value > DateTime.UtcNow)
+        {
+            return result;
+        }
+
+        return new McpAccessKeyValidationResult
+        {
+            IsValid = false,
+            Reason = "Key expired.",
+            ExpiresAt = result.ExpiresAt
+        };
+    }
+
+    private async Task<McpAccessKeyValidationResult> RejectIfRevokedOrExpiredAsync(
+        McpAccessKeyValidationResult result,
+        CancellationToken cancellationToken)
+    {
+        result = RejectIfExpired(result);
+        if (!result.IsValid || !result.KeyId.HasValue)
+        {
+            return result;
+        }
+
+        var revoked = await _cache.GetAsync<bool>(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(result.KeyId.Value),
+            cancellationToken);
+        return revoked
+            ? new McpAccessKeyValidationResult { IsValid = false, Reason = "Key revoked." }
+            : result;
     }
 }
