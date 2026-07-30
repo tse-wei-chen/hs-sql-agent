@@ -143,11 +143,10 @@ public static class HsSqlAgentServiceExtensions
             rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             rl.AddPolicy("mcp-policy", context =>
             {
-                var clientIp = context.Connection.RemoteIpAddress?.ToString();
-                var forwardedFor = context.Request.Headers["X-Forwarded-For"].ToString();
-                var ip = !string.IsNullOrWhiteSpace(forwardedFor)
-                    ? forwardedFor.Split(',')[0].Trim()
-                    : string.IsNullOrWhiteSpace(clientIp) ? "unknown" : clientIp;
+                // Only trust the connection address. Hosts behind a reverse proxy can
+                // opt into ASP.NET Core Forwarded Headers with explicit trusted proxies;
+                // that middleware safely updates RemoteIpAddress before this policy runs.
+                var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
                 if (options.RateLimitPermitLimit <= 0 || options.RateLimitWindowSeconds <= 0)
                     return RateLimitPartition.GetNoLimiter($"ip:{ip}");
