@@ -1,6 +1,7 @@
 import xior from "xior";
 import { refreshToken, signOut } from "./auth";
 import { toast } from "vue-sonner";
+import { clearAuthSession, persistAuthSession } from "@/lib/auth-session";
 
 let refreshPromise: Promise<any> | null = null;
 
@@ -52,8 +53,7 @@ xiorInstanceToken.interceptors.response.use(
         return Promise.reject(error);
       }
 
-      localStorage.setItem("accessToken", response.accessToken);
-      localStorage.setItem("refreshToken", response.refreshToken);
+      persistAuthSession(response);
 
       const updatedConfig = {
         ...error.config,
@@ -66,14 +66,7 @@ xiorInstanceToken.interceptors.response.use(
       return xior.request(updatedConfig);
     }
     if (error.response?.status === 403) {
-      toast.error("Permission denied. You have been logged out.");
-      await signOut();
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("refreshToken");
-      localStorage.removeItem("permissions");
-      localStorage.removeItem("userEmail");
-      localStorage.removeItem("userName");
-      await navigateTo("/login");
+      toast.error("Permission denied.");
     }
     return Promise.reject(error);
   },
@@ -98,11 +91,7 @@ xiorInstanceRefreshToken.interceptors.response.use(
   async (error) => {
     toast.error("Permission denied. You have been logged out.");
     await signOut();
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
-    localStorage.removeItem("permissions");
-    localStorage.removeItem("userEmail");
-    localStorage.removeItem("userName");
+    clearAuthSession();
     await navigateTo("/login");
     return Promise.reject(error);
   },

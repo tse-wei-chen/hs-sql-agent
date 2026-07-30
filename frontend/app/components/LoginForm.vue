@@ -8,6 +8,7 @@ import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
 import { toast } from "vue-sonner"
 import { checkFirstRun, signIn } from "~/api/auth";
+import { persistAuthSession } from "@/lib/auth-session";
 
 const props = defineProps<{
   class?: HTMLAttributes["class"];
@@ -35,11 +36,7 @@ const submit = async (values: any) => {
     );
 
     if (response?.accessToken && response?.refreshToken) {
-      localStorage.setItem("accessToken", response.accessToken);
-      localStorage.setItem("refreshToken", response.refreshToken);
-      localStorage.setItem("userEmail", response.email);
-      localStorage.setItem("userName", response.userName);
-      localStorage.setItem("permissions", JSON.stringify(response.permissions))
+      persistAuthSession(response);
       return await navigateTo("/home");
     }
 
