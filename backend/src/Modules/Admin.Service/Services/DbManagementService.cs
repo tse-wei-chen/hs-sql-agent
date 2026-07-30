@@ -16,6 +16,11 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
 
     public async Task<DbManagementVM> CreateDbAsync(DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
     {
+        if (DbManagementPasswordPolicy.RequiresPassword(dbManagement.SqlProvider)
+            && string.IsNullOrWhiteSpace(dbManagement.Password))
+        {
+            throw new ArgumentException("Password is required for this SQL provider.", nameof(dbManagement));
+        }
 
         var entity = new DbManagement
         {
@@ -73,7 +78,10 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
             existingDbManagement.Host = dbManagement.Host;
             existingDbManagement.Port = dbManagement.Port;
             existingDbManagement.Username = dbManagement.Username;
-            existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
+            if (!string.IsNullOrWhiteSpace(dbManagement.Password))
+            {
+                existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
+            }
             existingDbManagement.Database = dbManagement.Database;
             existingDbManagement.ExtraSettings = dbManagement.ExtraSettings;
             existingDbManagement.UpdatedAt = DateTime.UtcNow;

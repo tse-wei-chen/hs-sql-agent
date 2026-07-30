@@ -83,6 +83,50 @@ public class DbManagementServiceTests
     }
 
     [Fact]
+    public async Task CreateDbAsync_ShouldRejectBlankPassword_ForCredentialBasedProvider()
+    {
+        var request = new DbManagementRequest
+        {
+            Name = "Postgres",
+            SqlProvider = "Postgres",
+            Password = " "
+        };
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(
+            () => _service.CreateDbAsync(request, TestContext.Current.CancellationToken));
+
+        Assert.Contains("Password is required", exception.Message);
+        _cryptoServiceMock.Verify(
+            c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
+            Times.Never);
+        _contextMock.Verify(
+            c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateDbAsync_ShouldAllowBlankPassword_ForSqlite()
+    {
+        var request = new DbManagementRequest
+        {
+            Name = "Local",
+            SqlProvider = "Sqlite",
+            Database = "local.db"
+        };
+        _cryptoServiceMock
+            .Setup(c => c.EncryptText(string.Empty, _hmacSecretBytes))
+            .Returns("encrypted-empty-password");
+
+        await _service.CreateDbAsync(request, TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.DbManagement.Add(It.Is<DbManagement>(
+            db => db.PasswordHash == "encrypted-empty-password")), Times.Once);
+        _contextMock.Verify(
+            c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task GetDbByIdAsync_ShouldReturnNull_WhenDbDoesNotExist()
     {
         // Arrange
@@ -213,6 +257,40 @@ public class DbManagementServiceTests
         Assert.Equal(expectedEncryptedPassword, existingDb.PasswordHash);
 
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once, "SaveChanges was not called after updating entity.");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task UpdateDbAsync_ShouldPreserveExistingPassword_WhenPasswordIsBlank(string password)
+    {
+        var existingDb = new DbManagement
+        {
+            Id = 1,
+            Name = "OldName",
+            PasswordHash = "existing-encrypted-password"
+        };
+        _contextMock.Setup(c => c.DbManagement)
+            .ReturnsDbSet(new List<DbManagement> { existingDb });
+        var request = new DbManagementRequest
+        {
+            Name = "NewName",
+            Password = password
+        };
+
+        await _service.UpdateDbAsync(
+            existingDb.Id,
+            request,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("NewName", existingDb.Name);
+        Assert.Equal("existing-encrypted-password", existingDb.PasswordHash);
+        _cryptoServiceMock.Verify(
+            c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
+            Times.Never);
+        _contextMock.Verify(
+            c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
