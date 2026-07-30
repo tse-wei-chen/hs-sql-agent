@@ -1,3 +1,7 @@
+import { ref } from "vue"
+
+export const authSessionRevision = ref(0)
+
 export interface AuthSessionPayload {
   accessToken?: string | null
   refreshToken?: string | null
@@ -17,6 +21,7 @@ export function persistAuthSession(
   }
   if (payload.email) storage.setItem("userEmail", payload.email)
   if (payload.userName) storage.setItem("userName", payload.userName)
+  authSessionRevision.value += 1
 }
 
 export function clearAuthSession(storage: Storage = localStorage) {
@@ -25,4 +30,5 @@ export function clearAuthSession(storage: Storage = localStorage) {
   storage.removeItem("permissions")
   storage.removeItem("userEmail")
   storage.removeItem("userName")
+  authSessionRevision.value += 1
 }

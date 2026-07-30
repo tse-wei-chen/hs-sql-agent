@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import { clearAuthSession, persistAuthSession } from "./auth-session"
+import {
+  authSessionRevision,
+  clearAuthSession,
+  persistAuthSession,
+} from "./auth-session"
 
 describe("auth session storage", () => {
   beforeEach(() => localStorage.clear())
@@ -44,5 +48,15 @@ describe("auth session storage", () => {
     clearAuthSession()
 
     expect(localStorage.length).toBe(0)
+  })
+
+  it("notifies reactive permission consumers after persistence and clearing", () => {
+    const initialRevision = authSessionRevision.value
+
+    persistAuthSession({ permissions: [] })
+    expect(authSessionRevision.value).toBe(initialRevision + 1)
+
+    clearAuthSession()
+    expect(authSessionRevision.value).toBe(initialRevision + 2)
   })
 })

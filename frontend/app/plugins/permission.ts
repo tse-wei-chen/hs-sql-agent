@@ -43,23 +43,29 @@ function checkValue(value: string | string[], currentPath: string): boolean {
 
 export default defineNuxtPlugin((nuxtApp) => {
   const route = useRoute()
+  const directiveWatchers = new WeakMap<HTMLElement, () => void>()
 
   function currentCheck(value: string | string[]) {
+    // Establish a reactive dependency so computed callers of $can update after
+    // token refresh, sign-in, or sign-out changes the stored permission grants.
+    void authSessionRevision.value
     return checkValue(value, route.path)
   }
 
   nuxtApp.vueApp.directive("permission", {
     mounted(el, binding) {
-      if (!currentCheck(binding.value)) {
-        el.style.display = "none"
+      const applyVisibility = () => {
+        el.style.display = currentCheck(binding.value) ? "" : "none"
       }
+      applyVisibility()
+      directiveWatchers.set(el, watch(authSessionRevision, applyVisibility))
     },
     updated(el, binding) {
-      if (!currentCheck(binding.value)) {
-        el.style.display = "none"
-      } else {
-        el.style.display = ""
-      }
+      el.style.display = currentCheck(binding.value) ? "" : "none"
+    },
+    unmounted(el) {
+      directiveWatchers.get(el)?.()
+      directiveWatchers.delete(el)
     },
   })
 
@@ -69,3 +75,5 @@ export default defineNuxtPlugin((nuxtApp) => {
     },
   }
 })
+import { watch } from "vue"
+import { authSessionRevision } from "@/lib/auth-session"
