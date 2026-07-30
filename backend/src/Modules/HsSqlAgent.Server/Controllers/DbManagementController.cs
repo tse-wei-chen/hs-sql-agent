@@ -25,6 +25,11 @@ public class DbManagementController(
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Name))
             return BadRequest("Name is required.");
+        if (DbManagementPasswordPolicy.RequiresPassword(request.SqlProvider)
+            && string.IsNullOrWhiteSpace(request.Password))
+        {
+            return BadRequest("Password is required for this SQL provider.");
+        }
         var result = await dbManagementService.CreateDbAsync(request, cancellationToken);
         await auditService.WriteLogAsync("db.management.created", result.Id.ToString(), "success", $"Name: {result.Name}", cancellationToken);
         return Ok(result);

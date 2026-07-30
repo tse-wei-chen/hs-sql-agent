@@ -11,6 +11,23 @@ public class PermissionPolicyProvider(IOptions<AuthorizationOptions> options)
 
     public Task<AuthorizationPolicy?> GetPolicyAsync(string policyName)
     {
+        if (policyName.StartsWith(HasAnyPermissionAttribute.Prefix))
+        {
+            var permissions = policyName[HasAnyPermissionAttribute.Prefix.Length..]
+                .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (permissions.Length == 0)
+                return _fallback.GetPolicyAsync(policyName);
+
+            var anyPermissionPolicy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .RequireClaim("typ", "access")
+                .AddRequirements(new PermissionRequirement(permissions))
+                .Build();
+
+            return Task.FromResult<AuthorizationPolicy?>(anyPermissionPolicy);
+        }
+
         if (!policyName.StartsWith(Prefix))
             return _fallback.GetPolicyAsync(policyName);
 

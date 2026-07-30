@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -51,6 +51,10 @@ import { testDbConnection } from "~/api/runtime";
 import FormField from "@/components/FormField.vue";
 import { toast } from "vue-sonner"
 import { useForm } from "vee-validate";
+import {
+  buildDbConnectionTestRequest,
+  requiresDbPassword,
+} from "@/lib/db-management";
 
 definePageMeta({
   layout: "default",
@@ -88,6 +92,12 @@ const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
 const testing = ref(false);
+const passwordRequired = computed(
+  () => !editingId.value && requiresDbPassword(values.sqlProvider),
+);
+const testsSavedConnection = computed(
+  () => editingId.value !== null && !values.password.trim(),
+);
 
 const connectionTestResult = ref<{
   success: boolean;
@@ -109,9 +119,11 @@ const load = async () => {
 const resetForm = () => {
   resetVeeForm()
   editingId.value = null;
+  connectionTestResult.value = null;
 };
 
 const startEdit = (db: DbManagement) => {
+  connectionTestResult.value = null;
   editingId.value = db.id;
   const extraSettings = db.extraSettings ? JSON.parse(db.extraSettings) : {}
   setValues({
@@ -175,18 +187,9 @@ const test = async () => {
   try {
     testing.value = true;
     connectionTestResult.value = null;
-    const v = values
-    const result = await testDbConnection({
-      dbSettingMode: 1,
-      dbManagementId: undefined,
-      sqlProvider: v.sqlProvider,
-      host: v.host,
-      port: v.port,
-      username: v.username,
-      password: v.password,
-      database: v.database,
-      extraSettings: JSON.stringify({ TrustServerCertificate: v.TrustServerCertificate, Encrypt: v.Encrypt }),
-    });
+    const result = await testDbConnection(
+      buildDbConnectionTestRequest(values, editingId.value),
+    );
     connectionTestResult.value = {
       success: result.success,
       errorMessage: result.errorMessage || "Connection failed.",
@@ -200,6 +203,10 @@ const test = async () => {
     testing.value = false;
   }
 };
+
+watch(values, () => {
+  connectionTestResult.value = null;
+}, { deep: true });
 
 onMounted(load);
 </script>
@@ -287,7 +294,13 @@ onMounted(load);
                 </template>
               </FormField>
 
-              <FormField name="password" label="Password" rightAddon :helpText="editingId ? 'Leave blank to keep existing password intact.' : undefined">
+              <FormField
+                name="password"
+                :rules="passwordRequired ? 'required' : undefined"
+                label="Password"
+                rightAddon
+                :helpText="editingId ? 'Leave blank to keep the saved password. Enter a value only to replace it.' : undefined"
+              >
                 <template #default="{ field }">
                   <PasswordInput v-bind="field" id="password" placeholder="Database password" />
                 </template>
@@ -336,6 +349,13 @@ onMounted(load);
           </FieldGroup>
 
           <div class="flex justify-end gap-2 pt-4">
+            <p
+              v-if="testsSavedConnection"
+              class="mr-auto self-center text-xs text-muted-foreground"
+            >
+              With the password blank, this tests the currently saved connection.
+              Enter the password to test edited connection values.
+            </p>
             <Button
               v-if="editingId"
               type="button"
@@ -389,7 +409,11 @@ onMounted(load);
                       <template v-else>?</template>
                     </Badge>
                     <span>{{
-                      testing ? "Connecting..." : "Test DB Connection"
+                      testing
+                        ? "Connecting..."
+                        : testsSavedConnection
+                          ? "Test Saved Connection"
+                          : "Test DB Connection"
                     }}</span>
                   </Button>
                 </TooltipTrigger>

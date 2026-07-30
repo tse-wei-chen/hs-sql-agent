@@ -143,11 +143,10 @@ public static class HsSqlAgentServiceExtensions
             rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             rl.AddPolicy("mcp-policy", context =>
             {
-                var clientIp = context.Connection.RemoteIpAddress?.ToString();
-                var forwardedFor = context.Request.Headers["X-Forwarded-For"].ToString();
-                var ip = !string.IsNullOrWhiteSpace(forwardedFor)
-                    ? forwardedFor.Split(',')[0].Trim()
-                    : string.IsNullOrWhiteSpace(clientIp) ? "unknown" : clientIp;
+                // Only trust the connection address. Hosts behind a reverse proxy can
+                // opt into ASP.NET Core Forwarded Headers with explicit trusted proxies;
+                // that middleware safely updates RemoteIpAddress before this policy runs.
+                var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
                 if (options.RateLimitPermitLimit <= 0 || options.RateLimitWindowSeconds <= 0)
                     return RateLimitPartition.GetNoLimiter($"ip:{ip}");
@@ -241,6 +240,7 @@ public static class HsSqlAgentServiceExtensions
                             {
                                 using var scope = scopeFactory.CreateScope();
                                 var sp = scope.ServiceProvider;
+                                var server = args.Services?.GetService<McpServer>();
                                 var proxy = new CustomToolProxy(
                                     ct.Name,
                                     sp.GetRequiredService<ICustomSqlToolService>(),
@@ -250,7 +250,7 @@ public static class HsSqlAgentServiceExtensions
                                     sp.GetRequiredService<IAuditService>(),
                                     sp.GetRequiredService<IQueryValueParserService>());
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
-                                return await proxy.Execute(json);
+                                return await proxy.Execute(json, server, ct2);
                             });
 
                         mcpOptions.ToolCollection.Add(McpServerTool.Create(aiFunc, new McpServerToolCreateOptions

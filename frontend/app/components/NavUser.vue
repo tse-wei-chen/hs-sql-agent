@@ -22,6 +22,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { signOut } from "~/api/auth";
+import { clearAuthSession } from "@/lib/auth-session";
 
 const props = defineProps<{
   user: {
@@ -35,11 +36,7 @@ const { isMobile } = useSidebar();
 
 const logOut = async () => {
   await signOut();
-  localStorage.removeItem("accessToken");
-  localStorage.removeItem("refreshToken");
-  localStorage.removeItem("permissions");
-  localStorage.removeItem("userEmail");
-  localStorage.removeItem("userName");
+  clearAuthSession();
   navigateTo("/login");
 };
 </script>

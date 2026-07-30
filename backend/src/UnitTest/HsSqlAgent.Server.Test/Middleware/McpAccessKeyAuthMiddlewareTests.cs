@@ -18,6 +18,18 @@ namespace HsSqlAgent.Server.Test.Middleware;
 
 public class McpAccessKeyAuthMiddlewareTests
 {
+    [Theory]
+    [InlineData(int.MinValue)]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(int.MaxValue)]
+    public void GetStripedLockIndex_AlwaysReturnsValidIndex(int hashCode)
+    {
+        var index = McpAccessKeyAuthMiddleware.GetStripedLockIndex(hashCode, 64);
+
+        Assert.InRange(index, 0, 63);
+    }
+
     private readonly Mock<IMcpAccessKeyService> _keyServiceMock;
     private readonly Mock<IAuditService> _auditServiceMock;
     private readonly Mock<IMcpAccessKeyLastUsedQueue> _lastUsedQueueMock;
@@ -198,5 +210,93 @@ public class McpAccessKeyAuthMiddlewareTests
         await _middleware.InvokeAsync(context, next);
 
         Assert.Equal(403, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ShouldReturn401_WhenCachedKeyHasExpired()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/mcp";
+        context.Request.Headers.Authorization = "Bearer cached-expired-key";
+        context.Response.Body = new MemoryStream();
+
+        _cacheMock.Setup(c => c.GetAsync<McpAccessKeyValidationResult>(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new McpAccessKeyValidationResult
+            {
+                IsValid = true,
+                KeyId = 1,
+                ExpiresAt = DateTime.UtcNow.AddSeconds(-1)
+            });
+
+        await _middleware.InvokeAsync(context, _ => Task.CompletedTask);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        _keyServiceMock.Verify(
+            k => k.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ShouldReturn401_WhenCachedKeyWasRevoked()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/mcp";
+        context.Request.Headers.Authorization = "Bearer cached-revoked-key";
+        context.Response.Body = new MemoryStream();
+
+        _cacheMock.Setup(c => c.GetAsync<McpAccessKeyValidationResult>(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new McpAccessKeyValidationResult
+            {
+                IsValid = true,
+                KeyId = 42
+            });
+        _cacheMock.Setup(c => c.GetAsync<bool>(
+                McpAccessKeyCacheKeys.ForRevokedKeyId(42),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        await _middleware.InvokeAsync(context, _ => Task.CompletedTask);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        _keyServiceMock.Verify(
+            k => k.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ShouldNotCacheValidKeyBeyondItsExpiration()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/mcp";
+        context.Request.Headers.Authorization = "Bearer short-lived-key";
+        context.Response.Body = new MemoryStream();
+        var expiresAt = DateTime.UtcNow.AddSeconds(30);
+        TimeSpan? capturedCacheExpiry = null;
+
+        _keyServiceMock.Setup(k => k.ValidateAsync("short-lived-key", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new McpAccessKeyValidationResult
+            {
+                IsValid = true,
+                KeyId = 1,
+                ExpiresAt = expiresAt
+            });
+        _cacheMock.Setup(c => c.SetAsync(
+                It.IsAny<string>(),
+                It.IsAny<McpAccessKeyValidationResult>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, McpAccessKeyValidationResult, TimeSpan?, CancellationToken>(
+                (_, _, expiry, _) => capturedCacheExpiry = expiry)
+            .Returns(Task.CompletedTask);
+        _lastUsedQueueMock.Setup(q => q.TryEnqueue(1)).Returns(true);
+
+        await _middleware.InvokeAsync(context, _ => Task.CompletedTask);
+
+        Assert.NotNull(capturedCacheExpiry);
+        Assert.True(capturedCacheExpiry > TimeSpan.Zero);
+        Assert.True(DateTime.UtcNow + capturedCacheExpiry <= expiresAt.AddMilliseconds(100));
+        Assert.True(capturedCacheExpiry < TimeSpan.FromMinutes(5));
     }
 }

@@ -11,5 +11,6 @@ public class McpAccessKeyValidationResult
     public string? SqlProvider { get; set; }
     public int? DbManagementId { get; set; }
     public string? TableWhitelist { get; set; }
+    public DateTime? ExpiresAt { get; set; }
     public string? Reason { get; set; }
 }

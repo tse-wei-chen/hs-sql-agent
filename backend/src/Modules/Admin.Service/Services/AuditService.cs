@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
+using Common.Models;
 
 namespace Admin.Service.Services;
 
@@ -70,7 +71,7 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
             else
             {
                 // Try to get ActorId from MCP context
-                if (httpContext.Items.TryGetValue("AccessKeyId", out var keyIdObj) && keyIdObj != null)
+                if (httpContext.Items.TryGetValue(McpContextItemKeys.AccessKeyId, out var keyIdObj) && keyIdObj != null)
                 {
                     actorId = keyIdObj.ToString();
                     actorType = "mcp-key";

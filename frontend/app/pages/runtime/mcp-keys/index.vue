@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch  } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -41,6 +41,13 @@ import Transfer from "~/components/Transfer.vue";
 import FormField from "@/components/FormField.vue";
 import { toast } from "vue-sonner"
 import { useForm } from "vee-validate";
+import {
+  createInitialMcpKeyDetail,
+  formatAllowedToolsLabel,
+  resolveMcpKeyExpiry,
+  serializeTableWhitelist,
+  type McpKeyDetail,
+} from "@/lib/mcpKeyIssuance";
 
 definePageMeta({
   layout: "default",
@@ -52,32 +59,19 @@ interface McpKeyItem {
   name: string;
   keyPrefix: string;
   isActive: boolean;
+  isExpired: boolean;
+  expiresAt?: string | null;
   lastUsedAt?: string | null;
   corsAllowedOrigins?: string | null;
   sqlProvider?: string | null;
-  hasSqlConnectionStringOverride?: boolean;
+  dbManagementId?: number | null;
+  dbManagementName?: string | null;
   tableWhitelist?: string | null;
-}
-
-interface McpKeyDetail {
-  expiresAt: string | null
-  allowedTools: string[]
-  corsAllowedOrigins: string
-  dbManagementId: number | null
-  tableWhitelist: string[]
 }
 
 const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<{ name: string; dbManagementId: number | null }>({
   initialValues: { name: "", dbManagementId: null },
 })
-
-const initialDetail: McpKeyDetail = {
-  expiresAt: null,
-  allowedTools: ["get_columns", "get_schemas", "get_tables", "execute_query_sql"],
-  corsAllowedOrigins: "",
-  dbManagementId: null,
-  tableWhitelist: [],
-}
 
 const keys = ref<McpKeyItem[]>([]);
 const customTools = ref<CustomSqlTool[]>([]);
@@ -86,8 +80,7 @@ const loading = ref(false);
 const issuing = ref(false);
 const testing = ref(false);
 const customExpiresAt = ref("");
-const selectedTools = ref<string[]>([]);
-const detail = ref<McpKeyDetail>({ ...initialDetail });
+const detail = ref<McpKeyDetail>(createInitialMcpKeyDetail());
 const isWhitelistEnabled = ref(false);
 const selectedSchema = ref<string | undefined>(undefined);
 const availableSchemas = ref<string[]>([]);
@@ -170,11 +163,7 @@ const toolOptions = computed(() => {
 });
 
 const selectedToolLabel = computed(() => {
-  if (selectedTools.value.length === 0) {
-    return "Global (no restriction)";
-  }
-
-  return `${selectedTools.value.length} tools selected`;
+  return formatAllowedToolsLabel(detail.value.allowedTools);
 });
 
 const load = async () => {
@@ -196,21 +185,24 @@ const load = async () => {
 
 const resetForm = () => {
   resetVeeForm()
-  detail.value = { ...initialDetail }
+  detail.value = createInitialMcpKeyDetail()
+  customExpiresAt.value = ""
   isWhitelistEnabled.value = false
   selectedSchema.value = undefined
   issuedPlaintextKey.value = ""
 };
 
 const issue = async () => {
-  issuing.value = true;
-  const expiresAt =
-    detail.value.expiresAt === "custom"
-      ? customExpiresAt.value
-      : detail.value.expiresAt === null
-        ? null
-        : new Date(detail.value.expiresAt!).toISOString();
   try {
+    const expiresAt = resolveMcpKeyExpiry(
+      detail.value.expiresAt,
+      customExpiresAt.value,
+    );
+    const tableWhitelist = serializeTableWhitelist(
+      isWhitelistEnabled.value,
+      detail.value.tableWhitelist,
+    );
+    issuing.value = true;
     const result = await issueMcpKey({
       name: values.name.trim(),
       expiresAt,
@@ -220,17 +212,19 @@ const issue = async () => {
           : null,
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
       dbManagementId: detail.value.dbManagementId || 0,
-      tableWhitelist:
-        isWhitelistEnabled.value && detail.value.tableWhitelist?.length > 0
-          ? detail.value.tableWhitelist.join(",")
-          : null,
+      tableWhitelist,
     });
 
     resetForm()
     await load();
     issuedPlaintextKey.value = result.plaintextKey || "";
   } catch (error: any) {
-    toast.error(error?.response?.data || "Failed to issue MCP key.");
+    toast.error(
+      error?.response?.data?.error ||
+        error?.response?.data ||
+        error?.message ||
+        "Failed to issue MCP key.",
+    );
   } finally {
     issuing.value = false;
   }
@@ -434,7 +428,10 @@ onMounted(load);
                   />
                   <p class="text-xs text-muted-foreground">
                     Selected tables:
-                    {{ detail.tableWhitelist.length || "None (All access)" }}
+                    {{
+                      detail.tableWhitelist.length ||
+                      "None — select at least one table"
+                    }}
                   </p>
                 </div>
               </Tabs>
@@ -555,7 +552,12 @@ onMounted(load);
             </TooltipProvider>
             <Button
               type="submit"
-              :disabled="!meta.valid || issuing"
+              :disabled="
+                !meta.valid ||
+                issuing ||
+                (detail.expiresAt === 'custom' && !customExpiresAt) ||
+                (isWhitelistEnabled && detail.tableWhitelist.length === 0)
+              "
               class="w-full md:w-auto"
               v-permission="'create'"
             >
@@ -598,8 +600,11 @@ onMounted(load);
             <div class="text-sm">
               <div class="font-medium">{{ key.name }}</div>
               <div class="text-muted-foreground">
-                Prefix: {{ key.keyPrefix }} | Active:
-                {{ key.isActive ? "yes" : "no" }}
+                Prefix: {{ key.keyPrefix }} | Status:
+                {{ key.isExpired ? "expired" : key.isActive ? "active" : "revoked" }}
+              </div>
+              <div class="text-muted-foreground">
+                Expires: {{ key.expiresAt || "never" }}
               </div>
               <div class="text-muted-foreground">
                 Last used: {{ key.lastUsedAt || "never" }}
@@ -608,8 +613,9 @@ onMounted(load);
                 CORS: {{ key.corsAllowedOrigins || "none" }}
               </div>
               <div class="text-muted-foreground">
-                SQL: {{ key.sqlProvider || "Global" }} / connection:
-                {{ key.hasSqlConnectionStringOverride ? "override" : "Global" }}
+                Database:
+                {{ key.dbManagementName || (key.dbManagementId ? `Missing connection #${key.dbManagementId}` : "none") }}
+                <template v-if="key.sqlProvider"> ({{ key.sqlProvider }})</template>
               </div>
               <div class="text-muted-foreground">
                 Table Whitelist: {{ key.tableWhitelist || "All" }}

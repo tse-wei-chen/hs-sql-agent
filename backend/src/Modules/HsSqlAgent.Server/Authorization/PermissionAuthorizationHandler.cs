@@ -44,7 +44,7 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
             await cache.SetAsync(cacheKey, permissions, CacheTtl);
         }
 
-        if (permissions.Contains($"{req.Path}.{req.Action}"))
+        if (req.Permissions.Any(permissions.Contains))
             ctx.Succeed(req);
     }
 }

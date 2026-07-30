@@ -16,6 +16,11 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
 
     public async Task<DbManagementVM> CreateDbAsync(DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
     {
+        if (DbManagementPasswordPolicy.RequiresPassword(dbManagement.SqlProvider)
+            && string.IsNullOrWhiteSpace(dbManagement.Password))
+        {
+            throw new ArgumentException("Password is required for this SQL provider.", nameof(dbManagement));
+        }
 
         var entity = new DbManagement
         {
@@ -73,7 +78,10 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
             existingDbManagement.Host = dbManagement.Host;
             existingDbManagement.Port = dbManagement.Port;
             existingDbManagement.Username = dbManagement.Username;
-            existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
+            if (!string.IsNullOrWhiteSpace(dbManagement.Password))
+            {
+                existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
+            }
             existingDbManagement.Database = dbManagement.Database;
             existingDbManagement.ExtraSettings = dbManagement.ExtraSettings;
             existingDbManagement.UpdatedAt = DateTime.UtcNow;
@@ -88,6 +96,19 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
         var existingDbManagement = await _context.DbManagement.FirstOrDefaultAsync(db => db.Id == id, cancellationToken);
         if (existingDbManagement != null)
         {
+            var now = DateTime.UtcNow;
+            var hasUsableKeys = await _context.McpAccessKeys.AnyAsync(
+                key => key.DbManagementId == id &&
+                       key.IsActive &&
+                       (!key.ExpiresAt.HasValue || key.ExpiresAt > now),
+                cancellationToken);
+
+            if (hasUsableKeys)
+            {
+                throw new InvalidOperationException(
+                    "This database connection is still used by an active MCP access key. Revoke or let the key expire before deleting the connection.");
+            }
+
             _context.DbManagement.Remove(existingDbManagement);
             await _context.SaveChangesAsync(cancellationToken);
         }

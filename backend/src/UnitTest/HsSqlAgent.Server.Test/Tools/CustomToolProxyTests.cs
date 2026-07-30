@@ -10,12 +10,36 @@ using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
 using HsSqlAgent.Server.Tools;
+using ModelContextProtocol.Protocol;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
 
 public class CustomToolProxyTests
 {
+    private sealed class AcceptingApprovalClient : IDmlApprovalClient
+    {
+        public bool SupportsElicitation => true;
+        public ElicitRequestParams? LastRequest { get; private set; }
+        public int RequestCount { get; private set; }
+
+        public ValueTask<ElicitResult> ElicitAsync(
+            ElicitRequestParams request,
+            CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            RequestCount++;
+            return ValueTask.FromResult(new ElicitResult
+            {
+                Action = "accept",
+                Content = new Dictionary<string, JsonElement>
+                {
+                    ["approve"] = JsonSerializer.SerializeToElement(true)
+                }
+            });
+        }
+    }
+
     private readonly Mock<ICustomSqlToolService> _toolServiceMock;
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
     private readonly Mock<IConfiguration> _configMock;
@@ -111,20 +135,18 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_ShouldHandleDmlTool()
+    public async Task Execute_ShouldRequireElicitationForDmlTool()
     {
         var tool = new CustomSqlTool
         {
             Name = "delete_user",
             Type = "DML",
-            DefinitionJson = """{ "operation": "delete", "tableName": "users" }"""
+            DefinitionJson = """{ "operation": "delete", "tableName": "users", "confirmToken": "caller-controlled" }"""
         };
         _toolServiceMock.Setup(t => t.GetToolByNameAsync("delete_user"))
             .ReturnsAsync(tool);
 
         var strategyMock = new Mock<ISqlStrategy>();
-        strategyMock.Setup(s => s.ExecuteDmlAsync(It.IsAny<string>(), It.IsAny<DmlDefinition>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync("\"affectedRows\": 1");
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
 
@@ -137,12 +159,66 @@ public class CustomToolProxyTests
             _queryValueParserMock.Object);
 
         var args = JsonSerializer.SerializeToElement(new { });
-        var result = await dmlProxy.Execute(args);
+        var result = await dmlProxy.Execute(
+            args,
+            server: null,
+            cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.Contains("affectedRows", result);
+        Assert.Contains("does not support", result, StringComparison.OrdinalIgnoreCase);
         strategyMock.Verify(s => s.ExecuteDmlAsync(
             It.IsAny<string>(),
-            It.Is<DmlDefinition>(d => d.TableName == "users"), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<DmlDefinition>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_ShouldIgnoreCallerToken_AndCommitOnlyAfterApproval()
+    {
+        var tool = new CustomSqlTool
+        {
+            Name = "delete_user",
+            Type = "DML",
+            DefinitionJson = """{ "operation": "delete", "tableName": "users", "confirmToken": "caller-controlled" }"""
+        };
+        _toolServiceMock.Setup(t => t.GetToolByNameAsync("delete_user"))
+            .ReturnsAsync(tool);
+
+        var observedTokens = new List<string?>();
+        var strategyMock = new Mock<ISqlStrategy>();
+        strategyMock
+            .Setup(s => s.ExecuteDmlAsync(
+                It.IsAny<string>(),
+                It.IsAny<DmlDefinition>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string?, DmlDefinition?, CancellationToken>((_, dml, _) =>
+                observedTokens.Add(dml?.ConfirmToken))
+            .ReturnsAsync(() => observedTokens.Count == 1
+                ? "Dry Run Result | affectedRows=1 | TokenRequired=server-token | Security Note: not committed."
+                : "Success | affectedRows=1 | Operation Committed.");
+        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
+            .Returns(strategyMock.Object);
+
+        var approvalClient = new AcceptingApprovalClient();
+
+        var dmlProxy = new CustomToolProxy("delete_user",
+            _toolServiceMock.Object,
+            _httpContextAccessorMock.Object,
+            _configMock.Object,
+            _strategyFactoryMock.Object,
+            _auditServiceMock.Object,
+            _queryValueParserMock.Object);
+
+        var result = await dmlProxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            approvalClient,
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Success", result);
+        Assert.Equal([null, "server-token"], observedTokens);
+        Assert.Equal(1, approvalClient.RequestCount);
+        Assert.NotNull(approvalClient.LastRequest);
+        Assert.Contains("delete_user", approvalClient.LastRequest.Message);
+        Assert.Contains("1 row", approvalClient.LastRequest.Message);
     }
 
     [Fact]

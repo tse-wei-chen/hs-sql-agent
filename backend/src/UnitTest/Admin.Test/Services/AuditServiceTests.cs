@@ -103,7 +103,7 @@ public class AuditServiceTests
     {
         // Arrange
         var context = new DefaultHttpContext();
-        context.Items["AccessKeyId"] = 42;
+        context.Items[Common.Models.McpContextItemKeys.AccessKeyId] = 42;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
 
         // Act

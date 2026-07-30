@@ -141,6 +141,31 @@ public class PermissionAuthorizationHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_Succeeds_WhenUserHasAnyOneOfRequiredPermissions()
+    {
+        _cacheMock.Setup(c => c.GetAsync<HashSet<string>>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string> { "/runtime/db-management.edit" });
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(
+        [
+            new Claim("role_id", "1"),
+            new Claim(ClaimTypes.Role, "Operator")
+        ], "test"));
+        var requirement = new PermissionRequirement(
+        [
+            "/runtime/mcp-keys.create",
+            "/runtime/db-management.create",
+            "/runtime/db-management.edit"
+        ]);
+        var context = new AuthorizationHandlerContext([requirement], user, null);
+
+        var handler = new PermissionAuthorizationHandler(_contextMock.Object, _cacheMock.Object);
+        await handler.HandleAsync(context);
+
+        Assert.True(context.HasSucceeded);
+    }
+
+    [Fact]
     public async Task HandleAsync_PopulatesCache_WhenCacheMiss()
     {
         var role = new Role { Id = 1, Name = "Admin" };

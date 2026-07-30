@@ -11,7 +11,9 @@ public class McpAccessKeyListItem
     public string? AllowedTools { get; set; }
     public string? CorsAllowedOrigins { get; set; }
     public string? SqlProvider { get; set; }
-    public bool HasSqlConnectionStringOverride { get; set; }
+    public int? DbManagementId { get; set; }
+    public string? DbManagementName { get; set; }
+    public bool IsExpired { get; set; }
     public string? TableWhitelist { get; set; }
     public DateTime CreatedAt { get; set; }
 }

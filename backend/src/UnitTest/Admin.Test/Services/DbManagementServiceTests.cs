@@ -35,6 +35,7 @@ public class DbManagementServiceTests
 
         // Setup default DbManagement DbSet to avoid null reference exceptions in async queries
         _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement>());
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
 
         _service = new DbManagementService(_contextMock.Object, _cryptoServiceMock.Object, _mcpKeySettingsMock.Object);
     }
@@ -80,6 +81,50 @@ public class DbManagementServiceTests
         )), Times.Once, "The entity was not added to the context with correct parameters.");
 
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once, "SaveChanges was not called.");
+    }
+
+    [Fact]
+    public async Task CreateDbAsync_ShouldRejectBlankPassword_ForCredentialBasedProvider()
+    {
+        var request = new DbManagementRequest
+        {
+            Name = "Postgres",
+            SqlProvider = "Postgres",
+            Password = " "
+        };
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(
+            () => _service.CreateDbAsync(request, TestContext.Current.CancellationToken));
+
+        Assert.Contains("Password is required", exception.Message);
+        _cryptoServiceMock.Verify(
+            c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
+            Times.Never);
+        _contextMock.Verify(
+            c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateDbAsync_ShouldAllowBlankPassword_ForSqlite()
+    {
+        var request = new DbManagementRequest
+        {
+            Name = "Local",
+            SqlProvider = "Sqlite",
+            Database = "local.db"
+        };
+        _cryptoServiceMock
+            .Setup(c => c.EncryptText(string.Empty, _hmacSecretBytes))
+            .Returns("encrypted-empty-password");
+
+        await _service.CreateDbAsync(request, TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.DbManagement.Add(It.Is<DbManagement>(
+            db => db.PasswordHash == "encrypted-empty-password")), Times.Once);
+        _contextMock.Verify(
+            c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -215,6 +260,40 @@ public class DbManagementServiceTests
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once, "SaveChanges was not called after updating entity.");
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task UpdateDbAsync_ShouldPreserveExistingPassword_WhenPasswordIsBlank(string password)
+    {
+        var existingDb = new DbManagement
+        {
+            Id = 1,
+            Name = "OldName",
+            PasswordHash = "existing-encrypted-password"
+        };
+        _contextMock.Setup(c => c.DbManagement)
+            .ReturnsDbSet(new List<DbManagement> { existingDb });
+        var request = new DbManagementRequest
+        {
+            Name = "NewName",
+            Password = password
+        };
+
+        await _service.UpdateDbAsync(
+            existingDb.Id,
+            request,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("NewName", existingDb.Name);
+        Assert.Equal("existing-encrypted-password", existingDb.PasswordHash);
+        _cryptoServiceMock.Verify(
+            c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
+            Times.Never);
+        _contextMock.Verify(
+            c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     [Fact]
     public async Task UpdateDbAsync_ShouldSilentlyFailAndNotSaveChanges_WhenDbDoesNotExist()
     {
@@ -260,5 +339,52 @@ public class DbManagementServiceTests
         // Assert
         _contextMock.Verify(c => c.DbManagement.Remove(It.IsAny<DbManagement>()), Times.Never, "Remove should not be called when DB does not exist.");
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never, "SaveChanges should not be called when DB does not exist.");
+    }
+
+    [Fact]
+    public async Task DeleteDbAsync_ShouldRejectDelete_WhenActiveUnexpiredKeyUsesConnection()
+    {
+        var existingDb = new DbManagement { Id = 7 };
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement> { existingDb });
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>
+        {
+            new()
+            {
+                Id = 11,
+                DbManagementId = 7,
+                IsActive = true,
+                ExpiresAt = DateTime.UtcNow.AddHours(1)
+            }
+        });
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.DeleteDbAsync(7, TestContext.Current.CancellationToken));
+
+        Assert.Contains("active MCP access key", error.Message);
+        _contextMock.Verify(c => c.DbManagement.Remove(It.IsAny<DbManagement>()), Times.Never);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteDbAsync_ShouldAllowDelete_WhenReferencedKeyIsRevokedOrExpired()
+    {
+        var existingDb = new DbManagement { Id = 7 };
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement> { existingDb });
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>
+        {
+            new() { Id = 11, DbManagementId = 7, IsActive = false },
+            new()
+            {
+                Id = 12,
+                DbManagementId = 7,
+                IsActive = true,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(-1)
+            }
+        });
+
+        await _service.DeleteDbAsync(7, TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.DbManagement.Remove(existingDb), Times.Once);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 }

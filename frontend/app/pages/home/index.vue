@@ -57,6 +57,9 @@ interface AuditItem {
 }
 
 const loading = ref(false);
+const { $can } = useNuxtApp();
+const canViewKeys = computed(() => $can("/runtime/mcp-keys.view"));
+const canViewAudit = computed(() => $can("/runtime/audit.view"));
 const keys = ref<McpKeyItem[]>([]);
 const recentAudits = ref<AuditItem[]>([]);
 const dailySummary = ref<AuditDailySummaryItem[]>([]);
@@ -123,9 +126,13 @@ const loadDashboard = async () => {
   try {
     const [keyResult, latestAuditResult, dailySummaryResult] =
       await Promise.all([
-        listMcpKeys(),
-        getRuntimeAudit(1, 8),
-        getRuntimeAuditDailySummary(7),
+        canViewKeys.value ? listMcpKeys() : Promise.resolve([]),
+        canViewAudit.value
+          ? getRuntimeAudit(1, 8)
+          : Promise.resolve({ items: [] }),
+        canViewAudit.value
+          ? getRuntimeAuditDailySummary(7)
+          : Promise.resolve({ items: [] }),
       ]);
     keys.value = keyResult || [];
     recentAudits.value = latestAuditResult?.items || [];
@@ -165,7 +172,7 @@ onMounted(loadDashboard);
           <Button variant="outline" @click="loadDashboard" :disabled="loading">
             {{ loading ? "Refreshing..." : "Refresh" }}
           </Button>
-          <Button as-child>
+          <Button v-if="canViewKeys" as-child>
             <NuxtLink to="/runtime/mcp-keys">Manage Keys</NuxtLink>
           </Button>
         </div>
@@ -173,7 +180,7 @@ onMounted(loadDashboard);
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <Card>
+      <Card v-if="canViewKeys">
         <CardHeader class="pb-2">
           <CardDescription>Total Keys</CardDescription>
           <CardTitle class="text-3xl">{{ keys.length }}</CardTitle>
@@ -181,7 +188,7 @@ onMounted(loadDashboard);
         <CardContent class="text-xs text-muted-foreground">Issued server access keys in current environment
         </CardContent>
       </Card>
-      <Card>
+      <Card v-if="canViewKeys">
         <CardHeader class="pb-2">
           <CardDescription>Active Keys</CardDescription>
           <CardTitle class="text-3xl text-emerald-700">{{
@@ -190,7 +197,7 @@ onMounted(loadDashboard);
         </CardHeader>
         <CardContent class="text-xs text-muted-foreground">Ready for MCP runtime access</CardContent>
       </Card>
-      <Card>
+      <Card v-if="canViewKeys">
         <CardHeader class="pb-2">
           <CardDescription>Revoked Keys</CardDescription>
           <CardTitle class="text-3xl text-destructive">{{
@@ -199,7 +206,7 @@ onMounted(loadDashboard);
         </CardHeader>
         <CardContent class="text-xs text-muted-foreground">Disabled keys kept for auditability</CardContent>
       </Card>
-      <Card>
+      <Card v-if="canViewAudit">
         <CardHeader class="pb-2">
           <CardDescription>Recent Audit Failures</CardDescription>
           <CardTitle class="text-3xl text-rose-700">{{
@@ -212,14 +219,14 @@ onMounted(loadDashboard);
     </div>
 
     <div class="grid gap-4 xl:grid-cols-3">
-      <Card class="xl:col-span-2">
+      <Card v-if="canViewKeys || canViewAudit" class="xl:col-span-2">
         <CardHeader>
           <CardTitle>Security Signals</CardTitle>
           <CardDescription>Real-time status view from MCP keys and recent audit
             records</CardDescription>
         </CardHeader>
         <CardContent class="grid gap-4 md:grid-cols-2">
-          <div class="rounded-lg border p-3">
+          <div v-if="canViewKeys" class="rounded-lg border p-3">
             <div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Key Status
             </div>
@@ -242,7 +249,7 @@ onMounted(loadDashboard);
             </ChartContainer>
           </div>
 
-          <div class="rounded-lg border p-3">
+          <div v-if="canViewAudit" class="rounded-lg border p-3">
             <div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               7-Day Daily Outcomes
             </div>
@@ -299,7 +306,7 @@ onMounted(loadDashboard);
         </CardContent>
       </Card>
 
-      <Card>
+      <Card v-if="canViewAudit">
         <CardHeader class="flex flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>Recent Audit Events</CardTitle>
@@ -341,14 +348,14 @@ onMounted(loadDashboard);
       </Card>
     </div>
 
-    <div class="grid gap-4 xl:grid-cols-3">
+    <div v-if="canViewKeys || canViewAudit" class="grid gap-4 xl:grid-cols-3">
       <Card class="xl:col-span-1 xl:col-start-3">
         <CardHeader>
           <CardTitle>Quick Actions</CardTitle>
           <CardDescription>Jump to runtime management pages</CardDescription>
         </CardHeader>
         <CardContent class="space-y-3">
-          <NuxtLink class="block rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm transition hover:bg-sky-100"
+          <NuxtLink v-if="canViewKeys" class="block rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm transition hover:bg-sky-100"
             to="/runtime/mcp-keys">
             <div class="font-medium text-sky-900">MCP Key Management</div>
             <div class="text-xs text-sky-700">
@@ -356,6 +363,7 @@ onMounted(loadDashboard);
             </div>
           </NuxtLink>
           <NuxtLink
+            v-if="canViewAudit"
             class="block rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100"
             to="/runtime/audit">
             <div class="font-medium text-emerald-900">Audit Logs</div>
@@ -364,12 +372,22 @@ onMounted(loadDashboard);
             </div>
           </NuxtLink>
 
-          <div class="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+          <div v-if="canViewAudit" class="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
             Success events in latest batch: {{ successAuditCount }} /
             {{ recentAudits.length }}
           </div>
         </CardContent>
       </Card>
     </div>
+
+    <Card v-if="!canViewKeys && !canViewAudit">
+      <CardHeader>
+        <CardTitle>No operational data access</CardTitle>
+        <CardDescription>
+          Your role can open the overview, but it does not have permission to
+          view MCP keys or audit events.
+        </CardDescription>
+      </CardHeader>
+    </Card>
   </div>
 </template>
