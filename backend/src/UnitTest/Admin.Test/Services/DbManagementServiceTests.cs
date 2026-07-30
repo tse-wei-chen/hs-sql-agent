@@ -35,6 +35,7 @@ public class DbManagementServiceTests
 
         // Setup default DbManagement DbSet to avoid null reference exceptions in async queries
         _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement>());
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
 
         _service = new DbManagementService(_contextMock.Object, _cryptoServiceMock.Object, _mcpKeySettingsMock.Object);
     }
@@ -338,5 +339,52 @@ public class DbManagementServiceTests
         // Assert
         _contextMock.Verify(c => c.DbManagement.Remove(It.IsAny<DbManagement>()), Times.Never, "Remove should not be called when DB does not exist.");
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never, "SaveChanges should not be called when DB does not exist.");
+    }
+
+    [Fact]
+    public async Task DeleteDbAsync_ShouldRejectDelete_WhenActiveUnexpiredKeyUsesConnection()
+    {
+        var existingDb = new DbManagement { Id = 7 };
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement> { existingDb });
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>
+        {
+            new()
+            {
+                Id = 11,
+                DbManagementId = 7,
+                IsActive = true,
+                ExpiresAt = DateTime.UtcNow.AddHours(1)
+            }
+        });
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.DeleteDbAsync(7, TestContext.Current.CancellationToken));
+
+        Assert.Contains("active MCP access key", error.Message);
+        _contextMock.Verify(c => c.DbManagement.Remove(It.IsAny<DbManagement>()), Times.Never);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteDbAsync_ShouldAllowDelete_WhenReferencedKeyIsRevokedOrExpired()
+    {
+        var existingDb = new DbManagement { Id = 7 };
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement> { existingDb });
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>
+        {
+            new() { Id = 11, DbManagementId = 7, IsActive = false },
+            new()
+            {
+                Id = 12,
+                DbManagementId = 7,
+                IsActive = true,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(-1)
+            }
+        });
+
+        await _service.DeleteDbAsync(7, TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.DbManagement.Remove(existingDb), Times.Once);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 }

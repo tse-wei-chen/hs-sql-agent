@@ -96,6 +96,19 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
         var existingDbManagement = await _context.DbManagement.FirstOrDefaultAsync(db => db.Id == id, cancellationToken);
         if (existingDbManagement != null)
         {
+            var now = DateTime.UtcNow;
+            var hasUsableKeys = await _context.McpAccessKeys.AnyAsync(
+                key => key.DbManagementId == id &&
+                       key.IsActive &&
+                       (!key.ExpiresAt.HasValue || key.ExpiresAt > now),
+                cancellationToken);
+
+            if (hasUsableKeys)
+            {
+                throw new InvalidOperationException(
+                    "This database connection is still used by an active MCP access key. Revoke or let the key expire before deleting the connection.");
+            }
+
             _context.DbManagement.Remove(existingDbManagement);
             await _context.SaveChangesAsync(cancellationToken);
         }
