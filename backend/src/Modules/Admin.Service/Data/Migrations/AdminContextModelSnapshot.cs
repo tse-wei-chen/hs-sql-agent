@@ -15,12 +15,15 @@ namespace Admin.Service.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.5");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
             modelBuilder.Entity("Admin.Service.Data.Entites.AuditLog", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AccessKeyId")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Action")
@@ -37,14 +40,49 @@ namespace Admin.Service.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("AffectedRows")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ApprovalStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DatabaseName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Definition")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Detail")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ErrorCategory")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("IpAddress")
                         .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Operation")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Result")
@@ -52,9 +90,20 @@ namespace Admin.Service.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ReturnedRows")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Target")
                         .IsRequired()
                         .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ToolName")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("UserAgent")
@@ -63,9 +112,18 @@ namespace Admin.Service.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AccessKeyId");
+
                     b.HasIndex("Action");
 
                     b.HasIndex("CreatedAt");
+
+                    b.HasIndex("DbManagementId");
+
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("ToolName");
 
                     b.ToTable("AuditLogs");
                 });
@@ -258,6 +316,16 @@ namespace Admin.Service.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PermitLimitOverride")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RateLimitMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Inherit");
+
                     b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("TEXT");
 
@@ -272,6 +340,9 @@ namespace Admin.Service.Data.Migrations
                     b.Property<string>("TableWhitelist")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("WindowSecondsOverride")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("IsActive");
@@ -282,6 +353,79 @@ namespace Admin.Service.Data.Migrations
                     b.HasIndex("KeyPrefix");
 
                     b.ToTable("McpAccessKeys");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.SecurityPolicySettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowFullTableDelete")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowFullTableUpdate")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DmlMaxAffectedRows")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("IpPermitLimit")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("IpWindowSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("KeyPermitLimit")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("KeyWindowSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MaxConcurrentSql")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("QueryMaxRows")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("QueryTimeoutSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("RequireWhereForDelete")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("RequireWhereForUpdate")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SecurityPolicySettings");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            AllowFullTableDelete = false,
+                            AllowFullTableUpdate = false,
+                            DmlMaxAffectedRows = 100,
+                            IpPermitLimit = 60,
+                            IpWindowSeconds = 60,
+                            KeyPermitLimit = 120,
+                            KeyWindowSeconds = 60,
+                            MaxConcurrentSql = 16,
+                            QueryMaxRows = 1000,
+                            QueryTimeoutSeconds = 30,
+                            RequireWhereForDelete = true,
+                            RequireWhereForUpdate = true,
+                            UpdatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
+                        });
                 });
 
             modelBuilder.Entity("Admin.Service.Data.Entites.DbSemantic", b =>

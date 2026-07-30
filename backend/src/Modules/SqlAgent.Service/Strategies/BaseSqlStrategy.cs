@@ -48,16 +48,32 @@ public abstract partial class BaseSqlStrategy(
         QueryDefinition definition,
         string? connectionString = null,
         CancellationToken cancellationToken = default)
+        => await ExecuteQueryAsync(
+            definition,
+            connectionString,
+            new SqlExecutionPolicy { QueryTimeoutSeconds = 30 },
+            cancellationToken);
+
+    public async Task<string> ExecuteQueryAsync(
+        QueryDefinition definition,
+        string? connectionString,
+        SqlExecutionPolicy policy,
+        CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
         var compiler = CreateCompiler();
-        var db = new QueryFactory(connection, compiler);
+        var db = new QueryFactory(connection, compiler)
+        {
+            QueryTimeout = NormalizeTimeout(policy.QueryTimeoutSeconds)
+        };
 
         try
         {
             var query = BuildQueryFromDefinition(definition);
+            if (policy.QueryMaxRows > 0)
+                query = query.Limit(policy.QueryMaxRows);
             var result = await db.GetAsync(query, cancellationToken: cancellationToken);
             return SerializeQueryResult(result);
         }
@@ -71,15 +87,33 @@ public abstract partial class BaseSqlStrategy(
         string? connectionString = null,
         DmlDefinition? dml = null,
         CancellationToken cancellationToken = default)
+        => await ExecuteDmlAsync(
+            connectionString,
+            dml,
+            new SqlExecutionPolicy { QueryTimeoutSeconds = 30 },
+            cancellationToken);
+
+    public async Task<string> ExecuteDmlAsync(
+        string? connectionString,
+        DmlDefinition? dml,
+        SqlExecutionPolicy policy,
+        CancellationToken cancellationToken = default)
     {
         if (dml == null)
             return "No DML definition provided.";
+
+        var policyViolation = ValidateDmlPolicy(dml, policy);
+        if (policyViolation is not null)
+            return $"Security policy denied DML: {policyViolation}";
 
         using var connection = CreateConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
 
         var compiler = CreateCompiler();
-        var db = new QueryFactory(connection, compiler);
+        var db = new QueryFactory(connection, compiler)
+        {
+            QueryTimeout = NormalizeTimeout(policy.QueryTimeoutSeconds)
+        };
 
         using var transaction = connection.BeginTransaction();
 
@@ -95,6 +129,12 @@ public abstract partial class BaseSqlStrategy(
                 return $"Unsupported DML operation: {dml.Operation}";
 
             int affected = await db.ExecuteAsync(terminalQuery, transaction, cancellationToken: cancellationToken);
+
+            if (policy.DmlMaxAffectedRows > 0 && affected > policy.DmlMaxAffectedRows)
+            {
+                transaction.Rollback();
+                return $"Security policy denied DML: affectedRows={affected} exceeds maximum {policy.DmlMaxAffectedRows}.";
+            }
 
             var expectedToken = GenerateConfirmToken(dml.Operation, dml.TableName, affected);
 
@@ -113,6 +153,30 @@ public abstract partial class BaseSqlStrategy(
             transaction.Rollback();
             throw new Exception(BuildExecutionErrorMessage(ex, "DML"), ex);
         }
+    }
+
+    private static int NormalizeTimeout(int timeoutSeconds)
+        => timeoutSeconds > 0 ? timeoutSeconds : 30;
+
+    private static string? ValidateDmlPolicy(DmlDefinition dml, SqlExecutionPolicy policy)
+    {
+        var hasWhere = dml.WhereConditions is { Count: > 0 };
+
+        if (dml.Operation == DmlOperation.Update &&
+            !hasWhere &&
+            (policy.RequireWhereForUpdate || !policy.AllowFullTableUpdate))
+        {
+            return "UPDATE without WHERE is not allowed.";
+        }
+
+        if (dml.Operation == DmlOperation.Delete &&
+            !hasWhere &&
+            (policy.RequireWhereForDelete || !policy.AllowFullTableDelete))
+        {
+            return "DELETE without WHERE is not allowed.";
+        }
+
+        return null;
     }
 
     // =====================================================================

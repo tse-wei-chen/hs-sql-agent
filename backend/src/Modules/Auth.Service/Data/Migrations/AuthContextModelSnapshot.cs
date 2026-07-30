@@ -188,6 +188,12 @@ namespace Auth.Service.Data.Migrations
                             Id = 8,
                             Name = "Semantic Layer",
                             Path = "/runtime/db-management/semantic"
+                        },
+                        new
+                        {
+                            Id = 9,
+                            Name = "Security Policy",
+                            Path = "/runtime/security"
                         });
                 });
 
@@ -377,6 +383,24 @@ namespace Auth.Service.Data.Migrations
                             Id = 23,
                             ActionId = 3,
                             PermissionId = 8
+                        },
+                        new
+                        {
+                            Id = 24,
+                            ActionId = 1,
+                            PermissionId = 9
+                        },
+                        new
+                        {
+                            Id = 25,
+                            ActionId = 3,
+                            PermissionId = 9
+                        },
+                        new
+                        {
+                            Id = 26,
+                            ActionId = 3,
+                            PermissionId = 2
                         });
                 });
 

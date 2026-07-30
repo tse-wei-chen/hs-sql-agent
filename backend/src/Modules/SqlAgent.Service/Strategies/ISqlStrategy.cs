@@ -14,12 +14,24 @@ public interface ISqlStrategy
         string? connectionString,
         CancellationToken cancellationToken = default
     );
+    Task<string> ExecuteQueryAsync(
+        QueryDefinition definition,
+        string? connectionString,
+        SqlExecutionPolicy policy,
+        CancellationToken cancellationToken = default
+    );
     Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
     Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default);
     Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
     Task<string> ExecuteDmlAsync(
         string? connectionString = null,
         DmlDefinition? dml = null,
+        CancellationToken cancellationToken = default
+    );
+    Task<string> ExecuteDmlAsync(
+        string? connectionString,
+        DmlDefinition? dml,
+        SqlExecutionPolicy policy,
         CancellationToken cancellationToken = default
     );
 }

@@ -10,5 +10,6 @@ public interface IAdminContext
     DbSet<CustomSqlTool> CustomSqlTools { get; }
     DbSet<DbManagement> DbManagement { get; }
     DbSet<DbSemantic> DbSemantics { get; }
+    DbSet<SecurityPolicySettings> SecurityPolicySettings { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

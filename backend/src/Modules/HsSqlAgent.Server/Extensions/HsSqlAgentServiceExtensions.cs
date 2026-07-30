@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.RateLimiting;
 using Admin.Service.Data;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
@@ -19,6 +18,7 @@ using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
+using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Infrastructure.Caching;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -67,6 +67,10 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
+        services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
+        services.AddSingleton<ILayeredRateLimitService, LayeredRateLimitService>();
+        services.AddSingleton<ISqlExecutionConcurrencyLimiter, SqlExecutionConcurrencyLimiter>();
+        services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
         services.AddScoped<IMemberService, MemberService>();
         services.AddScoped<IRoleService, RoleService>();
@@ -137,37 +141,12 @@ public static class HsSqlAgentServiceExtensions
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
-        // --- Rate Limiting ---
-        services.AddRateLimiter(rl =>
-        {
-            rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            rl.AddPolicy("mcp-policy", context =>
-            {
-                // Only trust the connection address. Hosts behind a reverse proxy can
-                // opt into ASP.NET Core Forwarded Headers with explicit trusted proxies;
-                // that middleware safely updates RemoteIpAddress before this policy runs.
-                var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-                if (options.RateLimitPermitLimit <= 0 || options.RateLimitWindowSeconds <= 0)
-                    return RateLimitPartition.GetNoLimiter($"ip:{ip}");
-
-                return RateLimitPartition.GetFixedWindowLimiter($"ip:{ip}", _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = options.RateLimitPermitLimit,
-                    Window = TimeSpan.FromSeconds(options.RateLimitWindowSeconds),
-                    QueueLimit = Math.Max(0, options.RateLimitQueueLimit),
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    AutoReplenishment = true
-                });
-            });
-        });
-
         // --- MCP Server ---
         services.AddScoped<McpAccessKeyAuthMiddleware>();
+        services.AddTransient<IpRateLimitMiddleware>();
+        services.AddTransient<McpKeyRateLimitMiddleware>();
         services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
-        services.AddSingleton<IAuditQueue, AuditQueue>();
         services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
-        services.AddHostedService<AuditBackgroundService>();
         services.AddHostedService<TokenBlacklistCleanupService>();
         services.AddScoped<SqlAgentTool>();
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
@@ -248,7 +227,9 @@ public static class HsSqlAgentServiceExtensions
                                     sp.GetRequiredService<IConfiguration>(),
                                     sp.GetRequiredService<ISqlStrategyFactory>(),
                                     sp.GetRequiredService<IAuditService>(),
-                                    sp.GetRequiredService<IQueryValueParserService>());
+                                    sp.GetRequiredService<IQueryValueParserService>(),
+                                    sp.GetRequiredService<ISecurityPolicyRuntimeState>(),
+                                    sp.GetRequiredService<ISqlExecutionConcurrencyLimiter>());
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
                                 return await proxy.Execute(json, server, ct2);
                             });

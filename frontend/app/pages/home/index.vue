@@ -36,6 +36,8 @@ interface McpKeyItem {
   name: string;
   keyPrefix: string;
   isActive: boolean;
+  isExpiringSoon: boolean;
+  expiresAt?: string | null;
   createdAt?: string | null;
   lastUsedAt?: string | null;
   sqlProvider?: string | null;
@@ -69,6 +71,9 @@ const activeKeyCount = computed(
 );
 const revokedKeyCount = computed(
   () => keys.value.length - activeKeyCount.value,
+);
+const expiringSoonKeys = computed(() =>
+  keys.value.filter((key) => key.isExpiringSoon),
 );
 const failAuditCount = computed(
   () =>
@@ -178,6 +183,17 @@ onMounted(loadDashboard);
         </div>
       </div>
     </div>
+
+    <NuxtLink
+      v-if="canViewKeys && expiringSoonKeys.length"
+      to="/runtime/mcp-keys"
+      class="block rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 transition hover:bg-amber-100"
+    >
+      <div class="font-medium">
+        {{ expiringSoonKeys.length }} MCP key(s) expire within 7 days
+      </div>
+      <div>{{ expiringSoonKeys.map((key) => key.name).join(", ") }}</div>
+    </NuxtLink>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <Card v-if="canViewKeys">

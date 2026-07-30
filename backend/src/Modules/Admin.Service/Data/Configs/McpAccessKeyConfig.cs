@@ -18,6 +18,12 @@ public class McpAccessKeyConfig : IEntityTypeConfiguration<McpAccessKey>
         builder.Property(x => x.SqlProvider).HasMaxLength(32);
         builder.Property(x => x.DbManagementId);
         builder.Property(x => x.TableWhitelist);
+        builder.Property(x => x.RateLimitMode)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(Admin.Service.Models.McpKeyRateLimitMode.Inherit);
+        builder.Property(x => x.PermitLimitOverride);
+        builder.Property(x => x.WindowSecondsOverride);
         builder.Property(x => x.CreatedBy).HasMaxLength(64);
         builder.Property(x => x.RevokedBy).HasMaxLength(64);
         builder.Property(x => x.CreatedAt).IsRequired();

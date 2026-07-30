@@ -7,14 +7,14 @@ using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Common.Models;
+using System.Text.RegularExpressions;
 
 namespace Admin.Service.Services;
 
-public class AuditService(IAdminContext context, IHttpContextAccessor httpContextAccessor, IAuditQueue auditQueue) : IAuditService
+public class AuditService(IAdminContext context, IHttpContextAccessor httpContextAccessor) : IAuditService
 {
     private readonly IAdminContext _context = context;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
-    private readonly IAuditQueue _auditQueue = auditQueue;
 
     public async Task WriteAsync(
         string action,
@@ -29,10 +29,11 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
     {
         var item = new AuditLog
         {
+            EventId = Guid.NewGuid(),
             Action = action,
             Target = target,
             Result = result,
-            Detail = detail,
+            Detail = Redact(detail),
             ActorType = string.IsNullOrWhiteSpace(actorType) ? "system" : actorType,
             ActorId = actorId,
             IpAddress = ipAddress,
@@ -40,9 +41,7 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
             CreatedAt = DateTime.UtcNow
         };
 
-        // Offload to background queue instead of waiting for DB save
-        _auditQueue.TryEnqueue(item);
-        await Task.CompletedTask;
+        await PersistAsync(item, cancellationToken);
     }
 
     public async Task WriteLogAsync(
@@ -52,67 +51,110 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
         string? detail = null,
         CancellationToken cancellationToken = default)
     {
-        var httpContext = _httpContextAccessor.HttpContext;
-        string? actorId = null;
-        string? actorType = "system";
-        string? ipAddress = null;
-        string? userAgent = null;
-
-        if (httpContext != null)
-        {
-            // Try to get ActorId from JWT
-            actorId = httpContext.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
-                      ?? httpContext.User?.FindFirstValue(ClaimTypes.NameIdentifier);
-
-            if (actorId != null)
-            {
-                actorType = "admin";
-            }
-            else
-            {
-                // Try to get ActorId from MCP context
-                if (httpContext.Items.TryGetValue(McpContextItemKeys.AccessKeyId, out var keyIdObj) && keyIdObj != null)
-                {
-                    actorId = keyIdObj.ToString();
-                    actorType = "mcp-key";
-                }
-            }
-
-            ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
-            userAgent = httpContext.Request.Headers.UserAgent.ToString();
-        }
-
-        await WriteAsync(
+        await WriteEventAsync(
             action: action,
             target: target,
             result: result,
+            eventContext: CreateHttpContext(),
             detail: detail,
-            actorType: actorType,
-            actorId: actorId,
-            ipAddress: ipAddress,
-            userAgent: userAgent,
             cancellationToken: cancellationToken);
     }
 
-    public async Task<AuditLogQueryResult> QueryAsync(int page, int pageSize, string? action = null, string? keyword = null, CancellationToken cancellationToken = default)
+    public async Task WriteEventAsync(
+        string action,
+        string target,
+        string result,
+        AuditEventContext eventContext,
+        string? detail = null,
+        CancellationToken cancellationToken = default)
     {
-        var safePage = page <= 0 ? 1 : page;
-        var safePageSize = pageSize <= 0 ? 20 : Math.Min(pageSize, 200);
+        var httpContext = _httpContextAccessor.HttpContext;
+        var inferred = CreateHttpContext();
+        var actorId = httpContext?.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                      ?? httpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var actorType = actorId == null ? "system" : "admin";
+        if (actorId == null &&
+            httpContext?.Items.TryGetValue(McpContextItemKeys.AccessKeyId, out var keyIdObj) == true &&
+            keyIdObj != null)
+        {
+            actorId = keyIdObj.ToString();
+            actorType = "mcp-key";
+        }
+
+        var item = new AuditLog
+        {
+            EventId = Guid.NewGuid(),
+            Action = action,
+            Target = target,
+            Result = result,
+            Detail = Redact(detail),
+            ActorType = actorType,
+            ActorId = actorId,
+            IpAddress = httpContext?.Connection.RemoteIpAddress?.ToString(),
+            UserAgent = httpContext?.Request.Headers.UserAgent.ToString(),
+            RequestId = eventContext.RequestId ?? inferred.RequestId,
+            SessionId = eventContext.SessionId ?? inferred.SessionId,
+            AccessKeyId = eventContext.AccessKeyId ?? inferred.AccessKeyId,
+            DbManagementId = eventContext.DbManagementId ?? inferred.DbManagementId,
+            DatabaseName = eventContext.DatabaseName ?? inferred.DatabaseName,
+            ToolName = eventContext.ToolName,
+            Operation = eventContext.Operation,
+            DurationMs = eventContext.DurationMs,
+            ReturnedRows = eventContext.ReturnedRows,
+            AffectedRows = eventContext.AffectedRows,
+            ApprovalStatus = eventContext.ApprovalStatus,
+            ErrorCategory = eventContext.ErrorCategory,
+            Definition = eventContext.Definition,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await PersistAsync(item, cancellationToken);
+    }
+
+    public async Task<AuditLogQueryResult> QueryAsync(int page, int pageSize, string? action = null, string? keyword = null, CancellationToken cancellationToken = default)
+        => await QueryAsync(new AuditLogFilter
+        {
+            Page = page,
+            PageSize = pageSize,
+            Action = action,
+            Keyword = keyword
+        }, cancellationToken);
+
+    public async Task<AuditLogQueryResult> QueryAsync(
+        AuditLogFilter filter,
+        CancellationToken cancellationToken = default)
+    {
+        var safePage = filter.Page <= 0 ? 1 : filter.Page;
+        var safePageSize = filter.PageSize <= 0 ? 20 : Math.Min(filter.PageSize, 200);
 
         var query = _context.AuditLogs.AsNoTracking().AsQueryable();
 
-        if (!string.IsNullOrWhiteSpace(action))
+        if (!string.IsNullOrWhiteSpace(filter.Action))
         {
-            query = query.Where(x => x.Action == action);
+            query = query.Where(x => x.Action == filter.Action);
         }
 
-        if (!string.IsNullOrWhiteSpace(keyword))
+        if (!string.IsNullOrWhiteSpace(filter.Keyword))
         {
             query = query.Where(x =>
-                (x.Target != null && x.Target.Contains(keyword)) ||
-                (x.Detail != null && x.Detail.Contains(keyword)) ||
-                (x.ActorId != null && x.ActorId.Contains(keyword)));
+                (x.Target != null && x.Target.Contains(filter.Keyword)) ||
+                (x.Detail != null && x.Detail.Contains(filter.Keyword)) ||
+                (x.ActorId != null && x.ActorId.Contains(filter.Keyword)));
         }
+        if (filter.From.HasValue)
+            query = query.Where(x => x.CreatedAt >= filter.From.Value);
+        if (filter.To.HasValue)
+            query = query.Where(x => x.CreatedAt <= filter.To.Value);
+        if (!string.IsNullOrWhiteSpace(filter.Result))
+            query = query.Where(x => x.Result == filter.Result);
+        if (!string.IsNullOrWhiteSpace(filter.Actor))
+            query = query.Where(x => x.ActorId == filter.Actor || x.ActorType == filter.Actor);
+        if (filter.DbManagementId.HasValue)
+            query = query.Where(x => x.DbManagementId == filter.DbManagementId);
+        if (filter.AccessKeyId.HasValue)
+            query = query.Where(x => x.AccessKeyId == filter.AccessKeyId);
+        if (!string.IsNullOrWhiteSpace(filter.ToolName))
+            query = query.Where(x => x.ToolName == filter.ToolName);
 
         var totalCount = await query.CountAsync(cancellationToken);
 
@@ -123,6 +165,7 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
             .Select(x => new AuditLogItem
             {
                 Id = x.Id,
+                EventId = x.EventId,
                 ActorType = x.ActorType,
                 ActorId = x.ActorId,
                 Action = x.Action,
@@ -131,6 +174,19 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
                 Result = x.Result,
                 IpAddress = x.IpAddress,
                 UserAgent = x.UserAgent,
+                RequestId = x.RequestId,
+                SessionId = x.SessionId,
+                AccessKeyId = x.AccessKeyId,
+                DbManagementId = x.DbManagementId,
+                DatabaseName = x.DatabaseName,
+                ToolName = x.ToolName,
+                Operation = x.Operation,
+                DurationMs = x.DurationMs,
+                ReturnedRows = x.ReturnedRows,
+                AffectedRows = x.AffectedRows,
+                ApprovalStatus = x.ApprovalStatus,
+                ErrorCategory = x.ErrorCategory,
+                Definition = x.Definition,
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync(cancellationToken);
@@ -204,5 +260,67 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
         return [.. bucket
             .OrderBy(x => x.Key)
             .Select(x => x.Value)];
+    }
+
+    private AuditEventContext CreateHttpContext()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context == null)
+            return new AuditEventContext();
+
+        return new AuditEventContext
+        {
+            RequestId = context.TraceIdentifier,
+            SessionId = context.Request.Headers["Mcp-Session-Id"].FirstOrDefault(),
+            AccessKeyId = GetItem<int>(context, McpContextItemKeys.AccessKeyId),
+            DbManagementId = GetItem<int>(context, McpContextItemKeys.DbManagementId),
+            DatabaseName = GetItem<string>(context, McpContextItemKeys.DatabaseName)
+        };
+    }
+
+    private static T? GetItem<T>(HttpContext context, string key)
+    {
+        if (!context.Items.TryGetValue(key, out var value) || value == null)
+            return default;
+        return value is T typed ? typed : default;
+    }
+
+    private async Task PersistAsync(AuditLog item, CancellationToken cancellationToken)
+    {
+        _context.AuditLogs.Add(item);
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+                return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch when (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), cancellationToken);
+            }
+        }
+    }
+
+    private static string? Redact(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        var redacted = Regex.Replace(
+            value,
+            @"(?i)\b(password|pwd|token|api[_-]?key|secret)\s*[=:]\s*[^;\s]+",
+            "$1=[REDACTED]",
+            RegexOptions.CultureInvariant);
+        return Regex.Replace(
+            redacted,
+            @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
+            "Bearer [REDACTED]",
+            RegexOptions.CultureInvariant);
     }
 }

@@ -18,6 +18,13 @@ public static class HsSqlAgentApplicationExtensions
 
             var adminDb = scope.ServiceProvider.GetRequiredService<Admin.Service.Data.AdminContext>();
             adminDb.Database.Migrate();
+
+            var securityPolicy = adminDb.SecurityPolicySettings
+                .AsNoTracking()
+                .Single(x => x.Id == Admin.Service.Data.Entites.SecurityPolicySettings.SingletonId);
+            scope.ServiceProvider
+                .GetRequiredService<Admin.Service.Interfaces.ISecurityPolicyRuntimeState>()
+                .SetCurrent(Admin.Service.Models.SecurityPolicyModel.FromEntity(securityPolicy));
         }
 
         if (options.ServeAdminUi)
@@ -29,8 +36,9 @@ public static class HsSqlAgentApplicationExtensions
             context => context.Request.Path.StartsWithSegments(options.McpEndpoint),
             branch =>
             {
-                branch.UseRateLimiter();
+                branch.UseMiddleware<IpRateLimitMiddleware>();
                 branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
+                branch.UseMiddleware<McpKeyRateLimitMiddleware>();
                 branch.UseMiddleware<McpStringifiedArrayMiddleware>();
             });
 
@@ -76,8 +84,7 @@ public static class HsSqlAgentApplicationExtensions
         {
             var options = builder.Options;
             endpoints.MapMcp(options.McpEndpoint)
-               .AllowAnonymous()
-               .RequireRateLimiting("mcp-policy");
+               .AllowAnonymous();
 
             endpoints.MapControllers();
         }

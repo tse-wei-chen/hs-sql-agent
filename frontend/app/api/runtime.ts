@@ -15,6 +15,9 @@ export interface IssueMcpKeyRequest {
   database?: string | null;
   extraSettings?: string | null;
   tableWhitelist?: string | null;
+  rateLimitMode?: "Inherit" | "Custom" | "Unlimited";
+  permitLimitOverride?: number | null;
+  windowSecondsOverride?: number | null;
 }
 
 export interface TestDbConnectionRequest {
@@ -52,18 +55,59 @@ export const revokeMcpKey = async (id: number) => {
   return response.data;
 };
 
+export const updateMcpKey = async (
+  id: number,
+  payload: IssueMcpKeyRequest,
+) => {
+  const response = await xiorInstanceToken.put(
+    `/runtime/mcp-keys/${id}`,
+    payload,
+  );
+  return response.data;
+};
+
+export const rotateMcpKey = async (
+  id: number,
+  payload: { gracePeriodMinutes: number; expiresAt?: string | null },
+) => {
+  const response = await xiorInstanceToken.post(
+    `/runtime/mcp-keys/${id}/rotate`,
+    payload,
+  );
+  return response.data;
+};
+
+export const cloneMcpKey = async (
+  id: number,
+  payload: { name: string; expiresAt?: string | null },
+) => {
+  const response = await xiorInstanceToken.post(
+    `/runtime/mcp-keys/${id}/clone`,
+    payload,
+  );
+  return response.data;
+};
+
 export const getRuntimeAudit = async (
   page = 1,
   pageSize = 20,
-  action = "",
-  keyword = "",
+  filters: {
+    action?: string;
+    keyword?: string;
+    from?: string;
+    to?: string;
+    result?: string;
+    actor?: string;
+    dbManagementId?: number;
+    accessKeyId?: number;
+    toolName?: string;
+  } = {},
 ) => {
   const response = await xiorInstanceToken.get("/runtime/audit", {
     params: {
       page,
       pageSize,
-      action: action || undefined,
-      keyword: keyword || undefined,
+      ...filters,
     },
   });
   return response.data;

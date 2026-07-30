@@ -24,5 +24,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Modules\Admin.Service\Admin.Service.csproj" />
+    <ProjectReference Include="..\..\Modules\Auth.Service\Auth.Service.csproj" />
   </ItemGroup>
 </Project>

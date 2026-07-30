@@ -1,5 +1,7 @@
 namespace Admin.Service.Data.Entites;
 
+using Admin.Service.Models;
+
 public class McpAccessKey
 {
     public int Id { get; set; }
@@ -14,6 +16,9 @@ public class McpAccessKey
     public string? SqlProvider { get; set; }
     public int? DbManagementId { get; set; }
     public string? TableWhitelist { get; set; }
+    public McpKeyRateLimitMode RateLimitMode { get; set; } = McpKeyRateLimitMode.Inherit;
+    public int? PermitLimitOverride { get; set; }
+    public int? WindowSecondsOverride { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
     public DateTime? RevokedAt { get; set; }
