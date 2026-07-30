@@ -4,6 +4,11 @@ namespace HsSqlAgent.Server.Authorization;
 
 public class PermissionRequirement(string path, string action) : IAuthorizationRequirement
 {
-    public string Path { get; } = path;
-    public string Action { get; } = action;
+    public IReadOnlyCollection<string> Permissions { get; } = [$"{path}.{action}"];
+
+    public PermissionRequirement(IEnumerable<string> permissions)
+        : this(string.Empty, string.Empty)
+    {
+        Permissions = permissions.ToArray();
+    }
 }

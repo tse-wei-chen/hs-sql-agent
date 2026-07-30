@@ -71,6 +71,10 @@ public class RuntimeAdminController(
     }
 
     [HttpPost("mcp-keys/test-db-connection")]
+    [HasAnyPermission(
+        "/runtime/mcp-keys.create",
+        "/runtime/db-management.create",
+        "/runtime/db-management.edit")]
     public async Task<IActionResult> TestDbConnection([FromBody] TestDbConnectionRequest request, CancellationToken cancellationToken)
     {
         if (request.DbSettingMode == 0)
