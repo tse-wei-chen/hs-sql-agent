@@ -241,6 +241,7 @@ public static class HsSqlAgentServiceExtensions
                             {
                                 using var scope = scopeFactory.CreateScope();
                                 var sp = scope.ServiceProvider;
+                                var server = args.Services?.GetService<McpServer>();
                                 var proxy = new CustomToolProxy(
                                     ct.Name,
                                     sp.GetRequiredService<ICustomSqlToolService>(),
@@ -250,7 +251,7 @@ public static class HsSqlAgentServiceExtensions
                                     sp.GetRequiredService<IAuditService>(),
                                     sp.GetRequiredService<IQueryValueParserService>());
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
-                                return await proxy.Execute(json);
+                                return await proxy.Execute(json, server, ct2);
                             });
 
                         mcpOptions.ToolCollection.Add(McpServerTool.Create(aiFunc, new McpServerToolCreateOptions

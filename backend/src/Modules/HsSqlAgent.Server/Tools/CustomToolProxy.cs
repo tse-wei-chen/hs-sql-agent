@@ -4,11 +4,15 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Validation;
+using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
 namespace HsSqlAgent.Server.Tools;
 
@@ -27,7 +31,25 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         PropertyNameCaseInsensitive = true
     };
 
-    public async Task<string> Execute(JsonElement arguments)
+    public async Task<string> Execute(
+        JsonElement arguments,
+        McpServer? server = null,
+        CancellationToken cancellationToken = default)
+        => await ExecuteCore(
+            arguments,
+            server is null ? null : new McpDmlApprovalClient(server),
+            cancellationToken);
+
+    internal async Task<string> Execute(
+        JsonElement arguments,
+        IDmlApprovalClient? approvalClient,
+        CancellationToken cancellationToken = default)
+        => await ExecuteCore(arguments, approvalClient, cancellationToken);
+
+    private async Task<string> ExecuteCore(
+        JsonElement arguments,
+        IDmlApprovalClient? approvalClient,
+        CancellationToken cancellationToken)
     {
         var parameters = new Dictionary<string, object>();
         if (arguments.ValueKind == JsonValueKind.Object)
@@ -89,7 +111,7 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     return result;
                 }
 
-                result = await strategy.ExecuteQueryAsync(queryDef, sqlConfig.ConnectionString);
+                result = await strategy.ExecuteQueryAsync(queryDef, sqlConfig.ConnectionString, cancellationToken);
             }
             else if (isDml)
             {
@@ -110,7 +132,26 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                     return result;
                 }
 
-                result = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dmlDef);
+                result = await ExecuteDmlWithApprovalAsync(
+                    strategy,
+                    sqlConfig.ConnectionString,
+                    dmlDef,
+                    approvalClient,
+                    cancellationToken);
+
+                if (!result.StartsWith("Success", StringComparison.Ordinal))
+                {
+                    var auditResult = result.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
+                        ? "cancelled"
+                        : "failed";
+                    await _auditService.WriteLogAsync(
+                        $"mcp.{_name}.executed",
+                        _name,
+                        auditResult,
+                        result,
+                        cancellationToken);
+                    return result;
+                }
             }
             else
             {
@@ -119,7 +160,12 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
                 return result;
             }
 
-            await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "success", $"Type: {tool.Type}");
+            await _auditService.WriteLogAsync(
+                $"mcp.{_name}.executed",
+                _name,
+                "success",
+                $"Type: {tool.Type}",
+                cancellationToken);
             return result;
         }
         catch (Exception ex)
@@ -129,6 +175,72 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
             var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase) ? "execute_query_sql" : "execute_dml_sql";
             return $"Error: {ex.Message}\nerror definition: {finalDefinitionJson}\nplease fix the parameters or definition and use '{suggestedTool}' tools to try again.";
         }
+    }
+
+    private async Task<string> ExecuteDmlWithApprovalAsync(
+        ISqlStrategy strategy,
+        string connectionString,
+        DmlDefinition dml,
+        IDmlApprovalClient? approvalClient,
+        CancellationToken cancellationToken)
+    {
+        if (approvalClient?.SupportsElicitation != true)
+        {
+            return "Error: This MCP client does not support the interactive confirmation required for DML execution.";
+        }
+
+        // ConfirmToken is an internal dry-run artifact. Never trust a token
+        // supplied through a stored definition or a caller-controlled parameter.
+        dml.ConfirmToken = null;
+        var dryRunResult = await strategy.ExecuteDmlAsync(connectionString, dml, cancellationToken);
+        if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
+        {
+            return dryRunResult;
+        }
+
+        var affectedMatch = System.Text.RegularExpressions.Regex.Match(
+            dryRunResult,
+            @"affectedRows=(\d+)",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        var tokenMatch = System.Text.RegularExpressions.Regex.Match(
+            dryRunResult,
+            @"TokenRequired=(\S+)",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if (!affectedMatch.Success || !tokenMatch.Success)
+        {
+            return "Error: Unable to verify the DML dry-run result.";
+        }
+
+        var affectedRows = affectedMatch.Groups[1].Value;
+        var elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
+        {
+            Message =
+                $"Custom tool '{_name}' requests {dml.Operation} on {dml.TableName} — " +
+                $"{affectedRows} row(s) affected.",
+            RequestedSchema = new RequestSchema
+            {
+                Properties =
+                {
+                    ["approve"] = new BooleanSchema
+                    {
+                        Title = "Approve execution",
+                        Description =
+                            $"This will {dml.Operation.ToString().ToLowerInvariant()} " +
+                            $"{affectedRows} row(s) in {dml.TableName}"
+                    }
+                }
+            }
+        }, cancellationToken);
+
+        if (elicitResult.Action != "accept"
+            || elicitResult.Content?.TryGetValue("approve", out var approveElement) != true
+            || approveElement.ValueKind != JsonValueKind.True)
+        {
+            return "DML execution cancelled by user.";
+        }
+
+        dml.ConfirmToken = tokenMatch.Groups[1].Value;
+        return await strategy.ExecuteDmlAsync(connectionString, dml, cancellationToken);
     }
 
     private SqlRuntimeConfig ResolveSqlConfig()
@@ -203,4 +315,23 @@ public class CustomToolProxy(string name, ICustomSqlToolService customSqlToolSer
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
+}
+
+internal interface IDmlApprovalClient
+{
+    bool SupportsElicitation { get; }
+
+    ValueTask<ElicitResult> ElicitAsync(
+        ElicitRequestParams request,
+        CancellationToken cancellationToken);
+}
+
+internal sealed class McpDmlApprovalClient(McpServer server) : IDmlApprovalClient
+{
+    public bool SupportsElicitation => server.ClientCapabilities?.Elicitation != null;
+
+    public ValueTask<ElicitResult> ElicitAsync(
+        ElicitRequestParams request,
+        CancellationToken cancellationToken)
+        => server.ElicitAsync(request, cancellationToken);
 }

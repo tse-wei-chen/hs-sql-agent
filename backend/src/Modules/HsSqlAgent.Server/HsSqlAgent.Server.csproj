@@ -67,6 +67,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<InternalsVisibleTo Include="HsSqlAgent.Server.Test" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<None Include="..\..\..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
 		<None Include="..\..\..\..\miscellaneous\dml-approval-prompt.png" Pack="true" PackagePath="miscellaneous/" Visible="false" />
 	</ItemGroup>

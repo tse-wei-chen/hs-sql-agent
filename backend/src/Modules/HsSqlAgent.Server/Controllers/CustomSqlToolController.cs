@@ -132,7 +132,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
     }
 
     [HttpPost("test-execute")]
-    [HasPermission("/runtime/custom-tools", "view")]
+    [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> TestExecute(
         [FromBody] CustomToolTestExecuteRequest request,
         [FromServices] ISqlStrategyFactory sqlStrategyFactory,
