@@ -17,10 +17,20 @@ describe("MCP key issuance helpers", () => {
     expect(resolveMcpKeyExpiry(days, "", now)).toBe(expected);
   });
 
-  it("preserves never and custom expiry modes", () => {
+  it("preserves never mode and converts a local custom time to UTC", () => {
     expect(resolveMcpKeyExpiry(null, "")).toBeNull();
-    expect(resolveMcpKeyExpiry("custom", "2026-08-01T09:30")).toBe(
-      "2026-08-01T09:30",
+    const localDateTime = "2026-08-01T09:30";
+    expect(resolveMcpKeyExpiry("custom", localDateTime)).toBe(
+      new Date(localDateTime).toISOString(),
+    );
+  });
+
+  it("rejects missing or invalid custom expiry values", () => {
+    expect(() => resolveMcpKeyExpiry("custom", "")).toThrow(
+      "Select a custom expiration",
+    );
+    expect(() => resolveMcpKeyExpiry("custom", "invalid")).toThrow(
+      "Enter a valid custom expiration",
     );
   });
 

@@ -219,7 +219,12 @@ const issue = async () => {
     await load();
     issuedPlaintextKey.value = result.plaintextKey || "";
   } catch (error: any) {
-    toast.error(error?.response?.data || "Failed to issue MCP key.");
+    toast.error(
+      error?.response?.data?.error ||
+        error?.response?.data ||
+        error?.message ||
+        "Failed to issue MCP key.",
+    );
   } finally {
     issuing.value = false;
   }
@@ -550,6 +555,7 @@ onMounted(load);
               :disabled="
                 !meta.valid ||
                 issuing ||
+                (detail.expiresAt === 'custom' && !customExpiresAt) ||
                 (isWhitelistEnabled && detail.tableWhitelist.length === 0)
               "
               class="w-full md:w-auto"

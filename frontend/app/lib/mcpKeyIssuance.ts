@@ -35,7 +35,16 @@ export function resolveMcpKeyExpiry(
   }
 
   if (mode === "custom") {
-    return customExpiresAt;
+    if (!customExpiresAt) {
+      throw new Error("Select a custom expiration date and time.");
+    }
+
+    const parsed = new Date(customExpiresAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error("Enter a valid custom expiration date and time.");
+    }
+
+    return parsed.toISOString();
   }
 
   return new Date(now.getTime() + mode * 24 * 60 * 60 * 1000).toISOString();
