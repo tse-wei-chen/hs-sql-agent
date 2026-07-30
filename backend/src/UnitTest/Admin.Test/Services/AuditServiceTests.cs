@@ -15,15 +15,15 @@ public class AuditServiceTests
 {
     private readonly Mock<IAdminContext> _contextMock;
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
-    private readonly Mock<IAuditQueue> _auditQueueMock;
     private readonly AuditService _service;
 
     public AuditServiceTests()
     {
         _contextMock = new Mock<IAdminContext>();
         _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
-        _auditQueueMock = new Mock<IAuditQueue>();
-        _service = new AuditService(_contextMock.Object, _httpContextAccessorMock.Object, _auditQueueMock.Object);
+        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(new List<AuditLog>());
+        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        _service = new AuditService(_contextMock.Object, _httpContextAccessorMock.Object);
     }
 
     #region WriteAsync Tests
@@ -35,13 +35,13 @@ public class AuditServiceTests
         await _service.WriteAsync("login", "target_user", "success", null, "   ", null, null, null, CancellationToken.None);
 
         // Assert
-        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
+        _contextMock.Verify(c => c.AuditLogs.Add(It.Is<AuditLog>(a =>
             a.Action == "login" &&
             a.Target == "target_user" &&
             a.Result == "success" &&
             a.ActorType == "system" // Default fallback
         )), Times.Once);
-        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public class AuditServiceTests
         await _service.WriteAsync("query", "db1", "failed", "details", "user", "u1", "127.0.0.1", "Mozilla", CancellationToken.None);
 
         // Assert
-        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
+        _contextMock.Verify(c => c.AuditLogs.Add(It.Is<AuditLog>(a =>
             a.Action == "query" &&
             a.Target == "db1" &&
             a.Result == "failed" &&
@@ -60,9 +60,71 @@ public class AuditServiceTests
             a.ActorId == "u1" &&
             a.IpAddress == "127.0.0.1" &&
             a.UserAgent == "Mozilla" &&
+            a.EventId != Guid.Empty &&
             a.CreatedAt != default
         )), Times.Once);
-        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WriteAsync_ShouldRetryTransientPersistenceFailures()
+    {
+        var attempts = 0;
+        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                attempts++;
+                return attempts < 3
+                    ? Task.FromException<int>(new InvalidOperationException("temporary"))
+                    : Task.FromResult(1);
+            });
+
+        await _service.WriteAsync(
+            "query",
+            "db1",
+            "success",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, attempts);
+        _contextMock.Verify(
+            c => c.AuditLogs.Add(It.Is<AuditLog>(x => x.EventId != Guid.Empty)),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task WriteAsync_ShouldRedactSecretsFromDetail()
+    {
+        await _service.WriteAsync(
+            "query",
+            "db1",
+            "failed",
+            "Password=hunter2; Authorization: Bearer abc.def; token=secret-token",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.AuditLogs.Add(It.Is<AuditLog>(x =>
+            x.Detail != null &&
+            !x.Detail.Contains("hunter2") &&
+            !x.Detail.Contains("abc.def") &&
+            !x.Detail.Contains("secret-token") &&
+            x.Detail.Contains("[REDACTED]"))), Times.Once);
+    }
+
+    [Fact]
+    public async Task WriteAsync_ShouldPropagateFailureAfterRetryLimit()
+    {
+        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("database unavailable"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.WriteAsync(
+                "query",
+                "db1",
+                "success",
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        _contextMock.Verify(
+            c => c.SaveChangesAsync(TestContext.Current.CancellationToken),
+            Times.Exactly(3));
     }
 
     #endregion
@@ -86,7 +148,7 @@ public class AuditServiceTests
         await _service.WriteLogAsync("test.action", "test.target", "success", "test.detail", TestContext.Current.CancellationToken);
 
         // Assert
-        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
+        _contextMock.Verify(c => c.AuditLogs.Add(It.Is<AuditLog>(a =>
             a.Action == "test.action" &&
             a.Target == "test.target" &&
             a.Result == "success" &&
@@ -94,7 +156,8 @@ public class AuditServiceTests
             a.ActorType == "admin" &&
             a.ActorId == "user-123" &&
             a.IpAddress == "192.168.1.1" &&
-            a.UserAgent == "TestAgent"
+            a.UserAgent == "TestAgent" &&
+            a.RequestId == context.TraceIdentifier
         )), Times.Once);
     }
 
@@ -110,11 +173,45 @@ public class AuditServiceTests
         await _service.WriteLogAsync("mcp.action", "mcp.target", "success", cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
-        _auditQueueMock.Verify(m => m.TryEnqueue(It.Is<AuditLog>(a =>
+        _contextMock.Verify(c => c.AuditLogs.Add(It.Is<AuditLog>(a =>
             a.Action == "mcp.action" &&
             a.ActorType == "mcp-key" &&
             a.ActorId == "42"
         )), Times.Once);
+    }
+
+    [Fact]
+    public async Task WriteEventAsync_ShouldPersistStructuredContext()
+    {
+        var context = new DefaultHttpContext();
+        context.Items[Common.Models.McpContextItemKeys.AccessKeyId] = 42;
+        context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 7;
+        context.Items[Common.Models.McpContextItemKeys.DatabaseName] = "sales";
+        context.Request.Headers["Mcp-Session-Id"] = "session-1";
+        _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
+
+        await _service.WriteEventAsync(
+            "mcp.query.executed",
+            "orders",
+            "success",
+            new Admin.Service.Models.AuditEventContext
+            {
+                ToolName = "execute_query_sql",
+                Operation = "select",
+                DurationMs = 18,
+                ReturnedRows = 3,
+                Definition = """{"tableName":"orders","whereConditionCount":1}"""
+            },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.AuditLogs.Add(It.Is<AuditLog>(a =>
+            a.AccessKeyId == 42 &&
+            a.DbManagementId == 7 &&
+            a.DatabaseName == "sales" &&
+            a.SessionId == "session-1" &&
+            a.ToolName == "execute_query_sql" &&
+            a.ReturnedRows == 3 &&
+            a.DurationMs == 18)), Times.Once);
     }
 
     #endregion
@@ -157,6 +254,44 @@ public class AuditServiceTests
         Assert.Equal(2, result.TotalCount); // Should match id 2 (Target="db1") and id 3 (ActorId="db-admin")
         Assert.Contains(result.Items, x => x.Id == 2);
         Assert.Contains(result.Items, x => x.Id == 3);
+    }
+
+    [Fact]
+    public async Task QueryAsync_ShouldApplyStructuredFilters()
+    {
+        var now = DateTime.UtcNow;
+        var logs = new List<AuditLog>
+        {
+            new()
+            {
+                Id = 1, Action = "query", Result = "success", ActorId = "user-1",
+                DbManagementId = 7, AccessKeyId = 42, ToolName = "execute_query_sql",
+                CreatedAt = now
+            },
+            new()
+            {
+                Id = 2, Action = "query", Result = "failed", ActorId = "user-2",
+                DbManagementId = 8, AccessKeyId = 43, ToolName = "custom_report",
+                CreatedAt = now
+            }
+        };
+        _contextMock.Setup(c => c.AuditLogs).ReturnsDbSet(logs);
+
+        var result = await _service.QueryAsync(
+            new Admin.Service.Models.AuditLogFilter
+            {
+                Result = "success",
+                Actor = "user-1",
+                DbManagementId = 7,
+                AccessKeyId = 42,
+                ToolName = "execute_query_sql",
+                From = now.AddMinutes(-1),
+                To = now.AddMinutes(1)
+            },
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal(1, item.Id);
     }
 
     #endregion

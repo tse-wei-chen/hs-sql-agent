@@ -14,7 +14,8 @@ public class McpAccessKeyService(
     IAdminContext context,
     IOptions<McpKeySettings> mcpKeySettings,
     ICryptoService cryptoService,
-    ICacheService cache) : IMcpAccessKeyService
+    ICacheService cache,
+    ISecurityPolicyRuntimeState securityPolicyRuntimeState) : IMcpAccessKeyService
 {
     private const int KeyPrefixLength = 8;
     private static readonly TimeSpan RevocationTombstoneExpiry = TimeSpan.FromMinutes(10);
@@ -23,6 +24,7 @@ public class McpAccessKeyService(
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
     private readonly ICryptoService _cryptoService = cryptoService;
     private readonly ICacheService _cache = cache;
+    private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
 
     public async Task<McpAccessKeyIssueResult> IssueKeyAsync(
         IssueMcpAccessKeyModel request,
@@ -33,43 +35,15 @@ public class McpAccessKeyService(
         {
             throw new ArgumentException("Key name is required.", nameof(request.Name));
         }
-
-        var normalizedCorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins);
+        NormalizeAndValidateRateLimit(request);
 
         var plaintext = GenerateRawKey();
-        var keyHash = HashKey(plaintext, _hmacSecret);
-        var prefixLength = Math.Min(KeyPrefixLength, plaintext.Length);
-
-        var entity = new McpAccessKey
-        {
-            Name = request.Name.Trim(),
-            KeyPrefix = plaintext[..prefixLength],
-            KeyHash = keyHash,
-            ExpiresAt = request.ExpiresAt,
-            AllowedTools = string.IsNullOrWhiteSpace(request.AllowedTools) ? null : request.AllowedTools.Trim(),
-            CorsAllowedOrigins = normalizedCorsAllowedOrigins,
-            DbManagementId = request.DbManagementId,
-            TableWhitelist = string.IsNullOrWhiteSpace(request.TableWhitelist) ? null : request.TableWhitelist.Trim(),
-            CreatedAt = DateTime.UtcNow,
-            CreatedBy = actorId,
-            IsActive = true
-        };
+        var entity = CreateEntity(request, plaintext, actorId);
 
         _context.McpAccessKeys.Add(entity);
         await _context.SaveChangesAsync(cancellationToken);
 
-        return new McpAccessKeyIssueResult
-        {
-            Id = entity.Id,
-            Name = entity.Name,
-            KeyPrefix = entity.KeyPrefix,
-            PlaintextKey = plaintext,
-            ExpiresAt = entity.ExpiresAt,
-            AllowedTools = entity.AllowedTools,
-            CorsAllowedOrigins = entity.CorsAllowedOrigins,
-            SqlProvider = entity.SqlProvider,
-            TableWhitelist = entity.TableWhitelist,
-        };
+        return CreateIssueResult(entity, plaintext);
     }
 
     public async Task<IReadOnlyCollection<McpAccessKeyListItem>> ListKeysAsync(CancellationToken cancellationToken = default)
@@ -86,6 +60,9 @@ public class McpAccessKeyService(
                 IsActive = x.IsActive && !x.RevokedAt.HasValue &&
                     (!x.ExpiresAt.HasValue || x.ExpiresAt > now),
                 IsExpired = x.ExpiresAt.HasValue && x.ExpiresAt <= now,
+                IsExpiringSoon = x.IsActive && !x.RevokedAt.HasValue &&
+                    x.ExpiresAt.HasValue && x.ExpiresAt > now &&
+                    x.ExpiresAt <= now.AddDays(7),
                 ExpiresAt = x.ExpiresAt,
                 LastUsedAt = x.LastUsedAt,
                 AllowedTools = x.AllowedTools,
@@ -93,6 +70,9 @@ public class McpAccessKeyService(
                 SqlProvider = x.SqlProvider,
                 DbManagementId = x.DbManagementId,
                 TableWhitelist = x.TableWhitelist,
+                RateLimitMode = x.RateLimitMode,
+                PermitLimitOverride = x.PermitLimitOverride,
+                WindowSecondsOverride = x.WindowSecondsOverride,
                 CreatedAt = x.CreatedAt
             })
             .ToListAsync(cancellationToken);
@@ -103,28 +83,165 @@ public class McpAccessKeyService(
             .Distinct()
             .ToArray();
 
-        if (dbIds.Length == 0)
+        if (dbIds.Length > 0)
         {
-            return items;
-        }
+            var databases = await _context.DbManagement
+                .AsNoTracking()
+                .Where(x => dbIds.Contains(x.Id))
+                .Select(x => new { x.Id, x.Name, x.SqlProvider })
+                .ToDictionaryAsync(x => x.Id, cancellationToken);
 
-        var databases = await _context.DbManagement
-            .AsNoTracking()
-            .Where(x => dbIds.Contains(x.Id))
-            .Select(x => new { x.Id, x.Name, x.SqlProvider })
-            .ToDictionaryAsync(x => x.Id, cancellationToken);
-
-        foreach (var item in items)
-        {
-            if (item.DbManagementId.HasValue &&
-                databases.TryGetValue(item.DbManagementId.Value, out var database))
+            foreach (var item in items)
             {
-                item.DbManagementName = database.Name;
-                item.SqlProvider = database.SqlProvider;
+                if (item.DbManagementId.HasValue &&
+                    databases.TryGetValue(item.DbManagementId.Value, out var database))
+                {
+                    item.DbManagementName = database.Name;
+                    item.SqlProvider = database.SqlProvider;
+                }
             }
         }
 
+        var policy = _securityPolicyRuntimeState.GetCurrent();
+        foreach (var item in items)
+            ApplyEffectiveRateLimit(item, policy.KeyPermitLimit, policy.KeyWindowSeconds);
+
         return items;
+    }
+
+    public async Task<McpAccessKeyListItem?> UpdateKeyAsync(
+        int id,
+        UpdateMcpAccessKeyRequest request,
+        string? actorId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new ArgumentException("Key name is required.", nameof(request.Name));
+        NormalizeAndValidateRateLimit(request);
+
+        var entity = await _context.McpAccessKeys.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (entity is null)
+            return null;
+
+        entity.Name = request.Name.Trim();
+        entity.ExpiresAt = request.ExpiresAt;
+        entity.AllowedTools = NormalizeNullable(request.AllowedTools);
+        entity.CorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins);
+        entity.DbManagementId = request.DbManagementId;
+        entity.TableWhitelist = NormalizeNullable(request.TableWhitelist);
+        entity.RateLimitMode = request.RateLimitMode;
+        entity.PermitLimitOverride = request.PermitLimitOverride;
+        entity.WindowSecondsOverride = request.WindowSecondsOverride;
+        await _context.SaveChangesAsync(cancellationToken);
+        await _cache.RemoveAsync(McpAccessKeyCacheKeys.ForStoredHash(entity.KeyHash), CancellationToken.None);
+
+        var now = DateTime.UtcNow;
+        var result = new McpAccessKeyListItem
+        {
+            Id = entity.Id,
+            Name = entity.Name,
+            KeyPrefix = entity.KeyPrefix,
+            IsActive = entity.IsActive && !entity.RevokedAt.HasValue &&
+                (!entity.ExpiresAt.HasValue || entity.ExpiresAt > now),
+            IsExpired = entity.ExpiresAt.HasValue && entity.ExpiresAt <= now,
+            IsExpiringSoon = entity.ExpiresAt.HasValue && entity.ExpiresAt > now &&
+                entity.ExpiresAt <= now.AddDays(7),
+            ExpiresAt = entity.ExpiresAt,
+            LastUsedAt = entity.LastUsedAt,
+            AllowedTools = entity.AllowedTools,
+            CorsAllowedOrigins = entity.CorsAllowedOrigins,
+            SqlProvider = entity.SqlProvider,
+            DbManagementId = entity.DbManagementId,
+            TableWhitelist = entity.TableWhitelist,
+            RateLimitMode = entity.RateLimitMode,
+            PermitLimitOverride = entity.PermitLimitOverride,
+            WindowSecondsOverride = entity.WindowSecondsOverride,
+            CreatedAt = entity.CreatedAt
+        };
+        var policy = _securityPolicyRuntimeState.GetCurrent();
+        ApplyEffectiveRateLimit(result, policy.KeyPermitLimit, policy.KeyWindowSeconds);
+        return result;
+    }
+
+    public async Task<McpAccessKeyIssueResult?> RotateKeyAsync(
+        int id,
+        RotateMcpAccessKeyRequest request,
+        string? actorId,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.GracePeriodMinutes is < 0 or > 1440)
+            throw new ArgumentException("GracePeriodMinutes must be between 0 and 1440.");
+
+        var oldKey = await _context.McpAccessKeys.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (oldKey is null)
+            return null;
+        if (!oldKey.IsActive || oldKey.RevokedAt.HasValue ||
+            (oldKey.ExpiresAt.HasValue && oldKey.ExpiresAt <= DateTime.UtcNow))
+            throw new InvalidOperationException("Only an active key can be rotated.");
+
+        var plaintext = GenerateRawKey();
+        var replacement = CreateEntity(new IssueMcpAccessKeyModel
+        {
+            Name = oldKey.Name,
+            ExpiresAt = request.ExpiresAt,
+            AllowedTools = oldKey.AllowedTools,
+            CorsAllowedOrigins = oldKey.CorsAllowedOrigins,
+            DbManagementId = oldKey.DbManagementId,
+            TableWhitelist = oldKey.TableWhitelist,
+            RateLimitMode = oldKey.RateLimitMode,
+            PermitLimitOverride = oldKey.PermitLimitOverride,
+            WindowSecondsOverride = oldKey.WindowSecondsOverride
+        }, plaintext, actorId);
+        _context.McpAccessKeys.Add(replacement);
+
+        if (request.GracePeriodMinutes == 0)
+        {
+            oldKey.IsActive = false;
+            oldKey.RevokedAt = DateTime.UtcNow;
+            oldKey.RevokedBy = actorId;
+        }
+        else
+        {
+            var graceExpiry = DateTime.UtcNow.AddMinutes(request.GracePeriodMinutes);
+            if (!oldKey.ExpiresAt.HasValue || oldKey.ExpiresAt > graceExpiry)
+                oldKey.ExpiresAt = graceExpiry;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateChangedKeyAsync(oldKey, request.GracePeriodMinutes == 0);
+        return CreateIssueResult(replacement, plaintext);
+    }
+
+    public async Task<McpAccessKeyIssueResult?> CloneKeyAsync(
+        int id,
+        CloneMcpAccessKeyRequest request,
+        string? actorId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new ArgumentException("Key name is required.", nameof(request.Name));
+
+        var source = await _context.McpAccessKeys.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (source is null)
+            return null;
+
+        var plaintext = GenerateRawKey();
+        var clone = CreateEntity(new IssueMcpAccessKeyModel
+        {
+            Name = request.Name,
+            ExpiresAt = request.ExpiresAt,
+            AllowedTools = source.AllowedTools,
+            CorsAllowedOrigins = source.CorsAllowedOrigins,
+            DbManagementId = source.DbManagementId,
+            TableWhitelist = source.TableWhitelist,
+            RateLimitMode = source.RateLimitMode,
+            PermitLimitOverride = source.PermitLimitOverride,
+            WindowSecondsOverride = source.WindowSecondsOverride
+        }, plaintext, actorId);
+        _context.McpAccessKeys.Add(clone);
+        await _context.SaveChangesAsync(cancellationToken);
+        return CreateIssueResult(clone, plaintext);
     }
 
     public async Task<bool> RevokeKeyAsync(int id, string? actorId, CancellationToken cancellationToken = default)
@@ -202,7 +319,10 @@ public class McpAccessKeyService(
             SqlProvider = entity.SqlProvider,
             DbManagementId = entity.DbManagementId,
             TableWhitelist = entity.TableWhitelist,
-            ExpiresAt = entity.ExpiresAt
+            ExpiresAt = entity.ExpiresAt,
+            RateLimitMode = entity.RateLimitMode,
+            PermitLimitOverride = entity.PermitLimitOverride,
+            WindowSecondsOverride = entity.WindowSecondsOverride
         };
     }
 
@@ -222,6 +342,120 @@ public class McpAccessKeyService(
     {
         return McpAccessKeyCacheKeys.ComputeKeyHash(rawKey, hmacSecret);
     }
+
+    private McpAccessKey CreateEntity(
+        IssueMcpAccessKeyModel request,
+        string plaintext,
+        string? actorId)
+    {
+        var prefixLength = Math.Min(KeyPrefixLength, plaintext.Length);
+        return new McpAccessKey
+        {
+            Name = request.Name.Trim(),
+            KeyPrefix = plaintext[..prefixLength],
+            KeyHash = HashKey(plaintext, _hmacSecret),
+            ExpiresAt = request.ExpiresAt,
+            AllowedTools = NormalizeNullable(request.AllowedTools),
+            CorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins),
+            DbManagementId = request.DbManagementId,
+            TableWhitelist = NormalizeNullable(request.TableWhitelist),
+            RateLimitMode = request.RateLimitMode,
+            PermitLimitOverride = request.PermitLimitOverride,
+            WindowSecondsOverride = request.WindowSecondsOverride,
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = actorId,
+            IsActive = true
+        };
+    }
+
+    private static McpAccessKeyIssueResult CreateIssueResult(McpAccessKey entity, string plaintext)
+        => new()
+        {
+            Id = entity.Id,
+            Name = entity.Name,
+            KeyPrefix = entity.KeyPrefix,
+            PlaintextKey = plaintext,
+            ExpiresAt = entity.ExpiresAt,
+            AllowedTools = entity.AllowedTools,
+            CorsAllowedOrigins = entity.CorsAllowedOrigins,
+            SqlProvider = entity.SqlProvider,
+            DbManagementId = entity.DbManagementId,
+            TableWhitelist = entity.TableWhitelist,
+            RateLimitMode = entity.RateLimitMode,
+            PermitLimitOverride = entity.PermitLimitOverride,
+            WindowSecondsOverride = entity.WindowSecondsOverride
+        };
+
+    private static void NormalizeAndValidateRateLimit(IssueMcpAccessKeyModel request)
+    {
+        (request.PermitLimitOverride, request.WindowSecondsOverride) =
+            NormalizeAndValidateRateLimit(request.RateLimitMode, request.PermitLimitOverride, request.WindowSecondsOverride);
+    }
+
+    private static void NormalizeAndValidateRateLimit(UpdateMcpAccessKeyRequest request)
+    {
+        (request.PermitLimitOverride, request.WindowSecondsOverride) =
+            NormalizeAndValidateRateLimit(request.RateLimitMode, request.PermitLimitOverride, request.WindowSecondsOverride);
+    }
+
+    private static (int? PermitLimit, int? WindowSeconds) NormalizeAndValidateRateLimit(
+        McpKeyRateLimitMode mode,
+        int? permitLimit,
+        int? windowSeconds)
+    {
+        if (!Enum.IsDefined(mode))
+            throw new ArgumentException("Invalid rate limit mode.");
+
+        if (mode != McpKeyRateLimitMode.Custom)
+            return (null, null);
+
+        if (!permitLimit.HasValue || permitLimit is < 1 or > 1_000_000)
+            throw new ArgumentException("PermitLimitOverride must be between 1 and 1000000 in Custom mode.");
+        if (!windowSeconds.HasValue || windowSeconds is < 1 or > 86_400)
+            throw new ArgumentException("WindowSecondsOverride must be between 1 and 86400 in Custom mode.");
+
+        return (permitLimit, windowSeconds);
+    }
+
+    private static void ApplyEffectiveRateLimit(
+        McpAccessKeyListItem item,
+        int defaultPermitLimit,
+        int defaultWindowSeconds)
+    {
+        switch (item.RateLimitMode)
+        {
+            case McpKeyRateLimitMode.Inherit:
+                item.EffectivePermitLimit = defaultPermitLimit;
+                item.EffectiveWindowSeconds = defaultWindowSeconds;
+                break;
+            case McpKeyRateLimitMode.Custom:
+                item.EffectivePermitLimit = item.PermitLimitOverride;
+                item.EffectiveWindowSeconds = item.WindowSecondsOverride;
+                break;
+            case McpKeyRateLimitMode.Unlimited:
+                item.EffectivePermitLimit = null;
+                item.EffectiveWindowSeconds = null;
+                break;
+        }
+    }
+
+    private async Task InvalidateChangedKeyAsync(McpAccessKey key, bool revoked)
+    {
+        if (revoked)
+        {
+            await _cache.SetAsync(
+                McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
+                true,
+                absoluteExpireTime: RevocationTombstoneExpiry,
+                CancellationToken.None);
+        }
+        await _cache.RemoveAsync(
+            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+            CancellationToken.None);
+    }
+
+    private static string? NormalizeNullable(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static bool VerifyKey(string rawKey, string storedHash, byte[] hmacSecret)
     {

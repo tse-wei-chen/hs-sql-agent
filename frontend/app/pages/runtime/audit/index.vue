@@ -18,12 +18,26 @@ definePageMeta({
 
 interface AuditItem {
   id: number;
+  eventId: string;
   actorType: string;
   actorId?: string | null;
   action: string;
   target: string;
   detail?: string | null;
   result: string;
+  requestId?: string | null;
+  sessionId?: string | null;
+  accessKeyId?: number | null;
+  dbManagementId?: number | null;
+  databaseName?: string | null;
+  toolName?: string | null;
+  operation?: string | null;
+  durationMs?: number | null;
+  returnedRows?: number | null;
+  affectedRows?: number | null;
+  approvalStatus?: string | null;
+  errorCategory?: string | null;
+  definition?: string | null;
   createdAt: string;
 }
 
@@ -31,6 +45,13 @@ const page = ref(1);
 const pageSize = ref(20);
 const action = ref("");
 const keyword = ref("");
+const from = ref("");
+const to = ref("");
+const resultFilter = ref("");
+const actor = ref("");
+const dbManagementId = ref<number | undefined>();
+const accessKeyId = ref<number | undefined>();
+const toolName = ref("");
 const totalCount = ref(0);
 const items = ref<AuditItem[]>([]);
 const loading = ref(false);
@@ -41,8 +62,17 @@ const load = async () => {
     const result = await getRuntimeAudit(
       page.value,
       pageSize.value,
-      action.value,
-      keyword.value,
+      {
+        action: action.value || undefined,
+        keyword: keyword.value || undefined,
+        from: from.value ? new Date(`${from.value}T00:00:00`).toISOString() : undefined,
+        to: to.value ? new Date(`${to.value}T23:59:59.999`).toISOString() : undefined,
+        result: resultFilter.value || undefined,
+        actor: actor.value || undefined,
+        dbManagementId: dbManagementId.value || undefined,
+        accessKeyId: accessKeyId.value || undefined,
+        toolName: toolName.value || undefined,
+      },
     );
     items.value = result.items || [];
     totalCount.value = result.totalCount || 0;
@@ -74,9 +104,16 @@ onMounted(load);
         <CardDescription>Runtime settings and MCP key operation history.</CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="mb-4 flex flex-col gap-2 md:flex-row">
+        <div class="mb-4 grid gap-2 md:grid-cols-3 xl:grid-cols-5">
           <Input v-model="action" placeholder="Filter action" />
           <Input v-model="keyword" placeholder="Keyword" />
+          <Input v-model="resultFilter" placeholder="Result (success/failed)" />
+          <Input v-model="actor" placeholder="Actor ID or type" />
+          <Input v-model="toolName" placeholder="Tool name" />
+          <Input v-model.number="accessKeyId" type="number" min="1" placeholder="Access Key ID" />
+          <Input v-model.number="dbManagementId" type="number" min="1" placeholder="DB connection ID" />
+          <Input v-model="from" type="date" aria-label="From date" />
+          <Input v-model="to" type="date" aria-label="To date" />
           <Button @click="load">Search</Button>
         </div>
 
@@ -95,7 +132,19 @@ onMounted(load);
               {{ item.actorId || "" }}
             </div>
             <div class="text-muted-foreground">{{ item.createdAt }}</div>
+            <div v-if="item.toolName || item.databaseName" class="text-muted-foreground">
+              tool: {{ item.toolName || "—" }} | DB: {{ item.databaseName || item.dbManagementId || "—" }}
+              | key: {{ item.accessKeyId || "—" }}
+            </div>
+            <div v-if="item.durationMs != null || item.returnedRows != null || item.affectedRows != null" class="text-muted-foreground">
+              duration: {{ item.durationMs ?? "—" }} ms | returned: {{ item.returnedRows ?? "—" }}
+              | affected: {{ item.affectedRows ?? "—" }} | approval: {{ item.approvalStatus || "—" }}
+            </div>
+            <div v-if="item.requestId" class="text-xs text-muted-foreground">
+              request: {{ item.requestId }} <span v-if="item.sessionId">| session: {{ item.sessionId }}</span>
+            </div>
             <div v-if="item.detail" class="mt-1">{{ item.detail }}</div>
+            <div v-if="item.definition" class="mt-1 break-all font-mono text-xs">{{ item.definition }}</div>
           </div>
         </div>
 

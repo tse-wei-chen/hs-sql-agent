@@ -12,5 +12,8 @@ public class McpAccessKeyValidationResult
     public int? DbManagementId { get; set; }
     public string? TableWhitelist { get; set; }
     public DateTime? ExpiresAt { get; set; }
+    public McpKeyRateLimitMode RateLimitMode { get; set; }
+    public int? PermitLimitOverride { get; set; }
+    public int? WindowSecondsOverride { get; set; }
     public string? Reason { get; set; }
 }

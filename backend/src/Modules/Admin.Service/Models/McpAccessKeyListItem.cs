@@ -14,6 +14,12 @@ public class McpAccessKeyListItem
     public int? DbManagementId { get; set; }
     public string? DbManagementName { get; set; }
     public bool IsExpired { get; set; }
+    public bool IsExpiringSoon { get; set; }
     public string? TableWhitelist { get; set; }
     public DateTime CreatedAt { get; set; }
+    public McpKeyRateLimitMode RateLimitMode { get; set; }
+    public int? PermitLimitOverride { get; set; }
+    public int? WindowSecondsOverride { get; set; }
+    public int? EffectivePermitLimit { get; set; }
+    public int? EffectiveWindowSeconds { get; set; }
 }

@@ -70,6 +70,69 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     protected override string ColumnNotFoundErrorCode => "SQLITE_1";
 
     [Fact]
+    public async Task ExecuteQueryAsync_ShouldEnforcePolicyRowLimit()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition { TableName = TestTableName },
+            Fixture.ConnectionString,
+            new SqlExecutionPolicy { QueryMaxRows = 1, QueryTimeoutSeconds = 30 },
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteDmlAsync_ShouldRejectDeleteWithoutWhere_WhenPolicyRequiresWhere()
+    {
+        var result = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            new DmlDefinition
+            {
+                Operation = DmlOperation.Delete,
+                TableName = TestTableName
+            },
+            new SqlExecutionPolicy
+            {
+                RequireWhereForDelete = true,
+                AllowFullTableDelete = false,
+                DmlMaxAffectedRows = 100
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains("Security policy denied", result);
+
+        await using var connection = new SqliteConnection(Fixture.ConnectionString);
+        Assert.Equal(3, await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users"));
+    }
+
+    [Fact]
+    public async Task ExecuteDmlAsync_ShouldRollback_WhenAffectedRowsExceedPolicy()
+    {
+        var result = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            new DmlDefinition
+            {
+                Operation = DmlOperation.Update,
+                TableName = TestTableName,
+                Values = [new NameValuePair { FieldName = "Active", Value = false }]
+            },
+            new SqlExecutionPolicy
+            {
+                RequireWhereForUpdate = false,
+                AllowFullTableUpdate = true,
+                DmlMaxAffectedRows = 1
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains("affectedRows=3 exceeds", result);
+
+        await using var connection = new SqliteConnection(Fixture.ConnectionString);
+        Assert.Equal(2, await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE Active = 1"));
+    }
+
+    [Fact]
     public override async Task GetSchemasAsync_ShouldReturnAvailableSchemas()
     {
         var schemas = await Strategy.GetSchemasAsync(Fixture.ConnectionString, TestContext.Current.CancellationToken);

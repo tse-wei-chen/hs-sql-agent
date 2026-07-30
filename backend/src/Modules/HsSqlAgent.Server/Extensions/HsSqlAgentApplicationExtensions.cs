@@ -18,6 +18,13 @@ public static class HsSqlAgentApplicationExtensions
 
             var adminDb = scope.ServiceProvider.GetRequiredService<Admin.Service.Data.AdminContext>();
             adminDb.Database.Migrate();
+
+            var securityPolicy = adminDb.SecurityPolicySettings
+                .AsNoTracking()
+                .Single(x => x.Id == Admin.Service.Data.Entites.SecurityPolicySettings.SingletonId);
+            scope.ServiceProvider
+                .GetRequiredService<Admin.Service.Interfaces.ISecurityPolicyRuntimeState>()
+                .SetCurrent(Admin.Service.Models.SecurityPolicyModel.FromEntity(securityPolicy));
         }
 
         if (options.ServeAdminUi)
@@ -31,6 +38,7 @@ public static class HsSqlAgentApplicationExtensions
             {
                 branch.UseRateLimiter();
                 branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
+                branch.UseMiddleware<McpKeyRateLimitMiddleware>();
                 branch.UseMiddleware<McpStringifiedArrayMiddleware>();
             });
 

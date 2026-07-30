@@ -80,12 +80,14 @@ public class McpAccessKeyAuthMiddleware(
         }
         var provider = validation.SqlProvider ?? string.Empty;
         var connString = string.Empty;
+        string? databaseName = null;
 
         if (validation.DbManagementId.HasValue)
         {
             var dbc = await _dbManagementService.GetDbByIdAsync(validation.DbManagementId.Value, true, context.RequestAborted);
             if (dbc is DbManagementPwdVM pwdDbc)
             {
+                databaseName = pwdDbc.Database;
                 provider = pwdDbc.SqlProvider ?? string.Empty;
                 connString = await _dbSetterService.BuildDbConnectionAsync(new BuildDbConnectionModel
                 {
@@ -113,7 +115,11 @@ public class McpAccessKeyAuthMiddleware(
         context.Items[McpContextItemKeys.SqlProvider] = provider;
         context.Items[McpContextItemKeys.SqlConnectionString] = connString;
         context.Items[McpContextItemKeys.DbManagementId] = validation.DbManagementId;
+        context.Items[McpContextItemKeys.DatabaseName] = databaseName;
         context.Items[McpContextItemKeys.TableWhitelist] = validation.TableWhitelist ?? string.Empty;
+        context.Items[McpContextItemKeys.RateLimitMode] = validation.RateLimitMode;
+        context.Items[McpContextItemKeys.PermitLimitOverride] = validation.PermitLimitOverride;
+        context.Items[McpContextItemKeys.WindowSecondsOverride] = validation.WindowSecondsOverride;
         if (!TryApplyCorsPolicy(context, validation.CorsAllowedOriginsSet, out _))
         {
             await WriteForbiddenAsync(context, ForbiddenResponseBytes);

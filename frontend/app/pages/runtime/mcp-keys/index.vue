@@ -17,13 +17,24 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { CircleAlert, CircleCheck, KeyRound , CircleQuestionMark  } from "@lucide/vue";
 import {
   issueMcpKey,
+  cloneMcpKey,
   listMcpKeys,
   revokeMcpKey,
+  rotateMcpKey,
   testDbConnection,
+  updateMcpKey,
 } from "@/api/runtime";
 import { Switch } from "@/components/ui/switch";
 import { listCustomSqlTools, type CustomSqlTool } from "@/api/custom-tools";
@@ -47,6 +58,7 @@ import {
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
   type McpKeyDetail,
+  type McpKeyRateLimitMode,
 } from "@/lib/mcpKeyIssuance";
 
 definePageMeta({
@@ -60,13 +72,20 @@ interface McpKeyItem {
   keyPrefix: string;
   isActive: boolean;
   isExpired: boolean;
+  isExpiringSoon: boolean;
   expiresAt?: string | null;
   lastUsedAt?: string | null;
+  allowedTools?: string | null;
   corsAllowedOrigins?: string | null;
   sqlProvider?: string | null;
   dbManagementId?: number | null;
   dbManagementName?: string | null;
   tableWhitelist?: string | null;
+  rateLimitMode: McpKeyRateLimitMode;
+  permitLimitOverride?: number | null;
+  windowSecondsOverride?: number | null;
+  effectivePermitLimit?: number | null;
+  effectiveWindowSeconds?: number | null;
 }
 
 const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<{ name: string; dbManagementId: number | null }>({
@@ -92,6 +111,23 @@ const connectionTestResult = ref<{
   errorMessage: string;
 } | null>(null);
 const issuedPlaintextKey = ref("");
+const lifecycleMode = ref<"edit" | "rotate" | "clone" | null>(null);
+const lifecycleKey = ref<McpKeyItem | null>(null);
+const lifecycleSaving = ref(false);
+const lifecycleName = ref("");
+const lifecycleExpiresAt = ref("");
+const lifecycleAllowedTools = ref("");
+const lifecycleCors = ref("");
+const lifecycleDbManagementId = ref<number | null>(null);
+const lifecycleTableWhitelist = ref("");
+const lifecycleRateLimitMode = ref<McpKeyRateLimitMode>("Inherit");
+const lifecyclePermitLimit = ref(120);
+const lifecycleWindowSeconds = ref(60);
+const gracePeriodMinutes = ref(0);
+
+const expiringSoonKeys = computed(() =>
+  keys.value.filter((key) => key.isExpiringSoon),
+);
 
 watch(
   () => detail.value.dbManagementId,
@@ -213,6 +249,15 @@ const issue = async () => {
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
       dbManagementId: detail.value.dbManagementId || 0,
       tableWhitelist,
+      rateLimitMode: detail.value.rateLimitMode,
+      permitLimitOverride:
+        detail.value.rateLimitMode === "Custom"
+          ? detail.value.permitLimitOverride
+          : null,
+      windowSecondsOverride:
+        detail.value.rateLimitMode === "Custom"
+          ? detail.value.windowSecondsOverride
+          : null,
     });
 
     resetForm()
@@ -262,11 +307,115 @@ const revoke = async (id: number) => {
   }
 };
 
+const toLocalDateTime = (value?: string | null) => {
+  if (!value) return "";
+  const date = new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+};
+
+const lifecycleExpiry = () =>
+  lifecycleExpiresAt.value
+    ? new Date(lifecycleExpiresAt.value).toISOString()
+    : null;
+
+const openLifecycle = (
+  mode: "edit" | "rotate" | "clone",
+  key: McpKeyItem,
+) => {
+  lifecycleMode.value = mode;
+  lifecycleKey.value = key;
+  lifecycleName.value = mode === "clone" ? `${key.name} Copy` : key.name;
+  const reusableExpiry =
+    key.expiresAt && new Date(key.expiresAt) > new Date()
+      ? key.expiresAt
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  lifecycleExpiresAt.value = toLocalDateTime(
+    mode === "edit" ? key.expiresAt : reusableExpiry,
+  );
+  lifecycleAllowedTools.value = key.allowedTools || "";
+  lifecycleCors.value = key.corsAllowedOrigins || "";
+  lifecycleDbManagementId.value = key.dbManagementId ?? null;
+  lifecycleTableWhitelist.value = key.tableWhitelist || "";
+  lifecycleRateLimitMode.value = key.rateLimitMode || "Inherit";
+  lifecyclePermitLimit.value = key.permitLimitOverride || key.effectivePermitLimit || 120;
+  lifecycleWindowSeconds.value = key.windowSecondsOverride || key.effectiveWindowSeconds || 60;
+  gracePeriodMinutes.value = 0;
+};
+
+const saveLifecycle = async () => {
+  if (!lifecycleKey.value || !lifecycleMode.value) return;
+  lifecycleSaving.value = true;
+  try {
+    let result;
+    if (lifecycleMode.value === "edit") {
+      result = await updateMcpKey(lifecycleKey.value.id, {
+        name: lifecycleName.value.trim(),
+        expiresAt: lifecycleExpiry(),
+        allowedTools: lifecycleAllowedTools.value.trim() || null,
+        corsAllowedOrigins: lifecycleCors.value.trim() || null,
+        dbManagementId: lifecycleDbManagementId.value,
+        tableWhitelist: lifecycleTableWhitelist.value.trim() || null,
+        rateLimitMode: lifecycleRateLimitMode.value,
+        permitLimitOverride:
+          lifecycleRateLimitMode.value === "Custom"
+            ? lifecyclePermitLimit.value
+            : null,
+        windowSecondsOverride:
+          lifecycleRateLimitMode.value === "Custom"
+            ? lifecycleWindowSeconds.value
+            : null,
+      });
+      toast.success("MCP key settings updated.");
+    } else if (lifecycleMode.value === "rotate") {
+      result = await rotateMcpKey(lifecycleKey.value.id, {
+        gracePeriodMinutes: gracePeriodMinutes.value,
+        expiresAt: lifecycleExpiry(),
+      });
+      issuedPlaintextKey.value = result.plaintextKey || "";
+      toast.success("MCP key rotated. Save the replacement key now.");
+    } else {
+      result = await cloneMcpKey(lifecycleKey.value.id, {
+        name: lifecycleName.value.trim(),
+        expiresAt: lifecycleExpiry(),
+      });
+      issuedPlaintextKey.value = result.plaintextKey || "";
+      toast.success("MCP key duplicated. Save the new key now.");
+    }
+    lifecycleMode.value = null;
+    await load();
+  } catch (error: any) {
+    toast.error(
+      error?.response?.data?.error ||
+        error?.response?.data ||
+        "MCP key lifecycle operation failed.",
+    );
+  } finally {
+    lifecycleSaving.value = false;
+  }
+};
+
+const copyIssuedKey = async () => {
+  if (!issuedPlaintextKey.value) return;
+  await navigator.clipboard.writeText(issuedPlaintextKey.value);
+  toast.success("Key copied to clipboard.");
+};
+
 onMounted(load);
 </script>
 
 <template>
   <div class="space-y-4">
+    <div
+      v-if="expiringSoonKeys.length"
+      class="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+    >
+      <div class="font-medium">
+        {{ expiringSoonKeys.length }} active key(s) expire within 7 days
+      </div>
+      <div>{{ expiringSoonKeys.map((key) => key.name).join(", ") }}</div>
+    </div>
+
     <Card>
       <CardHeader class="border-b">
         <CardTitle>Issue MCP Access Key</CardTitle>
@@ -309,6 +458,36 @@ onMounted(load);
                 type="datetime-local"
               />
             </Field>
+            <Field>
+              <FieldLabel for="rateLimitMode">Per-key rate limit</FieldLabel>
+              <Select v-model="detail.rateLimitMode">
+                <SelectTrigger id="rateLimitMode" class="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Inherit">Use Security default</SelectItem>
+                  <SelectItem value="Custom">Custom quota</SelectItem>
+                  <SelectItem value="Unlimited">Unlimited</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <div v-if="detail.rateLimitMode === 'Custom'" class="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel for="permitLimitOverride">Requests</FieldLabel>
+                <Input id="permitLimitOverride" v-model.number="detail.permitLimitOverride" type="number" min="1" max="1000000" />
+              </Field>
+              <Field>
+                <FieldLabel for="windowSecondsOverride">Window (seconds)</FieldLabel>
+                <Input id="windowSecondsOverride" v-model.number="detail.windowSecondsOverride" type="number" min="1" max="86400" />
+              </Field>
+            </div>
+            <div
+              v-else-if="detail.rateLimitMode === 'Unlimited'"
+              class="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+            >
+              Disables only this key's request quota. IP throttling, SQL concurrency,
+              row limits, timeouts, and DML safeguards still apply.
+            </div>
             <VeeField name="dbManagementId" rules="required" v-slot="{ errorMessage, meta: fieldMeta }">
               <Field>
                 <FieldLabel>Database<RequiredStar /></FieldLabel>
@@ -556,7 +735,9 @@ onMounted(load);
                 !meta.valid ||
                 issuing ||
                 (detail.expiresAt === 'custom' && !customExpiresAt) ||
-                (isWhitelistEnabled && detail.tableWhitelist.length === 0)
+                (isWhitelistEnabled && detail.tableWhitelist.length === 0) ||
+                (detail.rateLimitMode === 'Custom' &&
+                  (detail.permitLimitOverride < 1 || detail.windowSecondsOverride < 1))
               "
               class="w-full md:w-auto"
               v-permission="'create'"
@@ -573,6 +754,9 @@ onMounted(load);
         >
           <div class="font-medium">One-time key value</div>
           <div class="mt-1 break-all">{{ issuedPlaintextKey }}</div>
+          <Button class="mt-2" size="sm" variant="outline" @click="copyIssuedKey">
+            Copy key
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -620,17 +804,158 @@ onMounted(load);
               <div class="text-muted-foreground">
                 Table Whitelist: {{ key.tableWhitelist || "All" }}
               </div>
+              <div class="text-muted-foreground">
+                Allowed Tools: {{ key.allowedTools || "All" }}
+              </div>
+              <div class="text-muted-foreground">
+                Rate Limit:
+                <template v-if="key.rateLimitMode === 'Unlimited'">
+                  Unlimited (per-key limit disabled)
+                </template>
+                <template v-else>
+                  {{ key.effectivePermitLimit }} requests / {{ key.effectiveWindowSeconds }}s
+                  ({{ key.rateLimitMode === "Custom" ? "key override" : "Security default" }})
+                </template>
+              </div>
+              <div
+                v-if="key.isExpiringSoon"
+                class="mt-1 font-medium text-amber-600"
+              >
+                Expires within 7 days
+              </div>
             </div>
-            <Button
-              variant="destructive"
-              :disabled="!key.isActive"
-              @click="revoke(key.id)"
-              v-permission="'revoke'"
-              >Revoke</Button
-            >
+            <div class="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                @click="openLifecycle('edit', key)"
+                v-permission="'edit'"
+              >Edit</Button>
+              <Button
+                variant="outline"
+                @click="openLifecycle('clone', key)"
+                v-permission="'create'"
+              >Duplicate</Button>
+              <Button
+                variant="outline"
+                :disabled="!key.isActive"
+                @click="openLifecycle('rotate', key)"
+                v-permission="'edit'"
+              >Rotate</Button>
+              <Button
+                variant="destructive"
+                :disabled="!key.isActive"
+                @click="revoke(key.id)"
+                v-permission="'revoke'"
+                >Revoke</Button
+              >
+            </div>
           </div>
         </div>
       </CardContent>
     </Card>
+
+    <Dialog :open="lifecycleMode !== null" @update:open="(open) => { if (!open) lifecycleMode = null }">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {{ lifecycleMode === "edit" ? "Edit MCP Key" : lifecycleMode === "rotate" ? "Rotate MCP Key" : "Duplicate MCP Key" }}
+          </DialogTitle>
+          <DialogDescription v-if="lifecycleMode === 'rotate'">
+            A new secret is shown once. The old key is revoked immediately unless a grace period is set.
+          </DialogDescription>
+          <DialogDescription v-else-if="lifecycleMode === 'clone'">
+            Copies database, tool, CORS, and table restrictions into a new key.
+          </DialogDescription>
+          <DialogDescription v-else>
+            Changes take effect immediately and invalidate cached authorization.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="grid gap-4">
+          <Field v-if="lifecycleMode !== 'rotate'">
+            <FieldLabel>Name</FieldLabel>
+            <Input v-model="lifecycleName" />
+          </Field>
+          <Field>
+            <FieldLabel>Expires at</FieldLabel>
+            <Input v-model="lifecycleExpiresAt" type="datetime-local" />
+          </Field>
+          <Field v-if="lifecycleMode === 'rotate'">
+            <FieldLabel>Old key grace period (minutes)</FieldLabel>
+            <Input v-model.number="gracePeriodMinutes" type="number" min="0" max="1440" />
+          </Field>
+          <template v-if="lifecycleMode === 'edit'">
+            <Field>
+              <FieldLabel>Database</FieldLabel>
+              <Select v-model="lifecycleDbManagementId">
+                <SelectTrigger class="w-full">
+                  <SelectValue placeholder="Select database connection" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="db in dbManagements" :key="db.id" :value="db.id">
+                    {{ db.name }} ({{ db.sqlProvider }})
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Allowed tools</FieldLabel>
+              <Input v-model="lifecycleAllowedTools" placeholder="Comma-separated tool names" />
+            </Field>
+            <Field>
+              <FieldLabel>Table whitelist</FieldLabel>
+              <Input v-model="lifecycleTableWhitelist" placeholder="schema.table, schema.table" />
+            </Field>
+            <Field>
+              <FieldLabel>CORS allowed origins</FieldLabel>
+              <Input v-model="lifecycleCors" placeholder="https://app.example.com" />
+            </Field>
+            <Field>
+              <FieldLabel>Per-key rate limit</FieldLabel>
+              <Select v-model="lifecycleRateLimitMode">
+                <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Inherit">Use Security default</SelectItem>
+                  <SelectItem value="Custom">Custom quota</SelectItem>
+                  <SelectItem value="Unlimited">Unlimited</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <div v-if="lifecycleRateLimitMode === 'Custom'" class="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel>Requests</FieldLabel>
+                <Input v-model.number="lifecyclePermitLimit" type="number" min="1" max="1000000" />
+              </Field>
+              <Field>
+                <FieldLabel>Window (seconds)</FieldLabel>
+                <Input v-model.number="lifecycleWindowSeconds" type="number" min="1" max="86400" />
+              </Field>
+            </div>
+            <div
+              v-else-if="lifecycleRateLimitMode === 'Unlimited'"
+              class="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+            >
+              Only the per-key request quota is disabled; other safety controls remain active.
+            </div>
+          </template>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" @click="lifecycleMode = null">Cancel</Button>
+          <Button
+            :disabled="
+              lifecycleSaving ||
+              (lifecycleMode !== 'rotate' && !lifecycleName.trim()) ||
+              (lifecycleMode === 'rotate' && (gracePeriodMinutes < 0 || gracePeriodMinutes > 1440)) ||
+              (lifecycleMode === 'edit' && lifecycleRateLimitMode === 'Custom' &&
+                (lifecyclePermitLimit < 1 || lifecycleWindowSeconds < 1))
+            "
+            @click="saveLifecycle"
+          >
+            {{ lifecycleSaving ? "Saving..." : lifecycleMode === "edit" ? "Save changes" : lifecycleMode === "rotate" ? "Rotate key" : "Duplicate key" }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

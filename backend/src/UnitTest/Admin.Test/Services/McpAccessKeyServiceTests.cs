@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Data;
 using Admin.Service.Data.Entites;
+using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using Common.Interfaces;
@@ -18,6 +19,7 @@ public class McpAccessKeyServiceTests
     private readonly Mock<IOptions<McpKeySettings>> _settingsMock;
     private readonly Mock<ICryptoService> _cryptoServiceMock;
     private readonly Mock<ICacheService> _cacheMock;
+    private readonly Mock<ISecurityPolicyRuntimeState> _securityPolicyRuntimeStateMock;
     private readonly McpAccessKeyService _service;
     private readonly string _testHmacSecret = "12345678901234567890123456789012";
 
@@ -34,6 +36,12 @@ public class McpAccessKeyServiceTests
         _cryptoServiceMock.Setup(c => c.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
             .Returns((string? cipher, byte[] key) => cipher?.Replace("ENCRYPTED_", ""));
         _cacheMock = new Mock<ICacheService>();
+        _securityPolicyRuntimeStateMock = new Mock<ISecurityPolicyRuntimeState>();
+        _securityPolicyRuntimeStateMock.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel
+        {
+            KeyPermitLimit = 120,
+            KeyWindowSeconds = 60
+        });
 
         // Default empty DbSet to prevent null reference errors
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
@@ -43,7 +51,8 @@ public class McpAccessKeyServiceTests
             _contextMock.Object,
             _settingsMock.Object,
             _cryptoServiceMock.Object,
-            _cacheMock.Object);
+            _cacheMock.Object,
+            _securityPolicyRuntimeStateMock.Object);
     }
 
     #region IssueKeyAsync Tests
@@ -105,6 +114,46 @@ public class McpAccessKeyServiceTests
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task IssueKeyAsync_ShouldPersistExplicitCustomRateLimit()
+    {
+        var request = new IssueMcpAccessKeyModel
+        {
+            Name = "Custom quota",
+            RateLimitMode = McpKeyRateLimitMode.Custom,
+            PermitLimitOverride = 500,
+            WindowSecondsOverride = 30
+        };
+        var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<McpAccessKey>>();
+        _contextMock.Setup(c => c.McpAccessKeys).Returns(mockDbSet.Object);
+
+        var result = await _service.IssueKeyAsync(request, "tester", TestContext.Current.CancellationToken);
+
+        Assert.Equal(McpKeyRateLimitMode.Custom, result.RateLimitMode);
+        Assert.Equal(500, result.PermitLimitOverride);
+        Assert.Equal(30, result.WindowSecondsOverride);
+        mockDbSet.Verify(x => x.Add(It.Is<McpAccessKey>(key =>
+            key.RateLimitMode == McpKeyRateLimitMode.Custom &&
+            key.PermitLimitOverride == 500 &&
+            key.WindowSecondsOverride == 30)), Times.Once);
+    }
+
+    [Fact]
+    public async Task IssueKeyAsync_ShouldRejectIncompleteCustomRateLimit()
+    {
+        var request = new IssueMcpAccessKeyModel
+        {
+            Name = "Broken quota",
+            RateLimitMode = McpKeyRateLimitMode.Custom,
+            PermitLimitOverride = 10
+        };
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(
+            () => _service.IssueKeyAsync(request, "tester", TestContext.Current.CancellationToken));
+
+        Assert.Contains("WindowSecondsOverride", exception.Message);
+    }
+
     #endregion
 
     #region ListKeysAsync Tests
@@ -147,6 +196,9 @@ public class McpAccessKeyServiceTests
         Assert.False(usable.IsExpired);
         Assert.Equal("Orders", usable.DbManagementName);
         Assert.Equal("PostgreSQL", usable.SqlProvider);
+        Assert.Equal(McpKeyRateLimitMode.Inherit, usable.RateLimitMode);
+        Assert.Equal(120, usable.EffectivePermitLimit);
+        Assert.Equal(60, usable.EffectiveWindowSeconds);
 
         var expired = Assert.Single(result, x => x.Id == 2);
         Assert.False(expired.IsActive);
@@ -173,6 +225,164 @@ public class McpAccessKeyServiceTests
 
         Assert.Equal(99, item.DbManagementId);
         Assert.Null(item.DbManagementName);
+    }
+
+    [Fact]
+    public async Task ListKeysAsync_ShouldFlagActiveKeysExpiringWithinSevenDays()
+    {
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>
+        {
+            new()
+            {
+                Id = 1, Name = "soon", KeyPrefix = "soon-key", IsActive = true,
+                ExpiresAt = DateTime.UtcNow.AddDays(3), CreatedAt = DateTime.UtcNow
+            },
+            new()
+            {
+                Id = 2, Name = "later", KeyPrefix = "laterkey", IsActive = true,
+                ExpiresAt = DateTime.UtcNow.AddDays(10), CreatedAt = DateTime.UtcNow
+            }
+        });
+
+        var result = await _service.ListKeysAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(Assert.Single(result, x => x.Id == 1).IsExpiringSoon);
+        Assert.False(Assert.Single(result, x => x.Id == 2).IsExpiringSoon);
+    }
+
+    #endregion
+
+    #region Lifecycle Tests
+
+    [Fact]
+    public async Task UpdateKeyAsync_ShouldUpdateConfigurationAndInvalidateValidationCache()
+    {
+        var key = new McpAccessKey
+        {
+            Id = 1, Name = "old", KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true
+        };
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
+
+        var result = await _service.UpdateKeyAsync(
+            1,
+            new UpdateMcpAccessKeyRequest
+            {
+                Name = "new",
+                ExpiresAt = DateTime.UtcNow.AddDays(30),
+                AllowedTools = "get_tables,get_columns",
+                CorsAllowedOrigins = "HTTPS://APP.EXAMPLE.COM/",
+                DbManagementId = 5,
+                TableWhitelist = "public.users"
+            },
+            "tester",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(result);
+        Assert.Equal("new", key.Name);
+        Assert.Equal("https://app.example.com", key.CorsAllowedOrigins);
+        Assert.Equal(5, key.DbManagementId);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+            CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task RotateKeyAsync_ShouldIssueReplacementAndImmediatelyRevokeOldKey()
+    {
+        var key = new McpAccessKey
+        {
+            Id = 1, Name = "production", KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true,
+            AllowedTools = "get_tables", DbManagementId = 5
+        };
+        var keys = new List<McpAccessKey> { key };
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(keys);
+
+        var result = await _service.RotateKeyAsync(
+            1,
+            new RotateMcpAccessKeyRequest
+            {
+                GracePeriodMinutes = 0,
+                ExpiresAt = DateTime.UtcNow.AddDays(30)
+            },
+            "tester",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(result);
+        Assert.NotEmpty(result.PlaintextKey);
+        Assert.Equal("get_tables", result.AllowedTools);
+        Assert.False(key.IsActive);
+        Assert.NotNull(key.RevokedAt);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(1),
+            true,
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+            CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task RotateKeyAsync_ShouldKeepOldKeyActiveOnlyForGracePeriod()
+    {
+        var key = new McpAccessKey
+        {
+            Id = 1, Name = "production", KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"), IsActive = true
+        };
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
+        var before = DateTime.UtcNow.AddMinutes(14);
+
+        await _service.RotateKeyAsync(
+            1,
+            new RotateMcpAccessKeyRequest { GracePeriodMinutes = 15 },
+            "tester",
+            TestContext.Current.CancellationToken);
+
+        Assert.True(key.IsActive);
+        Assert.Null(key.RevokedAt);
+        Assert.True(key.ExpiresAt >= before && key.ExpiresAt <= DateTime.UtcNow.AddMinutes(16));
+        _cacheMock.Verify(c => c.SetAsync(
+            It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+            CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloneKeyAsync_ShouldCopyConfigurationAndReturnOneTimeSecret()
+    {
+        var source = new McpAccessKey
+        {
+            Id = 1, Name = "source", KeyPrefix = "12345678",
+            KeyHash = GenerateTestHash("12345678-secret"), IsActive = false,
+            AllowedTools = "get_tables", CorsAllowedOrigins = "https://app.example.com",
+            DbManagementId = 5, TableWhitelist = "public.users",
+            RateLimitMode = McpKeyRateLimitMode.Unlimited
+        };
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { source });
+
+        var result = await _service.CloneKeyAsync(
+            1,
+            new CloneMcpAccessKeyRequest
+            {
+                Name = "copy",
+                ExpiresAt = DateTime.UtcNow.AddDays(7)
+            },
+            "tester",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(result);
+        Assert.Equal("copy", result.Name);
+        Assert.Equal("get_tables", result.AllowedTools);
+        Assert.Equal("https://app.example.com", result.CorsAllowedOrigins);
+        Assert.Equal(5, result.DbManagementId);
+        Assert.Equal("public.users", result.TableWhitelist);
+        Assert.Equal(McpKeyRateLimitMode.Unlimited, result.RateLimitMode);
+        Assert.NotEmpty(result.PlaintextKey);
     }
 
     #endregion

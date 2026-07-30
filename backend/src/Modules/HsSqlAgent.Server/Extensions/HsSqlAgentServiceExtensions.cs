@@ -19,6 +19,7 @@ using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
+using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Infrastructure.Caching;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -67,6 +68,10 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
+        services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
+        services.AddSingleton<ILayeredRateLimitService, LayeredRateLimitService>();
+        services.AddSingleton<ISqlExecutionConcurrencyLimiter, SqlExecutionConcurrencyLimiter>();
+        services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
         services.AddScoped<IMemberService, MemberService>();
         services.AddScoped<IRoleService, RoleService>();
@@ -137,7 +142,7 @@ public static class HsSqlAgentServiceExtensions
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
-        // --- Rate Limiting ---
+        // --- Pre-auth global IP Rate Limiting ---
         services.AddRateLimiter(rl =>
         {
             rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -164,10 +169,9 @@ public static class HsSqlAgentServiceExtensions
 
         // --- MCP Server ---
         services.AddScoped<McpAccessKeyAuthMiddleware>();
+        services.AddTransient<McpKeyRateLimitMiddleware>();
         services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
-        services.AddSingleton<IAuditQueue, AuditQueue>();
         services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
-        services.AddHostedService<AuditBackgroundService>();
         services.AddHostedService<TokenBlacklistCleanupService>();
         services.AddScoped<SqlAgentTool>();
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
@@ -248,7 +252,9 @@ public static class HsSqlAgentServiceExtensions
                                     sp.GetRequiredService<IConfiguration>(),
                                     sp.GetRequiredService<ISqlStrategyFactory>(),
                                     sp.GetRequiredService<IAuditService>(),
-                                    sp.GetRequiredService<IQueryValueParserService>());
+                                    sp.GetRequiredService<IQueryValueParserService>(),
+                                    sp.GetRequiredService<ISecurityPolicyRuntimeState>(),
+                                    sp.GetRequiredService<ISqlExecutionConcurrencyLimiter>());
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
                                 return await proxy.Execute(json, server, ct2);
                             });

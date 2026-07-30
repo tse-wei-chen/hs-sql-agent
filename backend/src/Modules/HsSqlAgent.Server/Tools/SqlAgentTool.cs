@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Models;
+using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
@@ -16,13 +18,22 @@ using SqlAgent.Service.Validation;
 namespace HsSqlAgent.Server.Tools;
 
 [McpServerToolType]
-public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ISqlStrategyFactory sqlStrategyFactory, IAuditService auditService, IDbSemanticService semanticService)
+public partial class SqlAgentTool(
+    IConfiguration configuration,
+    IHttpContextAccessor httpContextAccessor,
+    ISqlStrategyFactory sqlStrategyFactory,
+    IAuditService auditService,
+    IDbSemanticService semanticService,
+    ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+    ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter)
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
     private readonly IAuditService _auditService = auditService;
     private readonly IDbSemanticService _semanticService = semanticService;
+    private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
+    private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
 
     [McpServerTool, Description(@"
         Execute one SELECT SQL statement. The server parses SQL into a QueryDefinition, validates it,
@@ -35,6 +46,7 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
         [Description("A single SELECT SQL statement to parse, validate, and execute.")]
         string sql)
     {
+        var stopwatch = Stopwatch.StartNew();
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
         {
@@ -57,14 +69,47 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
             if (validationErrors.Count > 0)
                 return "Validation failed:\n" + string.Join("\n", validationErrors);
 
-            var result = await strategy.ExecuteQueryAsync(definition, sqlConfig.ConnectionString);
+            string result;
+            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            {
+                if (lease is null)
+                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                result = await strategy.ExecuteQueryAsync(
+                    definition,
+                    sqlConfig.ConnectionString,
+                    ResolveExecutionPolicy());
+            }
 
-            await _auditService.WriteLogAsync("mcp.query.executed", definition.TableName ?? "unknown", "success", $"Provider: {dbType}");
+            await _auditService.WriteEventAsync(
+                "mcp.query.executed",
+                definition.TableName ?? "unknown",
+                "success",
+                new AuditEventContext
+                {
+                    ToolName = "execute_query_sql",
+                    Operation = "select",
+                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    ReturnedRows = CountJsonRows(result),
+                    Definition = DescribeQuery(definition)
+                },
+                $"Provider: {dbType}");
             return result;
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync("mcp.query.executed", definition?.TableName ?? "unknown", "failed", ex.Message);
+            await _auditService.WriteEventAsync(
+                "mcp.query.executed",
+                definition?.TableName ?? "unknown",
+                "failed",
+                new AuditEventContext
+                {
+                    ToolName = "execute_query_sql",
+                    Operation = "select",
+                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    ErrorCategory = ex.GetType().Name,
+                    Definition = definition == null ? null : DescribeQuery(definition)
+                },
+                ex.Message);
             return "Execution failed: " + ex.Message;
         }
     }
@@ -82,7 +127,9 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
         McpServer server,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         DmlDefinition? dml = null;
+        int? affectedRowCount = null;
         try
         {
             ValidateToolAccess("execute_dml_sql");
@@ -107,10 +154,24 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
             // ── Dry-run ──────────────────────────────────────────────────────
 
             dml.ConfirmToken = null;
-            var dryRunResult = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml, cancellationToken);
+            var executionPolicy = ResolveExecutionPolicy();
+            string dryRunResult;
+            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            {
+                if (lease is null)
+                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                dryRunResult = await strategy.ExecuteDmlAsync(
+                    sqlConfig.ConnectionString,
+                    dml,
+                    executionPolicy,
+                    cancellationToken);
+            }
 
             if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
+            {
+                await WriteDmlAuditAsync(dml, "failed", "not-requested", stopwatch, null, dryRunResult, cancellationToken);
                 return dryRunResult;
+            }
 
             var affectedMatch = AffectedMatchRegex().Match(dryRunResult);
             var tokenMatch = TokenMatchRegex().Match(dryRunResult);
@@ -118,6 +179,7 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
                 return dryRunResult;
 
             var affectedRows = affectedMatch.Groups[1].Value;
+            affectedRowCount = int.TryParse(affectedRows, out var parsedRows) ? parsedRows : null;
             var detToken = tokenMatch.Groups[1].Value;
 
             // ── Present to user for approval via Elicitation ─────────────────
@@ -142,21 +204,73 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
 
             if (elicitResult.Action != "accept" || elicitResult.Content?.TryGetValue("approve", out var approveEl) != true || approveEl.ValueKind != JsonValueKind.True)
             {
-                await _auditService.WriteLogAsync("mcp.dml.executed", dml.TableName, "cancelled", $"Operation: {dml.Operation} (cancelled by user)", cancellationToken);
+                await WriteDmlAuditAsync(
+                    dml,
+                    "cancelled",
+                    "declined",
+                    stopwatch,
+                    affectedRowCount,
+                    $"Operation: {dml.Operation} (cancelled through MCP interaction)",
+                    cancellationToken);
                 return "DML execution cancelled by user.";
             }
 
             // ── Execute for real ──────────────────────────────────────────────
 
             dml.ConfirmToken = detToken;
-            var finalResult = await strategy.ExecuteDmlAsync(sqlConfig.ConnectionString, dml, cancellationToken);
+            string finalResult;
+            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            {
+                if (lease is null)
+                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                finalResult = await strategy.ExecuteDmlAsync(
+                    sqlConfig.ConnectionString,
+                    dml,
+                    executionPolicy,
+                    cancellationToken);
+            }
 
-            await _auditService.WriteLogAsync("mcp.dml.executed", dml.TableName, "success", $"Operation: {dml.Operation} (committed after user approval)", cancellationToken);
+            if (!finalResult.StartsWith("Success", StringComparison.Ordinal))
+            {
+                await WriteDmlAuditAsync(
+                    dml,
+                    "failed",
+                    "interactive-accepted",
+                    stopwatch,
+                    affectedRowCount,
+                    finalResult,
+                    cancellationToken);
+                return finalResult;
+            }
+
+            await WriteDmlAuditAsync(
+                dml,
+                "success",
+                "interactive-accepted",
+                stopwatch,
+                affectedRowCount,
+                $"Operation: {dml.Operation} (committed after MCP interactive approval)",
+                cancellationToken);
             return finalResult;
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync("mcp.dml.executed", dml?.TableName ?? "unknown", "failed", ex.Message);
+            await _auditService.WriteEventAsync(
+                "mcp.dml.executed",
+                dml?.TableName ?? "unknown",
+                "failed",
+                new AuditEventContext
+                {
+                    ToolName = "execute_dml_sql",
+                    Operation = dml?.Operation.ToString().ToLowerInvariant(),
+                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    AffectedRows = affectedRowCount,
+                    ApprovalStatus = "not-completed",
+                    ErrorCategory = ex.GetType().Name,
+                    Definition = dml == null ? null : DescribeDml(dml)
+                },
+                ex.Message,
+                cancellationToken);
             return $"Error executing DML: {ex.Message}";
         }
     }
@@ -178,7 +292,13 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
                 return "Table name cannot be empty.";
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-            var columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
+            List<ColumnInfo> columns;
+            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            {
+                if (lease is null)
+                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
+            }
 
             var dbId = ResolveDbManagementId();
             if (dbId.HasValue)
@@ -224,7 +344,13 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-            var schemas = await strategy.GetSchemasAsync(sqlConfig.ConnectionString);
+            IEnumerable<string> schemas;
+            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            {
+                if (lease is null)
+                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                schemas = await strategy.GetSchemasAsync(sqlConfig.ConnectionString);
+            }
 
             await _auditService.WriteLogAsync("mcp.get_schemas", "database", "success");
             return string.Join(", ", schemas);
@@ -248,7 +374,13 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-            var tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
+            IEnumerable<string> tables;
+            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            {
+                if (lease is null)
+                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
+            }
 
             var whitelist = ResolveTableWhitelist();
             if (whitelist is { Count: > 0 })
@@ -374,6 +506,83 @@ public partial class SqlAgentTool(IConfiguration configuration, IHttpContextAcce
             ConnectionString = _configuration["SqlConfig:ConnectionString"] ?? string.Empty
         };
     }
+
+    private SqlExecutionPolicy ResolveExecutionPolicy()
+    {
+        var policy = _securityPolicyRuntimeState.GetCurrent();
+        return new SqlExecutionPolicy
+        {
+            QueryMaxRows = policy.QueryMaxRows,
+            QueryTimeoutSeconds = policy.QueryTimeoutSeconds,
+            RequireWhereForUpdate = policy.RequireWhereForUpdate,
+            RequireWhereForDelete = policy.RequireWhereForDelete,
+            AllowFullTableUpdate = policy.AllowFullTableUpdate,
+            AllowFullTableDelete = policy.AllowFullTableDelete,
+            DmlMaxAffectedRows = policy.DmlMaxAffectedRows
+        };
+    }
+
+    private async Task WriteDmlAuditAsync(
+        DmlDefinition dml,
+        string result,
+        string approvalStatus,
+        Stopwatch stopwatch,
+        int? affectedRows,
+        string detail,
+        CancellationToken cancellationToken)
+    {
+        await _auditService.WriteEventAsync(
+            "mcp.dml.executed",
+            dml.TableName,
+            result,
+            new AuditEventContext
+            {
+                ToolName = "execute_dml_sql",
+                Operation = dml.Operation.ToString().ToLowerInvariant(),
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                AffectedRows = affectedRows,
+                ApprovalStatus = approvalStatus,
+                ErrorCategory = result == "failed" ? "PolicyOrExecutionDenied" : null,
+                Definition = DescribeDml(dml)
+            },
+            detail,
+            cancellationToken);
+    }
+
+    private static int? CountJsonRows(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Array
+                ? document.RootElement.GetArrayLength()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string DescribeQuery(QueryDefinition definition)
+        => JsonSerializer.Serialize(new
+        {
+            definition.TableName,
+            SelectColumnCount = definition.SelectColumns?.Count ?? 0,
+            WhereConditionCount = definition.WhereColumnsAndValues?.Count ?? 0,
+            JoinCount = definition.Joins?.Count ?? 0,
+            definition.Limit,
+            definition.Offset
+        });
+
+    private static string DescribeDml(DmlDefinition definition)
+        => JsonSerializer.Serialize(new
+        {
+            Operation = definition.Operation.ToString(),
+            definition.TableName,
+            ValueFields = definition.Values?.Select(x => x.FieldName).ToArray() ?? [],
+            WhereConditionCount = definition.WhereConditions?.Count ?? 0
+        });
 
     private void ValidateToolAccess(string? toolName = null)
     {
