@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.RateLimiting;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
@@ -66,6 +65,8 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IRequestRateLimiter, MemoryRequestRateLimiter>();
         services.AddSingleton<ILayeredRateLimitService, LayeredRateLimitService>();
         services.AddSingleton<ISqlExecutionConcurrencyLimiter, SqlExecutionConcurrencyLimiter>();
         services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
@@ -139,32 +140,8 @@ public static class HsSqlAgentServiceExtensions
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
-        // --- Pre-auth global IP Rate Limiting ---
-        services.AddRateLimiter(rl =>
-        {
-            rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            rl.AddPolicy("mcp-policy", context =>
-            {
-                // Only trust the connection address. Hosts behind a reverse proxy can
-                // opt into ASP.NET Core Forwarded Headers with explicit trusted proxies;
-                // that middleware safely updates RemoteIpAddress before this policy runs.
-                var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-                if (options.RateLimitPermitLimit <= 0 || options.RateLimitWindowSeconds <= 0)
-                    return RateLimitPartition.GetNoLimiter($"ip:{ip}");
-
-                return RateLimitPartition.GetFixedWindowLimiter($"ip:{ip}", _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = options.RateLimitPermitLimit,
-                    Window = TimeSpan.FromSeconds(options.RateLimitWindowSeconds),
-                    QueueLimit = Math.Max(0, options.RateLimitQueueLimit),
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    AutoReplenishment = true
-                });
-            });
-        });
-
         // --- MCP Server ---
+        services.AddTransient<McpIpRateLimitMiddleware>();
         services.AddScoped<McpAccessKeyAuthMiddleware>();
         services.AddTransient<McpKeyRateLimitMiddleware>();
         services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
