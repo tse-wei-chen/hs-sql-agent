@@ -7,7 +7,8 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      - AppConnectionString=Data Source=/app/data/hsqlagent.db
+      - AdminDatabase__Provider=${ADMIN_DATABASE_PROVIDER:-Sqlite}
+      - AdminDatabase__ConnectionString=${ADMIN_DATABASE_CONNECTION_STRING:-Data Source=/app/data/hsqlagent.db}
       - McpKeySettings__HmacSecretKey=${HMAC_KEY}
       - JwtSettings__SecretKey=${JWT_KEY}
       - JwtSettings__Issuer=${JWT_ISS}

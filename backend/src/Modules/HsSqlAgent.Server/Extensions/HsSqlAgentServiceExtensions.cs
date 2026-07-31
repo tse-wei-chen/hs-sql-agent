@@ -3,12 +3,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
-using Admin.Service.Data;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using Admin.Service.Validators;
-using Auth.Service.Data;
 using Auth.Service.Interfaces;
 using Auth.Service.Services;
 using Common.Interfaces;
@@ -51,6 +49,8 @@ public static class HsSqlAgentServiceExtensions
     public static IServiceCollection AddHsSqlAgent(this IServiceCollection services, HsSqlAgentServiceOptions options)
     {
         // Validate
+        if (string.IsNullOrWhiteSpace(options.AdminDatabaseProvider))
+            throw new InvalidOperationException("AdminDatabaseProvider is required.");
         if (string.IsNullOrWhiteSpace(options.AdminConnectionString))
             throw new InvalidOperationException("AdminConnectionString is required.");
         if (string.IsNullOrWhiteSpace(options.HmacSecretKey) || Encoding.UTF8.GetByteCount(options.HmacSecretKey) < 32)
@@ -60,10 +60,7 @@ public static class HsSqlAgentServiceExtensions
 
         // --- Cache ---
         services.AddCacheProvider(options.CacheProvider, options.CacheConnectionString);
-        services.AddDbContext<AdminContext>(db => db.UseSqlite(options.AdminConnectionString));
-        services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
-        services.AddDbContext<AuthContext>(db => db.UseSqlite(options.AdminConnectionString));
-        services.AddScoped<IAuthContext>(sp => sp.GetRequiredService<AuthContext>());
+        services.AddAdminDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
 
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();

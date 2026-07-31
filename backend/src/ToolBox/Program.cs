@@ -12,7 +12,9 @@ builder.Configuration
 
 builder.Services.AddHsSqlAgent(options =>
 {
-    options.AdminConnectionString = builder.Configuration["AppConnectionString"]
+    options.AdminDatabaseProvider = builder.Configuration["AdminDatabase:Provider"] ?? "Sqlite";
+    options.AdminConnectionString = builder.Configuration["AdminDatabase:ConnectionString"]
+        ?? builder.Configuration["AppConnectionString"]
         ?? throw new InvalidOperationException("Missing AppConnectionString in configuration.");
     options.HmacSecretKey = builder.Configuration["McpKeySettings:HmacSecretKey"] ?? string.Empty;
     options.JwtSecretKey = builder.Configuration["JwtSettings:SecretKey"] ?? string.Empty;

@@ -5,6 +5,7 @@ namespace HsSqlAgent.Server.Models;
 /// </summary>
 public class HsSqlAgentServiceOptions
 {
+    public string AdminDatabaseProvider { get; set; } = "Sqlite";
     public string AdminConnectionString { get; set; } = "Data Source=hsagent.db";
     public string HmacSecretKey { get; set; } = string.Empty;
     public string JwtSecretKey { get; set; } = string.Empty;
