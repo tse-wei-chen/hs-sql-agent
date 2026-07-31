@@ -54,6 +54,7 @@
 		<PackageReference Include="Oracle.ManagedDataAccess.Core" />
 		<PackageReference Include="FirebirdSql.Data.FirebirdClient" />
 		<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+		<PackageReference Include="StackExchange.Redis" />
 		<PackageReference Include="Humanizer.Core" />
 		<!-- <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" /> -->

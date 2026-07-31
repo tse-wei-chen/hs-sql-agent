@@ -32,6 +32,13 @@ builder.Services.AddHsSqlAgent(options =>
     if (int.TryParse(builder.Configuration["RateLimiting:QueueLimit"], out var ql))
         options.RateLimitQueueLimit = ql;
 
+    options.RateLimiterProvider = builder.Configuration["RateLimiter:Provider"] ?? "Memory";
+    options.RateLimiterConnectionString = builder.Configuration["RateLimiter:ConnectionString"]
+        ?? builder.Configuration["CacheConfig:ConnectionString"]
+        ?? string.Empty;
+    options.RateLimiterFailureMode = builder.Configuration["RateLimiter:FailureMode"] ?? "FailClosed";
+    options.RateLimiterKeyPrefix = builder.Configuration["RateLimiter:KeyPrefix"] ?? "hsqlagent:ratelimit:";
+
     options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "IMemoryCache";
     options.CacheConnectionString = builder.Configuration["CacheConfig:ConnectionString"] ?? string.Empty;
 });

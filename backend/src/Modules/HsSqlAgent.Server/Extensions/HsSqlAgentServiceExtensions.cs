@@ -65,8 +65,11 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
-        services.AddSingleton(TimeProvider.System);
-        services.AddSingleton<IRequestRateLimiter, MemoryRequestRateLimiter>();
+        services.AddRequestRateLimiter(
+            options.RateLimiterProvider,
+            options.RateLimiterConnectionString,
+            options.RateLimiterFailureMode,
+            options.RateLimiterKeyPrefix);
         services.AddSingleton<ILayeredRateLimitService, LayeredRateLimitService>();
         services.AddSingleton<ISqlExecutionConcurrencyLimiter, SqlExecutionConcurrencyLimiter>();
         services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();

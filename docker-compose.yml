@@ -18,4 +18,8 @@ services:
       - RateLimiting__PermitLimit=${RATE_LIMITING_PERMIT_LIMIT}
       - RateLimiting__WindowSeconds=${RATE_LIMITING_WINDOW_SECONDS}
       - RateLimiting__QueueLimit=${RATE_LIMITING_QUEUE_LIMIT}
+      - RateLimiter__Provider=${RATE_LIMITER_PROVIDER:-Memory}
+      - RateLimiter__ConnectionString=${RATE_LIMITER_CONNECTION_STRING:-}
+      - RateLimiter__FailureMode=${RATE_LIMITER_FAILURE_MODE:-FailClosed}
+      - RateLimiter__KeyPrefix=${RATE_LIMITER_KEY_PREFIX:-hsqlagent:ratelimit:}
     restart: unless-stopped

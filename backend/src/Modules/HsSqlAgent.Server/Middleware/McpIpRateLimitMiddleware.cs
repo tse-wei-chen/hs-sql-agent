@@ -18,6 +18,12 @@ public sealed class McpIpRateLimitMiddleware(
                 TimeSpan.FromSeconds(settings.WindowSeconds)),
             context.RequestAborted);
 
+        if (!result.IsAvailable)
+        {
+            await WriteUnavailableResponseAsync(context);
+            return;
+        }
+
         if (!result.IsAllowed)
         {
             await WriteRejectedResponseAsync(context, result.RetryAfter);
@@ -25,6 +31,15 @@ public sealed class McpIpRateLimitMiddleware(
         }
 
         await next(context);
+    }
+
+    private static async Task WriteUnavailableResponseAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(
+            new { error = "Rate limiter is unavailable." },
+            context.RequestAborted);
     }
 
     private static async Task WriteRejectedResponseAsync(HttpContext context, TimeSpan retryAfter)

@@ -9,9 +9,11 @@ public sealed record RateLimitRequest(
 
 public readonly record struct RateLimitResult(
     bool IsAllowed,
-    TimeSpan RetryAfter)
+    TimeSpan RetryAfter,
+    bool IsAvailable = true)
 {
     public static RateLimitResult Allowed => new(true, TimeSpan.Zero);
+    public static RateLimitResult Unavailable => new(false, TimeSpan.Zero, false);
 }
 
 public interface IRequestRateLimiter

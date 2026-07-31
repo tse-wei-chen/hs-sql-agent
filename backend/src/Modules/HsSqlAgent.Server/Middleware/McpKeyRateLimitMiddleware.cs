@@ -31,6 +31,16 @@ public sealed class McpKeyRateLimitMiddleware(
                 permitLimit,
                 windowSeconds,
                 context.RequestAborted);
+            if (!result.IsAvailable)
+            {
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(
+                    new { error = "Rate limiter is unavailable." },
+                    context.RequestAborted);
+                return;
+            }
+
             if (!result.IsAllowed)
             {
                 context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
