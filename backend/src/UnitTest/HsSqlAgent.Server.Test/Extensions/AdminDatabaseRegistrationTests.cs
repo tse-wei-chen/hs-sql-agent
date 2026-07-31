@@ -38,10 +38,32 @@ public class AdminDatabaseRegistrationTests
         Assert.Contains("Unsupported admin database provider", exception.Message);
     }
 
-    private static HsSqlAgentServiceOptions CreateOptions(string provider) => new()
+    [Fact]
+    public void AddHsSqlAgent_ShouldRegisterPostgresAdminContexts()
+    {
+        var services = new ServiceCollection();
+
+        services.AddHsSqlAgent(CreateOptions(
+            "PostgreSql",
+            "Host=localhost;Database=hsqlagent;Username=postgres;Password=postgres"));
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.Equal(
+            "Npgsql.EntityFrameworkCore.PostgreSQL",
+            scope.ServiceProvider.GetRequiredService<AdminContext>().Database.ProviderName);
+        Assert.Equal(
+            "Npgsql.EntityFrameworkCore.PostgreSQL",
+            scope.ServiceProvider.GetRequiredService<AuthContext>().Database.ProviderName);
+    }
+
+    private static HsSqlAgentServiceOptions CreateOptions(
+        string provider,
+        string connectionString = "Data Source=:memory:") => new()
     {
         AdminDatabaseProvider = provider,
-        AdminConnectionString = "Data Source=:memory:",
+        AdminConnectionString = connectionString,
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
     };

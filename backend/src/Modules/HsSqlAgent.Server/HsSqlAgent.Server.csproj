@@ -41,6 +41,7 @@
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
 		<PackageReference Include="FluentValidation.AspNetCore" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+		<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
 		<PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
 		<!-- Embedded ProjectReference runtime deps: add here when added to Admin.Service/SqlAgent.Service/Common. PrivateAssets=All on ProjectReferences hides these from the nuspec; re-declaring them here ensures
          consumers resolve the correct versions. -->
@@ -63,6 +64,7 @@
 		<ProjectReference Include="..\..\Infrastructure\Infrastructure.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\Admin.Service\Admin.Service.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\Auth.Service\Auth.Service.csproj" PrivateAssets="All" />
+		<ProjectReference Include="..\HsSqlAgent.PostgresMigrations\HsSqlAgent.PostgresMigrations.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\SqlAgent.Service\SqlAgent.Service.csproj" PrivateAssets="All" />
 	</ItemGroup>
 
