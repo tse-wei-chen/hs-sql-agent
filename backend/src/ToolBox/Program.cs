@@ -39,6 +39,16 @@ builder.Services.AddHsSqlAgent(options =>
     options.RateLimiterFailureMode = builder.Configuration["RateLimiter:FailureMode"] ?? "FailClosed";
     options.RateLimiterKeyPrefix = builder.Configuration["RateLimiter:KeyPrefix"] ?? "hsqlagent:ratelimit:";
 
+    options.SecurityPolicySyncProvider = builder.Configuration["SecurityPolicySync:Provider"] ?? "Memory";
+    options.SecurityPolicySyncConnectionString = builder.Configuration["SecurityPolicySync:ConnectionString"]
+        ?? builder.Configuration["RateLimiter:ConnectionString"]
+        ?? builder.Configuration["CacheConfig:ConnectionString"]
+        ?? string.Empty;
+    options.SecurityPolicySyncKeyPrefix = builder.Configuration["SecurityPolicySync:KeyPrefix"]
+        ?? "hsqlagent:security-policy:";
+    if (int.TryParse(builder.Configuration["SecurityPolicySync:RefreshIntervalSeconds"], out var refreshInterval))
+        options.SecurityPolicySyncRefreshIntervalSeconds = refreshInterval;
+
     options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "IMemoryCache";
     options.CacheConnectionString = builder.Configuration["CacheConfig:ConnectionString"] ?? string.Empty;
 });

@@ -21,6 +21,10 @@ public class HsSqlAgentServiceOptions
     public string RateLimiterConnectionString { get; set; } = string.Empty;
     public string RateLimiterFailureMode { get; set; } = "FailClosed";
     public string RateLimiterKeyPrefix { get; set; } = "hsqlagent:ratelimit:";
+    public string SecurityPolicySyncProvider { get; set; } = "Memory";
+    public string SecurityPolicySyncConnectionString { get; set; } = string.Empty;
+    public string SecurityPolicySyncKeyPrefix { get; set; } = "hsqlagent:security-policy:";
+    public int SecurityPolicySyncRefreshIntervalSeconds { get; set; } = 30;
 
     public string CacheProvider { get; set; } = "IMemoryCache";
     public string CacheConnectionString { get; set; } = string.Empty;

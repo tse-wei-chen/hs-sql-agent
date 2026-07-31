@@ -8,10 +8,12 @@ namespace Admin.Service.Services;
 
 public class SecurityPolicyService(
     IAdminContext context,
-    ISecurityPolicyRuntimeState runtimeState) : ISecurityPolicyService
+    ISecurityPolicyRuntimeState runtimeState,
+    ISecurityPolicyChangePublisher changePublisher) : ISecurityPolicyService
 {
     private readonly IAdminContext _context = context;
     private readonly ISecurityPolicyRuntimeState _runtimeState = runtimeState;
+    private readonly ISecurityPolicyChangePublisher _changePublisher = changePublisher;
 
     public async Task<SecurityPolicyModel> GetAsync(CancellationToken cancellationToken = default)
     {
@@ -50,6 +52,7 @@ public class SecurityPolicyService(
 
         var model = SecurityPolicyModel.FromEntity(entity);
         _runtimeState.SetCurrent(model);
+        await _changePublisher.PublishAsync(model, cancellationToken);
         return model;
     }
 

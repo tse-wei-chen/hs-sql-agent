@@ -22,4 +22,8 @@ services:
       - RateLimiter__ConnectionString=${RATE_LIMITER_CONNECTION_STRING:-}
       - RateLimiter__FailureMode=${RATE_LIMITER_FAILURE_MODE:-FailClosed}
       - RateLimiter__KeyPrefix=${RATE_LIMITER_KEY_PREFIX:-hsqlagent:ratelimit:}
+      - SecurityPolicySync__Provider=${SECURITY_POLICY_SYNC_PROVIDER:-Memory}
+      - SecurityPolicySync__ConnectionString=${SECURITY_POLICY_SYNC_CONNECTION_STRING:-}
+      - SecurityPolicySync__KeyPrefix=${SECURITY_POLICY_SYNC_KEY_PREFIX:-hsqlagent:security-policy:}
+      - SecurityPolicySync__RefreshIntervalSeconds=${SECURITY_POLICY_SYNC_REFRESH_INTERVAL_SECONDS:-30}
     restart: unless-stopped
