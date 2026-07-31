@@ -76,7 +76,12 @@ public static class HsSqlAgentServiceExtensions
             options.RateLimiterFailureMode,
             options.RateLimiterKeyPrefix);
         services.AddSingleton<ILayeredRateLimitService, LayeredRateLimitService>();
-        services.AddSingleton<ISqlExecutionConcurrencyLimiter, SqlExecutionConcurrencyLimiter>();
+        services.AddSqlConcurrencyLimiter(
+            options.SqlConcurrencyProvider,
+            options.SqlConcurrencyConnectionString,
+            options.SqlConcurrencyFailureMode,
+            options.SqlConcurrencyKey,
+            options.SqlConcurrencyLeaseSeconds);
         services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
         services.AddScoped<IMemberService, MemberService>();

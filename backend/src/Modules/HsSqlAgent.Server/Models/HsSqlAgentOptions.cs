@@ -25,6 +25,11 @@ public class HsSqlAgentServiceOptions
     public string SecurityPolicySyncConnectionString { get; set; } = string.Empty;
     public string SecurityPolicySyncKeyPrefix { get; set; } = "hsqlagent:security-policy:";
     public int SecurityPolicySyncRefreshIntervalSeconds { get; set; } = 30;
+    public string SqlConcurrencyProvider { get; set; } = "Memory";
+    public string SqlConcurrencyConnectionString { get; set; } = string.Empty;
+    public string SqlConcurrencyFailureMode { get; set; } = "FailClosed";
+    public string SqlConcurrencyKey { get; set; } = "hsqlagent:sql-concurrency";
+    public int SqlConcurrencyLeaseSeconds { get; set; } = 30;
 
     public string CacheProvider { get; set; } = "IMemoryCache";
     public string CacheConnectionString { get; set; } = string.Empty;

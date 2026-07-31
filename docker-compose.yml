@@ -26,4 +26,9 @@ services:
       - SecurityPolicySync__ConnectionString=${SECURITY_POLICY_SYNC_CONNECTION_STRING:-}
       - SecurityPolicySync__KeyPrefix=${SECURITY_POLICY_SYNC_KEY_PREFIX:-hsqlagent:security-policy:}
       - SecurityPolicySync__RefreshIntervalSeconds=${SECURITY_POLICY_SYNC_REFRESH_INTERVAL_SECONDS:-30}
+      - SqlConcurrency__Provider=${SQL_CONCURRENCY_PROVIDER:-Memory}
+      - SqlConcurrency__ConnectionString=${SQL_CONCURRENCY_CONNECTION_STRING:-}
+      - SqlConcurrency__FailureMode=${SQL_CONCURRENCY_FAILURE_MODE:-FailClosed}
+      - SqlConcurrency__Key=${SQL_CONCURRENCY_KEY:-hsqlagent:sql-concurrency}
+      - SqlConcurrency__LeaseSeconds=${SQL_CONCURRENCY_LEASE_SECONDS:-30}
     restart: unless-stopped

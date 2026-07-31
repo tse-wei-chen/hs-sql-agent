@@ -188,7 +188,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
 
         try
         {
-            using var lease = sqlConcurrencyLimiter.TryAcquire();
+            await using var lease = await sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken);
             if (lease is null)
                 return StatusCode(
                     StatusCodes.Status429TooManyRequests,

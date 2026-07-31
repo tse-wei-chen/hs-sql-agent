@@ -49,6 +49,17 @@ builder.Services.AddHsSqlAgent(options =>
     if (int.TryParse(builder.Configuration["SecurityPolicySync:RefreshIntervalSeconds"], out var refreshInterval))
         options.SecurityPolicySyncRefreshIntervalSeconds = refreshInterval;
 
+    options.SqlConcurrencyProvider = builder.Configuration["SqlConcurrency:Provider"] ?? "Memory";
+    options.SqlConcurrencyConnectionString = builder.Configuration["SqlConcurrency:ConnectionString"]
+        ?? builder.Configuration["RateLimiter:ConnectionString"]
+        ?? builder.Configuration["CacheConfig:ConnectionString"]
+        ?? string.Empty;
+    options.SqlConcurrencyFailureMode = builder.Configuration["SqlConcurrency:FailureMode"] ?? "FailClosed";
+    options.SqlConcurrencyKey = builder.Configuration["SqlConcurrency:Key"]
+        ?? "hsqlagent:sql-concurrency";
+    if (int.TryParse(builder.Configuration["SqlConcurrency:LeaseSeconds"], out var leaseSeconds))
+        options.SqlConcurrencyLeaseSeconds = leaseSeconds;
+
     options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "IMemoryCache";
     options.CacheConnectionString = builder.Configuration["CacheConfig:ConnectionString"] ?? string.Empty;
 });

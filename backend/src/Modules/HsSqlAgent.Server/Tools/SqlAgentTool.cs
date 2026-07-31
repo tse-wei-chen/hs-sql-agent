@@ -70,7 +70,7 @@ public partial class SqlAgentTool(
                 return "Validation failed:\n" + string.Join("\n", validationErrors);
 
             string result;
-            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -156,7 +156,7 @@ public partial class SqlAgentTool(
             dml.ConfirmToken = null;
             var executionPolicy = ResolveExecutionPolicy();
             string dryRunResult;
-            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -219,7 +219,7 @@ public partial class SqlAgentTool(
 
             dml.ConfirmToken = detToken;
             string finalResult;
-            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -293,7 +293,7 @@ public partial class SqlAgentTool(
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             List<ColumnInfo> columns;
-            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -345,7 +345,7 @@ public partial class SqlAgentTool(
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             IEnumerable<string> schemas;
-            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -375,7 +375,7 @@ public partial class SqlAgentTool(
             }
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
             IEnumerable<string> tables;
-            using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");

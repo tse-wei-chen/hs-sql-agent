@@ -79,25 +79,26 @@ public class ResourceLimitTests
     }
 
     [Fact]
-    public void SqlConcurrencyLimiter_ShouldReleaseLeaseAndHonorDynamicMaximum()
+    public async Task SqlConcurrencyLimiter_ShouldReleaseLeaseAndHonorDynamicMaximum()
     {
         var policy = new SecurityPolicyModel { MaxConcurrentSql = 1 };
         var state = new Mock<ISecurityPolicyRuntimeState>();
         state.Setup(x => x.GetCurrent()).Returns(() => policy.Clone());
         var limiter = new SqlExecutionConcurrencyLimiter(state.Object);
 
-        using var first = limiter.TryAcquire();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var first = await limiter.TryAcquireAsync(cancellationToken);
         Assert.NotNull(first);
         Assert.Equal(1, limiter.ActiveCount);
-        Assert.Null(limiter.TryAcquire());
+        Assert.Null(await limiter.TryAcquireAsync(cancellationToken));
 
         policy.MaxConcurrentSql = 2;
-        using var second = limiter.TryAcquire();
+        await using var second = await limiter.TryAcquireAsync(cancellationToken);
         Assert.NotNull(second);
         Assert.Equal(2, limiter.ActiveCount);
 
-        second.Dispose();
-        first.Dispose();
+        await second.DisposeAsync();
+        await first.DisposeAsync();
         Assert.Equal(0, limiter.ActiveCount);
     }
 

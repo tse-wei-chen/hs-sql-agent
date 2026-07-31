@@ -4,8 +4,8 @@ namespace HsSqlAgent.Server.Services;
 
 public interface ISqlExecutionConcurrencyLimiter
 {
-    IDisposable? TryAcquire();
-    int ActiveCount { get; }
+    ValueTask<IAsyncDisposable?> TryAcquireAsync(
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class SqlExecutionConcurrencyLimiter(
@@ -24,15 +24,17 @@ public sealed class SqlExecutionConcurrencyLimiter(
         }
     }
 
-    public IDisposable? TryAcquire()
+    public ValueTask<IAsyncDisposable?> TryAcquireAsync(
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_sync)
         {
             var maximum = _securityPolicyRuntimeState.GetCurrent().MaxConcurrentSql;
             if (_activeCount >= maximum)
-                return null;
+                return ValueTask.FromResult<IAsyncDisposable?>(null);
             _activeCount++;
-            return new Lease(this);
+            return ValueTask.FromResult<IAsyncDisposable?>(new Lease(this));
         }
     }
 
@@ -42,13 +44,14 @@ public sealed class SqlExecutionConcurrencyLimiter(
             _activeCount--;
     }
 
-    private sealed class Lease(SqlExecutionConcurrencyLimiter owner) : IDisposable
+    private sealed class Lease(SqlExecutionConcurrencyLimiter owner) : IAsyncDisposable
     {
         private SqlExecutionConcurrencyLimiter? _owner = owner;
 
-        public void Dispose()
+        public ValueTask DisposeAsync()
         {
             Interlocked.Exchange(ref _owner, null)?.Release();
+            return ValueTask.CompletedTask;
         }
     }
 }
