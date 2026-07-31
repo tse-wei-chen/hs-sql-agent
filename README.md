@@ -66,19 +66,7 @@ Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wik
 ## SQL Execution Flow
 
 ```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'primaryColor': '#18181B',
-    'primaryTextColor': '#FAFAFA',
-    'primaryBorderColor': '#27272A',
-    'lineColor': '#52525B',
-    'secondaryColor': '#27272A',
-    'tertiaryColor': '#09090B',
-    'mainBkg': '#09090B'
-  }
-}}%%
-
+%%{init: { 'theme': 'neutral' }}%%
 flowchart TD
     LLM(["Client :: LLM / MCP Client"])
     MCP["Server :: HsSqlAgent"]
@@ -96,7 +84,7 @@ flowchart TD
         QBUILD["SQL Strategy Compiler<br/>Compile Strategy"]
         QEXEC["Execution Engine<br/>Execute SELECT"]
         QRESULT(["Result :: Rows / JSON"])
-        
+
         QPARSE --> QDEF
         QDEF --> QVALID
         QVALID --> QBUILD
@@ -113,34 +101,30 @@ flowchart TD
         DECIDE{" Action :: Decision"}
         DEXEC["Transaction :: Commit<br/>Apply Changes"]
         DROLLBACK["Transaction :: Rollback<br/>Discard Changes"]
-        
+
         DPARSE --> DDEF
         DDEF --> DVALID
         DVALID --> DRYRUN
         DRYRUN --> ELICIT
         ELICIT --> DECIDE
-        
         DECIDE -->|Allowed| DEXEC
         DECIDE -->|Denied| DROLLBACK
     end
 
     ROUTE -->|execute_query_sql| QPARSE
     ROUTE -->|execute_dml_sql| DPARSE
-
     AUDIT[("Storage :: Async Audit Log")]
-    
+
     QRESULT --> AUDIT
     DEXEC --> AUDIT
     DROLLBACK --> AUDIT
 
-    classDef default fill:#18181B,stroke:#27272A,stroke-width:1px,color:#E4E4E7;
-    classDef client fill:#FAFAFA,stroke:#FAFAFA,stroke-width:1px,color:#09090B;
-    classDef server fill:#27272A,stroke:#3F3F46,stroke-width:1px,color:#F4F4F5;
-    classDef auth fill:#09090B,stroke:#27272A,stroke-width:1px,color:#A1A1AA;
-    classDef cond fill:#18181B,stroke:#FAFAFA,stroke-width:1.5px,color:#FAFAFA;
-    
-    classDef danger fill:#451A03,stroke:#7F1D1D,stroke-width:1px,color:#FCA5A5;
-    classDef success fill:#022C22,stroke:#064E3B,stroke-width:1px,color:#86EFAC;
+    classDef client fill:#f3f4f6,stroke:#374151,stroke-width:1px,color:#111827;
+    classDef server fill:#e5e7eb,stroke:#4b5563,stroke-width:1px,color:#1f2937;
+    classDef auth fill:#f9fafb,stroke:#9ca3af,stroke-width:1px,color:#4b5563;
+    classDef cond fill:#ffffff,stroke:#111827,stroke-width:1.5px,color:#111827;
+    classDef danger fill:#fee2e2,stroke:#ef4444,stroke-width:1px,color:#991b1b;
+    classDef success fill:#dcfce7,stroke:#22c55e,stroke-width:1px,color:#166534;
 
     class LLM client;
     class MCP,AUDIT server;
