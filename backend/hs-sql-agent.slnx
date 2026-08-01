@@ -6,6 +6,7 @@
     <Project Path="src/Modules/Auth.Service/Auth.Service.csproj" /> 
     <Project Path="src/Modules/SqlAgent.Service/SqlAgent.Service.csproj" />
     <Project Path="src/Modules/HsSqlAgent.Server/HsSqlAgent.Server.csproj" />
+    <Project Path="src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj" />
     <Project Path="src/ToolBox/ToolBox.csproj" />
     <Project Path="src/UnitTest/Admin.Test/Admin.Test.csproj" />
     <Project Path="src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj" />

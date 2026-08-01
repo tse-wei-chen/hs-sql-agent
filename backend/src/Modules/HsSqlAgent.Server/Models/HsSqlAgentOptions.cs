@@ -5,6 +5,7 @@ namespace HsSqlAgent.Server.Models;
 /// </summary>
 public class HsSqlAgentServiceOptions
 {
+    public string AdminDatabaseProvider { get; set; } = "Sqlite";
     public string AdminConnectionString { get; set; } = "Data Source=hsagent.db";
     public string HmacSecretKey { get; set; } = string.Empty;
     public string JwtSecretKey { get; set; } = string.Empty;
@@ -16,9 +17,23 @@ public class HsSqlAgentServiceOptions
     public int RateLimitPermitLimit { get; set; }
     public int RateLimitWindowSeconds { get; set; }
     public int RateLimitQueueLimit { get; set; }
+    public string RateLimiterProvider { get; set; } = "Memory";
+    public string RateLimiterConnectionString { get; set; } = string.Empty;
+    public string RateLimiterFailureMode { get; set; } = "FailClosed";
+    public string RateLimiterKeyPrefix { get; set; } = "hsqlagent:ratelimit:";
+    public string SecurityPolicySyncProvider { get; set; } = "Memory";
+    public string SecurityPolicySyncConnectionString { get; set; } = string.Empty;
+    public string SecurityPolicySyncKeyPrefix { get; set; } = "hsqlagent:security-policy:";
+    public int SecurityPolicySyncRefreshIntervalSeconds { get; set; } = 30;
+    public string SqlConcurrencyProvider { get; set; } = "Memory";
+    public string SqlConcurrencyConnectionString { get; set; } = string.Empty;
+    public string SqlConcurrencyFailureMode { get; set; } = "FailClosed";
+    public string SqlConcurrencyKey { get; set; } = "hsqlagent:sql-concurrency";
+    public int SqlConcurrencyLeaseSeconds { get; set; } = 30;
 
-    public string CacheProvider { get; set; } = "IMemoryCache";
+    public string CacheProvider { get; set; } = "Memory";
     public string CacheConnectionString { get; set; } = string.Empty;
+    public string CacheKeyPrefix { get; set; } = "hsqlagent:cache:";
 }
 
 /// <summary>

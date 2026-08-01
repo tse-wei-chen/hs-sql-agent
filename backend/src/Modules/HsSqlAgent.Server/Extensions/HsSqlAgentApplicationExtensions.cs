@@ -36,7 +36,7 @@ public static class HsSqlAgentApplicationExtensions
             context => context.Request.Path.StartsWithSegments(options.McpEndpoint),
             branch =>
             {
-                branch.UseRateLimiter();
+                branch.UseMiddleware<McpIpRateLimitMiddleware>();
                 branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
                 branch.UseMiddleware<McpKeyRateLimitMiddleware>();
                 branch.UseMiddleware<McpStringifiedArrayMiddleware>();
@@ -84,8 +84,7 @@ public static class HsSqlAgentApplicationExtensions
         {
             var options = builder.Options;
             endpoints.MapMcp(options.McpEndpoint)
-               .AllowAnonymous()
-               .RequireRateLimiting("mcp-policy");
+               .AllowAnonymous();
 
             endpoints.MapControllers();
         }

@@ -12,7 +12,9 @@ builder.Configuration
 
 builder.Services.AddHsSqlAgent(options =>
 {
-    options.AdminConnectionString = builder.Configuration["AppConnectionString"]
+    options.AdminDatabaseProvider = builder.Configuration["AdminDatabase:Provider"] ?? "Sqlite";
+    options.AdminConnectionString = builder.Configuration["AdminDatabase:ConnectionString"]
+        ?? builder.Configuration["AppConnectionString"]
         ?? throw new InvalidOperationException("Missing AppConnectionString in configuration.");
     options.HmacSecretKey = builder.Configuration["McpKeySettings:HmacSecretKey"] ?? string.Empty;
     options.JwtSecretKey = builder.Configuration["JwtSettings:SecretKey"] ?? string.Empty;
@@ -30,8 +32,37 @@ builder.Services.AddHsSqlAgent(options =>
     if (int.TryParse(builder.Configuration["RateLimiting:QueueLimit"], out var ql))
         options.RateLimitQueueLimit = ql;
 
-    options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "IMemoryCache";
+    options.RateLimiterProvider = builder.Configuration["RateLimiter:Provider"] ?? "Memory";
+    options.RateLimiterConnectionString = builder.Configuration["RateLimiter:ConnectionString"]
+        ?? builder.Configuration["CacheConfig:ConnectionString"]
+        ?? string.Empty;
+    options.RateLimiterFailureMode = builder.Configuration["RateLimiter:FailureMode"] ?? "FailClosed";
+    options.RateLimiterKeyPrefix = builder.Configuration["RateLimiter:KeyPrefix"] ?? "hsqlagent:ratelimit:";
+
+    options.SecurityPolicySyncProvider = builder.Configuration["SecurityPolicySync:Provider"] ?? "Memory";
+    options.SecurityPolicySyncConnectionString = builder.Configuration["SecurityPolicySync:ConnectionString"]
+        ?? builder.Configuration["RateLimiter:ConnectionString"]
+        ?? builder.Configuration["CacheConfig:ConnectionString"]
+        ?? string.Empty;
+    options.SecurityPolicySyncKeyPrefix = builder.Configuration["SecurityPolicySync:KeyPrefix"]
+        ?? "hsqlagent:security-policy:";
+    if (int.TryParse(builder.Configuration["SecurityPolicySync:RefreshIntervalSeconds"], out var refreshInterval))
+        options.SecurityPolicySyncRefreshIntervalSeconds = refreshInterval;
+
+    options.SqlConcurrencyProvider = builder.Configuration["SqlConcurrency:Provider"] ?? "Memory";
+    options.SqlConcurrencyConnectionString = builder.Configuration["SqlConcurrency:ConnectionString"]
+        ?? builder.Configuration["RateLimiter:ConnectionString"]
+        ?? builder.Configuration["CacheConfig:ConnectionString"]
+        ?? string.Empty;
+    options.SqlConcurrencyFailureMode = builder.Configuration["SqlConcurrency:FailureMode"] ?? "FailClosed";
+    options.SqlConcurrencyKey = builder.Configuration["SqlConcurrency:Key"]
+        ?? "hsqlagent:sql-concurrency";
+    if (int.TryParse(builder.Configuration["SqlConcurrency:LeaseSeconds"], out var leaseSeconds))
+        options.SqlConcurrencyLeaseSeconds = leaseSeconds;
+
+    options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "Memory";
     options.CacheConnectionString = builder.Configuration["CacheConfig:ConnectionString"] ?? string.Empty;
+    options.CacheKeyPrefix = builder.Configuration["CacheConfig:KeyPrefix"] ?? "hsqlagent:cache:";
 });
 
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:8080");

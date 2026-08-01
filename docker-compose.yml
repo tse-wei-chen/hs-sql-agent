@@ -7,7 +7,11 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      - AppConnectionString=Data Source=/app/data/hsqlagent.db
+      - AdminDatabase__Provider=${ADMIN_DATABASE_PROVIDER:-Sqlite}
+      - AdminDatabase__ConnectionString=${ADMIN_DATABASE_CONNECTION_STRING:-Data Source=/app/data/hsqlagent.db}
+      - CacheConfig__Provider=${CACHE_PROVIDER:-Memory}
+      - CacheConfig__ConnectionString=${CACHE_CONNECTION_STRING:-}
+      - CacheConfig__KeyPrefix=${CACHE_KEY_PREFIX:-hsqlagent:cache:}
       - McpKeySettings__HmacSecretKey=${HMAC_KEY}
       - JwtSettings__SecretKey=${JWT_KEY}
       - JwtSettings__Issuer=${JWT_ISS}
@@ -17,4 +21,17 @@ services:
       - RateLimiting__PermitLimit=${RATE_LIMITING_PERMIT_LIMIT}
       - RateLimiting__WindowSeconds=${RATE_LIMITING_WINDOW_SECONDS}
       - RateLimiting__QueueLimit=${RATE_LIMITING_QUEUE_LIMIT}
+      - RateLimiter__Provider=${RATE_LIMITER_PROVIDER:-Memory}
+      - RateLimiter__ConnectionString=${RATE_LIMITER_CONNECTION_STRING:-}
+      - RateLimiter__FailureMode=${RATE_LIMITER_FAILURE_MODE:-FailClosed}
+      - RateLimiter__KeyPrefix=${RATE_LIMITER_KEY_PREFIX:-hsqlagent:ratelimit:}
+      - SecurityPolicySync__Provider=${SECURITY_POLICY_SYNC_PROVIDER:-Memory}
+      - SecurityPolicySync__ConnectionString=${SECURITY_POLICY_SYNC_CONNECTION_STRING:-}
+      - SecurityPolicySync__KeyPrefix=${SECURITY_POLICY_SYNC_KEY_PREFIX:-hsqlagent:security-policy:}
+      - SecurityPolicySync__RefreshIntervalSeconds=${SECURITY_POLICY_SYNC_REFRESH_INTERVAL_SECONDS:-30}
+      - SqlConcurrency__Provider=${SQL_CONCURRENCY_PROVIDER:-Memory}
+      - SqlConcurrency__ConnectionString=${SQL_CONCURRENCY_CONNECTION_STRING:-}
+      - SqlConcurrency__FailureMode=${SQL_CONCURRENCY_FAILURE_MODE:-FailClosed}
+      - SqlConcurrency__Key=${SQL_CONCURRENCY_KEY:-hsqlagent:sql-concurrency}
+      - SqlConcurrency__LeaseSeconds=${SQL_CONCURRENCY_LEASE_SECONDS:-30}
     restart: unless-stopped

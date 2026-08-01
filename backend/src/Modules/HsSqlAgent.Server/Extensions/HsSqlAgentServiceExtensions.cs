@@ -2,13 +2,10 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.RateLimiting;
-using Admin.Service.Data;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using Admin.Service.Validators;
-using Auth.Service.Data;
 using Auth.Service.Interfaces;
 using Auth.Service.Services;
 using Common.Interfaces;
@@ -51,6 +48,8 @@ public static class HsSqlAgentServiceExtensions
     public static IServiceCollection AddHsSqlAgent(this IServiceCollection services, HsSqlAgentServiceOptions options)
     {
         // Validate
+        if (string.IsNullOrWhiteSpace(options.AdminDatabaseProvider))
+            throw new InvalidOperationException("AdminDatabaseProvider is required.");
         if (string.IsNullOrWhiteSpace(options.AdminConnectionString))
             throw new InvalidOperationException("AdminConnectionString is required.");
         if (string.IsNullOrWhiteSpace(options.HmacSecretKey) || Encoding.UTF8.GetByteCount(options.HmacSecretKey) < 32)
@@ -59,18 +58,33 @@ public static class HsSqlAgentServiceExtensions
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
 
         // --- Cache ---
-        services.AddCacheProvider(options.CacheProvider, options.CacheConnectionString);
-        services.AddDbContext<AdminContext>(db => db.UseSqlite(options.AdminConnectionString));
-        services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
-        services.AddDbContext<AuthContext>(db => db.UseSqlite(options.AdminConnectionString));
-        services.AddScoped<IAuthContext>(sp => sp.GetRequiredService<AuthContext>());
+        services.AddCacheProvider(
+            options.CacheProvider,
+            options.CacheConnectionString,
+            options.CacheKeyPrefix);
+        services.AddAdminDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
 
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
+        services.AddSecurityPolicySync(
+            options.SecurityPolicySyncProvider,
+            options.SecurityPolicySyncConnectionString,
+            options.SecurityPolicySyncKeyPrefix,
+            options.SecurityPolicySyncRefreshIntervalSeconds);
+        services.AddRequestRateLimiter(
+            options.RateLimiterProvider,
+            options.RateLimiterConnectionString,
+            options.RateLimiterFailureMode,
+            options.RateLimiterKeyPrefix);
         services.AddSingleton<ILayeredRateLimitService, LayeredRateLimitService>();
-        services.AddSingleton<ISqlExecutionConcurrencyLimiter, SqlExecutionConcurrencyLimiter>();
+        services.AddSqlConcurrencyLimiter(
+            options.SqlConcurrencyProvider,
+            options.SqlConcurrencyConnectionString,
+            options.SqlConcurrencyFailureMode,
+            options.SqlConcurrencyKey,
+            options.SqlConcurrencyLeaseSeconds);
         services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
         services.AddScoped<IMemberService, MemberService>();
@@ -142,32 +156,8 @@ public static class HsSqlAgentServiceExtensions
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
-        // --- Pre-auth global IP Rate Limiting ---
-        services.AddRateLimiter(rl =>
-        {
-            rl.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            rl.AddPolicy("mcp-policy", context =>
-            {
-                // Only trust the connection address. Hosts behind a reverse proxy can
-                // opt into ASP.NET Core Forwarded Headers with explicit trusted proxies;
-                // that middleware safely updates RemoteIpAddress before this policy runs.
-                var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-                if (options.RateLimitPermitLimit <= 0 || options.RateLimitWindowSeconds <= 0)
-                    return RateLimitPartition.GetNoLimiter($"ip:{ip}");
-
-                return RateLimitPartition.GetFixedWindowLimiter($"ip:{ip}", _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = options.RateLimitPermitLimit,
-                    Window = TimeSpan.FromSeconds(options.RateLimitWindowSeconds),
-                    QueueLimit = Math.Max(0, options.RateLimitQueueLimit),
-                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                    AutoReplenishment = true
-                });
-            });
-        });
-
         // --- MCP Server ---
+        services.AddTransient<McpIpRateLimitMiddleware>();
         services.AddScoped<McpAccessKeyAuthMiddleware>();
         services.AddTransient<McpKeyRateLimitMiddleware>();
         services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();

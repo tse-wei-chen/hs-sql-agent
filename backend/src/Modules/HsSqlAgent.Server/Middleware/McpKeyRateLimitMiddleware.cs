@@ -25,12 +25,28 @@ public sealed class McpKeyRateLimitMiddleware(
                 ? configuredWindowSeconds
                 : null;
 
-            if (!rateLimitService.TryAcquireKey(keyId, mode, permitLimit, windowSeconds, out var retryAfter))
+            var result = await rateLimitService.AcquireKeyAsync(
+                keyId,
+                mode,
+                permitLimit,
+                windowSeconds,
+                context.RequestAborted);
+            if (!result.IsAvailable)
+            {
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(
+                    new { error = "Rate limiter is unavailable." },
+                    context.RequestAborted);
+                return;
+            }
+
+            if (!result.IsAllowed)
             {
                 context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
                 context.Response.ContentType = "application/json";
                 context.Response.Headers.RetryAfter =
-                    Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+                    Math.Max(1, (int)Math.Ceiling(result.RetryAfter.TotalSeconds)).ToString();
                 await context.Response.WriteAsJsonAsync(
                     new { error = "MCP key request limit exceeded." },
                     context.RequestAborted);

@@ -62,7 +62,9 @@ public class CustomToolProxyTests
         _queryValueParserMock = new Mock<IQueryValueParserService>();
         _securityPolicyRuntimeStateMock = new Mock<ISecurityPolicyRuntimeState>();
         _sqlConcurrencyLimiterMock = new Mock<ISqlExecutionConcurrencyLimiter>();
-        _sqlConcurrencyLimiterMock.Setup(x => x.TryAcquire()).Returns(Mock.Of<IDisposable>());
+        _sqlConcurrencyLimiterMock
+            .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<IAsyncDisposable>());
         _securityPolicyRuntimeStateMock.Setup(s => s.GetCurrent()).Returns(new SecurityPolicyModel
         {
             QueryMaxRows = 1000,

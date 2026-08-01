@@ -128,7 +128,7 @@ public class CustomToolProxy(
                     return result;
                 }
 
-                using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+                await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -257,7 +257,7 @@ public class CustomToolProxy(
         dml.ConfirmToken = null;
         var executionPolicy = ResolveExecutionPolicy();
         string dryRunResult;
-        using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+        await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
                 return "Server busy: maximum concurrent SQL operations reached.";
@@ -314,7 +314,7 @@ public class CustomToolProxy(
         }
 
         dml.ConfirmToken = tokenMatch.Groups[1].Value;
-        using (var lease = _sqlConcurrencyLimiter.TryAcquire())
+        await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
                 return "Server busy: maximum concurrent SQL operations reached.";

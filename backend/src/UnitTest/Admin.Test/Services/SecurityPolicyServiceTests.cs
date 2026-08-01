@@ -16,12 +16,13 @@ public class SecurityPolicyServiceTests
     {
         var context = new Mock<IAdminContext>();
         var runtimeState = new Mock<ISecurityPolicyRuntimeState>();
+        var publisher = new Mock<ISecurityPolicyChangePublisher>();
         var entity = new SecurityPolicySettings { Id = SecurityPolicySettings.SingletonId };
         context.Setup(c => c.SecurityPolicySettings)
             .ReturnsDbSet(new List<SecurityPolicySettings> { entity });
         context.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
-        var service = new SecurityPolicyService(context.Object, runtimeState.Object);
+        var service = new SecurityPolicyService(context.Object, runtimeState.Object, publisher.Object);
         var request = new SecurityPolicyModel
         {
             QueryMaxRows = 250,
@@ -47,6 +48,11 @@ public class SecurityPolicyServiceTests
             s => s.SetCurrent(It.Is<SecurityPolicyModel>(p =>
                 p.QueryMaxRows == 250 && p.DmlMaxAffectedRows == 25)),
             Times.Once);
+        publisher.Verify(
+            x => x.PublishAsync(
+                It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == 250),
+                TestContext.Current.CancellationToken),
+            Times.Once);
     }
 
     [Fact]
@@ -54,7 +60,8 @@ public class SecurityPolicyServiceTests
     {
         var context = new Mock<IAdminContext>();
         var runtimeState = new Mock<ISecurityPolicyRuntimeState>();
-        var service = new SecurityPolicyService(context.Object, runtimeState.Object);
+        var publisher = new Mock<ISecurityPolicyChangePublisher>();
+        var service = new SecurityPolicyService(context.Object, runtimeState.Object, publisher.Object);
 
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
             service.UpdateAsync(
@@ -65,5 +72,8 @@ public class SecurityPolicyServiceTests
         Assert.Contains("QueryMaxRows", exception.Message);
         context.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         runtimeState.Verify(s => s.SetCurrent(It.IsAny<SecurityPolicyModel>()), Times.Never);
+        publisher.Verify(
+            x => x.PublishAsync(It.IsAny<SecurityPolicyModel>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }
