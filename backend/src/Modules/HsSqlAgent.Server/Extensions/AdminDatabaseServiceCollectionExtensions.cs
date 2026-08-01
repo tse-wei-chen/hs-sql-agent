@@ -77,12 +77,11 @@ internal static class AdminDatabaseServiceCollectionExtensions
 
     private static void ThrowUnsupportedProvider(string provider) =>
         throw new InvalidOperationException(
-            $"Unsupported admin database provider '{provider}'. Supported providers: Sqlite, PostgreSql.");
+            $"Unsupported admin database provider '{provider}'. Supported providers: Sqlite, Postgres.");
 
     private static bool IsSqlite(string provider) =>
         string.Equals(provider, "Sqlite", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsPostgres(string provider) =>
-        string.Equals(provider, "PostgreSql", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase);
 }

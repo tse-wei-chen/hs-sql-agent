@@ -9,6 +9,9 @@ services:
     environment:
       - AdminDatabase__Provider=${ADMIN_DATABASE_PROVIDER:-Sqlite}
       - AdminDatabase__ConnectionString=${ADMIN_DATABASE_CONNECTION_STRING:-Data Source=/app/data/hsqlagent.db}
+      - CacheConfig__Provider=${CACHE_PROVIDER:-Memory}
+      - CacheConfig__ConnectionString=${CACHE_CONNECTION_STRING:-}
+      - CacheConfig__KeyPrefix=${CACHE_KEY_PREFIX:-hsqlagent:cache:}
       - McpKeySettings__HmacSecretKey=${HMAC_KEY}
       - JwtSettings__SecretKey=${JWT_KEY}
       - JwtSettings__Issuer=${JWT_ISS}

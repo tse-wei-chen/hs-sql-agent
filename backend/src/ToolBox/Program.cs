@@ -60,8 +60,9 @@ builder.Services.AddHsSqlAgent(options =>
     if (int.TryParse(builder.Configuration["SqlConcurrency:LeaseSeconds"], out var leaseSeconds))
         options.SqlConcurrencyLeaseSeconds = leaseSeconds;
 
-    options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "IMemoryCache";
+    options.CacheProvider = builder.Configuration["CacheConfig:Provider"] ?? "Memory";
     options.CacheConnectionString = builder.Configuration["CacheConfig:ConnectionString"] ?? string.Empty;
+    options.CacheKeyPrefix = builder.Configuration["CacheConfig:KeyPrefix"] ?? "hsqlagent:cache:";
 });
 
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:8080");

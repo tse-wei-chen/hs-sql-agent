@@ -58,7 +58,10 @@ public static class HsSqlAgentServiceExtensions
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
 
         // --- Cache ---
-        services.AddCacheProvider(options.CacheProvider, options.CacheConnectionString);
+        services.AddCacheProvider(
+            options.CacheProvider,
+            options.CacheConnectionString,
+            options.CacheKeyPrefix);
         services.AddAdminDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
 
         services.AddScoped<IAuthService, AuthService>();

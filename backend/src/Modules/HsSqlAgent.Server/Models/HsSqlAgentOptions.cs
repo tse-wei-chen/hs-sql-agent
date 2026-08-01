@@ -31,8 +31,9 @@ public class HsSqlAgentServiceOptions
     public string SqlConcurrencyKey { get; set; } = "hsqlagent:sql-concurrency";
     public int SqlConcurrencyLeaseSeconds { get; set; } = 30;
 
-    public string CacheProvider { get; set; } = "IMemoryCache";
+    public string CacheProvider { get; set; } = "Memory";
     public string CacheConnectionString { get; set; } = string.Empty;
+    public string CacheKeyPrefix { get; set; } = "hsqlagent:cache:";
 }
 
 /// <summary>

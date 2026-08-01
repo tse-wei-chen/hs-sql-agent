@@ -44,7 +44,7 @@ public class AdminDatabaseRegistrationTests
         var services = new ServiceCollection();
 
         services.AddHsSqlAgent(CreateOptions(
-            "PostgreSql",
+            "Postgres",
             "Host=localhost;Database=hsqlagent;Username=postgres;Password=postgres"));
 
         using var provider = services.BuildServiceProvider();
