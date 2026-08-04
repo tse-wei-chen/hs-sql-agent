@@ -50,8 +50,14 @@ export const updateRole = async (id: number, payload: RolePayload) => {
   return response.data;
 };
 
-export const deleteRole = async (id: number) => {
-  await xiorInstanceToken.delete(`/role/${id}`);
+export const deleteRole = async (id: number, force = false) => {
+  await xiorInstanceToken.delete(`/role/${id}`, { params: { force } });
+};
+
+export interface RoleDependencies { roleId: number; roleName: string; permissions: string[]; members: { id: number; username: string; mail: string }[] }
+export const getRoleDependencies = async (id: number) => {
+  const response = await xiorInstanceToken.get<RoleDependencies>(`/role/${id}/dependencies`);
+  return response.data;
 };
 
 export const listPermissionActionTemplates = async () => {

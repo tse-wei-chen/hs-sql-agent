@@ -261,7 +261,7 @@ onMounted(load);
                 v-model="assignAllRoles"
               />
               <Label for="assignAllRoles" class="cursor-pointer text-sm">
-                Assign all roles
+                Select all current roles
               </Label>
             </div>
 

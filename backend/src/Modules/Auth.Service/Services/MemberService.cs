@@ -1,3 +1,4 @@
+using System.Data;
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
 using Auth.Service.Interfaces;
@@ -118,6 +119,7 @@ public class MemberService(IAuthContext context) : IMemberService
         UpdateMemberRolesRequest request,
         CancellationToken cancellationToken = default)
     {
+        await using var transaction = await BeginGuardTransactionAsync(cancellationToken);
         var member = await _context.Members
             .Include(x => x.MemberRoles)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -148,7 +150,7 @@ public class MemberService(IAuthContext context) : IMemberService
         member.SecurityVersion++;
         await _context.SaveChangesAsync(cancellationToken);
 
-        return new MemberVM
+        var result = new MemberVM
         {
             Id = member.Id,
             Username = member.Username,
@@ -162,6 +164,8 @@ public class MemberService(IAuthContext context) : IMemberService
                 .OrderBy(x => x)
                 .ToArrayAsync(cancellationToken)
         };
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     public async Task<MemberVM> UpdateMemberStatusAsync(
@@ -169,6 +173,7 @@ public class MemberService(IAuthContext context) : IMemberService
         UpdateMemberStatusRequest request,
         CancellationToken cancellationToken = default)
     {
+        await using var transaction = await BeginGuardTransactionAsync(cancellationToken);
         var member = await _context.Members
             .Include(x => x.MemberRoles)
             .ThenInclude(x => x.Role)
@@ -184,11 +189,13 @@ public class MemberService(IAuthContext context) : IMemberService
         member.IsActive = request.IsActive;
         member.SecurityVersion++;
         await _context.SaveChangesAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
         return ToViewModel(member);
     }
 
     public async Task DeleteMemberAsync(int id, CancellationToken cancellationToken = default)
     {
+        await using var transaction = await BeginGuardTransactionAsync(cancellationToken);
         var member = await _context.Members
             .Include(x => x.MemberRoles)
             .ThenInclude(x => x.Role)
@@ -199,6 +206,7 @@ public class MemberService(IAuthContext context) : IMemberService
 
         _context.Members.Remove(member);
         await _context.SaveChangesAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<int> CreateMemberAsync(CreateMemberRequest request, CancellationToken cancellationToken = default)
@@ -321,4 +329,9 @@ public class MemberService(IAuthContext context) : IMemberService
             session.RevocationReason = reason;
         }
     }
+
+    private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?> BeginGuardTransactionAsync(CancellationToken cancellationToken)
+        => _context is AuthContext db
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
 }

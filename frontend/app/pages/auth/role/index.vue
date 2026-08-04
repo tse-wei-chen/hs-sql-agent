@@ -18,6 +18,7 @@ import FormField from "@/components/FormField.vue";
 import {
   createRole,
   deleteRole,
+  getRoleDependencies,
   listPermissionActionTemplates,
   listRoles,
   updateRole,
@@ -191,10 +192,14 @@ const save = async () => {
 const onSave = handleSubmit(save);
 
 const remove = async (role: Role) => {
-  if (!confirm(`Delete role "${role.name}"?`)) return;
-
   try {
-    await deleteRole(role.id);
+    const dependencies = await getRoleDependencies(role.id);
+    const affected = dependencies.members;
+    const accounts = affected.length ? affected.map((member) => `- ${member.mail}`).join("\n") : "- None";
+    const permissions = dependencies.permissions.length ? dependencies.permissions.map((permission) => `- ${permission}`).join("\n") : "- None";
+    const detail = `\n\nAffected accounts:\n${accounts}\n\nPermissions removed:\n${permissions}`;
+    if (!confirm(`Delete role "${role.name}"?${detail}`)) return;
+    await deleteRole(role.id, affected.length > 0);
     await load();
   } catch (error: any) {
     toast.error(error?.response?.data || "Failed to delete role.");
