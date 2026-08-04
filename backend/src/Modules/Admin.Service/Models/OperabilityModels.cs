@@ -72,3 +72,11 @@ public class AuditRetentionResult
     public string? ArchiveFile { get; set; }
     public long DeletedCount { get; set; }
 }
+
+public class AuditRetentionPolicy
+{
+    public bool Enabled { get; set; }
+    public int RetentionDays { get; set; }
+    public string Mode { get; set; } = null!;
+    public int RunHourUtc { get; set; }
+}

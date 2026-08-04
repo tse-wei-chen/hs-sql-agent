@@ -13,6 +13,25 @@ namespace Admin.Test.Services;
 public class AuditRetentionServiceTests
 {
     [Fact]
+    public async Task GetPolicy_ShouldReportZeroDayRetentionAsDisabled()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var dbOptions = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
+        await using var context = new AdminContext(dbOptions);
+        var settings = Options.Create(new OperabilitySettings());
+        var audit = new AuditService(context, new HttpContextAccessor(), settings);
+        var service = new AuditRetentionService(context, audit, settings);
+
+        var policy = service.GetPolicy();
+
+        Assert.False(policy.Enabled);
+        Assert.Equal(0, policy.RetentionDays);
+        Assert.Equal("Purge", policy.Mode);
+        Assert.Equal(2, policy.RunHourUtc);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ShouldSupportDryRunAndAuditThePurge()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

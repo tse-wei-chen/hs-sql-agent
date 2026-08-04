@@ -148,6 +148,9 @@ export const getDeliveryStatuses = async () =>
 export const retryDelivery = async (id: number) =>
   xiorInstanceToken.post(`/runtime/operability/deliveries/${id}/retry`);
 
+export const getAuditRetentionPolicy = async () =>
+  (await xiorInstanceToken.get("/runtime/audit/retention")).data;
+
 export const dryRunAuditRetention = async () =>
   (await xiorInstanceToken.post("/runtime/audit/retention/dry-run")).data;
 

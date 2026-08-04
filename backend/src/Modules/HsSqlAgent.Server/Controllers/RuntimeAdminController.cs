@@ -245,15 +245,30 @@ public class RuntimeAdminController(
     public async Task<IActionResult> RetryDelivery(long id, CancellationToken cancellationToken)
         => await operabilityService.RetryDeliveryAsync(id, cancellationToken) ? NoContent() : NotFound();
 
+    [HasPermission("/runtime/audit", "view")]
+    [HttpGet("audit/retention")]
+    public IActionResult GetRetentionPolicy()
+        => Ok(auditRetentionService.GetPolicy());
+
     [HasPermission("/runtime/audit", "edit")]
     [HttpPost("audit/retention/dry-run")]
     public async Task<IActionResult> DryRunRetention(CancellationToken cancellationToken)
-        => Ok(await auditRetentionService.ExecuteAsync(true, cancellationToken));
+    {
+        if (!auditRetentionService.GetPolicy().Enabled)
+            return BadRequest("Audit retention is disabled. Set Operability:AuditRetentionDays to a positive value and restart the service.");
+
+        return Ok(await auditRetentionService.ExecuteAsync(true, cancellationToken));
+    }
 
     [HasPermission("/runtime/audit", "edit")]
     [HttpPost("audit/retention/execute")]
     public async Task<IActionResult> ExecuteRetention(CancellationToken cancellationToken)
-        => Ok(await auditRetentionService.ExecuteAsync(false, cancellationToken));
+    {
+        if (!auditRetentionService.GetPolicy().Enabled)
+            return BadRequest("Audit retention is disabled. Set Operability:AuditRetentionDays to a positive value and restart the service.");
+
+        return Ok(await auditRetentionService.ExecuteAsync(false, cancellationToken));
+    }
 
     private string? ResolveActorId()
         => User.FindFirstValue(JwtRegisteredClaimNames.Sub)

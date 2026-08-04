@@ -12,6 +12,18 @@ public class AuditRetentionService(
     IAuditService auditService,
     IOptions<OperabilitySettings> settings) : IAuditRetentionService
 {
+    public AuditRetentionPolicy GetPolicy()
+    {
+        var options = settings.Value;
+        return new AuditRetentionPolicy
+        {
+            Enabled = options.AuditRetentionDays > 0,
+            RetentionDays = Math.Max(0, options.AuditRetentionDays),
+            Mode = options.AuditRetentionMode,
+            RunHourUtc = Math.Clamp(options.AuditRetentionRunHourUtc, 0, 23)
+        };
+    }
+
     public async Task<AuditRetentionResult> ExecuteAsync(bool dryRun, CancellationToken cancellationToken = default)
     {
         var options = settings.Value;
