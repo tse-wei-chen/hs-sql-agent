@@ -9,4 +9,5 @@ public class Member
     public bool IsActive { get; set; } = true;
     public int SecurityVersion { get; set; } = 1;
     public ICollection<MemberRole> MemberRoles { get; set; } = [];
+    public ICollection<AuthSession> AuthSessions { get; set; } = [];
 }

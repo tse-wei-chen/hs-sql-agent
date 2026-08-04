@@ -39,3 +39,7 @@ export const updateMemberStatus = async (id: number, isActive: boolean) => {
 export const deleteMember = async (id: number) => {
   await xiorInstanceToken.delete(`/member/${id}`);
 };
+
+export const revokeMemberSessions = async (id: number) => {
+  await xiorInstanceToken.delete(`/member/${id}/sessions`);
+};

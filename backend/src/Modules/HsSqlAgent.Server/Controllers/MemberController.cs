@@ -14,6 +14,7 @@ namespace HsSqlAgent.Server.Controllers;
 public class MemberController(
     ILogger<MemberController> logger,
     IMemberService memberService,
+    IAuthService authService,
     IAuditService auditService) : ControllerBase
 {
     [HttpPost]
@@ -140,5 +141,14 @@ public class MemberController(
                 ? NotFound(ex.Message)
                 : BadRequest(ex.Message);
         }
+    }
+
+    [HttpDelete("{id:int}/sessions")]
+    [HasPermission("/auth/user", "edit")]
+    public async Task<IActionResult> RevokeUserSessionsAsync(int id, CancellationToken cancellationToken)
+    {
+        await authService.RevokeAllSessionsAsync(id, null, "Revoked by administrator.", cancellationToken);
+        await auditService.WriteLogAsync("admin.users.sessions.revoke", id.ToString(), "success", cancellationToken: cancellationToken);
+        return NoContent();
     }
 }

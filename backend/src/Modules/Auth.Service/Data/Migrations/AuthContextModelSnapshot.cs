@@ -73,6 +73,59 @@ namespace Auth.Service.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Auth.Service.Data.Entites.AuthSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CurrentRefreshTokenHash")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastUsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TokenFamilyId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("TokenFamilyId");
+
+                    b.ToTable("AuthSessions");
+                });
+
             modelBuilder.Entity("Auth.Service.Data.Entites.Member", b =>
                 {
                     b.Property<int>("Id")
@@ -464,6 +517,17 @@ namespace Auth.Service.Data.Migrations
                     b.ToTable("TokenBlacklistEntries");
                 });
 
+            modelBuilder.Entity("Auth.Service.Data.Entites.AuthSession", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany("AuthSessions")
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
             modelBuilder.Entity("Auth.Service.Data.Entites.MemberRole", b =>
                 {
                     b.HasOne("Auth.Service.Data.Entites.Member", "Member")
@@ -538,6 +602,8 @@ namespace Auth.Service.Data.Migrations
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Member", b =>
                 {
+                    b.Navigation("AuthSessions");
+
                     b.Navigation("MemberRoles");
                 });
 

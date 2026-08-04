@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
 using Auth.Service.Models;
@@ -14,6 +16,7 @@ public class AuthServiceTests
     private readonly Mock<IAuthContext> _contextMock;
     private readonly IOptions<JwtSettings> _jwtSettings;
     private readonly AuthService _service;
+    private readonly List<AuthSession> _sessions = [];
 
     public AuthServiceTests()
     {
@@ -27,6 +30,11 @@ public class AuthServiceTests
             RefreshTokenExpirationDays = 30
         });
         _service = new AuthService(_contextMock.Object, _jwtSettings);
+        _contextMock.Setup(c => c.AuthSessions).ReturnsDbSet(_sessions);
+        Mock.Get(_contextMock.Object.AuthSessions)
+            .Setup(x => x.Add(It.IsAny<AuthSession>()))
+            .Callback<AuthSession>(_sessions.Add);
+        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
     }
 
     [Fact]
@@ -114,6 +122,7 @@ public class AuthServiceTests
         _contextMock.SetupSequence(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(1)
             .ReturnsAsync(1)
+            .ReturnsAsync(1)
             .ReturnsAsync(1);
 
         var result = await _service.SignUpFirstAdminAsync(new SignUpRequest { Email = "admin@test.com", Password = "admin123" }, TestContext.Current.CancellationToken);
@@ -140,11 +149,20 @@ public class AuthServiceTests
     public async Task RefreshTokenAsync_ReturnsAuthResult_WhenMemberExists()
     {
         var member = new Member { Id = 1, Mail = "user@test.com", PasswordHash = "hash", Username = "user" };
+        var sessionId = Guid.NewGuid();
+        const string refreshTokenId = "refresh-token-id";
+        _sessions.Add(new AuthSession
+        {
+            Id = sessionId,
+            MemberId = member.Id,
+            CurrentRefreshTokenHash = Hash(refreshTokenId),
+            ExpiresAt = DateTime.UtcNow.AddDays(1)
+        });
         _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
         _contextMock.Setup(c => c.MemberRoles).ReturnsDbSet(new List<MemberRole>());
         _contextMock.Setup(c => c.PermissionActions).ReturnsDbSet(new List<PermissionAction>());
 
-        var result = await _service.RefreshTokenAsync("1", 1, TestContext.Current.CancellationToken);
+        var result = await _service.RefreshTokenAsync("1", 1, sessionId, refreshTokenId, TestContext.Current.CancellationToken);
 
         Assert.Equal("user", result.UserName);
         Assert.NotNull(result.AccessToken);
@@ -155,7 +173,7 @@ public class AuthServiceTests
     public async Task RefreshTokenAsync_Throws_WhenIdNotParseable()
     {
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            _service.RefreshTokenAsync("not-a-number", 1, TestContext.Current.CancellationToken));
+            _service.RefreshTokenAsync("not-a-number", 1, Guid.NewGuid(), "token", TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -164,7 +182,7 @@ public class AuthServiceTests
         _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member>());
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            _service.RefreshTokenAsync("999", 1, TestContext.Current.CancellationToken));
+            _service.RefreshTokenAsync("999", 1, Guid.NewGuid(), "token", TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -200,7 +218,7 @@ public class AuthServiceTests
         _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            _service.RefreshTokenAsync("1", 1, TestContext.Current.CancellationToken));
+            _service.RefreshTokenAsync("1", 1, Guid.NewGuid(), "token", TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -247,4 +265,33 @@ public class AuthServiceTests
         Assert.NotNull(result.RefreshToken);
         Assert.NotEqual(result.AccessToken, result.RefreshToken);
     }
+
+    [Fact]
+    public async Task RefreshTokenAsync_RevokesSession_WhenSameTokenIsUsedTwice()
+    {
+        var member = new Member { Id = 1, Mail = "user@test.com", PasswordHash = "hash", Username = "user" };
+        var session = new AuthSession
+        {
+            Id = Guid.NewGuid(),
+            MemberId = member.Id,
+            CurrentRefreshTokenHash = Hash("one-time-token"),
+            ExpiresAt = DateTime.UtcNow.AddDays(1)
+        };
+        _sessions.Add(session);
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+        _contextMock.Setup(c => c.MemberRoles).ReturnsDbSet(new List<MemberRole>());
+        _contextMock.Setup(c => c.PermissionActions).ReturnsDbSet(new List<PermissionAction>());
+
+        await _service.RefreshTokenAsync(
+            "1", 1, session.Id, "one-time-token", TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.RefreshTokenAsync("1", 1, session.Id, "one-time-token", TestContext.Current.CancellationToken));
+
+        Assert.NotNull(session.RevokedAt);
+        Assert.Equal("Refresh token reuse detected.", session.RevocationReason);
+    }
+
+    private static string Hash(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 }

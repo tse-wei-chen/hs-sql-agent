@@ -19,7 +19,7 @@ public class TokenRevocationMiddleware(RequestDelegate next)
 
         if (!string.IsNullOrWhiteSpace(jti) && await revocationService.IsRevokedAsync(jti))
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await WriteAuthFailureAsync(context, "session_revoked", "This session has been revoked.");
             return;
         }
 
@@ -27,10 +27,12 @@ public class TokenRevocationMiddleware(RequestDelegate next)
         {
             var subject = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
             var versionClaim = context.User.FindFirst(AuthService.SecurityVersionClaim)?.Value;
+            var sessionClaim = context.User.FindFirst(AuthService.SessionIdClaim)?.Value;
             if (!int.TryParse(subject, out var memberId) ||
-                !int.TryParse(versionClaim, out var tokenSecurityVersion))
+                !int.TryParse(versionClaim, out var tokenSecurityVersion) ||
+                !Guid.TryParse(sessionClaim, out var sessionId))
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await WriteAuthFailureAsync(context, "invalid_token", "The authentication token is invalid.");
                 return;
             }
 
@@ -40,14 +42,41 @@ public class TokenRevocationMiddleware(RequestDelegate next)
                 .Select(x => new { x.IsActive, x.SecurityVersion })
                 .FirstOrDefaultAsync(context.RequestAborted);
 
-            if (memberState is null || !memberState.IsActive ||
-                memberState.SecurityVersion != tokenSecurityVersion)
+            if (memberState is null)
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await WriteAuthFailureAsync(context, "session_invalid", "The account no longer exists.");
+                return;
+            }
+            if (!memberState.IsActive)
+            {
+                await WriteAuthFailureAsync(context, "account_disabled", "This account has been disabled.");
+                return;
+            }
+            if (memberState.SecurityVersion != tokenSecurityVersion)
+            {
+                await WriteAuthFailureAsync(context, "permissions_changed", "Account permissions changed. Sign in again.");
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var sessionIsActive = await authContext.AuthSessions
+                .AsNoTracking()
+                .AnyAsync(x => x.Id == sessionId && x.MemberId == memberId &&
+                               x.RevokedAt == null && x.ExpiresAt > now,
+                    context.RequestAborted);
+            if (!sessionIsActive)
+            {
+                await WriteAuthFailureAsync(context, "session_expired", "This session expired or was revoked.");
                 return;
             }
         }
 
         await _next(context);
+    }
+
+    private static async Task WriteAuthFailureAsync(HttpContext context, string code, string message)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await context.Response.WriteAsJsonAsync(new { code, message }, context.RequestAborted);
     }
 }

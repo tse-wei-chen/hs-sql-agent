@@ -6,6 +6,7 @@ namespace Auth.Service.Data;
 public class AuthContext(DbContextOptions<AuthContext> options) : DbContext(options), IAuthContext
 {
     public DbSet<AuthAction> AuthActions { get; set; } = null!;
+    public DbSet<AuthSession> AuthSessions { get; set; } = null!;
     public DbSet<Member> Members { get; set; } = null!;
     public DbSet<MemberRole> MemberRoles { get; set; } = null!;
     public DbSet<Permission> Permissions { get; set; } = null!;

@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Edit2, Power, PowerOff, Save, Trash2, UserPlus, X } from "@lucide/vue";
+import { Edit2, LogOut, Power, PowerOff, Save, Trash2, UserPlus, X } from "@lucide/vue";
 import FormField from "@/components/FormField.vue";
 import PasswordInput from "@/components/PasswordInput.vue";
 import {
@@ -22,6 +22,7 @@ import {
   listMembers,
   updateMemberRoles,
   updateMemberStatus,
+  revokeMemberSessions,
   type Member,
 } from "~/api/member";
 import {
@@ -179,6 +180,16 @@ const toggleStatus = async (member: Member) => {
   }
 };
 
+const revokeSessions = async (member: Member) => {
+  if (!confirm(`Sign out all sessions for "${member.mail}"?`)) return;
+  try {
+    await revokeMemberSessions(member.id);
+    toast.success("All user sessions were revoked.");
+  } catch (error: any) {
+    toast.error(error?.response?.data || "Failed to revoke user sessions.");
+  }
+};
+
 onMounted(load);
 </script>
 
@@ -313,6 +324,9 @@ onMounted(load);
                 </p>
               </div>
               <div v-if="member.id !== currentUserId" class="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <Button variant="ghost" size="icon" class="h-8 w-8" title="Sign out all sessions" @click="revokeSessions(member)" v-permission="'edit'">
+                  <LogOut class="size-4" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

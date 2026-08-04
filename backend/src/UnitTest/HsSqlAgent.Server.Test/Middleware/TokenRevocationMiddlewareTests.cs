@@ -14,6 +14,7 @@ namespace HsSqlAgent.Server.Test.Middleware;
 
 public class TokenRevocationMiddlewareTests
 {
+    private static readonly Guid ActiveSessionId = Guid.NewGuid();
     private readonly Mock<ITokenRevocationService> _revocationMock;
     private readonly Mock<IAuthContext> _authContextMock;
 
@@ -24,6 +25,10 @@ public class TokenRevocationMiddlewareTests
         _authContextMock.Setup(x => x.Members).ReturnsDbSet(new List<Member>
         {
             new() { Id = 1, Username = "user", Mail = "user@test.com", PasswordHash = "hash", IsActive = true, SecurityVersion = 1 }
+        });
+        _authContextMock.Setup(x => x.AuthSessions).ReturnsDbSet(new List<AuthSession>
+        {
+            new() { Id = ActiveSessionId, MemberId = 1, ExpiresAt = DateTime.UtcNow.AddDays(1) }
         });
     }
 
@@ -120,7 +125,8 @@ public class TokenRevocationMiddlewareTests
         {
             new Claim(JwtRegisteredClaimNames.Jti, jti),
             new Claim(JwtRegisteredClaimNames.Sub, "1"),
-            new Claim(AuthService.SecurityVersionClaim, "1")
+            new Claim(AuthService.SecurityVersionClaim, "1"),
+            new Claim(AuthService.SessionIdClaim, ActiveSessionId.ToString())
         };
         var identity = new ClaimsIdentity(claims, "TestAuth");
         var principal = new ClaimsPrincipal(identity);
@@ -132,7 +138,8 @@ public class TokenRevocationMiddlewareTests
         var identity = new ClaimsIdentity(
         [
             new Claim(JwtRegisteredClaimNames.Sub, "1"),
-            new Claim(AuthService.SecurityVersionClaim, "1")
+            new Claim(AuthService.SecurityVersionClaim, "1"),
+            new Claim(AuthService.SessionIdClaim, ActiveSessionId.ToString())
         ], "TestAuth");
         var principal = new ClaimsPrincipal(identity);
         return new DefaultHttpContext { User = principal };

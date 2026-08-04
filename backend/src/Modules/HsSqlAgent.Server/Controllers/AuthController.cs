@@ -31,7 +31,10 @@ public class AuthController(
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
         try
         {
-            var result = await authService.SignInAsync(request);
+            var result = await authService.SignInAsync(
+                request,
+                ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
+                userAgent: Request.Headers.UserAgent.ToString());
             await auditService.WriteLogAsync("admin.signin", request.Email, "success");
             return Ok(result);
         }
@@ -56,7 +59,10 @@ public class AuthController(
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
         try
         {
-            var result = await authService.SignUpFirstAdminAsync(request);
+            var result = await authService.SignUpFirstAdminAsync(
+                request,
+                ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
+                userAgent: Request.Headers.UserAgent.ToString());
             await auditService.WriteLogAsync("admin.signup", request.Email, "success");
             return Ok(result);
         }
@@ -82,15 +88,26 @@ public class AuthController(
             return Unauthorized("User ID is required.");
         if (!int.TryParse(User.FindFirstValue(AuthService.SecurityVersionClaim), out var securityVersion))
             return Unauthorized("Security version is required.");
+        if (!Guid.TryParse(User.FindFirstValue(AuthService.SessionIdClaim), out var sessionId))
+            return Unauthorized("Session ID is required.");
+        var refreshTokenId = User.FindFirstValue(JwtRegisteredClaimNames.Jti);
+        if (string.IsNullOrWhiteSpace(refreshTokenId))
+            return Unauthorized("Refresh token ID is required.");
         try
         {
-            var result = await authService.RefreshTokenAsync(id, securityVersion, cancellationToken);
+            var result = await authService.RefreshTokenAsync(id, securityVersion, sessionId, refreshTokenId, cancellationToken);
             return Ok(result);
         }
         catch (UnauthorizedAccessException ex)
         {
             logger.LogWarning(ex, "Token refresh failed");
-            return Forbid();
+            await auditService.WriteLogAsync(
+                "admin.sessions.refresh-rejected",
+                id,
+                "failed",
+                ex.Message,
+                cancellationToken);
+            return Unauthorized(new { code = "session_invalid", message = ex.Message });
         }
         catch (ArgumentException ex)
         {
@@ -102,6 +119,11 @@ public class AuthController(
     [HttpPost("sign-out")]
     public async Task<IActionResult> SignOutAsync([FromBody] SignOutRequest? request)
     {
+        var memberIdClaim = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        var sessionIdClaim = User.FindFirstValue(AuthService.SessionIdClaim);
+        if (int.TryParse(memberIdClaim, out var memberId) && Guid.TryParse(sessionIdClaim, out var sessionId))
+            await authService.RevokeSessionAsync(memberId, sessionId, "User signed out.");
+
         var accessJti = User.FindFirstValue(JwtRegisteredClaimNames.Jti);
 
         if (!string.IsNullOrWhiteSpace(accessJti))
@@ -136,5 +158,44 @@ public class AuthController(
 
         await auditService.WriteLogAsync("admin.signout", User.FindFirstValue(JwtRegisteredClaimNames.Email) ?? "unknown", "success");
         return Ok();
+    }
+
+    [HttpGet("sessions")]
+    public async Task<IActionResult> GetSessionsAsync(CancellationToken cancellationToken)
+    {
+        if (!TryGetSessionIdentity(out var memberId, out var sessionId)) return Unauthorized();
+        return Ok(await authService.GetSessionsAsync(memberId, sessionId, cancellationToken));
+    }
+
+    [HttpDelete("sessions/{sessionId:guid}")]
+    public async Task<IActionResult> RevokeSessionAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        if (!TryGetSessionIdentity(out var memberId, out _)) return Unauthorized();
+        try
+        {
+            await authService.RevokeSessionAsync(memberId, sessionId, "Revoked by user.", cancellationToken);
+            await auditService.WriteLogAsync("admin.sessions.revoke", sessionId.ToString(), "success", cancellationToken: cancellationToken);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ex.Message);
+        }
+    }
+
+    [HttpDelete("sessions")]
+    public async Task<IActionResult> RevokeOtherSessionsAsync(CancellationToken cancellationToken)
+    {
+        if (!TryGetSessionIdentity(out var memberId, out var sessionId)) return Unauthorized();
+        await authService.RevokeAllSessionsAsync(memberId, sessionId, "Other sessions revoked by user.", cancellationToken);
+        await auditService.WriteLogAsync("admin.sessions.revoke-others", memberId.ToString(), "success", cancellationToken: cancellationToken);
+        return NoContent();
+    }
+
+    private bool TryGetSessionIdentity(out int memberId, out Guid sessionId)
+    {
+        var hasMember = int.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out memberId);
+        var hasSession = Guid.TryParse(User.FindFirstValue(AuthService.SessionIdClaim), out sessionId);
+        return hasMember && hasSession;
     }
 }

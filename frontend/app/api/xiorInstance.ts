@@ -89,7 +89,8 @@ xiorInstanceRefreshToken.interceptors.response.use(
     return response;
   },
   async (error) => {
-    toast.error("Permission denied. You have been logged out.");
+    const message = error.response?.data?.message || "Your session expired or was revoked. Please sign in again.";
+    toast.error(message);
     await signOut();
     clearAuthSession();
     await navigateTo("/login");

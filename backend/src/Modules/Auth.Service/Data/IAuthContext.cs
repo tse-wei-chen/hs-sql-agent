@@ -6,6 +6,7 @@ namespace Auth.Service.Data;
 public interface IAuthContext
 {
     DbSet<AuthAction> AuthActions { get; }
+    DbSet<AuthSession> AuthSessions { get; }
     DbSet<Member> Members { get; }
     DbSet<MemberRole> MemberRoles { get; }
     DbSet<Permission> Permissions { get; }
