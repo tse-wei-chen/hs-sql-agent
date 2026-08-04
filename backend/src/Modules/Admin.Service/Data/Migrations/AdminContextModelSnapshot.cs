@@ -137,9 +137,8 @@ namespace Admin.Service.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("DefinitionJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                    b.Property<int?>("DbManagementId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Description")
                         .IsRequired()
@@ -157,6 +156,22 @@ namespace Admin.Service.Data.Migrations
                     b.Property<string>("ParametersJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PublishedIdentity")
+                        .HasMaxLength(220)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PublishedRevisionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SqlTemplate")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -164,7 +179,72 @@ namespace Admin.Service.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DbManagementId");
+
+                    b.HasIndex("PublishedIdentity")
+                        .IsUnique();
+
+                    b.HasIndex("PublishedRevisionId");
+
                     b.ToTable("CustomSqlTools");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlToolRevision", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CustomSqlToolId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DiffJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ParametersJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("PublishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PublishedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RevisionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SqlTemplate")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DbManagementId");
+
+                    b.HasIndex("CustomSqlToolId", "RevisionNumber")
+                        .IsUnique();
+
+                    b.ToTable("CustomSqlToolRevisions");
                 });
 
             modelBuilder.Entity("Admin.Service.Data.Entites.DbHealthState", b =>
@@ -560,6 +640,42 @@ namespace Admin.Service.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlTool", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
+                        .WithMany()
+                        .HasForeignKey("DbManagementId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Admin.Service.Data.Entites.CustomSqlToolRevision", "PublishedRevision")
+                        .WithMany()
+                        .HasForeignKey("PublishedRevisionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("DbManagement");
+
+                    b.Navigation("PublishedRevision");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlToolRevision", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.CustomSqlTool", "CustomSqlTool")
+                        .WithMany("Revisions")
+                        .HasForeignKey("CustomSqlToolId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
+                        .WithMany()
+                        .HasForeignKey("DbManagementId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CustomSqlTool");
+
+                    b.Navigation("DbManagement");
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.DbHealthState", b =>
                 {
                     b.HasOne("Admin.Service.Data.Entites.DbManagement", null)
@@ -578,6 +694,11 @@ namespace Admin.Service.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("DbManagement");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlTool", b =>
+                {
+                    b.Navigation("Revisions");
                 });
 #pragma warning restore 612, 618
         }

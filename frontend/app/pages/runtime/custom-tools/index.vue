@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from "vue";
+import { onMounted, ref } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -32,14 +32,20 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CircleAlert, CircleCheck, Plus, Trash2, Edit2, Save, X, Play } from "@lucide/vue";
+import { CircleAlert, CircleCheck, Plus, Trash2, Edit2, Save, X, Play, Upload, Ban, History } from "@lucide/vue";
 import {
   listCustomSqlTools,
   createCustomSqlTool,
   updateCustomSqlTool,
   deleteCustomSqlTool,
   testExecuteCustomSqlTool,
+  publishCustomSqlTool,
+  disableCustomSqlTool,
+  listCustomSqlToolRevisions,
+  rollbackCustomSqlTool,
+  getCustomSqlToolImpact,
   type CustomSqlTool,
+  type CustomSqlToolRevision,
   type TestExecuteResult,
 } from "@/api/custom-tools";
 import {
@@ -47,8 +53,6 @@ import {
   type DbManagement,
 } from "@/api/db-management";
 
-import { parseSqlCustomSqlTool } from "@/api/custom-tools";
-import { json } from "@codemirror/lang-json";
 import { oneDark } from "@codemirror/theme-one-dark";
 import FormField from "@/components/FormField.vue";
 import { toast } from "vue-sonner"
@@ -63,7 +67,8 @@ interface ToolFormValues {
   name: string
   description: string
   type: 'Query' | 'DML'
-  definitionJson: string
+  sqlTemplate: string
+  dbManagementId: number | null
 }
 
 const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<ToolFormValues>({
@@ -71,7 +76,8 @@ const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm, handleS
     name: "",
     description: "",
     type: "Query",
-    definitionJson: "",
+    sqlTemplate: "",
+    dbManagementId: null,
   },
 })
 
@@ -90,26 +96,31 @@ const testDbId = ref<number | null>(null);
 const testParamValues = ref<Record<string, string>>({});
 const testExecuting = ref(false);
 const testResult = ref<TestExecuteResult | null>(null);
+const isHistoryDialogOpen = ref(false);
+const historyTool = ref<CustomSqlTool | null>(null);
+const revisions = ref<CustomSqlToolRevision[]>([]);
 
 const openTestDialog = () => {
-  testDbId.value = dbs.value?.[0]?.id ?? null;
+  if (!editingId.value) {
+    toast.error("Save the draft before testing it.");
+    return;
+  }
+  testDbId.value = values.dbManagementId;
   testParamValues.value = {};
   testResult.value = null;
   isTestDialogOpen.value = true;
 };
 
 const runTestExecute = async () => {
-  if (!testDbId.value) {
-    toast.error("Please select a database.");
+  if (!editingId.value) {
+    toast.error("Save the draft before testing it.");
     return;
   }
   testExecuting.value = true;
   testResult.value = null;
   try {
     const result = await testExecuteCustomSqlTool({
-      definitionJson: values.definitionJson,
-      type: values.type,
-      dbId: testDbId.value,
+      toolId: editingId.value,
       parameters: Object.keys(testParamValues.value).length > 0 ? testParamValues.value : undefined,
     });
     testResult.value = result;
@@ -137,41 +148,6 @@ const loadDbs = async () => {
     dbs.value = await listDbManagements();
   } catch (e: any) {
     toast.error(getErrorMessage(e, "Failed to load databases."));
-  }
-};
-
-const isJsonValid = computed(() => {
-  if (!values.definitionJson) return true;
-  try {
-    const sanitized = values.definitionJson.replace(/\{\{[^}]*\}\}/g, "null");
-    JSON.parse(sanitized);
-    return true;
-  } catch {
-    return false;
-  }
-});
-
-const formatJson = () => {
-  if (isJsonValid.value && values.definitionJson) {
-    try {
-      const parsed = JSON.parse(values.definitionJson);
-      setFieldValue("definitionJson", JSON.stringify(parsed, null, 2));
-    } catch {}
-  }
-};
-
-const parseSql = async () => {
-  if (!values.definitionJson) return;
-  try {
-    const result = await parseSqlCustomSqlTool(values.definitionJson);
-    if (result.success) {
-      setFieldValue("definitionJson", JSON.stringify(JSON.parse(result.data!), null, 2));
-      toast.success("SQL parsed to QueryDefinition JSON");
-    } else {
-      toast.error(`Parse error: ${result.error}`);
-    }
-  } catch (e: any) {
-    toast.error(`Parse error: ${e.message}`);
   }
 };
 
@@ -204,13 +180,18 @@ const startEdit = (tool: CustomSqlTool) => {
     name: tool.name,
     description: tool.description,
     type: tool.type,
-    definitionJson: tool.definitionJson,
+    sqlTemplate: tool.sqlTemplate,
+    dbManagementId: tool.dbManagementId ?? null,
   })
   parameters.value = tool.parametersJson ? JSON.parse(tool.parametersJson) : [];
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
 const save = async () => {
+  if (!values.dbManagementId) {
+    toast.error("Please bind the tool to a database.");
+    return;
+  }
   if (parameters.value.some((p) => !p.name.trim())) {
     toast.error("All parameters must have a name.");
     return;
@@ -223,7 +204,8 @@ const save = async () => {
       name: v.name,
       description: v.description,
       type: v.type,
-      definitionJson: v.definitionJson,
+      sqlTemplate: v.sqlTemplate,
+      dbManagementId: v.dbManagementId,
       parametersJson: JSON.stringify(parameters.value),
     };
 
@@ -256,16 +238,53 @@ const remove = async (id: number) => {
     toast.error(getErrorMessage(error, "Failed to delete tool."));
   }
 };
+const dbName = (id?: number | null) => dbs.value.find((db) => db.id === id)?.name ?? "Unbound";
 
-watch(
-  () => values.type,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      setFieldValue("definitionJson", "");
-      parameters.value = [];
-    }
-  },
-);
+const publish = async (tool: CustomSqlTool) => {
+  try {
+    const impact = await getCustomSqlToolImpact(tool.id);
+    const changes = impact.breakingChanges.length > 0
+      ? `\nBreaking changes:\n- ${impact.breakingChanges.join("\n- ")}`
+      : "\nNo parameter, name, type, or database breaking changes detected.";
+    if (!confirm(
+      `Publish ${tool.name} to ${impact.draftDatabaseName || "the bound database"}?\n` +
+      `${impact.wouldExposeToKeys.length} active key(s) will be able to discover it.${changes}`,
+    )) return;
+    await publishCustomSqlTool(tool.id);
+    toast.success(`${tool.name} published.`);
+    await load();
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, "Failed to publish tool."));
+  }
+};
+
+const disable = async (tool: CustomSqlTool) => {
+  try {
+    await disableCustomSqlTool(tool.id);
+    toast.success(`${tool.name} disabled for new MCP sessions.`);
+    await load();
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, "Failed to disable tool."));
+  }
+};
+
+const openHistory = async (tool: CustomSqlTool) => {
+  historyTool.value = tool;
+  revisions.value = await listCustomSqlToolRevisions(tool.id);
+  isHistoryDialogOpen.value = true;
+};
+
+const rollback = async (revision: CustomSqlToolRevision) => {
+  if (!historyTool.value || !confirm(`Publish a new revision from revision ${revision.revisionNumber}?`)) return;
+  try {
+    await rollbackCustomSqlTool(historyTool.value.id, revision.id);
+    toast.success(`Rolled back by publishing revision ${revision.revisionNumber} as a new revision.`);
+    revisions.value = await listCustomSqlToolRevisions(historyTool.value.id);
+    await load();
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, "Failed to roll back tool."));
+  }
+};
 
 onMounted(async () => {
   await load();
@@ -307,6 +326,19 @@ onMounted(async () => {
               </Select>
             </Field>
 
+            <Field class="md:col-span-2">
+              <FieldLabel for="database">Bound Database</FieldLabel>
+              <Select :modelValue="values.dbManagementId" @update:modelValue="(v: unknown) => setFieldValue('dbManagementId', Number(v))">
+                <SelectTrigger id="database">
+                  <SelectValue placeholder="Select the only database where this tool is available" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="db in dbs" :key="db.id" :value="db.id">{{ db.name }} ({{ db.sqlProvider }})</SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-[0.7rem] text-muted-foreground">Only MCP keys bound to this database can discover or execute the published tool.</p>
+            </Field>
+
             <FormField name="description" rules="required" label="Description (for LLM)" class="md:col-span-2">
               <template #default="{ field }">
                 <Textarea v-bind="field" id="description"
@@ -314,24 +346,15 @@ onMounted(async () => {
               </template>
             </FormField>
 
-            <VeeField name="definitionJson" rules="required|json" v-slot="{ field, handleChange, errorMessage, meta: fieldMeta }">
+            <VeeField name="sqlTemplate" rules="required" v-slot="{ field, handleChange, errorMessage, meta: fieldMeta }">
               <Field class="md:col-span-2">
                 <div class="flex items-center justify-between mb-2">
-                  <FieldLabel for="definition" class="mb-0">SQL Definition (JSON)</FieldLabel>
+                  <FieldLabel for="sql-template" class="mb-0">SQL Template</FieldLabel>
                   <div class="flex items-center gap-2">
-                    <Button v-if="values.type === 'Query'" variant="outline" size="sm"
-                      class="h-7 text-[0.65rem] px-2" @click="parseSql" type="button"
-                      :disabled="!values.definitionJson">
-                      Parse SQL
-                    </Button>
-                    <Button variant="outline" size="sm" class="h-7 text-[0.65rem] px-2" @click="formatJson" type="button"
-                      :disabled="!isJsonValid || !values.definitionJson">
-                      Format JSON
-                    </Button>
                     <Button variant="default" size="sm"
                       class="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
                       @click="openTestDialog" type="button"
-                      :disabled="!isJsonValid || !values.definitionJson">
+                      :disabled="!editingId || !values.sqlTemplate || !values.dbManagementId">
                       <Play class="size-3 mr-1" /> Test Execute
                     </Button>
                   </div>
@@ -340,22 +363,22 @@ onMounted(async () => {
                 <div class="space-y-2">
                   <div
                     class="border rounded-md overflow-hidden focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-shadow">
-                    <NuxtCodeMirror :key="colorMode.value" id="definition" :editable="true" :extensions="[json()]"
+                    <NuxtCodeMirror :key="colorMode.value" id="sql-template" :editable="true"
                       :theme="colorMode.value === 'dark' ? oneDark : undefined" :basic-setup="true"
                       :indent-with-tab="true" :modelValue="field.value" @update:modelValue="(v: string) => handleChange(v ?? '')"
                       :style="{
                         minHeight: '150px',
                         maxHeight: '400px',
                         overflowY: 'auto',
-                      }" placeholder='{ "tableName": "customers", "selectColumns": [{ "field": "name" }] }' />
+                      }" placeholder="SELECT name FROM customers WHERE status = {{ status }}" />
                   </div>
                   <div class="flex justify-between items-start">
                     <div class="space-y-1 text-[0.7rem] text-muted-foreground">
                       <p>
-                        You can paste SQL here, then click Parse SQL to convert it into QueryDefinition JSON.
+                        SQL is parsed into the same AST as the built-in SQL tools at publish and execution time.
                       </p>
                       <p v-pre>
-                        Use {{ parameterName }} as placeholders in values.
+                        Use unquoted {{ parameterName }} placeholders for values. Identifiers and SQL fragments cannot be parameters.
                       </p>
                     </div>
                     <TooltipProvider v-if="errorMessage && fieldMeta.touched">
@@ -472,12 +495,25 @@ onMounted(async () => {
                     ">
                     {{ tool.type }}
                   </span>
+                  <span class="px-1.5 py-0.5 rounded text-[0.6rem] font-bold uppercase tracking-wider"
+                    :class="tool.status === 'Published' ? 'bg-emerald-100 text-emerald-700' : tool.status === 'Disabled' ? 'bg-zinc-200 text-zinc-700' : 'bg-amber-100 text-amber-700'">
+                    {{ tool.status }}
+                  </span>
                 </div>
                 <p class="text-xs text-muted-foreground line-clamp-2 mt-1">
                   {{ tool.description }}
                 </p>
               </div>
               <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button variant="ghost" size="icon" class="h-8 w-8" title="Revision history" @click="openHistory(tool)">
+                  <History class="size-4" />
+                </Button>
+                <Button variant="ghost" size="icon" class="h-8 w-8 text-emerald-700" title="Publish current draft" @click="publish(tool)" v-permission="'edit'">
+                  <Upload class="size-4" />
+                </Button>
+                <Button v-if="tool.status === 'Published'" variant="ghost" size="icon" class="h-8 w-8" title="Disable for new sessions" @click="disable(tool)" v-permission="'edit'">
+                  <Ban class="size-4" />
+                </Button>
                 <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(tool)" v-permission="'edit'">
                   <Edit2 class="size-4" />
                 </Button>
@@ -487,7 +523,8 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="mt-auto pt-3 border-t flex items-center justify-between text-[0.65rem] text-muted-foreground">
+            <div class="mt-auto pt-3 border-t flex items-center justify-between gap-3 text-[0.65rem] text-muted-foreground">
+              <span>DB: {{ dbName(tool.dbManagementId) }}</span>
               <span>{{
                 tool.parametersJson
                   ? JSON.parse(tool.parametersJson).length
@@ -511,25 +548,11 @@ onMounted(async () => {
       <DialogContent class="sm:max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Test Execute Tool</DialogTitle>
-          <DialogDescription>
-            Run this tool definition against a selected database with test parameters.
-          </DialogDescription>
+          <DialogDescription>Run against the bound database. DML tests always roll back and never commit.</DialogDescription>
         </DialogHeader>
 
         <div class="flex-1 overflow-y-auto space-y-4 py-4">
-          <Field>
-            <FieldLabel>Target Database</FieldLabel>
-            <Select v-model="testDbId">
-              <SelectTrigger>
-                <SelectValue placeholder="Select a database..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="db in dbs" :key="db.id" :value="db.id">
-                  {{ db.name }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
+          <div class="rounded-md border p-3 text-sm">Target database: <strong>{{ dbName(testDbId) }}</strong></div>
 
           <div v-if="parameters.length > 0" class="space-y-3">
             <h4 class="text-sm font-medium">Parameters</h4>
@@ -560,6 +583,29 @@ onMounted(async () => {
             {{ testExecuting ? "Executing..." : "Execute" }}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="isHistoryDialogOpen">
+      <DialogContent class="sm:max-w-3xl max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Revision history · {{ historyTool?.name }}</DialogTitle>
+          <DialogDescription>Published revisions are immutable. Rollback creates and publishes a new revision.</DialogDescription>
+        </DialogHeader>
+        <div class="flex-1 overflow-y-auto space-y-3 py-4">
+          <div v-if="revisions.length === 0" class="text-sm text-muted-foreground">No published revisions yet.</div>
+          <div v-for="revision in revisions" :key="revision.id" class="rounded-md border p-3 space-y-2">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <strong class="text-sm">Revision {{ revision.revisionNumber }}</strong>
+                <p class="text-xs text-muted-foreground">{{ new Date(revision.publishedAt).toLocaleString() }} · {{ revision.publishedBy || 'unknown actor' }} · DB {{ dbName(revision.dbManagementId) }}</p>
+              </div>
+              <Button size="sm" variant="outline" @click="rollback(revision)" v-permission="'edit'">Rollback</Button>
+            </div>
+            <pre class="text-xs bg-muted/30 rounded p-2 overflow-auto max-h-36 whitespace-pre-wrap">{{ revision.sqlTemplate }}</pre>
+          </div>
+        </div>
+        <DialogFooter><Button variant="outline" @click="isHistoryDialogOpen = false">Close</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   </div>

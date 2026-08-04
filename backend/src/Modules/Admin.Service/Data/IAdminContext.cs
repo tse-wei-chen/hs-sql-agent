@@ -8,6 +8,7 @@ public interface IAdminContext
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<McpAccessKey> McpAccessKeys { get; }
     DbSet<CustomSqlTool> CustomSqlTools { get; }
+    DbSet<CustomSqlToolRevision> CustomSqlToolRevisions { get; }
     DbSet<DbManagement> DbManagement { get; }
     DbSet<DbSemantic> DbSemantics { get; }
     DbSet<SecurityPolicySettings> SecurityPolicySettings { get; }

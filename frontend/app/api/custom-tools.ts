@@ -4,9 +4,12 @@ export interface CustomSqlTool {
   id: number;
   name: string;
   description: string;
-  definitionJson: string;
+  sqlTemplate: string;
   type: "Query" | "DML";
   parametersJson?: string | null;
+  dbManagementId?: number | null;
+  status: "Draft" | "Published" | "Disabled";
+  publishedRevisionId?: number | null;
   createdAt: string;
   lastModifiedAt?: string | null;
 }
@@ -40,27 +43,61 @@ export const deleteCustomSqlTool = async (id: number): Promise<void> => {
   await xiorInstanceToken.delete(`/CustomSqlTool/${id}`);
 };
 
-export interface ParseSqlResult {
-  success: boolean;
-  data?: string;
-  error?: string;
+export interface CustomSqlToolRevision {
+  id: number;
+  customSqlToolId: number;
+  revisionNumber: number;
+  dbManagementId: number;
+  name: string;
+  description: string;
+  sqlTemplate: string;
+  type: "Query" | "DML";
+  parametersJson?: string | null;
+  diffJson: string;
+  publishedBy?: string | null;
+  publishedAt: string;
 }
 
-export const parseSqlCustomSqlTool = async (
-  sql: string,
-): Promise<ParseSqlResult> => {
-  const response = await xiorInstanceToken.post(
-    "/CustomSqlTool/parse-sql",
-    { sql },
-  );
+export const listCustomSqlToolRevisions = async (id: number): Promise<CustomSqlToolRevision[]> => {
+  const response = await xiorInstanceToken.get(`/CustomSqlTool/${id}/revisions`);
+  return response.data;
+};
+
+export interface CustomSqlToolImpact {
+  toolId: number;
+  draftDbManagementId?: number | null;
+  draftDatabaseName?: string | null;
+  publishedDbManagementId?: number | null;
+  publishedDatabaseName?: string | null;
+  currentlyExposedToKeys: Array<{ id: number; name: string; keyPrefix: string }>;
+  wouldExposeToKeys: Array<{ id: number; name: string; keyPrefix: string }>;
+  breakingChanges: string[];
+  sqlChanged: boolean;
+}
+
+export const getCustomSqlToolImpact = async (id: number): Promise<CustomSqlToolImpact> => {
+  const response = await xiorInstanceToken.get(`/CustomSqlTool/${id}/impact`);
+  return response.data;
+};
+
+export const publishCustomSqlTool = async (id: number): Promise<CustomSqlTool> => {
+  const response = await xiorInstanceToken.post(`/CustomSqlTool/${id}/publish`);
+  return response.data;
+};
+
+export const disableCustomSqlTool = async (id: number): Promise<CustomSqlTool> => {
+  const response = await xiorInstanceToken.post(`/CustomSqlTool/${id}/disable`);
+  return response.data;
+};
+
+export const rollbackCustomSqlTool = async (id: number, revisionId: number): Promise<CustomSqlTool> => {
+  const response = await xiorInstanceToken.post(`/CustomSqlTool/${id}/rollback/${revisionId}`);
   return response.data;
 };
 
 export interface TestExecuteRequest {
-  definitionJson: string;
-  type: "Query" | "DML";
-  dbId: number;
-  parameters?: Record<string, string>;
+  toolId: number;
+  parameters?: Record<string, string | number | boolean | null>;
 }
 
 export interface TestExecuteResult {

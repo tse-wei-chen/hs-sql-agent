@@ -63,6 +63,12 @@ Audit results can be exported as filtered CSV or JSON through a separate `audit.
 
 `Operability:AlertWebhookUrl` receives deduplicated database-unhealthy events. `Operability:SiemWebhookUrl` receives redacted audit events through the durable delivery outbox. Both integrations require a 32-byte webhook secret, use an `X-Hs-Signature: sha256=...` HMAC header, retry failed delivery, and expose pending/delivered/dead-letter status in the Admin Panel. Leave their URLs empty to disable them.
 
+## Custom SQL tools
+
+Custom tools are saved as database-bound SQL templates. Saving creates or updates a draft; only an explicit Publish makes an immutable revision available to new MCP sessions, and only keys bound to the same database can discover or execute it. Disable removes it from new sessions, while rollback republishes an earlier snapshot as a new revision.
+
+Use unquoted `{{parameterName}}` placeholders for scalar values declared as string, number, or boolean. The server converts values to escaped SQL literals, then runs the resulting statement through the same runtime parser, AST validation, table whitelist, security policy, and concurrency limit as the built-in SQL tools. Parameters cannot substitute identifiers or arbitrary SQL fragments. DML test execution always rolls back; published DML still requires MCP Elicitation before commit.
+
 ## 📖 Documentation
 
 Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki):

@@ -79,6 +79,7 @@ public class CustomToolProxyTests
         var context = new DefaultHttpContext();
         context.Items[Common.Models.McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[Common.Models.McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
 
         _proxy = new CustomToolProxy("test_tool",
@@ -95,13 +96,13 @@ public class CustomToolProxyTests
     [Fact]
     public async Task Execute_ShouldReturnError_WhenToolNotFound()
     {
-        _toolServiceMock.Setup(t => t.GetToolByNameAsync("test_tool"))
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync((CustomSqlTool?)null);
 
         var args = JsonSerializer.SerializeToElement(new { });
         var result = await _proxy.Execute(args);
 
-        Assert.Contains("not found", result);
+        Assert.Contains("not available", result);
     }
 
     [Fact]
@@ -111,9 +112,10 @@ public class CustomToolProxyTests
         {
             Name = "test_tool",
             Type = "Query",
-            DefinitionJson = """{ "tableName": "users", "alias": "u", "selectColumns": [ { "type": "field", "fieldName": "{{colName}}" } ] }"""
+            SqlTemplate = "SELECT email FROM users WHERE email = {{email}}",
+            ParametersJson = """[{"name":"email","type":"string"}]"""
         };
-        _toolServiceMock.Setup(t => t.GetToolByNameAsync("test_tool"))
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
         _queryValueParserMock.Setup(q => q.UnwrapJsonElement(It.IsAny<JsonElement>()))
@@ -129,7 +131,7 @@ public class CustomToolProxyTests
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
 
-        var args = JsonSerializer.SerializeToElement(new { colName = "email" });
+        var args = JsonSerializer.SerializeToElement(new { email = "test@example.com" });
         var result = await _proxy.Execute(args);
 
         Assert.Contains("result", result);
@@ -144,15 +146,16 @@ public class CustomToolProxyTests
     public async Task Execute_ShouldReturnError_WhenSqlConfigMissing()
     {
         var emptyContext = new DefaultHttpContext();
+        emptyContext.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(emptyContext);
 
         var tool = new CustomSqlTool
         {
             Name = "test_tool",
             Type = "Query",
-            DefinitionJson = "{}"
+            SqlTemplate = "SELECT * FROM users"
         };
-        _toolServiceMock.Setup(t => t.GetToolByNameAsync("test_tool"))
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
         var args = JsonSerializer.SerializeToElement(new { });
@@ -168,9 +171,9 @@ public class CustomToolProxyTests
         {
             Name = "delete_user",
             Type = "DML",
-            DefinitionJson = """{ "operation": "delete", "tableName": "users", "confirmToken": "caller-controlled" }"""
+            SqlTemplate = "DELETE FROM users"
         };
-        _toolServiceMock.Setup(t => t.GetToolByNameAsync("delete_user"))
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("delete_user", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
         var strategyMock = new Mock<ISqlStrategy>();
@@ -208,9 +211,9 @@ public class CustomToolProxyTests
         {
             Name = "delete_user",
             Type = "DML",
-            DefinitionJson = """{ "operation": "delete", "tableName": "users", "confirmToken": "caller-controlled" }"""
+            SqlTemplate = "DELETE FROM users"
         };
-        _toolServiceMock.Setup(t => t.GetToolByNameAsync("delete_user"))
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("delete_user", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
         var observedTokens = new List<string?>();
@@ -261,9 +264,9 @@ public class CustomToolProxyTests
         {
             Name = "test_tool",
             Type = "Query",
-            DefinitionJson = """{ "tableName": "users" }"""
+            SqlTemplate = "SELECT * FROM users"
         };
-        _toolServiceMock.Setup(t => t.GetToolByNameAsync("test_tool"))
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
         _queryValueParserMock.Setup(q => q.UnwrapJsonElement(It.IsAny<JsonElement>()))
@@ -299,7 +302,7 @@ public class CustomToolProxyTests
     [Fact]
     public async Task Execute_ShouldLogAuditOnFailure()
     {
-        _toolServiceMock.Setup(t => t.GetToolByNameAsync("test_tool"))
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync((CustomSqlTool?)null);
 
         var args = JsonSerializer.SerializeToElement(new { });

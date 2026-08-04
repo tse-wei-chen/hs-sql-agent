@@ -473,7 +473,7 @@ public partial class SqlAgentTool(
         @"EXTRACT\s*\(\s*QUARTER\s+FROM\s+([^()]+)\s*\)",
         RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
-    private static string NormalizeSql(string sql)
+    internal static string NormalizeSql(string sql)
     {
         sql = ExtractQuarterPattern.Replace(sql, m =>
             $"CEIL(MONTH({m.Groups[1].Value.Trim()}) / 3.0)");

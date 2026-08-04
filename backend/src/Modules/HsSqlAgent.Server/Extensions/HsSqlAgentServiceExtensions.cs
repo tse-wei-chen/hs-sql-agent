@@ -312,7 +312,12 @@ public static class HsSqlAgentServiceExtensions
                     }
 
                     var customToolService = httpContext.RequestServices.GetRequiredService<ICustomSqlToolService>();
-                    var customTools = await customToolService.GetAllToolsAsync();
+                    var dbManagementId = httpContext.Items[Common.Models.McpContextItemKeys.DbManagementId] is int id
+                        ? id
+                        : (int?)null;
+                    var customTools = dbManagementId.HasValue
+                        ? await customToolService.GetPublishedToolsForDbAsync(dbManagementId.Value, cancellationToken)
+                        : [];
 
                     foreach (var ct in customTools)
                     {
@@ -343,7 +348,7 @@ public static class HsSqlAgentServiceExtensions
                             catch { }
                         }
 
-                        var schemaObj = new { type = "object", properties };
+                        var schemaObj = new { type = "object", properties, required = properties.Keys.ToArray() };
                         var jsonSchema = JsonSerializer.SerializeToElement(schemaObj);
                         var scopeFactory = httpContext.RequestServices.GetRequiredService<IServiceScopeFactory>();
 

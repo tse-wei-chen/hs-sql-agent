@@ -11,6 +11,35 @@ namespace Admin.Test.Data;
 public class AdminMigrationTests
 {
     [Fact]
+    public async Task CustomToolLifecycleMigration_ShouldDisableLegacyJsonDefinitions()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
+        var authOptions = new DbContextOptionsBuilder<AuthContext>().UseSqlite(connection).Options;
+        await using (var authContext = new AuthContext(authOptions))
+        {
+            await authContext.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        }
+        await using var context = new AdminContext(options);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260804124242_AddOperability", TestContext.Current.CancellationToken);
+        await context.Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO CustomSqlTools (Name, Description, DefinitionJson, Type, CreatedAt)
+            VALUES ('legacy', 'legacy JSON tool', '{{"tableName":"users"}}', 'Query', '2026-01-01T00:00:00Z');
+            """,
+            TestContext.Current.CancellationToken);
+
+        await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        var legacy = await context.CustomSqlTools.AsNoTracking().SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("Disabled", legacy.Status);
+        Assert.Null(legacy.DbManagementId);
+        Assert.Contains("tableName", legacy.SqlTemplate);
+    }
+
+    [Fact]
     public async Task OperabilityPermissionMigration_ShouldGrantExistingSuperUser()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

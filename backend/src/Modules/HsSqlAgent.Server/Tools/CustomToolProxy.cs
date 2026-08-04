@@ -12,6 +12,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Validation;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
@@ -38,12 +39,6 @@ public class CustomToolProxy(
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
-    private static readonly JsonSerializerOptions _jsonOptions = new(McpJsonUtilities.DefaultOptions)
-    {
-        AllowOutOfOrderMetadataProperties = true,
-        PropertyNameCaseInsensitive = true
-    };
-
     public async Task<string> Execute(
         JsonElement arguments,
         McpServer? server = null,
@@ -65,7 +60,7 @@ public class CustomToolProxy(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        var parameters = new Dictionary<string, object>();
+        var parameters = new Dictionary<string, object?>();
         if (arguments.ValueKind == JsonValueKind.Object)
         {
             foreach (var prop in arguments.EnumerateObject())
@@ -75,14 +70,24 @@ public class CustomToolProxy(
         CustomSqlTool? tool = null;
         QueryDefinition? auditQuery = null;
         DmlDefinition? auditDml = null;
-        string finalDefinitionJson = "";
+        string renderedSql = "";
         try
         {
             var sqlConfig = ResolveSqlConfig();
-            tool = await _customSqlToolService.GetToolByNameAsync(_name);
+            var dbManagementId = ResolveDbManagementId();
+            if (dbManagementId is null)
+            {
+                var error = "Error: The authenticated key is not bound to a database.";
+                await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
+                return error;
+            }
+            tool = await _customSqlToolService.GetPublishedToolByNameAsync(
+                _name,
+                dbManagementId.Value,
+                cancellationToken);
             if (tool == null)
             {
-                var error = $"Error: Tool '{_name}' not found.";
+                var error = $"Error: Published tool '{_name}' is not available for this database.";
                 await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
                 return error;
             }
@@ -101,7 +106,7 @@ public class CustomToolProxy(
                 return error;
             }
 
-            finalDefinitionJson = ReplaceParameters(tool.DefinitionJson, parameters);
+            renderedSql = CustomToolSqlTemplate.Render(tool.SqlTemplate, tool.ParametersJson, parameters);
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 
             string result;
@@ -110,7 +115,7 @@ public class CustomToolProxy(
 
             if (isQuery)
             {
-                var queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
+                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(renderedSql));
                 auditQuery = queryDef;
                 if (queryDef == null)
                 {
@@ -141,7 +146,7 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
+                var dmlDef = SqlDefinitionParser.ParseDml(renderedSql);
                 auditDml = dmlDef;
                 if (dmlDef == null)
                 {
@@ -236,7 +241,7 @@ public class CustomToolProxy(
                 cancellationToken);
             var toolType = tool?.Type ?? "Unknown";
             var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase) ? "execute_query_sql" : "execute_dml_sql";
-            return $"Error: {ex.Message}\nerror definition: {finalDefinitionJson}\nplease fix the parameters or definition and use '{suggestedTool}' tools to try again.";
+            return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
         }
     }
 
@@ -402,22 +407,13 @@ public class CustomToolProxy(
         };
     }
 
-    private static string ReplaceParameters(string json, Dictionary<string, object> parameters)
+    private int? ResolveDbManagementId()
     {
-        if (parameters == null || parameters.Count == 0) return json;
-        foreach (var param in parameters)
-        {
-            var key = System.Text.RegularExpressions.Regex.Escape(param.Key);
-
-            // "{{key}}" — placeholder inside a JSON string (lookbehind/lookahead verify quotes)
-            var innerPattern = @"\{\{\s*" + key + @"\s*\}\}";
-            var quotedPattern = @"(?<="")" + innerPattern + @"(?="")";
-            json = System.Text.RegularExpressions.Regex.Replace(json, quotedPattern, (param.Value?.ToString() ?? "null").Replace("\"", "\\\""));
-
-            // {{key}} — bare placeholder: serialize as proper JSON token (type-aware)
-            json = System.Text.RegularExpressions.Regex.Replace(json, innerPattern, System.Text.Json.JsonSerializer.Serialize(param.Value));
-        }
-        return json;
+        var context = _httpContextAccessor.HttpContext;
+        return context?.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var value) == true
+            && value is int id
+            ? id
+            : null;
     }
 
     private HashSet<string>? ResolveTableWhitelist()
