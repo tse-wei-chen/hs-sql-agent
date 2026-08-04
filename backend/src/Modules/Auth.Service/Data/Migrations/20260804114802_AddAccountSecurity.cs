@@ -20,7 +20,12 @@ namespace Auth.Service.Data.Migrations
                 table: "Members",
                 type: "TEXT",
                 nullable: false,
-                defaultValueSql: "CURRENT_TIMESTAMP");
+                // SQLite rejects ALTER TABLE ADD COLUMN when the default is a
+                // non-constant expression such as CURRENT_TIMESTAMP and the
+                // table already contains rows. Use a constant only to make the
+                // schema change legal; the UPDATE below backfills every legacy
+                // member with the actual migration time.
+                defaultValue: new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc));
 
             migrationBuilder.AddColumn<int>(
                 name: "FailedSignInCount",
