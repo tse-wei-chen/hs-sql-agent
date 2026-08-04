@@ -16,4 +16,5 @@ public interface IAuditService
     Task<AuditLogQueryResult> QueryAsync(int page, int pageSize, string? action = null, string? keyword = null, CancellationToken cancellationToken = default);
     Task<AuditLogQueryResult> QueryAsync(AuditLogFilter filter, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<AuditDailySummaryItem>> QueryDailySummaryAsync(int days, string? action = null, string? keyword = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<AuditLogItem>> ExportAsync(AuditLogFilter filter, int maxRows = 100_000, CancellationToken cancellationToken = default);
 }

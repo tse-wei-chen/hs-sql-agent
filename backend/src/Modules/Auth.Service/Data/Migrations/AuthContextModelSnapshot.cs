@@ -70,6 +70,12 @@ namespace Auth.Service.Data.Migrations
                             Id = 5,
                             Code = "revoke",
                             Name = "revoke"
+                        },
+                        new
+                        {
+                            Id = 6,
+                            Code = "export",
+                            Name = "export"
                         });
                 });
 
@@ -416,6 +422,12 @@ namespace Auth.Service.Data.Migrations
                             Id = 9,
                             Name = "Security Policy",
                             Path = "/runtime/security"
+                        },
+                        new
+                        {
+                            Id = 10,
+                            Name = "Operability",
+                            Path = "/runtime/operability"
                         });
                 });
 
@@ -623,6 +635,30 @@ namespace Auth.Service.Data.Migrations
                             Id = 26,
                             ActionId = 3,
                             PermissionId = 2
+                        },
+                        new
+                        {
+                            Id = 27,
+                            ActionId = 3,
+                            PermissionId = 5
+                        },
+                        new
+                        {
+                            Id = 28,
+                            ActionId = 6,
+                            PermissionId = 5
+                        },
+                        new
+                        {
+                            Id = 29,
+                            ActionId = 1,
+                            PermissionId = 10
+                        },
+                        new
+                        {
+                            Id = 30,
+                            ActionId = 3,
+                            PermissionId = 10
                         });
                 });
 

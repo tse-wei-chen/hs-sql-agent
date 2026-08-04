@@ -8,6 +8,8 @@ using Moq.EntityFrameworkCore;
 using Xunit;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
+using Admin.Service.Models;
+using Microsoft.Extensions.Options;
 
 namespace Admin.Test.Services;
 
@@ -128,6 +130,21 @@ public class AuditServiceTests
     }
 
     #endregion
+
+    [Fact]
+    public async Task WriteAsync_ShouldQueueSignedSiemDelivery_WhenConfigured()
+    {
+        _contextMock.Setup(c => c.OutboundDeliveries).ReturnsDbSet(new List<OutboundDelivery>());
+        var service = new AuditService(
+            _contextMock.Object,
+            _httpContextAccessorMock.Object,
+            Options.Create(new OperabilitySettings { SiemWebhookUrl = "https://siem.example/events" }));
+
+        await service.WriteAsync("query", "db1", "success", cancellationToken: TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.OutboundDeliveries.Add(It.Is<OutboundDelivery>(x =>
+            x.Category == "siem" && x.TargetUrl == "https://siem.example/events" && x.Status == "pending")), Times.Once);
+    }
 
     #region WriteLogAsync Tests
 

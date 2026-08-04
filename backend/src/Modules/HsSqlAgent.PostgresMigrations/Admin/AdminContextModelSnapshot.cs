@@ -176,6 +176,49 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                     b.ToTable("CustomSqlTools");
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbHealthState", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastCheckedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime?>("LastSuccessAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("LatencyMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("OutageStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DbManagementId")
+                        .IsUnique();
+
+                    b.ToTable("DbHealthStates");
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.DbManagement", b =>
                 {
                     b.Property<int>("Id")
@@ -370,6 +413,109 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                     b.ToTable("McpAccessKeys");
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.OutboundDelivery", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DedupeKey")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)");
+
+                    b.Property<DateTime?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastAttemptAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("TargetUrl")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DedupeKey")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.ToTable("OutboundDeliveries");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.RateLimitMetric", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int?>("AccessKeyId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("BucketStart")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DbManagementId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Layer")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long>("RejectedCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ToolName")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccessKeyId");
+
+                    b.HasIndex("BucketStart");
+
+                    b.HasIndex("DbManagementId");
+
+                    b.ToTable("RateLimitMetrics");
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.SecurityPolicySettings", b =>
                 {
                     b.Property<int>("Id")
@@ -435,6 +581,15 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                             RequireWhereForUpdate = true,
                             UpdatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbHealthState", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", null)
+                        .WithOne()
+                        .HasForeignKey("Admin.Service.Data.Entites.DbHealthState", "DbManagementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Admin.Service.Data.Entites.DbSemantic", b =>

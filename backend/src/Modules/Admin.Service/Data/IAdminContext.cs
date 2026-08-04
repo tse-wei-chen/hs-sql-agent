@@ -11,5 +11,8 @@ public interface IAdminContext
     DbSet<DbManagement> DbManagement { get; }
     DbSet<DbSemantic> DbSemantics { get; }
     DbSet<SecurityPolicySettings> SecurityPolicySettings { get; }
+    DbSet<DbHealthState> DbHealthStates { get; }
+    DbSet<RateLimitMetric> RateLimitMetrics { get; }
+    DbSet<OutboundDelivery> OutboundDeliveries { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

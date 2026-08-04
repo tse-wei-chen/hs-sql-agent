@@ -55,6 +55,14 @@ TOTP MFA and one-time recovery codes are managed from **Account**. Roles listed 
 
 For Active Directory or LDAP environments, connect the directory to an OIDC/SAML identity provider and configure that provider here. Direct LDAP binding is intentionally a separate future integration, not part of the OIDC settings.
 
+## Operability and audit
+
+The optional Operability page reports scheduled database health, Query/DML success and latency, slow operations, per-key MCP activity, and IP/key rate-limit rejections. IP rejection metrics are aggregated in memory and flushed in batches, so the pre-auth IP limiter never performs a governance-database lookup for each rejected request.
+
+Audit results can be exported as filtered CSV or JSON through a separate `audit.export` permission. Retention supports dry-run estimates and scheduled purge or JSONL archive; a completed retention run writes its own audit event. Set `Operability:AuditRetentionDays` to `0` to disable scheduled retention.
+
+`Operability:AlertWebhookUrl` receives deduplicated database-unhealthy events. `Operability:SiemWebhookUrl` receives redacted audit events through the durable delivery outbox. Both integrations require a 32-byte webhook secret, use an `X-Hs-Signature: sha256=...` HMAC header, retry failed delivery, and expose pending/delivered/dead-letter status in the Admin Panel. Leave their URLs empty to disable them.
+
 ## 📖 Documentation
 
 Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki):

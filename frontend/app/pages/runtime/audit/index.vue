@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getRuntimeAudit } from "@/api/runtime";
+import { dryRunAuditRetention, executeAuditRetention, exportRuntimeAudit, getRuntimeAudit } from "@/api/runtime";
 
 definePageMeta({
   layout: "default",
@@ -55,6 +55,20 @@ const toolName = ref("");
 const totalCount = ref(0);
 const items = ref<AuditItem[]>([]);
 const loading = ref(false);
+const retentionResult = ref<any>(null);
+const { $can } = useNuxtApp();
+
+const currentFilters = () => ({
+  action: action.value || undefined,
+  keyword: keyword.value || undefined,
+  from: from.value ? new Date(`${from.value}T00:00:00`).toISOString() : undefined,
+  to: to.value ? new Date(`${to.value}T23:59:59.999`).toISOString() : undefined,
+  result: resultFilter.value || undefined,
+  actor: actor.value || undefined,
+  dbManagementId: dbManagementId.value || undefined,
+  accessKeyId: accessKeyId.value || undefined,
+  toolName: toolName.value || undefined,
+});
 
 const load = async () => {
   loading.value = true;
@@ -62,23 +76,25 @@ const load = async () => {
     const result = await getRuntimeAudit(
       page.value,
       pageSize.value,
-      {
-        action: action.value || undefined,
-        keyword: keyword.value || undefined,
-        from: from.value ? new Date(`${from.value}T00:00:00`).toISOString() : undefined,
-        to: to.value ? new Date(`${to.value}T23:59:59.999`).toISOString() : undefined,
-        result: resultFilter.value || undefined,
-        actor: actor.value || undefined,
-        dbManagementId: dbManagementId.value || undefined,
-        accessKeyId: accessKeyId.value || undefined,
-        toolName: toolName.value || undefined,
-      },
+      currentFilters(),
     );
     items.value = result.items || [];
     totalCount.value = result.totalCount || 0;
   } finally {
     loading.value = false;
   }
+};
+
+const exportAudit = async (format: "csv" | "json") => {
+  const blob = await exportRuntimeAudit(format, currentFilters());
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a"); link.href = url; link.download = `audit-${new Date().toISOString()}.${format}`; link.click();
+  URL.revokeObjectURL(url);
+};
+const previewRetention = async () => { retentionResult.value = await dryRunAuditRetention(); };
+const runRetention = async () => {
+  if (!confirm("Delete/archive all audit rows shown by the retention dry-run?")) return;
+  retentionResult.value = await executeAuditRetention(); await load();
 };
 
 const nextPage = async () => {
@@ -115,6 +131,17 @@ onMounted(load);
           <Input v-model="from" type="date" aria-label="From date" />
           <Input v-model="to" type="date" aria-label="To date" />
           <Button @click="load">Search</Button>
+          <Button v-if="$can('/runtime/audit.export')" variant="outline" @click="exportAudit('csv')">Export CSV</Button>
+          <Button v-if="$can('/runtime/audit.export')" variant="outline" @click="exportAudit('json')">Export JSON</Button>
+        </div>
+
+        <div v-if="$can('/runtime/audit.edit')" class="mb-4 rounded border p-3 text-sm">
+          <div class="font-medium">Retention policy</div>
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" @click="previewRetention">Dry run</Button>
+            <Button size="sm" variant="destructive" :disabled="!retentionResult?.dryRun" @click="runRetention">Run configured retention</Button>
+            <span v-if="retentionResult" class="text-muted-foreground">{{ retentionResult.matchingCount }} rows before {{ retentionResult.cutoff }} · {{ retentionResult.mode }}<template v-if="retentionResult.deletedCount"> · deleted {{ retentionResult.deletedCount }}</template></span>
+          </div>
         </div>
 
         <div v-if="loading">Loading audit logs...</div>

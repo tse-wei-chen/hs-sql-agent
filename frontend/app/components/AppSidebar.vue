@@ -69,6 +69,7 @@ const data = ref({
         { title: "DB Management", url: "/runtime/db-management" },
         { title: "Audit", url: "/runtime/audit" },
         { title: "Security", url: "/runtime/security" },
+        { title: "Operability", url: "/runtime/operability" },
       ],
     },
     {

@@ -6,6 +6,7 @@ namespace HsSqlAgent.Server.Models;
 public class HsSqlAgentServiceOptions
 {
     public EnterpriseIdentityOptions EnterpriseIdentity { get; } = new();
+    public OperabilityOptions Operability { get; } = new();
     public string AdminDatabaseProvider { get; set; } = "Sqlite";
     public string AdminConnectionString { get; set; } = "Data Source=hsagent.db";
     public string HmacSecretKey { get; set; } = string.Empty;
@@ -45,6 +46,23 @@ public class HsSqlAgentServiceOptions
     public string CacheProvider { get; set; } = "Memory";
     public string CacheConnectionString { get; set; } = string.Empty;
     public string CacheKeyPrefix { get; set; } = "hsqlagent:cache:";
+}
+
+public class OperabilityOptions
+{
+    public bool HealthProbeEnabled { get; set; } = true;
+    public int HealthProbeIntervalSeconds { get; set; } = 60;
+    public int HealthProbeTimeoutSeconds { get; set; } = 10;
+    public int SlowQueryThresholdMs { get; set; } = 1000;
+    public string AlertWebhookUrl { get; set; } = string.Empty;
+    public string AlertWebhookSecret { get; set; } = string.Empty;
+    public string SiemWebhookUrl { get; set; } = string.Empty;
+    public string SiemWebhookSecret { get; set; } = string.Empty;
+    public int DeliveryMaxAttempts { get; set; } = 6;
+    public int AuditRetentionDays { get; set; }
+    public string AuditRetentionMode { get; set; } = "Purge";
+    public string AuditArchivePath { get; set; } = "data/audit-archive";
+    public int AuditRetentionRunHourUtc { get; set; } = 2;
 }
 
 public class EnterpriseIdentityOptions

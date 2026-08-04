@@ -59,6 +59,8 @@ public static class HsSqlAgentServiceExtensions
             throw new InvalidOperationException("HmacSecretKey must be at least 32 bytes.");
         if (string.IsNullOrWhiteSpace(options.JwtSecretKey) || Encoding.UTF8.GetByteCount(options.JwtSecretKey) < 32)
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
+        ValidateWebhook("Operability Alert", options.Operability.AlertWebhookUrl, options.Operability.AlertWebhookSecret);
+        ValidateWebhook("Operability SIEM", options.Operability.SiemWebhookUrl, options.Operability.SiemWebhookSecret);
 
         // --- Cache ---
         services.AddCacheProvider(
@@ -103,6 +105,8 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<IMemberService, MemberService>();
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IOperabilityService, OperabilityService>();
+        services.AddScoped<IAuditRetentionService, AuditRetentionService>();
         services.AddScoped<ICustomSqlToolService, CustomSqlToolService>();
         services.AddScoped<IDbManagementService, DbManagementService>();
         services.AddScoped<IDbSemanticService, DbSemanticService>();
@@ -131,6 +135,23 @@ public static class HsSqlAgentServiceExtensions
             jwt.SignInLockoutMinutes = options.SignInLockoutMinutes;
         });
         services.Configure<McpKeySettings>(mcp => mcp.HmacSecretKey = options.HmacSecretKey);
+        services.Configure<OperabilitySettings>(operability =>
+        {
+            var source = options.Operability;
+            operability.HealthProbeEnabled = source.HealthProbeEnabled;
+            operability.HealthProbeIntervalSeconds = source.HealthProbeIntervalSeconds;
+            operability.HealthProbeTimeoutSeconds = source.HealthProbeTimeoutSeconds;
+            operability.SlowQueryThresholdMs = source.SlowQueryThresholdMs;
+            operability.AlertWebhookUrl = source.AlertWebhookUrl;
+            operability.AlertWebhookSecret = source.AlertWebhookSecret;
+            operability.SiemWebhookUrl = source.SiemWebhookUrl;
+            operability.SiemWebhookSecret = source.SiemWebhookSecret;
+            operability.DeliveryMaxAttempts = source.DeliveryMaxAttempts;
+            operability.AuditRetentionDays = source.AuditRetentionDays;
+            operability.AuditRetentionMode = source.AuditRetentionMode;
+            operability.AuditArchivePath = source.AuditArchivePath;
+            operability.AuditRetentionRunHourUtc = source.AuditRetentionRunHourUtc;
+        });
         services.Configure<PasswordResetSettings>(reset =>
         {
             reset.BaseUrl = options.PasswordResetBaseUrl;
@@ -251,9 +272,16 @@ public static class HsSqlAgentServiceExtensions
         services.AddTransient<McpIpRateLimitMiddleware>();
         services.AddScoped<McpAccessKeyAuthMiddleware>();
         services.AddTransient<McpKeyRateLimitMiddleware>();
+        services.AddSingleton<IOperationalMetricRecorder, OperationalMetricRecorder>();
         services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
         services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
         services.AddHostedService<TokenBlacklistCleanupService>();
+        services.AddHostedService<OperationalMetricFlushService>();
+        services.AddHostedService<DbHealthMonitorService>();
+        services.AddHostedService<OutboundDeliveryService>();
+        services.AddHostedService<AuditRetentionBackgroundService>();
+        services.AddHttpClient("operability-webhook", client => client.Timeout = TimeSpan.FromSeconds(15))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<SqlAgentTool>();
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
@@ -366,6 +394,15 @@ public static class HsSqlAgentServiceExtensions
         services.AddProblemDetails();
 
         return services;
+    }
+
+    private static void ValidateWebhook(string name, string url, string secret)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            throw new InvalidOperationException($"{name} webhook URL must be an absolute HTTP(S) URL.");
+        if (Encoding.UTF8.GetByteCount(secret) < 32)
+            throw new InvalidOperationException($"{name} webhook secret must be at least 32 bytes when enabled.");
     }
 
     private static McpServerTool[] GetToolsForType<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods)] T>(HsSqlAgentServiceOptions options) where T : class

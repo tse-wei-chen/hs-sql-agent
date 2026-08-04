@@ -8,13 +8,19 @@ using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Common.Models;
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
 
 namespace Admin.Service.Services;
 
-public class AuditService(IAdminContext context, IHttpContextAccessor httpContextAccessor) : IAuditService
+public class AuditService(
+    IAdminContext context,
+    IHttpContextAccessor httpContextAccessor,
+    IOptions<OperabilitySettings>? operabilitySettings = null) : IAuditService
 {
     private readonly IAdminContext _context = context;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
+    private readonly OperabilitySettings _operabilitySettings = operabilitySettings?.Value ?? new();
 
     public async Task WriteAsync(
         string action,
@@ -262,6 +268,44 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
             .Select(x => x.Value)];
     }
 
+    public async Task<IReadOnlyCollection<AuditLogItem>> ExportAsync(
+        AuditLogFilter filter,
+        int maxRows = 100_000,
+        CancellationToken cancellationToken = default)
+    {
+        var query = ApplyFilter(_context.AuditLogs.AsNoTracking(), filter);
+        return await query.OrderByDescending(x => x.CreatedAt)
+            .Take(Math.Clamp(maxRows, 1, 100_001))
+            .Select(x => new AuditLogItem
+            {
+                Id = x.Id, EventId = x.EventId, ActorType = x.ActorType, ActorId = x.ActorId,
+                Action = x.Action, Target = x.Target, Detail = x.Detail, Result = x.Result,
+                IpAddress = x.IpAddress, UserAgent = x.UserAgent, RequestId = x.RequestId,
+                SessionId = x.SessionId, AccessKeyId = x.AccessKeyId, DbManagementId = x.DbManagementId,
+                DatabaseName = x.DatabaseName, ToolName = x.ToolName, Operation = x.Operation,
+                DurationMs = x.DurationMs, ReturnedRows = x.ReturnedRows, AffectedRows = x.AffectedRows,
+                ApprovalStatus = x.ApprovalStatus, ErrorCategory = x.ErrorCategory,
+                Definition = x.Definition, CreatedAt = x.CreatedAt
+            }).ToListAsync(cancellationToken);
+    }
+
+    private static IQueryable<AuditLog> ApplyFilter(IQueryable<AuditLog> query, AuditLogFilter filter)
+    {
+        if (!string.IsNullOrWhiteSpace(filter.Action)) query = query.Where(x => x.Action == filter.Action);
+        if (!string.IsNullOrWhiteSpace(filter.Keyword)) query = query.Where(x =>
+            (x.Target != null && x.Target.Contains(filter.Keyword)) ||
+            (x.Detail != null && x.Detail.Contains(filter.Keyword)) ||
+            (x.ActorId != null && x.ActorId.Contains(filter.Keyword)));
+        if (filter.From.HasValue) query = query.Where(x => x.CreatedAt >= filter.From.Value);
+        if (filter.To.HasValue) query = query.Where(x => x.CreatedAt <= filter.To.Value);
+        if (!string.IsNullOrWhiteSpace(filter.Result)) query = query.Where(x => x.Result == filter.Result);
+        if (!string.IsNullOrWhiteSpace(filter.Actor)) query = query.Where(x => x.ActorId == filter.Actor || x.ActorType == filter.Actor);
+        if (filter.DbManagementId.HasValue) query = query.Where(x => x.DbManagementId == filter.DbManagementId);
+        if (filter.AccessKeyId.HasValue) query = query.Where(x => x.AccessKeyId == filter.AccessKeyId);
+        if (!string.IsNullOrWhiteSpace(filter.ToolName)) query = query.Where(x => x.ToolName == filter.ToolName);
+        return query;
+    }
+
     private AuditEventContext CreateHttpContext()
     {
         var context = _httpContextAccessor.HttpContext;
@@ -288,6 +332,19 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
     private async Task PersistAsync(AuditLog item, CancellationToken cancellationToken)
     {
         _context.AuditLogs.Add(item);
+        if (!string.IsNullOrWhiteSpace(_operabilitySettings.SiemWebhookUrl))
+        {
+            _context.OutboundDeliveries.Add(new OutboundDelivery
+            {
+                Category = "siem",
+                DedupeKey = $"siem:{item.EventId:N}",
+                TargetUrl = _operabilitySettings.SiemWebhookUrl,
+                Payload = JsonSerializer.Serialize(item),
+                Status = "pending",
+                CreatedAt = DateTime.UtcNow,
+                NextAttemptAt = DateTime.UtcNow
+            });
+        }
         const int maxAttempts = 3;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {

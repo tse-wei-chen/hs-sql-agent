@@ -11,6 +11,30 @@ namespace Admin.Test.Data;
 public class AdminMigrationTests
 {
     [Fact]
+    public async Task OperabilityPermissionMigration_ShouldGrantExistingSuperUser()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AuthContext>().UseSqlite(connection).Options;
+        await using var context = new AuthContext(options);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260804121039_AddEnterpriseIdentity", TestContext.Current.CancellationToken);
+        context.Roles.Add(new Auth.Service.Data.Entites.Role { Name = "SuperUser" });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await migrator.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        var permissions = await context.PermissionActions.AsNoTracking()
+            .Where(x => x.Role.Name == "SuperUser")
+            .Select(x => x.Permission.Path + "." + x.Action.Code)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("/runtime/audit.export", permissions);
+        Assert.Contains("/runtime/audit.edit", permissions);
+        Assert.Contains("/runtime/operability.view", permissions);
+        Assert.Contains("/runtime/operability.edit", permissions);
+    }
+
+    [Fact]
     public async Task StructuredAuditMigration_ShouldAssignUniqueEventIdsToExistingRows()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

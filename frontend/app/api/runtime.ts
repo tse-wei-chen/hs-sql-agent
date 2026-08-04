@@ -122,6 +122,38 @@ export const getRuntimeAuditDailySummary = async (days = 7) => {
   return response.data;
 };
 
+export const exportRuntimeAudit = async (
+  format: "csv" | "json",
+  filters: Record<string, string | number | undefined>,
+) => {
+  const response = await xiorInstanceToken.get("/runtime/audit/export", {
+    params: { format, ...filters },
+    responseType: "blob",
+  });
+  return response.data as Blob;
+};
+
+export const getOperabilityMetrics = async (filters: Record<string, string | number | undefined> = {}) =>
+  (await xiorInstanceToken.get("/runtime/operability/metrics", { params: filters })).data;
+
+export const getDbHealth = async () =>
+  (await xiorInstanceToken.get("/runtime/operability/db-health")).data;
+
+export const getKeyUsage = async (filters: Record<string, string | number | undefined> = {}) =>
+  (await xiorInstanceToken.get("/runtime/operability/key-usage", { params: filters })).data;
+
+export const getDeliveryStatuses = async () =>
+  (await xiorInstanceToken.get("/runtime/operability/deliveries")).data;
+
+export const retryDelivery = async (id: number) =>
+  xiorInstanceToken.post(`/runtime/operability/deliveries/${id}/retry`);
+
+export const dryRunAuditRetention = async () =>
+  (await xiorInstanceToken.post("/runtime/audit/retention/dry-run")).data;
+
+export const executeAuditRetention = async () =>
+  (await xiorInstanceToken.post("/runtime/audit/retention/execute")).data;
+
 export const testDbConnection = async (payload: TestDbConnectionRequest) => {
   const response = await xiorInstanceToken.post(
     "/runtime/mcp-keys/test-db-connection",

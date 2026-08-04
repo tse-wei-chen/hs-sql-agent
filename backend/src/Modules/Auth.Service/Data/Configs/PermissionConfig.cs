@@ -22,7 +22,8 @@ public class PermissionConfig : IEntityTypeConfiguration<Permission>
             new Permission { Id = 6, Name = "Role Management", Path = "/auth/role" },
             new Permission { Id = 7, Name = "User Management", Path = "/auth/user" },
             new Permission { Id = 8, Name = "Semantic Layer", Path = "/runtime/db-management/semantic" },
-            new Permission { Id = 9, Name = "Security Policy", Path = "/runtime/security" }
+            new Permission { Id = 9, Name = "Security Policy", Path = "/runtime/security" },
+            new Permission { Id = 10, Name = "Operability", Path = "/runtime/operability" }
         );
     }
 }

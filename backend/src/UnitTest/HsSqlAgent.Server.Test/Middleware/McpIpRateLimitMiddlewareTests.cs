@@ -20,9 +20,11 @@ public class McpIpRateLimitMiddlewareTests
             PermitLimit = 1,
             WindowSeconds = 60
         });
+        var metrics = new OperationalMetricRecorder();
         var middleware = new McpIpRateLimitMiddleware(
             runtimeState.Object,
-            new MemoryRequestRateLimiter(TimeProvider.System));
+            new MemoryRequestRateLimiter(TimeProvider.System),
+            metrics);
         var nextCallCount = 0;
         RequestDelegate next = _ =>
         {
@@ -37,6 +39,7 @@ public class McpIpRateLimitMiddlewareTests
         Assert.Equal(1, nextCallCount);
         Assert.Equal(StatusCodes.Status429TooManyRequests, rejectedContext.Response.StatusCode);
         Assert.True(rejectedContext.Response.Headers.ContainsKey("Retry-After"));
+        Assert.Equal(1, Assert.Single(metrics.Drain()).Count);
     }
 
     private static DefaultHttpContext CreateContext()
