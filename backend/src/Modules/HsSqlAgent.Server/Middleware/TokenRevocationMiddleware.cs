@@ -69,6 +69,23 @@ public class TokenRevocationMiddleware(RequestDelegate next)
                 await WriteAuthFailureAsync(context, "session_expired", "This session expired or was revoked.");
                 return;
             }
+
+            var passwordChangeRequired = context.User.FindFirst(AuthService.PasswordChangeRequiredClaim)?.Value;
+            var passwordChangePath = context.Request.Path.Equals("/api/auth/account/password", StringComparison.OrdinalIgnoreCase);
+            var accountReadPath = HttpMethods.IsGet(context.Request.Method) &&
+                                  context.Request.Path.Equals("/api/auth/account", StringComparison.OrdinalIgnoreCase);
+            var signOutPath = context.Request.Path.Equals("/api/auth/sign-out", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(passwordChangeRequired, "true", StringComparison.OrdinalIgnoreCase) &&
+                !passwordChangePath && !accountReadPath && !signOutPath)
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    code = "password_change_required",
+                    message = "Change your password before continuing."
+                }, context.RequestAborted);
+                return;
+            }
         }
 
         await _next(context);

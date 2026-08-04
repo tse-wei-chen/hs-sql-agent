@@ -141,12 +141,29 @@ namespace HsSqlAgent.PostgresMigrations.Auth
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedSignInCount")
+                        .HasColumnType("integer");
+
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
+                    b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LockoutEnd")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Mail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("NormalizedMail")
                         .IsRequired()
                         .HasMaxLength(320)
                         .HasColumnType("character varying(320)");
@@ -155,6 +172,9 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                         .IsRequired()
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
+
+                    b.Property<bool>("RequirePasswordChangeAtNextSignIn")
+                        .HasColumnType("boolean");
 
                     b.Property<int>("SecurityVersion")
                         .ValueGeneratedOnAdd()
@@ -168,7 +188,7 @@ namespace HsSqlAgent.PostgresMigrations.Auth
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Mail")
+                    b.HasIndex("NormalizedMail")
                         .IsUnique();
 
                     b.ToTable("Members");
@@ -187,6 +207,41 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                     b.HasIndex("RoleId");
 
                     b.ToTable("MemberRoles");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.PasswordResetToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("PasswordResetTokens");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Permission", b =>
@@ -564,6 +619,17 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                     b.Navigation("Member");
 
                     b.Navigation("Role");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.PasswordResetToken", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany()
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.PermissionAction", b =>

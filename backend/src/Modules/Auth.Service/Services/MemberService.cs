@@ -11,20 +11,106 @@ public class MemberService(IAuthContext context) : IMemberService
     private readonly IAuthContext _context = context;
 
     public async Task<IEnumerable<MemberVM>> GetMembersAsync(CancellationToken cancellationToken = default)
+        => (await GetMembersAsync(new MemberQuery { PageSize = 100 }, cancellationToken)).Items;
+
+    public async Task<MemberPage> GetMembersAsync(MemberQuery request, CancellationToken cancellationToken = default)
     {
-        return await _context.Members
+        var page = Math.Max(1, request.Page);
+        var pageSize = Math.Clamp(request.PageSize, 1, 100);
+        var query = _context.Members.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(request.Search))
+        {
+            var search = request.Search.Trim();
+            query = query.Where(x => x.Mail.Contains(search) || x.Username.Contains(search));
+        }
+        if (request.IsActive.HasValue)
+            query = query.Where(x => x.IsActive == request.IsActive.Value);
+        if (request.RoleId.HasValue)
+            query = query.Where(x => x.MemberRoles.Any(r => r.RoleId == request.RoleId.Value));
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var items = await query
             .AsNoTracking()
             .OrderBy(x => x.Mail)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(x => new MemberVM
             {
                 Id = x.Id,
                 Username = x.Username,
                 Mail = x.Mail,
                 IsActive = x.IsActive,
+                RequirePasswordChangeAtNextSignIn = x.RequirePasswordChangeAtNextSignIn,
+                CreatedAt = x.CreatedAt,
+                LastLoginAt = x.LastLoginAt,
+                ActiveSessionCount = x.AuthSessions.Count(s => s.RevokedAt == null && s.ExpiresAt > DateTime.UtcNow),
                 RoleIds = x.MemberRoles.OrderBy(r => r.RoleId).Select(r => r.RoleId).ToArray(),
                 Roles = x.MemberRoles.OrderBy(r => r.Role.Name).Select(r => r.Role.Name).ToArray()
             })
             .ToListAsync(cancellationToken);
+        return new MemberPage { Items = items, TotalCount = totalCount, Page = page, PageSize = pageSize };
+    }
+
+    public async Task<MemberVM> GetAccountAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var member = await _context.Members.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Member not found.");
+        return ToViewModel(member);
+    }
+
+    public async Task<MemberVM> UpdateAccountAsync(
+        int id,
+        UpdateAccountRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var member = await _context.Members.FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Member not found.");
+        var email = request.Email.Trim();
+        var normalizedEmail = AuthService.NormalizeEmail(email);
+        if (await _context.Members.AnyAsync(
+                x => x.Id != id && x.NormalizedMail == normalizedEmail, cancellationToken))
+            throw new InvalidOperationException("Member email already exists.");
+
+        member.Username = request.Username.Trim();
+        member.Mail = email;
+        member.NormalizedMail = normalizedEmail;
+        member.SecurityVersion++;
+        await RevokeSessionsInternalAsync(id, "Account identity changed.", cancellationToken);
+        await _context.SaveChangesAsync(cancellationToken);
+        return ToViewModel(member);
+    }
+
+    public async Task ChangePasswordAsync(
+        int id,
+        ChangePasswordRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var member = await _context.Members.FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Member not found.");
+        if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, member.PasswordHash))
+            throw new UnauthorizedAccessException("Current password is incorrect.");
+        if (BCrypt.Net.BCrypt.Verify(request.NewPassword, member.PasswordHash))
+            throw new ArgumentException("New password must be different from the current password.");
+
+        member.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        member.RequirePasswordChangeAtNextSignIn = false;
+        member.SecurityVersion++;
+        await RevokeSessionsInternalAsync(id, "Password changed.", cancellationToken);
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task SetPasswordChangeRequiredAsync(
+        int id,
+        bool required,
+        CancellationToken cancellationToken = default)
+    {
+        var member = await _context.Members.FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Member not found.");
+        member.RequirePasswordChangeAtNextSignIn = required;
+        member.SecurityVersion++;
+        await RevokeSessionsInternalAsync(id, "Password change required by administrator.", cancellationToken);
+        await _context.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<MemberVM> UpdateMemberRolesAsync(
@@ -118,7 +204,9 @@ public class MemberService(IAuthContext context) : IMemberService
     public async Task<int> CreateMemberAsync(CreateMemberRequest request, CancellationToken cancellationToken = default)
     {
         var email = request.Email.Trim();
-        if (await _context.Members.AnyAsync(x => x.Mail == email, cancellationToken))
+        var normalizedEmail = AuthService.NormalizeEmail(email);
+        if (await _context.Members.AnyAsync(x => x.NormalizedMail == normalizedEmail ||
+                (x.NormalizedMail == null && x.Mail.ToUpper() == normalizedEmail), cancellationToken))
         {
             throw new InvalidOperationException("Member email already exists.");
         }
@@ -126,6 +214,7 @@ public class MemberService(IAuthContext context) : IMemberService
         var member = new Member
         {
             Mail = email,
+            NormalizedMail = normalizedEmail,
             Username = string.IsNullOrWhiteSpace(request.Username) ? email.Split('@')[0] : request.Username.Trim(),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password.Trim())
         };
@@ -210,10 +299,26 @@ public class MemberService(IAuthContext context) : IMemberService
         Username = member.Username,
         Mail = member.Mail,
         IsActive = member.IsActive,
+        RequirePasswordChangeAtNextSignIn = member.RequirePasswordChangeAtNextSignIn,
+        CreatedAt = member.CreatedAt,
+        LastLoginAt = member.LastLoginAt,
         RoleIds = [.. member.MemberRoles.OrderBy(x => x.RoleId).Select(x => x.RoleId)],
         Roles = [.. member.MemberRoles
             .Where(x => x.Role is not null)
             .OrderBy(x => x.Role.Name)
             .Select(x => x.Role.Name)]
     };
+
+    private async Task RevokeSessionsInternalAsync(int memberId, string reason, CancellationToken cancellationToken)
+    {
+        var sessions = await _context.AuthSessions
+            .Where(x => x.MemberId == memberId && x.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        foreach (var session in sessions)
+        {
+            session.RevokedAt = now;
+            session.RevocationReason = reason;
+        }
+    }
 }

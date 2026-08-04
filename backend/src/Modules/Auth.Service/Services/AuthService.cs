@@ -17,6 +17,7 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
     public const string SuperUserRoleName = "SuperUser";
     public const string SecurityVersionClaim = "security_version";
     public const string SessionIdClaim = "session_id";
+    public const string PasswordChangeRequiredClaim = "password_change_required";
 
     private readonly IAuthContext _context = context;
     private readonly JwtSettings _jwtSettings = jwtSettings.Value;
@@ -27,16 +28,35 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
     public async Task<AuthResult> SignInAsync(SignInRequest request, CancellationToken cancellationToken = default, string? ipAddress = null, string? userAgent = null)
     {
         var email = request.Email.Trim();
+        var normalizedEmail = NormalizeEmail(email);
         var password = request.Password.Trim();
 
         var member = await _context.Members
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Mail == email, cancellationToken);
+            .FirstOrDefaultAsync(x => x.NormalizedMail == normalizedEmail ||
+                                      (x.NormalizedMail == null && x.Mail.ToUpper() == normalizedEmail), cancellationToken);
 
-        if (member is null || !member.IsActive || !BCrypt.Net.BCrypt.Verify(password, member.PasswordHash))
+        var now = DateTime.UtcNow;
+        if (member is null || !member.IsActive || member.LockoutEnd > now)
         {
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
+
+        if (!BCrypt.Net.BCrypt.Verify(password, member.PasswordHash))
+        {
+            member.FailedSignInCount++;
+            if (member.FailedSignInCount >= Math.Max(1, _jwtSettings.SignInLockoutThreshold))
+            {
+                member.LockoutEnd = now.AddMinutes(Math.Max(1, _jwtSettings.SignInLockoutMinutes));
+                member.FailedSignInCount = 0;
+            }
+            await _context.SaveChangesAsync(cancellationToken);
+            throw new UnauthorizedAccessException("Invalid email or password.");
+        }
+
+        member.FailedSignInCount = 0;
+        member.LockoutEnd = null;
+        member.LastLoginAt = now;
+        await _context.SaveChangesAsync(cancellationToken);
 
         return await CreateSessionAndBuildAuthResultAsync(member.Id, ipAddress, userAgent, cancellationToken);
     }
@@ -52,6 +72,7 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         var member = new Member
         {
             Mail = email,
+            NormalizedMail = NormalizeEmail(email),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password.Trim()),
             Username = email.Split('@')[0]
         };
@@ -268,8 +289,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             Email = member.Mail,
             Roles = roleNames,
             Permissions = permissions,
-            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, member.SecurityVersion, sessionId, roleIds, roleNames),
-            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, member.SecurityVersion, sessionId, refreshTokenId, roleIds, roleNames)
+            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, member.SecurityVersion, member.RequirePasswordChangeAtNextSignIn, sessionId, roleIds, roleNames),
+            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, member.SecurityVersion, member.RequirePasswordChangeAtNextSignIn, sessionId, refreshTokenId, roleIds, roleNames)
         };
     }
 
@@ -316,17 +337,18 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         string ActionCode,
         string ActionName);
 
-    private string GenerateAccessToken(int memberId, string userName, string email, int securityVersion, Guid sessionId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
-        => GenerateToken(memberId, userName, email, securityVersion, sessionId, Guid.NewGuid().ToString(), roleIds, roleNames, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
+    private string GenerateAccessToken(int memberId, string userName, string email, int securityVersion, bool passwordChangeRequired, Guid sessionId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, securityVersion, passwordChangeRequired, sessionId, Guid.NewGuid().ToString(), roleIds, roleNames, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
 
-    private string GenerateRefreshToken(int memberId, string userName, string email, int securityVersion, Guid sessionId, string refreshTokenId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
-        => GenerateToken(memberId, userName, email, securityVersion, sessionId, refreshTokenId, roleIds, roleNames, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
+    private string GenerateRefreshToken(int memberId, string userName, string email, int securityVersion, bool passwordChangeRequired, Guid sessionId, string refreshTokenId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, securityVersion, passwordChangeRequired, sessionId, refreshTokenId, roleIds, roleNames, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
 
     private string GenerateToken(
         int memberId,
         string userName,
         string email,
         int securityVersion,
+        bool passwordChangeRequired,
         Guid sessionId,
         string tokenId,
         IReadOnlyCollection<int> roleIds,
@@ -349,7 +371,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             new(JwtRegisteredClaimNames.Email, email),
             new(JwtRegisteredClaimNames.Jti, tokenId),
             new(SecurityVersionClaim, securityVersion.ToString()),
-            new(SessionIdClaim, sessionId.ToString())
+            new(SessionIdClaim, sessionId.ToString()),
+            new(PasswordChangeRequiredClaim, passwordChangeRequired.ToString().ToLowerInvariant())
         };
 
         claims.AddRange(roleNames.Select(n => new Claim(ClaimTypes.Role, n)));
@@ -367,4 +390,6 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
 
     private static string HashTokenId(string tokenId)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tokenId)));
+
+    public static string NormalizeEmail(string email) => email.Trim().ToUpperInvariant();
 }

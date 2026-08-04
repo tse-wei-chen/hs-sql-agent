@@ -13,6 +13,16 @@ public class HsSqlAgentServiceOptions
     public string JwtAudience { get; set; } = "HS-Agent-Users";
     public int JwtAccessTokenExpirationMinutes { get; set; } = 1;
     public int JwtRefreshTokenExpirationDays { get; set; } = 30;
+    public int SignInLockoutThreshold { get; set; } = 5;
+    public int SignInLockoutMinutes { get; set; } = 15;
+    public string PasswordResetBaseUrl { get; set; } = "http://localhost:3000/reset-password";
+    public int PasswordResetExpirationMinutes { get; set; } = 30;
+    public string SmtpHost { get; set; } = string.Empty;
+    public int SmtpPort { get; set; } = 587;
+    public bool SmtpEnableSsl { get; set; } = true;
+    public string SmtpUsername { get; set; } = string.Empty;
+    public string SmtpPassword { get; set; } = string.Empty;
+    public string SmtpFrom { get; set; } = string.Empty;
 
     public int RateLimitPermitLimit { get; set; }
     public int RateLimitWindowSeconds { get; set; }

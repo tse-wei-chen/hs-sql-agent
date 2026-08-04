@@ -2,7 +2,7 @@ export default defineNuxtRouteMiddleware((to, _from) => {
   if (import.meta.server) return;
   const token = window.localStorage.getItem("accessToken");
   const isLogin = !!token;
-  const publicRoutes = ["/login", "/sign-up", "/403"];
+  const publicRoutes = ["/login", "/sign-up", "/forgot-password", "/reset-password", "/403"];
   if (!isLogin && !publicRoutes.includes(to.path)) {
     return navigateTo("/login");
   }
@@ -11,6 +11,16 @@ export default defineNuxtRouteMiddleware((to, _from) => {
   }
   if (isLogin && publicRoutes.includes(to.path)) {
     return;
+  }
+
+  try {
+    const payloadPart = token?.split(".")[1];
+    const payload = payloadPart ? JSON.parse(atob(payloadPart.replace(/-/g, "+").replace(/_/g, "/"))) : null;
+    if (payload?.password_change_required === "true" && to.path !== "/account") {
+      return navigateTo("/account");
+    }
+  } catch {
+    return navigateTo("/login");
   }
 
   const required = to.meta.permission as string | undefined;

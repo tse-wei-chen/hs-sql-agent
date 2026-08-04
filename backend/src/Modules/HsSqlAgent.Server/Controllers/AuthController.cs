@@ -16,6 +16,8 @@ namespace HsSqlAgent.Server.Controllers;
 public class AuthController(
     ILogger<AuthController> logger,
     IAuthService authService,
+    IMemberService memberService,
+    IPasswordResetService passwordResetService,
     IAuditService auditService,
     ITokenRevocationService tokenRevocationService) : ControllerBase
 {
@@ -197,5 +199,79 @@ public class AuthController(
         var hasMember = int.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out memberId);
         var hasSession = Guid.TryParse(User.FindFirstValue(AuthService.SessionIdClaim), out sessionId);
         return hasMember && hasSession;
+    }
+
+    [AllowAnonymous]
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPasswordAsync(ForgotPasswordRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await passwordResetService.RequestAsync(request, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Password reset delivery failed.");
+        }
+        return Accepted(new { message = "If the account exists, password reset instructions will be sent." });
+    }
+
+    [AllowAnonymous]
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPasswordAsync(ResetPasswordRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await passwordResetService.ResetAsync(request, cancellationToken);
+            await auditService.WriteLogAsync("admin.account.password.reset", "password-reset", "success", cancellationToken: cancellationToken);
+            return NoContent();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    [HttpGet("account")]
+    public async Task<IActionResult> GetAccountAsync(CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out var memberId)) return Unauthorized();
+        return Ok(await memberService.GetAccountAsync(memberId, cancellationToken));
+    }
+
+    [HttpPut("account")]
+    public async Task<IActionResult> UpdateAccountAsync(UpdateAccountRequest request, CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out var memberId)) return Unauthorized();
+        try
+        {
+            var result = await memberService.UpdateAccountAsync(memberId, request, cancellationToken);
+            await auditService.WriteLogAsync("admin.account.update", memberId.ToString(), "success", cancellationToken: cancellationToken);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    [HttpPut("account/password")]
+    public async Task<IActionResult> ChangePasswordAsync(ChangePasswordRequest request, CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub), out var memberId)) return Unauthorized();
+        try
+        {
+            await memberService.ChangePasswordAsync(memberId, request, cancellationToken);
+            await auditService.WriteLogAsync("admin.account.password.change", memberId.ToString(), "success", cancellationToken: cancellationToken);
+            return NoContent();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 }

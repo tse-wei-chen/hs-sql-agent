@@ -71,6 +71,7 @@ const submit = async (values: any) => {
             <PasswordInput v-bind="field" id="password" />
           </template>
         </FormField>
+        <NuxtLink to="/forgot-password" class="text-right text-sm text-primary hover:underline">Forgot password?</NuxtLink>
 
         <UIField>
           <Button type="submit" :disabled="!meta.valid || submitting">

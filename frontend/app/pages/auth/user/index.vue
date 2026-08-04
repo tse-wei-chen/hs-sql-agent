@@ -23,6 +23,7 @@ import {
   updateMemberRoles,
   updateMemberStatus,
   revokeMemberSessions,
+  requireMemberPasswordChange,
   type Member,
 } from "~/api/member";
 import {
@@ -72,6 +73,11 @@ const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
 const loadError = ref("");
+const search = ref("");
+const statusFilter = ref("");
+const roleFilter = ref("");
+const page = ref(1);
+const totalCount = ref(0);
 
 const roleMap = computed(() => new Map(roles.value.map((role) => [role.id, role])));
 
@@ -101,8 +107,15 @@ const load = async () => {
   loading.value = true;
   loadError.value = "";
   try {
-    const [memberData, roleData] = await Promise.all([listMembers(), listRoles()]);
-    members.value = memberData;
+    const [memberData, roleData] = await Promise.all([listMembers({
+      search: search.value || undefined,
+      isActive: statusFilter.value === "" ? undefined : statusFilter.value === "active",
+      roleId: roleFilter.value || undefined,
+      page: page.value,
+      pageSize: 20,
+    }), listRoles()]);
+    members.value = memberData.items;
+    totalCount.value = memberData.totalCount;
     roles.value = roleData;
   } catch (error: any) {
     loadError.value = error?.response?.data || "Failed to load users.";
@@ -187,6 +200,16 @@ const revokeSessions = async (member: Member) => {
     toast.success("All user sessions were revoked.");
   } catch (error: any) {
     toast.error(error?.response?.data || "Failed to revoke user sessions.");
+  }
+};
+
+const requirePasswordChange = async (member: Member) => {
+  if (!confirm(`Require "${member.mail}" to change password on next sign-in?`)) return;
+  try {
+    await requireMemberPasswordChange(member.id);
+    toast.success("Password change is now required and existing sessions were revoked.");
+  } catch (error: any) {
+    toast.error(error?.response?.data || "Failed to require password change.");
   }
 };
 
@@ -297,6 +320,16 @@ onMounted(load);
         <CardTitle>Registered Users</CardTitle>
       </CardHeader>
       <CardContent class="pt-6">
+        <div class="mb-4 grid gap-2 md:grid-cols-4">
+          <Input v-model="search" placeholder="Search email or username" />
+          <select v-model="statusFilter" class="h-9 rounded-md border bg-background px-3 text-sm">
+            <option value="">All statuses</option><option value="active">Active</option><option value="disabled">Disabled</option>
+          </select>
+          <select v-model="roleFilter" class="h-9 rounded-md border bg-background px-3 text-sm">
+            <option value="">All roles</option><option v-for="role in roles" :key="role.id" :value="role.id">{{ role.name }}</option>
+          </select>
+          <Button @click="page = 1; load()">Search</Button>
+        </div>
         <div v-if="loading" class="py-8 text-center text-sm text-muted-foreground">
           Loading users...
         </div>
@@ -322,10 +355,16 @@ onMounted(load);
                 <p class="mt-1 truncate font-mono text-xs text-muted-foreground">
                   {{ member.mail }}
                 </p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Created {{ new Date(member.createdAt).toLocaleString() }} · Last login {{ member.lastLoginAt ? new Date(member.lastLoginAt).toLocaleString() : "Never" }} · {{ member.activeSessionCount }} sessions
+                </p>
               </div>
               <div v-if="member.id !== currentUserId" class="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                 <Button variant="ghost" size="icon" class="h-8 w-8" title="Sign out all sessions" @click="revokeSessions(member)" v-permission="'edit'">
                   <LogOut class="size-4" />
+                </Button>
+                <Button variant="ghost" size="sm" class="h-8" title="Require password change" @click="requirePasswordChange(member)" v-permission="'edit'">
+                  Reset password
                 </Button>
                 <Button
                   variant="ghost"
@@ -359,6 +398,11 @@ onMounted(load);
               <div v-else class="text-xs text-muted-foreground">No roles assigned.</div>
             </div>
           </div>
+        </div>
+        <div class="mt-4 flex items-center justify-end gap-2">
+          <Button variant="outline" :disabled="page <= 1" @click="page--; load()">Previous</Button>
+          <span class="text-sm text-muted-foreground">Page {{ page }} · Total {{ totalCount }}</span>
+          <Button variant="outline" :disabled="page * 20 >= totalCount" @click="page++; load()">Next</Button>
         </div>
       </CardContent>
     </Card>

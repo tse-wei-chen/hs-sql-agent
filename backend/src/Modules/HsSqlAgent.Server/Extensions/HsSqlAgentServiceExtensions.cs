@@ -65,6 +65,7 @@ public static class HsSqlAgentServiceExtensions
         services.AddAdminDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
 
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IPasswordResetService, PasswordResetService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
@@ -114,8 +115,21 @@ public static class HsSqlAgentServiceExtensions
             jwt.Audience = options.JwtAudience;
             jwt.AccessTokenExpirationMinutes = options.JwtAccessTokenExpirationMinutes;
             jwt.RefreshTokenExpirationDays = options.JwtRefreshTokenExpirationDays;
+            jwt.SignInLockoutThreshold = options.SignInLockoutThreshold;
+            jwt.SignInLockoutMinutes = options.SignInLockoutMinutes;
         });
         services.Configure<McpKeySettings>(mcp => mcp.HmacSecretKey = options.HmacSecretKey);
+        services.Configure<PasswordResetSettings>(reset =>
+        {
+            reset.BaseUrl = options.PasswordResetBaseUrl;
+            reset.ExpirationMinutes = options.PasswordResetExpirationMinutes;
+            reset.SmtpHost = options.SmtpHost;
+            reset.SmtpPort = options.SmtpPort;
+            reset.SmtpEnableSsl = options.SmtpEnableSsl;
+            reset.SmtpUsername = options.SmtpUsername;
+            reset.SmtpPassword = options.SmtpPassword;
+            reset.SmtpFrom = options.SmtpFrom;
+        });
         services.Configure<RateLimitingSettings>(rl =>
         {
             rl.PermitLimit = options.RateLimitPermitLimit;

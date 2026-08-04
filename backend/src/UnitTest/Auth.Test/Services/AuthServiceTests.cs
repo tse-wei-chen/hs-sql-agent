@@ -91,6 +91,31 @@ public class AuthServiceTests
     }
 
     [Fact]
+    public async Task SignInAsync_LocksAccount_AfterConfiguredFailedAttempts()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "user@test.com",
+            NormalizedMail = "USER@TEST.COM",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("correct"),
+            Username = "user"
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                _service.SignInAsync(
+                    new SignInRequest { Email = "USER@test.com", Password = "wrong" },
+                    TestContext.Current.CancellationToken));
+        }
+
+        Assert.NotNull(member.LockoutEnd);
+        Assert.True(member.LockoutEnd > DateTime.UtcNow);
+    }
+
+    [Fact]
     public async Task SignUpFirstAdminAsync_CreatesSuperUserRoleAndMember()
     {
         var members = new List<Member>();

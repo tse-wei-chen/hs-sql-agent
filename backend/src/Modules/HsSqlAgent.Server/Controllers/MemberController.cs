@@ -44,9 +44,9 @@ public class MemberController(
 
     [HttpGet]
     [HasPermission("/auth/user", "view")]
-    public async Task<IActionResult> GetUsersAsync(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetUsersAsync([FromQuery] MemberQuery query, CancellationToken cancellationToken)
     {
-        var users = await memberService.GetMembersAsync(cancellationToken);
+        var users = await memberService.GetMembersAsync(query, cancellationToken);
         return Ok(users);
     }
 
@@ -150,5 +150,24 @@ public class MemberController(
         await authService.RevokeAllSessionsAsync(id, null, "Revoked by administrator.", cancellationToken);
         await auditService.WriteLogAsync("admin.users.sessions.revoke", id.ToString(), "success", cancellationToken: cancellationToken);
         return NoContent();
+    }
+
+    [HttpPut("{id:int}/password-change-required")]
+    [HasPermission("/auth/user", "edit")]
+    public async Task<IActionResult> SetPasswordChangeRequiredAsync(
+        int id,
+        RequirePasswordResetRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await memberService.SetPasswordChangeRequiredAsync(id, request.Required, cancellationToken);
+            await auditService.WriteLogAsync("admin.users.password-reset.require", id.ToString(), "success", cancellationToken: cancellationToken);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ex.Message);
+        }
     }
 }

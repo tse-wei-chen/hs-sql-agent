@@ -62,3 +62,35 @@ export const revokeSession = async (sessionId: string) => {
 export const revokeOtherSessions = async () => {
   await xiorInstanceToken.delete("/auth/sessions");
 };
+
+export interface AccountProfile {
+  id: number;
+  username: string;
+  mail: string;
+  requirePasswordChangeAtNextSignIn: boolean;
+  createdAt: string;
+  lastLoginAt?: string | null;
+}
+
+export const getAccount = async () => {
+  const response = await xiorInstanceToken.get<AccountProfile>("/auth/account");
+  return response.data;
+};
+
+export const updateAccount = async (username: string, email: string) => {
+  const response = await xiorInstanceToken.put<AccountProfile>("/auth/account", { username, email });
+  return response.data;
+};
+
+export const changePassword = async (currentPassword: string, newPassword: string) => {
+  await xiorInstanceToken.put("/auth/account/password", { currentPassword, newPassword });
+};
+
+export const forgotPassword = async (email: string) => {
+  const response = await xiorInstance.post("/auth/forgot-password", { email });
+  return response.data;
+};
+
+export const resetPassword = async (token: string, newPassword: string) => {
+  await xiorInstance.post("/auth/reset-password", { token, newPassword });
+};

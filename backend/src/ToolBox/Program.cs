@@ -25,6 +25,19 @@ builder.Services.AddHsSqlAgent(options =>
         options.JwtAccessTokenExpirationMinutes = atExp;
     if (int.TryParse(builder.Configuration["JwtSettings:RefreshTokenExpirationDays"], out var rtExp))
         options.JwtRefreshTokenExpirationDays = rtExp;
+    if (int.TryParse(builder.Configuration["Authentication:LockoutThreshold"], out var lockoutThreshold))
+        options.SignInLockoutThreshold = lockoutThreshold;
+    if (int.TryParse(builder.Configuration["Authentication:LockoutMinutes"], out var lockoutMinutes))
+        options.SignInLockoutMinutes = lockoutMinutes;
+    options.PasswordResetBaseUrl = builder.Configuration["PasswordReset:BaseUrl"] ?? options.PasswordResetBaseUrl;
+    if (int.TryParse(builder.Configuration["PasswordReset:ExpirationMinutes"], out var resetExpiration))
+        options.PasswordResetExpirationMinutes = resetExpiration;
+    options.SmtpHost = builder.Configuration["PasswordReset:SmtpHost"] ?? string.Empty;
+    if (int.TryParse(builder.Configuration["PasswordReset:SmtpPort"], out var smtpPort)) options.SmtpPort = smtpPort;
+    if (bool.TryParse(builder.Configuration["PasswordReset:SmtpEnableSsl"], out var smtpSsl)) options.SmtpEnableSsl = smtpSsl;
+    options.SmtpUsername = builder.Configuration["PasswordReset:SmtpUsername"] ?? string.Empty;
+    options.SmtpPassword = builder.Configuration["PasswordReset:SmtpPassword"] ?? string.Empty;
+    options.SmtpFrom = builder.Configuration["PasswordReset:SmtpFrom"] ?? string.Empty;
     if (int.TryParse(builder.Configuration["RateLimiting:PermitLimit"], out var pl))
         options.RateLimitPermitLimit = pl;
     if (int.TryParse(builder.Configuration["RateLimiting:WindowSeconds"], out var ws))
