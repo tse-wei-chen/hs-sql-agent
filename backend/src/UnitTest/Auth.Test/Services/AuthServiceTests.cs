@@ -183,8 +183,46 @@ public class AuthServiceTests
         Assert.Equal("admin@test.com", result.Email);
         Assert.NotNull(result.AccessToken);
         Assert.NotNull(result.RefreshToken);
+        Assert.False(result.RequiresMfaEnrollment);
         Assert.Single(roles);
         Assert.Equal("SuperUser", roles[0].Name);
+    }
+
+    [Fact]
+    public async Task BeginMemberSignInAsync_RequiresEnrollment_OnlyWhenRoleIsExplicitlyConfigured()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "admin@test.com",
+            NormalizedMail = "ADMIN@TEST.COM",
+            PasswordHash = "hash",
+            Username = "admin"
+        };
+        var role = new Role { Id = 7, Name = AuthService.SuperUserRoleName };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+        _contextMock.Setup(c => c.MemberRoles).ReturnsDbSet(new List<MemberRole>
+        {
+            new() { MemberId = member.Id, RoleId = role.Id, Member = member, Role = role }
+        });
+        _contextMock.Setup(c => c.PermissionActions).ReturnsDbSet(new List<PermissionAction>());
+        var optedInService = new AuthService(
+            _contextMock.Object,
+            _jwtSettings,
+            Options.Create(new EnterpriseIdentitySettings
+            {
+                RequireMfaForRoles = [AuthService.SuperUserRoleName]
+            }));
+
+        var result = await optedInService.BeginMemberSignInAsync(
+            member.Id,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.RequiresMfaEnrollment);
+        var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler()
+            .ReadJwtToken(result.AccessToken);
+        Assert.Contains(token.Claims, claim =>
+            claim.Type == AuthService.MfaEnrollmentRequiredClaim && claim.Value == "true");
     }
 
     [Fact]

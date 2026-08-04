@@ -83,7 +83,7 @@ public class EnterpriseIdentityOptions
     public bool AutoProvision { get; set; } = true;
     public string FrontendCallbackUrl { get; set; } = "/sso-callback";
     public int LoginCodeExpirationMinutes { get; set; } = 2;
-    public List<string> RequireMfaForRoles { get; set; } = ["SuperUser"];
+    public List<string> RequireMfaForRoles { get; set; } = [];
     public string TotpIssuer { get; set; } = "HS SQL Agent";
     public string DataProtectionKeyPath { get; set; } = string.Empty;
 }
