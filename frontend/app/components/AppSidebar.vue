@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { Command, LifeBuoy, Send } from "@lucide/vue";
-import NavSecondary from "@/components/NavSecondary.vue";
+import { Command } from "@lucide/vue";
 import NavUser from "@/components/NavUser.vue";
 import {
   Sidebar,
@@ -46,18 +45,6 @@ const data = ref({
     email: "",
     avatar: "",
   },
-  navSecondary: [
-    {
-      title: "Support",
-      url: "#",
-      icon: LifeBuoy,
-    },
-    {
-      title: "Feedback",
-      url: "#",
-      icon: Send,
-    },
-  ],
   navGroups: [
     {
       title: "Runtime Management",
@@ -90,7 +77,7 @@ const data = ref({
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton size="lg" as-child>
-            <a href="#">
+            <NuxtLink to="/home">
               <div
                 class="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground"
               >
@@ -100,7 +87,7 @@ const data = ref({
                 <span class="truncate font-medium">HS Admin Panel</span>
                 <span class="truncate text-xs">Dashboard</span>
               </div>
-            </a>
+            </NuxtLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SearchForm />
@@ -127,7 +114,6 @@ const data = ref({
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
-      <NavSecondary :items="data.navSecondary" class="mt-auto" />
     </SidebarContent>
     <SidebarFooter>
       <NavUser :user="data.user" />

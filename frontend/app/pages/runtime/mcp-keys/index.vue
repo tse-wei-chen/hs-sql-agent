@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -57,8 +58,13 @@ import {
   formatAllowedToolsLabel,
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
+  createMcpOnboardingSnippets,
+  getMcpEndpoint,
+  runMcpSmokeTest,
+  allowedToolsRequireElicitation,
   type McpKeyDetail,
   type McpKeyRateLimitMode,
+  type McpSmokeResult,
 } from "@/lib/mcpKeyIssuance";
 
 definePageMeta({
@@ -111,6 +117,11 @@ const connectionTestResult = ref<{
   errorMessage: string;
 } | null>(null);
 const issuedPlaintextKey = ref("");
+const issuedKeyName = ref("");
+const mcpEndpoint = ref("");
+const smokeTesting = ref(false);
+const smokeResult = ref<McpSmokeResult | null>(null);
+const smokeStages = ["network", "auth", "capability"] as const;
 const lifecycleMode = ref<"edit" | "rotate" | "clone" | null>(null);
 const lifecycleKey = ref<McpKeyItem | null>(null);
 const lifecycleSaving = ref(false);
@@ -202,6 +213,22 @@ const selectedToolLabel = computed(() => {
   return formatAllowedToolsLabel(detail.value.allowedTools);
 });
 
+const dmlToolNames = computed(() => new Set(
+  customTools.value.filter((tool) => tool.type === "DML").map((tool) => tool.name),
+));
+
+const issueRequiresElicitation = computed(() =>
+  allowedToolsRequireElicitation(detail.value.allowedTools, dmlToolNames.value),
+);
+const lifecycleRequiresElicitation = computed(() => allowedToolsRequireElicitation(
+  lifecycleAllowedTools.value.split(",").map((name) => name.trim()).filter(Boolean),
+  dmlToolNames.value,
+));
+
+const onboardingSnippets = computed(() =>
+  createMcpOnboardingSnippets(mcpEndpoint.value, issuedPlaintextKey.value),
+);
+
 const load = async () => {
   loading.value = true;
   try {
@@ -226,6 +253,8 @@ const resetForm = () => {
   isWhitelistEnabled.value = false
   selectedSchema.value = undefined
   issuedPlaintextKey.value = ""
+  issuedKeyName.value = ""
+  smokeResult.value = null
 };
 
 const issue = async () => {
@@ -263,6 +292,7 @@ const issue = async () => {
     resetForm()
     await load();
     issuedPlaintextKey.value = result.plaintextKey || "";
+    issuedKeyName.value = result.name || values.name;
   } catch (error: any) {
     toast.error(
       error?.response?.data?.error ||
@@ -373,6 +403,7 @@ const saveLifecycle = async () => {
         expiresAt: lifecycleExpiry(),
       });
       issuedPlaintextKey.value = result.plaintextKey || "";
+      issuedKeyName.value = result.name || lifecycleKey.value.name;
       toast.success("MCP key rotated. Save the replacement key now.");
     } else {
       result = await cloneMcpKey(lifecycleKey.value.id, {
@@ -380,6 +411,7 @@ const saveLifecycle = async () => {
         expiresAt: lifecycleExpiry(),
       });
       issuedPlaintextKey.value = result.plaintextKey || "";
+      issuedKeyName.value = result.name || lifecycleName.value;
       toast.success("MCP key duplicated. Save the new key now.");
     }
     lifecycleMode.value = null;
@@ -401,7 +433,31 @@ const copyIssuedKey = async () => {
   toast.success("Key copied to clipboard.");
 };
 
-onMounted(load);
+const copySnippet = async (value: string) => {
+  await navigator.clipboard.writeText(value);
+  toast.success("Configuration copied to clipboard.");
+};
+
+const closeOnboarding = () => {
+  issuedPlaintextKey.value = "";
+  issuedKeyName.value = "";
+  smokeResult.value = null;
+};
+
+const smokeTest = async () => {
+  smokeTesting.value = true;
+  smokeResult.value = null;
+  try {
+    smokeResult.value = await runMcpSmokeTest(mcpEndpoint.value, issuedPlaintextKey.value);
+  } finally {
+    smokeTesting.value = false;
+  }
+};
+
+onMounted(async () => {
+  mcpEndpoint.value = getMcpEndpoint(window.location.origin);
+  await load();
+});
 </script>
 
 <template>
@@ -641,6 +697,12 @@ onMounted(load);
                   </div>
                 </template>
               </MultiSelect>
+              <div
+                v-if="issueRequiresElicitation"
+                class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                This key can invoke DML. Its MCP client must support form Elicitation so a human can approve each commit; unsupported clients will be refused. An unrestricted tool list also includes DML.
+              </div>
             </Field>
             <Field class="md:col-span-2">
               <div class="flex items-center justify-start gap-2">
@@ -748,16 +810,6 @@ onMounted(load);
           </span>
         </form>
 
-        <div
-          v-if="issuedPlaintextKey"
-          class="mt-4 rounded border border-border bg-muted/40 p-3 text-sm"
-        >
-          <div class="font-medium">One-time key value</div>
-          <div class="mt-1 break-all">{{ issuedPlaintextKey }}</div>
-          <Button class="mt-2" size="sm" variant="outline" @click="copyIssuedKey">
-            Copy key
-          </Button>
-        </div>
       </CardContent>
     </Card>
 
@@ -901,6 +953,12 @@ onMounted(load);
             <Field>
               <FieldLabel>Allowed tools</FieldLabel>
               <Input v-model="lifecycleAllowedTools" placeholder="Comma-separated tool names" />
+              <div
+                v-if="lifecycleRequiresElicitation"
+                class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
+              >
+                DML is enabled (an empty list means all tools). The client must support MCP form Elicitation.
+              </div>
             </Field>
             <Field>
               <FieldLabel>Table whitelist</FieldLabel>
@@ -954,6 +1012,82 @@ onMounted(load);
           >
             {{ lifecycleSaving ? "Saving..." : lifecycleMode === "edit" ? "Save changes" : lifecycleMode === "rotate" ? "Rotate key" : "Duplicate key" }}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog :open="Boolean(issuedPlaintextKey)" @update:open="(open) => { if (!open) closeOnboarding() }">
+      <DialogContent class="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Save and connect {{ issuedKeyName || "this MCP key" }}</DialogTitle>
+          <DialogDescription>
+            This secret and every generated configuration are available only in this dialog. Closing it permanently removes the plaintext value from the Admin UI.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-4">
+          <div class="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            Treat copied snippets as secrets. Do not commit them to source control or paste them into tickets.
+          </div>
+          <Field>
+            <FieldLabel>One-time key value</FieldLabel>
+            <div class="break-all rounded border bg-muted/40 p-3 font-mono text-xs">{{ issuedPlaintextKey }}</div>
+            <Button class="mt-2" size="sm" variant="outline" @click="copyIssuedKey">Copy key</Button>
+          </Field>
+          <Field>
+            <FieldLabel>MCP endpoint</FieldLabel>
+            <Input v-model="mcpEndpoint" />
+          </Field>
+
+          <Tabs default-value="claude">
+            <TabsList>
+              <TabsTrigger value="claude">Claude Desktop</TabsTrigger>
+              <TabsTrigger value="cursor">Cursor</TabsTrigger>
+              <TabsTrigger value="generic">Generic HTTP</TabsTrigger>
+            </TabsList>
+            <TabsContent value="claude" class="space-y-2">
+              <p class="text-xs text-muted-foreground">
+                Claude Desktop cannot natively attach this static Bearer key to a remote connector. This local stdio configuration uses the pinned experimental mcp-remote bridge and requires Node.js/npx. Native Settings → Connectors support requires a future OAuth implementation.
+              </p>
+              <Textarea :model-value="onboardingSnippets.claudeDesktop" readonly class="min-h-48 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.claudeDesktop)">Copy Claude config</Button>
+            </TabsContent>
+            <TabsContent value="cursor" class="space-y-2">
+              <p class="text-xs text-muted-foreground">Add this entry to Cursor's MCP configuration.</p>
+              <Textarea :model-value="onboardingSnippets.cursor" readonly class="min-h-48 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.cursor)">Copy Cursor config</Button>
+            </TabsContent>
+            <TabsContent value="generic" class="space-y-2">
+              <p class="text-xs text-muted-foreground">Generic Streamable HTTP client connection object.</p>
+              <Textarea :model-value="onboardingSnippets.genericHttp" readonly class="min-h-40 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.genericHttp)">Copy HTTP config</Button>
+            </TabsContent>
+          </Tabs>
+
+          <div class="rounded border p-3">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="font-medium">Connection and capability smoke test</div>
+                <p class="text-xs text-muted-foreground">Tests endpoint reachability, this key, MCP initialization, and tools capability separately.</p>
+              </div>
+              <Button size="sm" :disabled="smokeTesting || !mcpEndpoint" @click="smokeTest">
+                {{ smokeTesting ? "Testing..." : "Run smoke test" }}
+              </Button>
+            </div>
+            <div v-if="smokeResult" class="mt-3 grid gap-2 text-sm md:grid-cols-3">
+              <div v-for="stage in smokeStages" :key="stage" class="rounded border p-2">
+                <div class="font-medium capitalize">{{ stage }}: {{ smokeResult[stage].status }}</div>
+                <div class="mt-1 text-xs text-muted-foreground">{{ smokeResult[stage].message }}</div>
+              </div>
+            </div>
+            <p class="mt-3 text-xs text-amber-700">
+              This smoke test declares form Elicitation itself, but cannot prove that Claude Desktop or Cursor implements an approval UI. If this key can call DML, verify Elicitation support in the actual client/version before production use.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="destructive" @click="closeOnboarding">I saved it — close and forget secret</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

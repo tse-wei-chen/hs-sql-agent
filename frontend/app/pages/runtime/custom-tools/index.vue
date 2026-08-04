@@ -246,9 +246,12 @@ const publish = async (tool: CustomSqlTool) => {
     const changes = impact.breakingChanges.length > 0
       ? `\nBreaking changes:\n- ${impact.breakingChanges.join("\n- ")}`
       : "\nNo parameter, name, type, or database breaking changes detected.";
+    const elicitation = tool.type === "DML"
+      ? "\n\nDML requirement: every production call requires a client with MCP form Elicitation. Clients without it cannot commit."
+      : "";
     if (!confirm(
       `Publish ${tool.name} to ${impact.draftDatabaseName || "the bound database"}?\n` +
-      `${impact.wouldExposeToKeys.length} active key(s) will be able to discover it.${changes}`,
+      `${impact.wouldExposeToKeys.length} active key(s) will be able to discover it.${changes}${elicitation}`,
     )) return;
     await publishCustomSqlTool(tool.id);
     toast.success(`${tool.name} published.`);
@@ -324,6 +327,12 @@ onMounted(async () => {
                   <SelectItem value="DML">DML (INSERT/UPDATE/DELETE)</SelectItem>
                 </SelectContent>
               </Select>
+              <div
+                v-if="values.type === 'DML'"
+                class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                Published DML requires MCP form Elicitation for every commit. Clients without an Elicitation approval UI can still use Query tools, but DML execution will be refused.
+              </div>
             </Field>
 
             <Field class="md:col-span-2">
@@ -548,7 +557,9 @@ onMounted(async () => {
       <DialogContent class="sm:max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Test Execute Tool</DialogTitle>
-          <DialogDescription>Run against the bound database. DML tests always roll back and never commit.</DialogDescription>
+          <DialogDescription>
+            Run against the bound database. DML tests always roll back and never commit. Production DML additionally requires a client that supports MCP form Elicitation.
+          </DialogDescription>
         </DialogHeader>
 
         <div class="flex-1 overflow-y-auto space-y-4 py-4">

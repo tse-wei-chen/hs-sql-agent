@@ -69,6 +69,12 @@ Custom tools are saved as database-bound SQL templates. Saving creates or update
 
 Use unquoted `{{parameterName}}` placeholders for scalar values declared as string, number, or boolean. The server converts values to escaped SQL literals, then runs the resulting statement through the same runtime parser, AST validation, table whitelist, security policy, and concurrency limit as the built-in SQL tools. Parameters cannot substitute identifiers or arbitrary SQL fragments. DML test execution always rolls back; published DML still requires MCP Elicitation before commit.
 
+## MCP client onboarding
+
+After an MCP key is issued, rotated, or duplicated, the Admin Panel shows its plaintext secret exactly once and generates Claude Desktop, Cursor, and generic Streamable HTTP configuration. The same dialog provides a smoke test that reports network, authentication, and MCP capability failures separately. Closing the dialog removes the secret and generated snippets from the UI.
+
+See [MCP client onboarding and compatibility](docs/mcp-onboarding.md) for the verified protocol baseline, client-version policy, troubleshooting, and the required manual Elicitation check for DML-capable keys.
+
 ## 📖 Documentation
 
 Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki):

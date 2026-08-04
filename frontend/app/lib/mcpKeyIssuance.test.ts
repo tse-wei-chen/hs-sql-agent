@@ -4,6 +4,10 @@ import {
   formatAllowedToolsLabel,
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
+  createMcpOnboardingSnippets,
+  getMcpEndpoint,
+  runMcpSmokeTest,
+  allowedToolsRequireElicitation,
 } from "./mcpKeyIssuance";
 
 describe("MCP key issuance helpers", () => {
@@ -64,5 +68,67 @@ describe("MCP key issuance helpers", () => {
     expect(second.tableWhitelist).toEqual([]);
     expect(second.allowedTools).not.toBe(first.allowedTools);
     expect(second.tableWhitelist).not.toBe(first.tableWhitelist);
+  });
+
+  it("builds one-time Streamable HTTP snippets with bearer authentication", () => {
+    const snippets = createMcpOnboardingSnippets("https://sql.example.com/mcp", "secret-key");
+    expect(JSON.parse(snippets.cursor).mcpServers["hs-sql-agent"]).toEqual({
+      type: "http",
+      url: "https://sql.example.com/mcp",
+      headers: { Authorization: "Bearer secret-key" },
+    });
+    expect(JSON.parse(snippets.claudeDesktop).mcpServers["hs-sql-agent"]).toEqual({
+      command: "npx",
+      args: [
+        "-y",
+        "mcp-remote@0.1.38",
+        "https://sql.example.com/mcp",
+        "--header",
+        "Authorization:${HS_SQL_AGENT_AUTH}",
+      ],
+      env: { HS_SQL_AGENT_AUTH: "Bearer secret-key" },
+    });
+    expect(JSON.parse(snippets.genericHttp).type).toBe("streamable-http");
+    expect(getMcpEndpoint("https://sql.example.com/")).toBe("https://sql.example.com/mcp");
+  });
+
+  it("requires Elicitation for unrestricted, built-in DML, and custom DML access", () => {
+    expect(allowedToolsRequireElicitation([])).toBe(true);
+    expect(allowedToolsRequireElicitation(["execute_dml_sql"])).toBe(true);
+    expect(allowedToolsRequireElicitation(["archive_customer"], ["archive_customer"])).toBe(true);
+    expect(allowedToolsRequireElicitation(["execute_query_sql"], ["archive_customer"])).toBe(false);
+  });
+
+  it("separates auth rejection from network and capability results", async () => {
+    const request = async () => new Response("unauthorized", { status: 401 });
+    const result = await runMcpSmokeTest("https://sql.example.com/mcp", "bad", request as typeof fetch);
+    expect(result.network.status).toBe("passed");
+    expect(result.auth.status).toBe("failed");
+    expect(result.capability.status).toBe("not-run");
+  });
+
+  it("reports MCP tools capability after successful initialization", async () => {
+    const request = async () => new Response(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        protocolVersion: "2025-11-25",
+        capabilities: { tools: {} },
+        serverInfo: { name: "HsSqlAgent", version: "1.0.0" },
+      },
+    }), { status: 200 });
+    const result = await runMcpSmokeTest("https://sql.example.com/mcp", "key", request as typeof fetch);
+    expect(result.network.status).toBe("passed");
+    expect(result.auth.status).toBe("passed");
+    expect(result.capability.status).toBe("passed");
+    expect(result.protocolVersion).toBe("2025-11-25");
+  });
+
+  it("reports network failures without claiming authentication was tested", async () => {
+    const request = async () => { throw new TypeError("Failed to fetch"); };
+    const result = await runMcpSmokeTest("https://offline.example/mcp", "key", request as typeof fetch);
+    expect(result.network.status).toBe("failed");
+    expect(result.auth.status).toBe("not-run");
+    expect(result.capability.status).toBe("not-run");
   });
 });
