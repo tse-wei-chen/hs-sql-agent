@@ -47,6 +47,14 @@ app.UseHsSqlAgent();                    // API-only
 
 > The Admin UI is embedded in the DLL — no external files to deploy. See the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/NuGet-Package) for details.
 
+## Enterprise authentication
+
+The Admin Panel supports optional OIDC SSO with PKCE, verified-email account linking, configurable claim/role mapping, and auto-provisioning. The callback returns a short-lived one-time exchange code; access and refresh tokens are never placed in redirect URLs. Local password login remains available for a break-glass administrator.
+
+TOTP MFA and one-time recovery codes are managed from **Account**. Roles listed in `EnterpriseIdentity:RequireMfaForRoles` (by default `SuperUser`) cannot use the Admin Panel until MFA is enrolled. Persist `EnterpriseIdentity:DataProtectionKeyPath` across deployments so existing TOTP secrets remain decryptable.
+
+For Active Directory or LDAP environments, connect the directory to an OIDC/SAML identity provider and configure that provider here. Direct LDAP binding is intentionally a separate future integration, not part of the OIDC settings.
+
 ## 📖 Documentation
 
 Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki):

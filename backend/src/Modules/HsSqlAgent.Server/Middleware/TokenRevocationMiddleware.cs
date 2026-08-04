@@ -23,7 +23,10 @@ public class TokenRevocationMiddleware(RequestDelegate next)
             return;
         }
 
-        if (context.User.Identity?.IsAuthenticated == true)
+        var tokenType = context.User.FindFirst(JwtRegisteredClaimNames.Typ)?.Value;
+        if (context.User.Identity?.IsAuthenticated == true &&
+            (string.Equals(tokenType, "access", StringComparison.Ordinal) ||
+             string.Equals(tokenType, "refresh", StringComparison.Ordinal)))
         {
             var subject = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
             var versionClaim = context.User.FindFirst(AuthService.SecurityVersionClaim)?.Value;
@@ -75,14 +78,28 @@ public class TokenRevocationMiddleware(RequestDelegate next)
             var accountReadPath = HttpMethods.IsGet(context.Request.Method) &&
                                   context.Request.Path.Equals("/api/auth/account", StringComparison.OrdinalIgnoreCase);
             var signOutPath = context.Request.Path.Equals("/api/auth/sign-out", StringComparison.OrdinalIgnoreCase);
+            var mfaPath = context.Request.Path.StartsWithSegments("/api/auth/mfa");
             if (string.Equals(passwordChangeRequired, "true", StringComparison.OrdinalIgnoreCase) &&
-                !passwordChangePath && !accountReadPath && !signOutPath)
+                !passwordChangePath && !accountReadPath && !mfaPath && !signOutPath)
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 await context.Response.WriteAsJsonAsync(new
                 {
                     code = "password_change_required",
                     message = "Change your password before continuing."
+                }, context.RequestAborted);
+                return;
+            }
+
+            var mfaEnrollmentRequired = context.User.FindFirst(AuthService.MfaEnrollmentRequiredClaim)?.Value;
+            if (string.Equals(mfaEnrollmentRequired, "true", StringComparison.OrdinalIgnoreCase) &&
+                !mfaPath && !passwordChangePath && !accountReadPath && !signOutPath)
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    code = "mfa_enrollment_required",
+                    message = "Set up multi-factor authentication before continuing."
                 }, context.RequestAborted);
                 return;
             }

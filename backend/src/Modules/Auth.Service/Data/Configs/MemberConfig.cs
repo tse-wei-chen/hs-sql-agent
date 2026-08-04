@@ -15,6 +15,7 @@ public class MemberConfig : IEntityTypeConfiguration<Member>
         builder.Property(x => x.PasswordHash).IsRequired().HasMaxLength(512);
         builder.Property(x => x.IsActive).IsRequired().HasDefaultValue(true);
         builder.Property(x => x.SecurityVersion).IsRequired().HasDefaultValue(1);
+        builder.Property(x => x.MfaSecretProtected).HasMaxLength(2048);
         builder.HasIndex(x => x.NormalizedMail).IsUnique();
     }
 }

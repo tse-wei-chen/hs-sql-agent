@@ -12,15 +12,20 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace Auth.Service.Services;
 
-public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings) : IAuthService
+public class AuthService(
+    IAuthContext context,
+    IOptions<JwtSettings> jwtSettings,
+    IOptions<EnterpriseIdentitySettings>? enterpriseIdentitySettings = null) : IAuthService
 {
     public const string SuperUserRoleName = "SuperUser";
     public const string SecurityVersionClaim = "security_version";
     public const string SessionIdClaim = "session_id";
     public const string PasswordChangeRequiredClaim = "password_change_required";
+    public const string MfaEnrollmentRequiredClaim = "mfa_enrollment_required";
 
     private readonly IAuthContext _context = context;
     private readonly JwtSettings _jwtSettings = jwtSettings.Value;
+    private readonly EnterpriseIdentitySettings _enterpriseIdentitySettings = enterpriseIdentitySettings?.Value ?? new();
 
     public async Task<bool> IsFirstRunAsync(CancellationToken cancellationToken = default)
         => !await _context.Members.AnyAsync(cancellationToken);
@@ -58,7 +63,7 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         member.LastLoginAt = now;
         await _context.SaveChangesAsync(cancellationToken);
 
-        return await CreateSessionAndBuildAuthResultAsync(member.Id, ipAddress, userAgent, cancellationToken);
+        return await BeginMemberSignInAsync(member.Id, cancellationToken, ipAddress, userAgent);
     }
 
     public async Task<AuthResult> SignUpFirstAdminAsync(SignUpRequest request, CancellationToken cancellationToken = default, string? ipAddress = null, string? userAgent = null)
@@ -87,7 +92,43 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         });
 
         await _context.SaveChangesAsync(cancellationToken);
-        return await CreateSessionAndBuildAuthResultAsync(member.Id, ipAddress, userAgent, cancellationToken);
+        return await BeginMemberSignInAsync(member.Id, cancellationToken, ipAddress, userAgent);
+    }
+
+    public async Task<AuthResult> BeginMemberSignInAsync(
+        int memberId,
+        CancellationToken cancellationToken = default,
+        string? ipAddress = null,
+        string? userAgent = null)
+    {
+        var member = await _context.Members.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == memberId, cancellationToken)
+            ?? throw new UnauthorizedAccessException("User not found.");
+        if (!member.IsActive) throw new UnauthorizedAccessException("Account is disabled.");
+        if (member.MfaEnabled)
+        {
+            return new AuthResult
+            {
+                UserName = member.Username,
+                Email = member.Mail,
+                RequiresMfa = true,
+                MfaToken = GenerateMfaChallengeToken(member)
+            };
+        }
+        return await CreateSessionAndBuildAuthResultAsync(memberId, ipAddress, userAgent, cancellationToken);
+    }
+
+    public async Task<AuthResult> CompleteMfaSignInAsync(
+        int memberId,
+        int securityVersion,
+        CancellationToken cancellationToken = default,
+        string? ipAddress = null,
+        string? userAgent = null)
+    {
+        var valid = await _context.Members.AsNoTracking()
+            .AnyAsync(x => x.Id == memberId && x.IsActive && x.MfaEnabled && x.SecurityVersion == securityVersion, cancellationToken);
+        if (!valid) throw new UnauthorizedAccessException("MFA challenge is no longer valid.");
+        return await CreateSessionAndBuildAuthResultAsync(memberId, ipAddress, userAgent, cancellationToken);
     }
 
     public async Task<AuthResult> RefreshTokenAsync(
@@ -282,6 +323,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         var roleNames = roleInfos.Select(r => r.Name).ToList();
 
         var permissions = await GetPermissionGrantsAsync(roleIds, cancellationToken);
+        var requiresMfaEnrollment = !member.MfaEnabled && roleNames.Any(role =>
+            _enterpriseIdentitySettings.RequireMfaForRoles.Contains(role, StringComparer.OrdinalIgnoreCase));
 
         return new AuthResult
         {
@@ -289,8 +332,9 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             Email = member.Mail,
             Roles = roleNames,
             Permissions = permissions,
-            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, member.SecurityVersion, member.RequirePasswordChangeAtNextSignIn, sessionId, roleIds, roleNames),
-            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, member.SecurityVersion, member.RequirePasswordChangeAtNextSignIn, sessionId, refreshTokenId, roleIds, roleNames)
+            RequiresMfaEnrollment = requiresMfaEnrollment,
+            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, member.SecurityVersion, member.RequirePasswordChangeAtNextSignIn, requiresMfaEnrollment, sessionId, roleIds, roleNames),
+            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, member.SecurityVersion, member.RequirePasswordChangeAtNextSignIn, requiresMfaEnrollment, sessionId, refreshTokenId, roleIds, roleNames)
         };
     }
 
@@ -337,11 +381,11 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         string ActionCode,
         string ActionName);
 
-    private string GenerateAccessToken(int memberId, string userName, string email, int securityVersion, bool passwordChangeRequired, Guid sessionId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
-        => GenerateToken(memberId, userName, email, securityVersion, passwordChangeRequired, sessionId, Guid.NewGuid().ToString(), roleIds, roleNames, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
+    private string GenerateAccessToken(int memberId, string userName, string email, int securityVersion, bool passwordChangeRequired, bool mfaEnrollmentRequired, Guid sessionId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, securityVersion, passwordChangeRequired, mfaEnrollmentRequired, sessionId, Guid.NewGuid().ToString(), roleIds, roleNames, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
 
-    private string GenerateRefreshToken(int memberId, string userName, string email, int securityVersion, bool passwordChangeRequired, Guid sessionId, string refreshTokenId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
-        => GenerateToken(memberId, userName, email, securityVersion, passwordChangeRequired, sessionId, refreshTokenId, roleIds, roleNames, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
+    private string GenerateRefreshToken(int memberId, string userName, string email, int securityVersion, bool passwordChangeRequired, bool mfaEnrollmentRequired, Guid sessionId, string refreshTokenId, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, securityVersion, passwordChangeRequired, mfaEnrollmentRequired, sessionId, refreshTokenId, roleIds, roleNames, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
 
     private string GenerateToken(
         int memberId,
@@ -349,6 +393,7 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         string email,
         int securityVersion,
         bool passwordChangeRequired,
+        bool mfaEnrollmentRequired,
         Guid sessionId,
         string tokenId,
         IReadOnlyCollection<int> roleIds,
@@ -372,7 +417,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             new(JwtRegisteredClaimNames.Jti, tokenId),
             new(SecurityVersionClaim, securityVersion.ToString()),
             new(SessionIdClaim, sessionId.ToString()),
-            new(PasswordChangeRequiredClaim, passwordChangeRequired.ToString().ToLowerInvariant())
+            new(PasswordChangeRequiredClaim, passwordChangeRequired.ToString().ToLowerInvariant()),
+            new(MfaEnrollmentRequiredClaim, mfaEnrollmentRequired.ToString().ToLowerInvariant())
         };
 
         claims.AddRange(roleNames.Select(n => new Claim(ClaimTypes.Role, n)));
@@ -392,4 +438,22 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tokenId)));
 
     public static string NormalizeEmail(string email) => email.Trim().ToUpperInvariant();
+
+    private string GenerateMfaChallengeToken(Member member)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.SecretKey));
+        var token = new JwtSecurityToken(
+            issuer: _jwtSettings.Issuer,
+            audience: _jwtSettings.Audience,
+            claims:
+            [
+                new Claim(JwtRegisteredClaimNames.Typ, "mfa"),
+                new Claim(JwtRegisteredClaimNames.Sub, member.Id.ToString()),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+                new Claim(SecurityVersionClaim, member.SecurityVersion.ToString())
+            ],
+            expires: DateTime.UtcNow.AddMinutes(5),
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
 }

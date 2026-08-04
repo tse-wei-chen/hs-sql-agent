@@ -116,6 +116,33 @@ public class AuthServiceTests
     }
 
     [Fact]
+    public async Task SignInAsync_ReturnsShortLivedChallenge_WhenMfaIsEnabled()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "user@test.com",
+            NormalizedMail = "USER@TEST.COM",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("correct"),
+            Username = "user",
+            MfaEnabled = true
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+
+        var result = await _service.SignInAsync(
+            new SignInRequest { Email = member.Mail, Password = "correct" },
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.RequiresMfa);
+        Assert.NotNull(result.MfaToken);
+        Assert.Null(result.AccessToken);
+        Assert.Null(result.RefreshToken);
+        Assert.Empty(_sessions);
+        var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().ReadJwtToken(result.MfaToken);
+        Assert.Contains(token.Claims, claim => claim.Type == "typ" && claim.Value == "mfa");
+    }
+
+    [Fact]
     public async Task SignUpFirstAdminAsync_CreatesSuperUserRoleAndMember()
     {
         var members = new List<Member>();

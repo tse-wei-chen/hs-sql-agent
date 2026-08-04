@@ -124,7 +124,9 @@ public class TokenRevocationMiddlewareTests
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Jti, jti),
+            new Claim(JwtRegisteredClaimNames.Typ, "access"),
             new Claim(JwtRegisteredClaimNames.Sub, "1"),
+            new Claim(JwtRegisteredClaimNames.Typ, "access"),
             new Claim(AuthService.SecurityVersionClaim, "1"),
             new Claim(AuthService.SessionIdClaim, ActiveSessionId.ToString())
         };

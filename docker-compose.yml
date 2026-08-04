@@ -28,6 +28,12 @@ services:
       - PasswordReset__SmtpUsername=${SMTP_USERNAME}
       - PasswordReset__SmtpPassword=${SMTP_PASSWORD}
       - PasswordReset__SmtpFrom=${SMTP_FROM}
+      - EnterpriseIdentity__OidcEnabled=${OIDC_ENABLED}
+      - EnterpriseIdentity__Authority=${OIDC_AUTHORITY}
+      - EnterpriseIdentity__ClientId=${OIDC_CLIENT_ID}
+      - EnterpriseIdentity__ClientSecret=${OIDC_CLIENT_SECRET}
+      - EnterpriseIdentity__RequireHttpsMetadata=${OIDC_REQUIRE_HTTPS_METADATA}
+      - EnterpriseIdentity__DataProtectionKeyPath=${DATA_PROTECTION_KEY_PATH}
       - RateLimiting__PermitLimit=${RATE_LIMITING_PERMIT_LIMIT}
       - RateLimiting__WindowSeconds=${RATE_LIMITING_WINDOW_SECONDS}
       - RateLimiting__QueueLimit=${RATE_LIMITING_QUEUE_LIMIT}

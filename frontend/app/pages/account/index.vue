@@ -17,6 +17,10 @@ import {
   getAccount,
   updateAccount,
   changePassword,
+  getMfaStatus,
+  beginMfaSetup,
+  confirmMfaSetup,
+  disableMfa,
   revokeOtherSessions,
   revokeSession,
   type AuthSession,
@@ -32,6 +36,20 @@ const email = ref("");
 const currentPassword = ref("");
 const newPassword = ref("");
 const passwordChangeRequired = ref(false);
+const mfaEnabled = ref(false);
+const mfaEnrollmentRequired = ref(false);
+const recoveryCodesRemaining = ref(0);
+const mfaSetupSecret = ref("");
+const mfaSetupUri = ref("");
+const mfaCode = ref("");
+const recoveryCodes = ref<string[]>([]);
+
+const tokenRequiresMfaEnrollment = () => {
+  try {
+    const payload = JSON.parse(atob((localStorage.getItem("accessToken")?.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/")));
+    return payload?.mfa_enrollment_required === "true";
+  } catch { return false; }
+};
 
 const formatDate = (value: string) => new Date(value).toLocaleString();
 
@@ -42,12 +60,46 @@ const load = async () => {
     username.value = profile.username;
     email.value = profile.mail;
     passwordChangeRequired.value = profile.requirePasswordChangeAtNextSignIn;
-    sessions.value = passwordChangeRequired.value ? [] : await listSessions();
+    const mfa = await getMfaStatus();
+    mfaEnabled.value = mfa.enabled;
+    recoveryCodesRemaining.value = mfa.recoveryCodesRemaining;
+    mfaEnrollmentRequired.value = tokenRequiresMfaEnrollment();
+    sessions.value = passwordChangeRequired.value || mfaEnrollmentRequired.value ? [] : await listSessions();
   } catch (error: any) {
     toast.error(error?.response?.data || "Failed to load sessions.");
   } finally {
     loading.value = false;
   }
+};
+
+const startMfaSetup = async () => {
+  try {
+    const setup = await beginMfaSetup();
+    mfaSetupSecret.value = setup.secret;
+    mfaSetupUri.value = setup.otpAuthUri;
+  } catch (error: any) { toast.error(error?.response?.data || "Failed to start MFA setup."); }
+};
+
+const confirmMfa = async () => {
+  try {
+    const result = await confirmMfaSetup(mfaCode.value);
+    recoveryCodes.value = result.recoveryCodes;
+    mfaEnabled.value = true;
+    toast.success("MFA enabled. Save the recovery codes before signing in again.");
+  } catch (error: any) { toast.error(error?.response?.data || "Invalid authenticator code."); }
+};
+
+const turnOffMfa = async () => {
+  try {
+    await disableMfa(mfaCode.value);
+    clearAuthSession();
+    await navigateTo("/login");
+  } catch (error: any) { toast.error(error?.response?.data || "Failed to disable MFA."); }
+};
+
+const finishMfaSetup = async () => {
+  clearAuthSession();
+  await navigateTo("/login");
 };
 
 const saveProfile = async () => {
@@ -96,6 +148,34 @@ onMounted(load);
 
 <template>
   <div class="space-y-4">
+    <Card>
+      <CardHeader class="border-b">
+        <CardTitle>Multi-factor authentication</CardTitle>
+        <CardDescription v-if="mfaEnrollmentRequired" class="text-destructive">Your role requires TOTP MFA before you can continue.</CardDescription>
+        <CardDescription v-else>Use an authenticator app and one-time recovery codes.</CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-4 pt-6">
+        <template v-if="recoveryCodes.length">
+          <p class="font-medium">Save these recovery codes now. They will not be shown again.</p>
+          <pre class="rounded border bg-muted p-4 text-sm">{{ recoveryCodes.join("\n") }}</pre>
+          <Button @click="finishMfaSetup">I saved them — sign in again</Button>
+        </template>
+        <template v-else-if="!mfaEnabled">
+          <Button v-if="!mfaSetupSecret" @click="startMfaSetup">Set up authenticator</Button>
+          <template v-else>
+            <div class="space-y-2"><Label>Setup key</Label><code class="block break-all rounded border p-3">{{ mfaSetupSecret }}</code></div>
+            <div class="space-y-2"><Label>Authenticator URI</Label><code class="block break-all rounded border p-3 text-xs">{{ mfaSetupUri }}</code></div>
+            <div class="space-y-2"><Label for="mfa-confirm">6-digit code</Label><Input id="mfa-confirm" v-model="mfaCode" autocomplete="one-time-code" /></div>
+            <Button @click="confirmMfa">Enable MFA</Button>
+          </template>
+        </template>
+        <template v-else>
+          <p class="text-sm text-muted-foreground">MFA is enabled. {{ recoveryCodesRemaining }} recovery codes remain.</p>
+          <div class="flex gap-2"><Input v-model="mfaCode" placeholder="Authenticator or recovery code" /><Button variant="destructive" @click="turnOffMfa">Disable MFA</Button></div>
+        </template>
+      </CardContent>
+    </Card>
+
     <Card>
       <CardHeader class="border-b">
         <CardTitle>Account profile</CardTitle>

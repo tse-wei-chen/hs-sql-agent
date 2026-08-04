@@ -8,6 +8,9 @@ public class AuthResult
     public IReadOnlyCollection<PermissionGrant> Permissions { get; set; } = [];
     public string? AccessToken { get; set; }
     public string? RefreshToken { get; set; }
+    public bool RequiresMfa { get; set; }
+    public bool RequiresMfaEnrollment { get; set; }
+    public string? MfaToken { get; set; }
 }
 
 public class PermissionGrant

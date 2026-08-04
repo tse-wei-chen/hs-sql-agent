@@ -94,3 +94,27 @@ export const forgotPassword = async (email: string) => {
 export const resetPassword = async (token: string, newPassword: string) => {
   await xiorInstance.post("/auth/reset-password", { token, newPassword });
 };
+
+export const getOidcStatus = async () => {
+  const response = await xiorInstance.get<{ enabled: boolean }>("/auth/oidc/status");
+  return response.data;
+};
+
+export const exchangeOidcCode = async (code: string) => {
+  const response = await xiorInstance.post("/auth/oidc/exchange", { code });
+  return response.data;
+};
+
+export const verifyMfa = async (mfaToken: string, code: string) => {
+  const response = await xiorInstance.post("/auth/mfa/verify", { code }, {
+    headers: { Authorization: `Bearer ${mfaToken}` },
+  });
+  return response.data;
+};
+
+export interface MfaStatus { enabled: boolean; recoveryCodesRemaining: number }
+export interface MfaSetup { secret: string; otpAuthUri: string }
+export const getMfaStatus = async () => (await xiorInstanceToken.get<MfaStatus>("/auth/mfa/status")).data;
+export const beginMfaSetup = async () => (await xiorInstanceToken.post<MfaSetup>("/auth/mfa/setup")).data;
+export const confirmMfaSetup = async (code: string) => (await xiorInstanceToken.post<{ recoveryCodes: string[] }>("/auth/mfa/confirm", { code })).data;
+export const disableMfa = async (code: string) => { await xiorInstanceToken.post("/auth/mfa/disable", { code }); };

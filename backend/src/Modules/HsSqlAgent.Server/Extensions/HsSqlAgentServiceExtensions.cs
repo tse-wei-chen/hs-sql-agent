@@ -20,6 +20,9 @@ using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Infrastructure.Caching;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -62,9 +65,18 @@ public static class HsSqlAgentServiceExtensions
             options.CacheProvider,
             options.CacheConnectionString,
             options.CacheKeyPrefix);
+        var dataProtection = services.AddDataProtection().SetApplicationName("HsSqlAgent");
+        if (!string.IsNullOrWhiteSpace(options.EnterpriseIdentity.DataProtectionKeyPath))
+        {
+            var keyPath = Path.GetFullPath(options.EnterpriseIdentity.DataProtectionKeyPath, AppContext.BaseDirectory);
+            Directory.CreateDirectory(keyPath);
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+        }
         services.AddAdminDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
 
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IEnterpriseIdentityService, EnterpriseIdentityService>();
+        services.AddScoped<IMfaService, MfaService>();
         services.AddScoped<IPasswordResetService, PasswordResetService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
@@ -130,6 +142,28 @@ public static class HsSqlAgentServiceExtensions
             reset.SmtpPassword = options.SmtpPassword;
             reset.SmtpFrom = options.SmtpFrom;
         });
+        services.Configure<EnterpriseIdentitySettings>(identity =>
+        {
+            var source = options.EnterpriseIdentity;
+            identity.OidcEnabled = source.OidcEnabled;
+            identity.Authority = source.Authority;
+            identity.ClientId = source.ClientId;
+            identity.ClientSecret = source.ClientSecret;
+            identity.RequireHttpsMetadata = source.RequireHttpsMetadata;
+            identity.EmailClaim = source.EmailClaim;
+            identity.NameClaim = source.NameClaim;
+            identity.RoleClaim = source.RoleClaim;
+            identity.EmailVerifiedClaim = source.EmailVerifiedClaim;
+            identity.RequireVerifiedEmail = source.RequireVerifiedEmail;
+            identity.Scopes = [.. source.Scopes];
+            identity.RoleMappings = new(source.RoleMappings, StringComparer.OrdinalIgnoreCase);
+            identity.DefaultRoleNames = [.. source.DefaultRoleNames];
+            identity.AutoProvision = source.AutoProvision;
+            identity.FrontendCallbackUrl = source.FrontendCallbackUrl;
+            identity.LoginCodeExpirationMinutes = source.LoginCodeExpirationMinutes;
+            identity.RequireMfaForRoles = [.. source.RequireMfaForRoles];
+            identity.TotpIssuer = source.TotpIssuer;
+        });
         services.Configure<RateLimitingSettings>(rl =>
         {
             rl.PermitLimit = options.RateLimitPermitLimit;
@@ -139,7 +173,7 @@ public static class HsSqlAgentServiceExtensions
 
         // --- JWT Auth ---
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.JwtSecretKey));
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        var authentication = services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(jwt =>
             {
                 jwt.MapInboundClaims = false;
@@ -154,10 +188,43 @@ public static class HsSqlAgentServiceExtensions
                     IssuerSigningKey = signingKey,
                     ClockSkew = TimeSpan.Zero
                 };
+            })
+            .AddCookie("ExternalCookie", cookie =>
+            {
+                cookie.Cookie.Name = "hs-sql-agent.external";
+                cookie.Cookie.HttpOnly = true;
+                cookie.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+                cookie.ExpireTimeSpan = TimeSpan.FromMinutes(10);
             });
+
+        if (options.EnterpriseIdentity.OidcEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(options.EnterpriseIdentity.Authority) ||
+                string.IsNullOrWhiteSpace(options.EnterpriseIdentity.ClientId))
+                throw new InvalidOperationException("OIDC Authority and ClientId are required when OIDC is enabled.");
+            authentication.AddOpenIdConnect("oidc", oidc =>
+            {
+                var source = options.EnterpriseIdentity;
+                oidc.SignInScheme = "ExternalCookie";
+                oidc.Authority = source.Authority;
+                oidc.ClientId = source.ClientId;
+                oidc.ClientSecret = source.ClientSecret;
+                oidc.RequireHttpsMetadata = source.RequireHttpsMetadata;
+                oidc.ResponseType = "code";
+                oidc.UsePkce = true;
+                oidc.SaveTokens = false;
+                oidc.CallbackPath = "/api/auth/oidc/signin";
+                oidc.Scope.Clear();
+                foreach (var scope in source.Scopes) oidc.Scope.Add(scope);
+            });
+        }
 
         services.AddAuthorizationBuilder()
             .SetDefaultPolicy(new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .RequireClaim("typ", "access")
+                .Build())
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()
                 .RequireClaim("typ", "access")
                 .Build())
@@ -165,6 +232,16 @@ public static class HsSqlAgentServiceExtensions
             {
                 policy.RequireAuthenticatedUser();
                 policy.RequireClaim("typ", "refresh");
+            })
+            .AddPolicy("MfaChallengePolicy", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.RequireClaim("typ", "mfa");
+            })
+            .AddPolicy("ExternalLoginPolicy", policy =>
+            {
+                policy.AddAuthenticationSchemes("ExternalCookie");
+                policy.RequireAuthenticatedUser();
             });
 
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();

@@ -14,6 +14,10 @@ public class Member
     public bool RequirePasswordChangeAtNextSignIn { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastLoginAt { get; set; }
+    public bool MfaEnabled { get; set; }
+    public string? MfaSecretProtected { get; set; }
     public ICollection<MemberRole> MemberRoles { get; set; } = [];
     public ICollection<AuthSession> AuthSessions { get; set; } = [];
+    public ICollection<ExternalIdentity> ExternalIdentities { get; set; } = [];
+    public ICollection<MfaRecoveryCode> MfaRecoveryCodes { get; set; } = [];
 }
