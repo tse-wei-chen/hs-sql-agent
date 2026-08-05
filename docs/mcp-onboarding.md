@@ -1,10 +1,10 @@
 # MCP client onboarding and compatibility
 
 HS SQL Agent exposes a Streamable HTTP MCP endpoint at `/mcp`. Authenticate with
-`Authorization: Bearer <MCP key>` (the legacy `X-MCP-Server-Key` header is also
-accepted). The Admin Panel generates Claude Desktop, Cursor, and generic HTTP
-configuration only immediately after Issue, Rotate, or Duplicate. The plaintext
-secret is not stored and cannot be shown again after that dialog is closed.
+`X-MCP-Server-Key: <MCP key>`. The Admin Panel generates direct HTTP configuration
+for Claude Desktop, Cursor, and generic Streamable HTTP clients only immediately
+after Issue, Rotate, or Duplicate. The plaintext secret is not stored and cannot
+be shown again after that dialog is closed.
 
 ## Compatibility baseline
 
@@ -14,19 +14,13 @@ successful connection.
 
 | Client / component | Version | Verified coverage |
 | --- | --- | --- |
-| HS SQL Agent Admin smoke client | 1.0.0 | Streamable HTTP `initialize` using MCP `2025-11-25`, Bearer authentication, and server `tools` capability; response/error classification is covered by frontend tests. |
+| HS SQL Agent Admin smoke client | 1.0.0 | Streamable HTTP `initialize` using MCP `2025-11-25`, `X-MCP-Server-Key` authentication, and server `tools` capability; response/error classification is covered by frontend tests. |
 | ModelContextProtocol.AspNetCore server SDK | 1.4.0 | Server transport and MCP tool exposure used by this release. |
-| Claude Desktop | Operator-installed version | The generated local stdio configuration uses pinned `mcp-remote@0.1.38` to attach the static Bearer header. Record the exact deployed version only after running the one-time smoke test and, for DML, a manual Elicitation decline/accept test. |
+| Claude Desktop | Operator-installed version | A direct HTTP `mcpServers` entry with the `X-MCP-Server-Key` header is generated. Record the exact deployed version only after running the one-time smoke test and, for DML, a manual Elicitation decline/accept test. |
 | Cursor | Operator-installed version | Current HTTP configuration is generated from the standard `mcpServers` schema. Record the exact deployed version only after the same connection and DML checks. |
 
-Claude Desktop's native remote connectors are configured through **Settings →
-Connectors**, not `claude_desktop_config.json`, and do not accept an arbitrary static
-Bearer header. HS SQL Agent does not currently expose MCP OAuth, so the generated
-Desktop snippet uses the third-party, experimental `mcp-remote` bridge through the
-local stdio configuration. It is pinned rather than installed from `latest`, requires
-Node.js/npx, and should be security-reviewed before enterprise rollout. Native
-Claude Desktop remote configuration remains unavailable until HS SQL Agent supports
-MCP OAuth.
+The generated Claude Desktop snippet connects directly to the Streamable HTTP
+endpoint and does not install or execute a third-party stdio bridge.
 
 Cursor supports remote Streamable HTTP MCP servers and custom headers through its
 MCP configuration. Client behavior changes over time, so generated configuration
@@ -41,7 +35,7 @@ independently:
 - **Network**: the browser received any HTTP response from `/mcp`. A passed network
   stage does not mean the key was accepted.
 - **Auth**: the endpoint returned neither `401` nor `403` and accepted the one-time
-  Bearer key. Other server errors are reported as inconclusive rather than as an
+  `X-MCP-Server-Key`. Other server errors are reported as inconclusive rather than as an
   authentication success.
 - **Capability**: the body is a valid MCP initialize response and advertises the
   tools capability. A proxy HTML page or non-MCP endpoint fails here even if it
@@ -70,5 +64,4 @@ Official references:
 - [Claude Code MCP remote HTTP configuration](https://code.claude.com/docs/en/mcp)
 - [Claude Desktop remote connector setup and limitations](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)
 - [Cursor MCP documentation](https://cursor.com/docs/context/mcp)
-- [`mcp-remote` bridge and custom-header syntax](https://github.com/geelen/mcp-remote)
 - [MCP Elicitation capability](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation)

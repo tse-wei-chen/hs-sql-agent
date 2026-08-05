@@ -1047,7 +1047,7 @@ onMounted(async () => {
             </TabsList>
             <TabsContent value="claude" class="space-y-2">
               <p class="text-xs text-muted-foreground">
-                Claude Desktop cannot natively attach this static Bearer key to a remote connector. This local stdio configuration uses the pinned experimental mcp-remote bridge and requires Node.js/npx. Native Settings → Connectors support requires a future OAuth implementation.
+                Add this direct HTTP entry to Claude Desktop's MCP configuration. It connects without a local Node.js bridge.
               </p>
               <Textarea :model-value="onboardingSnippets.claudeDesktop" readonly class="min-h-48 font-mono text-xs" />
               <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.claudeDesktop)">Copy Claude config</Button>

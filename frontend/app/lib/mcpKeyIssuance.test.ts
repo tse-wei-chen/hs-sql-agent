@@ -70,25 +70,22 @@ describe("MCP key issuance helpers", () => {
     expect(second.tableWhitelist).not.toBe(first.tableWhitelist);
   });
 
-  it("builds one-time Streamable HTTP snippets with bearer authentication", () => {
+  it("builds direct Streamable HTTP snippets with the MCP server key header", () => {
     const snippets = createMcpOnboardingSnippets("https://sql.example.com/mcp", "secret-key");
     expect(JSON.parse(snippets.cursor).mcpServers["hs-sql-agent"]).toEqual({
       type: "http",
       url: "https://sql.example.com/mcp",
-      headers: { Authorization: "Bearer secret-key" },
+      headers: { "X-MCP-Server-Key": "secret-key" },
     });
     expect(JSON.parse(snippets.claudeDesktop).mcpServers["hs-sql-agent"]).toEqual({
-      command: "npx",
-      args: [
-        "-y",
-        "mcp-remote@0.1.38",
-        "https://sql.example.com/mcp",
-        "--header",
-        "Authorization:${HS_SQL_AGENT_AUTH}",
-      ],
-      env: { HS_SQL_AGENT_AUTH: "Bearer secret-key" },
+      url: "https://sql.example.com/mcp",
+      headers: { "X-MCP-Server-Key": "secret-key" },
     });
-    expect(JSON.parse(snippets.genericHttp).type).toBe("streamable-http");
+    expect(JSON.parse(snippets.genericHttp)).toEqual({
+      type: "streamable-http",
+      url: "https://sql.example.com/mcp",
+      headers: { "X-MCP-Server-Key": "secret-key" },
+    });
     expect(getMcpEndpoint("https://sql.example.com/")).toBe("https://sql.example.com/mcp");
   });
 
@@ -130,5 +127,23 @@ describe("MCP key issuance helpers", () => {
     expect(result.network.status).toBe("failed");
     expect(result.auth.status).toBe("not-run");
     expect(result.capability.status).toBe("not-run");
+  });
+
+  it("uses X-MCP-Server-Key for the one-time smoke test", async () => {
+    let requestHeaders: HeadersInit | undefined;
+    const request = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestHeaders = init?.headers;
+      return new Response(JSON.stringify({
+        result: {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+        },
+      }), { status: 200 });
+    };
+
+    await runMcpSmokeTest("https://sql.example.com/mcp", "secret-key", request as typeof fetch);
+
+    expect(requestHeaders).toMatchObject({ "X-MCP-Server-Key": "secret-key" });
+    expect(requestHeaders).not.toHaveProperty("Authorization");
   });
 });

@@ -117,26 +117,17 @@ export function createMcpOnboardingSnippets(
   endpoint: string,
   plaintextKey: string,
 ): McpOnboardingSnippets {
+  const headers = { "X-MCP-Server-Key": plaintextKey };
   const server = {
     type: "http",
     url: endpoint,
-    headers: { Authorization: `Bearer ${plaintextKey}` },
+    headers,
   };
   const genericServer = { ...server, type: "streamable-http" };
-  const claudeDesktopBridge = {
-    command: "npx",
-    args: [
-      "-y",
-      "mcp-remote@0.1.38",
-      endpoint,
-      "--header",
-      "Authorization:${HS_SQL_AGENT_AUTH}",
-    ],
-    env: { HS_SQL_AGENT_AUTH: `Bearer ${plaintextKey}` },
-  };
+  const claudeDesktopServer = { url: endpoint, headers };
 
   return {
-    claudeDesktop: JSON.stringify({ mcpServers: { "hs-sql-agent": claudeDesktopBridge } }, null, 2),
+    claudeDesktop: JSON.stringify({ mcpServers: { "hs-sql-agent": claudeDesktopServer } }, null, 2),
     cursor: JSON.stringify({ mcpServers: { "hs-sql-agent": server } }, null, 2),
     genericHttp: JSON.stringify(genericServer, null, 2),
   };
@@ -182,7 +173,7 @@ export async function runMcpSmokeTest(
     response = await request(endpoint, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${plaintextKey}`,
+        "X-MCP-Server-Key": plaintextKey,
         Accept: "application/json, text/event-stream",
         "Content-Type": "application/json",
       },
