@@ -10,8 +10,16 @@ builder.Configuration
     .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables();
 
+if (!builder.Environment.IsDevelopment()
+    && string.IsNullOrWhiteSpace(builder.Configuration["Mcp:PublicEndpoint"]))
+{
+    throw new InvalidOperationException(
+        "Mcp:PublicEndpoint is required outside Development so generated client configuration uses the externally reachable MCP URL.");
+}
+
 builder.Services.AddHsSqlAgent(options =>
 {
+    builder.Configuration.GetSection("Mcp").Bind(options.Mcp);
     options.AdminDatabaseProvider = builder.Configuration["AdminDatabase:Provider"] ?? "Sqlite";
     options.AdminConnectionString = builder.Configuration["AdminDatabase:ConnectionString"]
         ?? builder.Configuration["AppConnectionString"]

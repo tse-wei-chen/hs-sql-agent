@@ -61,6 +61,9 @@ public static class HsSqlAgentServiceExtensions
             throw new InvalidOperationException("HmacSecretKey must be at least 32 bytes.");
         if (string.IsNullOrWhiteSpace(options.JwtSecretKey) || Encoding.UTF8.GetByteCount(options.JwtSecretKey) < 32)
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
+        if (!Uri.TryCreate(options.Mcp.PublicEndpoint, UriKind.Absolute, out var mcpPublicEndpoint)
+            || mcpPublicEndpoint.Scheme is not ("http" or "https"))
+            throw new InvalidOperationException("Mcp:PublicEndpoint must be an absolute HTTP or HTTPS URL.");
         ValidateWebhook("Operability Alert", options.Operability.AlertWebhookUrl, options.Operability.AlertWebhookSecret);
         ValidateWebhook("Operability SIEM", options.Operability.SiemWebhookUrl, options.Operability.SiemWebhookSecret);
         if (options.Telemetry.PrometheusEnabled && options.Telemetry.PrometheusPort is < 1 or > 65535)
@@ -199,6 +202,7 @@ public static class HsSqlAgentServiceExtensions
             jwt.SignInLockoutMinutes = options.SignInLockoutMinutes;
         });
         services.Configure<McpKeySettings>(mcp => mcp.HmacSecretKey = options.HmacSecretKey);
+        services.Configure<McpOptions>(mcp => mcp.PublicEndpoint = options.Mcp.PublicEndpoint);
         services.Configure<OperabilitySettings>(operability =>
         {
             var source = options.Operability;

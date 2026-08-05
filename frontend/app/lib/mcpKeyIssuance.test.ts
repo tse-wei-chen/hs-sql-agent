@@ -5,7 +5,6 @@ import {
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
   createMcpOnboardingSnippets,
-  getMcpEndpoint,
   allowedToolsRequireElicitation,
 } from "./mcpKeyIssuance";
 
@@ -85,7 +84,6 @@ describe("MCP key issuance helpers", () => {
       url: "https://sql.example.com/mcp",
       headers: { "X-MCP-Server-Key": "secret-key" },
     });
-    expect(getMcpEndpoint("https://sql.example.com/")).toBe("https://sql.example.com/mcp");
   });
 
   it("requires Elicitation for unrestricted, built-in DML, and custom DML access", () => {

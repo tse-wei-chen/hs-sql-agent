@@ -15,6 +15,7 @@ services:
       - CacheConfig__ConnectionString=${CACHE_CONNECTION_STRING:-}
       - CacheConfig__KeyPrefix=${CACHE_KEY_PREFIX:-hsqlagent:cache:}
       - McpKeySettings__HmacSecretKey=${HMAC_KEY}
+      - Mcp__PublicEndpoint=${MCP_PUBLIC_ENDPOINT:-http://localhost:8080/mcp}
       - JwtSettings__SecretKey=${JWT_KEY}
       - JwtSettings__Issuer=${JWT_ISS}
       - JwtSettings__Audience=${JWT_AUD}

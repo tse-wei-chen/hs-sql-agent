@@ -5,6 +5,7 @@ namespace HsSqlAgent.Server.Models;
 /// </summary>
 public class HsSqlAgentServiceOptions
 {
+    public McpOptions Mcp { get; } = new();
     public EnterpriseIdentityOptions EnterpriseIdentity { get; } = new();
     public OperabilityOptions Operability { get; } = new();
     public TelemetryOptions Telemetry { get; } = new();
@@ -47,6 +48,11 @@ public class HsSqlAgentServiceOptions
     public string CacheProvider { get; set; } = "Memory";
     public string CacheConnectionString { get; set; } = string.Empty;
     public string CacheKeyPrefix { get; set; } = "hsqlagent:cache:";
+}
+
+public class McpOptions
+{
+    public string PublicEndpoint { get; set; } = "http://localhost:8080/mcp";
 }
 
 public class TelemetryOptions

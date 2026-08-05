@@ -96,10 +96,6 @@ export interface McpOnboardingSnippets {
   genericHttp: string;
 }
 
-export function getMcpEndpoint(origin: string): string {
-  return `${origin.replace(/\/$/, "")}/mcp`;
-}
-
 export function createMcpOnboardingSnippets(
   endpoint: string,
   plaintextKey: string,

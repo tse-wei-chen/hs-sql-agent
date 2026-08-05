@@ -6,6 +6,22 @@ for Claude Desktop, Cursor, and generic Streamable HTTP clients only immediately
 after Issue, Rotate, or Duplicate. The plaintext secret is not stored and cannot
 be shown again after that dialog is closed.
 
+Configure the externally reachable endpoint on the server. Do not derive it from
+the Admin UI origin, because the UI and MCP endpoint may use different hosts,
+ports, or reverse-proxy paths:
+
+```json
+"Mcp": {
+  "PublicEndpoint": "https://sql-agent.example.com/mcp"
+}
+```
+
+The equivalent environment variable is `Mcp__PublicEndpoint`. The provided
+Compose file maps `MCP_PUBLIC_ENDPOINT` to it. The authenticated Admin UI reads
+this value from `GET /api/runtime/client-config` and displays it as read-only.
+Non-Development startup requires the setting, and the server rejects values that
+are not absolute HTTP or HTTPS URLs.
+
 ## Compatibility baseline
 
 The following rows distinguish what this repository actually verifies from client

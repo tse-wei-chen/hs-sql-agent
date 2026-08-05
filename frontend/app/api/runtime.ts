@@ -38,6 +38,17 @@ export interface AuditDailySummaryItem {
   failed: number;
 }
 
+export interface McpClientConfig {
+  mcpEndpoint: string;
+}
+
+export const getMcpClientConfig = async (): Promise<McpClientConfig> => {
+  const response = await xiorInstanceToken.get<McpClientConfig>(
+    "/runtime/client-config",
+  );
+  return response.data;
+};
+
 export const listMcpKeys = async () => {
   const response = await xiorInstanceToken.get("/runtime/mcp-keys");
   return response.data;

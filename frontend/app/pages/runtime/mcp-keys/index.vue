@@ -31,6 +31,7 @@ import { CircleAlert, CircleCheck, KeyRound , CircleQuestionMark  } from "@lucid
 import {
   issueMcpKey,
   cloneMcpKey,
+  getMcpClientConfig,
   listMcpKeys,
   revokeMcpKey,
   rotateMcpKey,
@@ -59,7 +60,6 @@ import {
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
   createMcpOnboardingSnippets,
-  getMcpEndpoint,
   allowedToolsRequireElicitation,
   type McpKeyDetail,
   type McpKeyRateLimitMode,
@@ -227,15 +227,17 @@ const onboardingSnippets = computed(() =>
 const load = async () => {
   loading.value = true;
   try {
-    const [keysResult, customToolsResult, dbManagementsResult] =
+    const [keysResult, customToolsResult, dbManagementsResult, clientConfig] =
       await Promise.all([
         listMcpKeys(),
         listCustomSqlTools(),
         listDbManagements(),
+        getMcpClientConfig(),
       ]);
     keys.value = keysResult;
     customTools.value = customToolsResult;
     dbManagements.value = dbManagementsResult;
+    mcpEndpoint.value = clientConfig.mcpEndpoint;
   } finally {
     loading.value = false;
   }
@@ -438,7 +440,6 @@ const closeOnboarding = () => {
 };
 
 onMounted(async () => {
-  mcpEndpoint.value = getMcpEndpoint(window.location.origin);
   await load();
 });
 </script>
@@ -1019,7 +1020,8 @@ onMounted(async () => {
           </Field>
           <Field>
             <FieldLabel>MCP endpoint</FieldLabel>
-            <Input v-model="mcpEndpoint" />
+            <Input :model-value="mcpEndpoint" readonly />
+            <p class="text-xs text-muted-foreground">Configured by the server through Mcp:PublicEndpoint.</p>
           </Field>
 
           <Tabs default-value="claude">

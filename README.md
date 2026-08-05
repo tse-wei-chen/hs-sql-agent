@@ -79,6 +79,9 @@ Use unquoted `{{parameterName}}` placeholders for scalar values declared as stri
 
 After an MCP key is issued, rotated, or duplicated, the Admin Panel shows its plaintext secret exactly once and generates Claude Desktop, Cursor, and generic Streamable HTTP configuration. Closing the dialog removes the secret and generated snippets from the UI.
 
+Set `Mcp:PublicEndpoint` (environment variable `Mcp__PublicEndpoint`, or `MCP_PUBLIC_ENDPOINT` through the provided Compose file) to the absolute URL MCP clients can reach, including the `/mcp` path. The Admin Panel obtains this value from the authenticated backend client-config API instead of deriving it from the browser origin.
+Non-Development startup requires this setting, and invalid or non-HTTP(S) values are rejected.
+
 See [MCP client onboarding and compatibility](docs/mcp-onboarding.md) for the verified protocol baseline, client-version policy, troubleshooting, and the required manual Elicitation check for DML-capable keys.
 
 ## 📖 Documentation
