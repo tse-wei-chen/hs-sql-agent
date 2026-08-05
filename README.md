@@ -77,7 +77,7 @@ Use unquoted `{{parameterName}}` placeholders for scalar values declared as stri
 
 ## MCP client onboarding
 
-After an MCP key is issued, rotated, or duplicated, the Admin Panel shows its plaintext secret exactly once and generates Claude Desktop, Cursor, and generic Streamable HTTP configuration. The same dialog provides a smoke test that reports network, authentication, and MCP capability failures separately. Closing the dialog removes the secret and generated snippets from the UI.
+After an MCP key is issued, rotated, or duplicated, the Admin Panel shows its plaintext secret exactly once and generates Claude Desktop, Cursor, and generic Streamable HTTP configuration. Closing the dialog removes the secret and generated snippets from the UI.
 
 See [MCP client onboarding and compatibility](docs/mcp-onboarding.md) for the verified protocol baseline, client-version policy, troubleshooting, and the required manual Elicitation check for DML-capable keys.
 

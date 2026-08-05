@@ -60,11 +60,9 @@ import {
   serializeTableWhitelist,
   createMcpOnboardingSnippets,
   getMcpEndpoint,
-  runMcpSmokeTest,
   allowedToolsRequireElicitation,
   type McpKeyDetail,
   type McpKeyRateLimitMode,
-  type McpSmokeResult,
 } from "@/lib/mcpKeyIssuance";
 
 definePageMeta({
@@ -119,9 +117,6 @@ const connectionTestResult = ref<{
 const issuedPlaintextKey = ref("");
 const issuedKeyName = ref("");
 const mcpEndpoint = ref("");
-const smokeTesting = ref(false);
-const smokeResult = ref<McpSmokeResult | null>(null);
-const smokeStages = ["network", "auth", "capability"] as const;
 const lifecycleMode = ref<"edit" | "rotate" | "clone" | null>(null);
 const lifecycleKey = ref<McpKeyItem | null>(null);
 const lifecycleSaving = ref(false);
@@ -254,7 +249,6 @@ const resetForm = () => {
   selectedSchema.value = undefined
   issuedPlaintextKey.value = ""
   issuedKeyName.value = ""
-  smokeResult.value = null
 };
 
 const issue = async () => {
@@ -441,17 +435,6 @@ const copySnippet = async (value: string) => {
 const closeOnboarding = () => {
   issuedPlaintextKey.value = "";
   issuedKeyName.value = "";
-  smokeResult.value = null;
-};
-
-const smokeTest = async () => {
-  smokeTesting.value = true;
-  smokeResult.value = null;
-  try {
-    smokeResult.value = await runMcpSmokeTest(mcpEndpoint.value, issuedPlaintextKey.value);
-  } finally {
-    smokeTesting.value = false;
-  }
 };
 
 onMounted(async () => {
@@ -1064,26 +1047,6 @@ onMounted(async () => {
             </TabsContent>
           </Tabs>
 
-          <div class="rounded border p-3">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <div class="font-medium">Connection and capability smoke test</div>
-                <p class="text-xs text-muted-foreground">Tests endpoint reachability, this key, MCP initialization, and tools capability separately.</p>
-              </div>
-              <Button size="sm" :disabled="smokeTesting || !mcpEndpoint" @click="smokeTest">
-                {{ smokeTesting ? "Testing..." : "Run smoke test" }}
-              </Button>
-            </div>
-            <div v-if="smokeResult" class="mt-3 grid gap-2 text-sm md:grid-cols-3">
-              <div v-for="stage in smokeStages" :key="stage" class="rounded border p-2">
-                <div class="font-medium capitalize">{{ stage }}: {{ smokeResult[stage].status }}</div>
-                <div class="mt-1 text-xs text-muted-foreground">{{ smokeResult[stage].message }}</div>
-              </div>
-            </div>
-            <p class="mt-3 text-xs text-amber-700">
-              This smoke test declares form Elicitation itself, but cannot prove that Claude Desktop or Cursor implements an approval UI. If this key can call DML, verify Elicitation support in the actual client/version before production use.
-            </p>
-          </div>
         </div>
 
         <DialogFooter>

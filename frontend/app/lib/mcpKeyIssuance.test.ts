@@ -6,7 +6,6 @@ import {
   serializeTableWhitelist,
   createMcpOnboardingSnippets,
   getMcpEndpoint,
-  runMcpSmokeTest,
   allowedToolsRequireElicitation,
 } from "./mcpKeyIssuance";
 
@@ -96,54 +95,4 @@ describe("MCP key issuance helpers", () => {
     expect(allowedToolsRequireElicitation(["execute_query_sql"], ["archive_customer"])).toBe(false);
   });
 
-  it("separates auth rejection from network and capability results", async () => {
-    const request = async () => new Response("unauthorized", { status: 401 });
-    const result = await runMcpSmokeTest("https://sql.example.com/mcp", "bad", request as typeof fetch);
-    expect(result.network.status).toBe("passed");
-    expect(result.auth.status).toBe("failed");
-    expect(result.capability.status).toBe("not-run");
-  });
-
-  it("reports MCP tools capability after successful initialization", async () => {
-    const request = async () => new Response(JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      result: {
-        protocolVersion: "2025-11-25",
-        capabilities: { tools: {} },
-        serverInfo: { name: "HsSqlAgent", version: "1.0.0" },
-      },
-    }), { status: 200 });
-    const result = await runMcpSmokeTest("https://sql.example.com/mcp", "key", request as typeof fetch);
-    expect(result.network.status).toBe("passed");
-    expect(result.auth.status).toBe("passed");
-    expect(result.capability.status).toBe("passed");
-    expect(result.protocolVersion).toBe("2025-11-25");
-  });
-
-  it("reports network failures without claiming authentication was tested", async () => {
-    const request = async () => { throw new TypeError("Failed to fetch"); };
-    const result = await runMcpSmokeTest("https://offline.example/mcp", "key", request as typeof fetch);
-    expect(result.network.status).toBe("failed");
-    expect(result.auth.status).toBe("not-run");
-    expect(result.capability.status).toBe("not-run");
-  });
-
-  it("uses X-MCP-Server-Key for the one-time smoke test", async () => {
-    let requestHeaders: HeadersInit | undefined;
-    const request = async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestHeaders = init?.headers;
-      return new Response(JSON.stringify({
-        result: {
-          protocolVersion: "2025-11-25",
-          capabilities: { tools: {} },
-        },
-      }), { status: 200 });
-    };
-
-    await runMcpSmokeTest("https://sql.example.com/mcp", "secret-key", request as typeof fetch);
-
-    expect(requestHeaders).toMatchObject({ "X-MCP-Server-Key": "secret-key" });
-    expect(requestHeaders).not.toHaveProperty("Authorization");
-  });
 });
