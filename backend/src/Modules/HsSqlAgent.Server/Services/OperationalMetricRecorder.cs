@@ -12,12 +12,13 @@ public interface IOperationalMetricRecorder
 public readonly record struct RateLimitMetricSnapshot(
     DateTime BucketStart, string Layer, int? AccessKeyId, int? DbManagementId, string? ToolName, long Count);
 
-public class OperationalMetricRecorder : IOperationalMetricRecorder
+public class OperationalMetricRecorder(IHsSqlAgentMetrics? prometheusMetrics = null) : IOperationalMetricRecorder
 {
     private readonly ConcurrentDictionary<MetricKey, long> _counts = new();
 
     public void RecordRateLimit(string layer, int? accessKeyId = null, int? dbManagementId = null, string? toolName = null)
     {
+        prometheusMetrics?.RecordRateLimitRejection(layer);
         var now = DateTime.UtcNow;
         var bucket = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
         _counts.AddOrUpdate(new MetricKey(bucket, layer, accessKeyId, dbManagementId, toolName), 1, (_, value) => value + 1);

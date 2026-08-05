@@ -7,6 +7,7 @@ public class HsSqlAgentServiceOptions
 {
     public EnterpriseIdentityOptions EnterpriseIdentity { get; } = new();
     public OperabilityOptions Operability { get; } = new();
+    public TelemetryOptions Telemetry { get; } = new();
     public string AdminDatabaseProvider { get; set; } = "Sqlite";
     public string AdminConnectionString { get; set; } = "Data Source=hsagent.db";
     public string HmacSecretKey { get; set; } = string.Empty;
@@ -46,6 +47,15 @@ public class HsSqlAgentServiceOptions
     public string CacheProvider { get; set; } = "Memory";
     public string CacheConnectionString { get; set; } = string.Empty;
     public string CacheKeyPrefix { get; set; } = "hsqlagent:cache:";
+}
+
+public class TelemetryOptions
+{
+    public bool PrometheusEnabled { get; set; } = true;
+    public string PrometheusHost { get; set; } = "localhost";
+    public int PrometheusPort { get; set; } = 9000;
+    public string OtlpEndpoint { get; set; } = string.Empty;
+    public string ServiceName { get; set; } = "hs-sql-agent";
 }
 
 public class OperabilityOptions

@@ -6,6 +6,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using HsSqlAgent.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Enums;
@@ -17,7 +18,8 @@ namespace HsSqlAgent.Server.Background;
 public class DbHealthMonitorService(
     IServiceScopeFactory scopeFactory,
     IOptions<OperabilitySettings> settings,
-    ILogger<DbHealthMonitorService> logger) : BackgroundService
+    ILogger<DbHealthMonitorService> logger,
+    IHsSqlAgentMetrics? metrics = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -82,6 +84,7 @@ public class DbHealthMonitorService(
                     state.LastError = result.ErrorMessage?.Length > 2000 ? result.ErrorMessage[..2000] : result.ErrorMessage;
                 }
                 await context.SaveChangesAsync(cancellationToken);
+                metrics?.RecordDbHealth(db.Id, db.SqlProvider ?? "unknown", state.Status, stopwatch.ElapsedMilliseconds);
 
                 if (state.Status == "unhealthy" && !string.IsNullOrWhiteSpace(settings.Value.AlertWebhookUrl))
                 {

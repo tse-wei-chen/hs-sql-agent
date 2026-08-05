@@ -149,6 +149,31 @@ public class AuditServiceTests
     #region WriteLogAsync Tests
 
     [Fact]
+    public async Task WriteEventAsync_ShouldPublishExecutionToMetricSinks()
+    {
+        var sink = new Mock<IAuditMetricSink>();
+        var service = new AuditService(
+            _contextMock.Object,
+            _httpContextAccessorMock.Object,
+            metricSinks: [sink.Object]);
+        var eventContext = new AuditEventContext
+        {
+            ToolName = "execute_query_sql",
+            Operation = "select",
+            DurationMs = 42
+        };
+
+        await service.WriteEventAsync(
+            "mcp.query.executed",
+            "users",
+            "success",
+            eventContext,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        sink.Verify(x => x.Record("mcp.query.executed", "success", eventContext), Times.Once);
+    }
+
+    [Fact]
     public async Task WriteLogAsync_ShouldCaptureContextInfo_WhenHttpContextIsAvailable()
     {
         // Arrange

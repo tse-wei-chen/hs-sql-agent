@@ -44,6 +44,9 @@
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
 		<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
 		<PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+		<PackageReference Include="OpenTelemetry.Exporter.Prometheus.HttpListener" />
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
 		<!-- Embedded ProjectReference runtime deps: add here when added to Admin.Service/SqlAgent.Service/Common. PrivateAssets=All on ProjectReferences hides these from the nuspec; re-declaring them here ensures
          consumers resolve the correct versions. -->
 		<PackageReference Include="BCrypt.Net-Next" />

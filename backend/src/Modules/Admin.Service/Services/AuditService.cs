@@ -16,11 +16,13 @@ namespace Admin.Service.Services;
 public class AuditService(
     IAdminContext context,
     IHttpContextAccessor httpContextAccessor,
-    IOptions<OperabilitySettings>? operabilitySettings = null) : IAuditService
+    IOptions<OperabilitySettings>? operabilitySettings = null,
+    IEnumerable<IAuditMetricSink>? metricSinks = null) : IAuditService
 {
     private readonly IAdminContext _context = context;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly OperabilitySettings _operabilitySettings = operabilitySettings?.Value ?? new();
+    private readonly IReadOnlyCollection<IAuditMetricSink> _metricSinks = metricSinks?.ToArray() ?? [];
 
     public async Task WriteAsync(
         string action,
@@ -74,6 +76,9 @@ public class AuditService(
         string? detail = null,
         CancellationToken cancellationToken = default)
     {
+        foreach (var sink in _metricSinks)
+            sink.Record(action, result, eventContext);
+
         var httpContext = _httpContextAccessor.HttpContext;
         var inferred = CreateHttpContext();
         var actorId = httpContext?.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)

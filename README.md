@@ -63,6 +63,12 @@ Audit results can be exported as filtered CSV or JSON through a separate `audit.
 
 `Operability:AlertWebhookUrl` receives deduplicated database-unhealthy events. `Operability:SiemWebhookUrl` receives redacted audit events through the durable delivery outbox. Both integrations require a 32-byte webhook secret, use an `X-Hs-Signature: sha256=...` HMAC header, retry failed delivery, and expose pending/delivered/dead-letter status in the Admin Panel. Leave their URLs empty to disable them.
 
+Prometheus metrics are exposed from a dedicated listener at `http://localhost:9000/metrics` by default. The Admin/API/MCP listener does not serve `/metrics`, and the metrics listener does not serve application routes. Configure `Telemetry:PrometheusEnabled`, `Telemetry:PrometheusHost`, and `Telemetry:PrometheusPort` (or the matching Docker environment variables) to change or disable it. Docker exposes port 9000 only to its internal network; explicitly publish `9000:9000` when the Prometheus server runs outside that network. Set `Telemetry:OtlpEndpoint` to export the same metrics through OTLP as well.
+
+For a Prometheus container on the same Docker network, use `targets: ["hs-sql-agent:9000"]` in its `scrape_configs`. The endpoint has no application-level authentication and must remain on a trusted monitoring network.
+
+The exporter reports live process counters and histograms for MCP requests, SQL execution counts and latency, returned/affected rows, rate-limit rejections, DML approvals, database health, ASP.NET Core, Kestrel, and .NET networking. Audit records remain the source for per-key and historical administration reports; Prometheus scraping never queries the audit database.
+
 ## Custom SQL tools
 
 Custom tools are saved as database-bound SQL templates. Saving creates or updates a draft; only an explicit Publish makes an immutable revision available to new MCP sessions, and only keys bound to the same database can discover or execute it. Disable removes it from new sessions, while rollback republishes an earlier snapshot as a new revision.

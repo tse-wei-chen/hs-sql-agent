@@ -40,6 +40,7 @@ builder.Services.AddHsSqlAgent(options =>
     options.SmtpFrom = builder.Configuration["PasswordReset:SmtpFrom"] ?? string.Empty;
     builder.Configuration.GetSection("EnterpriseIdentity").Bind(options.EnterpriseIdentity);
     builder.Configuration.GetSection("Operability").Bind(options.Operability);
+    builder.Configuration.GetSection("Telemetry").Bind(options.Telemetry);
     if (int.TryParse(builder.Configuration["RateLimiting:PermitLimit"], out var pl))
         options.RateLimitPermitLimit = pl;
     if (int.TryParse(builder.Configuration["RateLimiting:WindowSeconds"], out var ws))

@@ -4,6 +4,8 @@ services:
     container_name: hs-sql-agent
     ports:
       - "8080:8080"
+    expose:
+      - "9000"
     volumes:
       - ./data:/app/data
     environment:
@@ -63,4 +65,9 @@ services:
       - SqlConcurrency__FailureMode=${SQL_CONCURRENCY_FAILURE_MODE:-FailClosed}
       - SqlConcurrency__Key=${SQL_CONCURRENCY_KEY:-hsqlagent:sql-concurrency}
       - SqlConcurrency__LeaseSeconds=${SQL_CONCURRENCY_LEASE_SECONDS:-30}
+      - Telemetry__PrometheusEnabled=${PROMETHEUS_ENABLED:-true}
+      - Telemetry__PrometheusHost=${PROMETHEUS_HOST:-0.0.0.0}
+      - Telemetry__PrometheusPort=${PROMETHEUS_PORT:-9000}
+      - Telemetry__OtlpEndpoint=${OTLP_ENDPOINT:-}
+      - Telemetry__ServiceName=${OTEL_SERVICE_NAME:-hs-sql-agent}
     restart: unless-stopped
