@@ -96,19 +96,25 @@ public class OperabilityService(IAdminContext context, IOptions<OperabilitySetti
                 Count = x.LongCount(),
                 Success = x.LongCount(y => y.Result == "success")
             }).ToDictionaryAsync(x => x.Id, cancellationToken);
-        var rejected = await context.RateLimitMetrics.AsNoTracking()
+        var rateLimitUsage = await context.RateLimitMetrics.AsNoTracking()
             .Where(x => x.Layer == "key" && x.BucketStart >= from && x.BucketStart <= to && x.AccessKeyId.HasValue && ids.Contains(x.AccessKeyId.Value))
-            .GroupBy(x => x.AccessKeyId!.Value).Select(x => new { Id = x.Key, Count = x.Sum(y => y.RejectedCount) })
-            .ToDictionaryAsync(x => x.Id, x => x.Count, cancellationToken);
+            .GroupBy(x => x.AccessKeyId!.Value).Select(x => new
+            {
+                Id = x.Key,
+                Attempts = x.Sum(y => y.AttemptCount),
+                Rejected = x.Sum(y => y.RejectedCount)
+            }).ToDictionaryAsync(x => x.Id, cancellationToken);
         foreach (var item in items)
         {
             var keyUsage = usage.GetValueOrDefault(item.AccessKeyId);
             item.RequestCount = keyUsage?.Count ?? 0;
             item.SuccessCount = keyUsage?.Success ?? 0;
             item.FailureCount = item.RequestCount - item.SuccessCount;
-            item.RateLimitCount = rejected.GetValueOrDefault(item.AccessKeyId);
-            var attempts = item.RequestCount + item.RateLimitCount;
-            item.RateLimitRejectionRate = attempts == 0 ? 0 : (double)item.RateLimitCount / attempts;
+            var limitUsage = rateLimitUsage.GetValueOrDefault(item.AccessKeyId);
+            item.RateLimitCount = limitUsage?.Rejected ?? 0;
+            item.RateLimitRejectionRate = limitUsage is not { Attempts: > 0 }
+                ? 0
+                : (double)limitUsage.Rejected / limitUsage.Attempts;
         }
         return items;
     }

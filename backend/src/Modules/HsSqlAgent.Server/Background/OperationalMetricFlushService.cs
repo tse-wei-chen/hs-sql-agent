@@ -28,7 +28,8 @@ public class OperationalMetricFlushService(
                 context.RateLimitMetrics.Add(new RateLimitMetric
                 {
                     BucketStart = item.BucketStart, Layer = item.Layer, AccessKeyId = item.AccessKeyId,
-                    DbManagementId = item.DbManagementId, ToolName = item.ToolName, RejectedCount = item.Count
+                    DbManagementId = item.DbManagementId, ToolName = item.ToolName,
+                    AttemptCount = item.AttemptCount, RejectedCount = item.RejectedCount
                 });
             await context.SaveChangesAsync(cancellationToken);
         }

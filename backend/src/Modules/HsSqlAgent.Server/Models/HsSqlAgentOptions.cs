@@ -30,7 +30,6 @@ public class HsSqlAgentServiceOptions
 
     public int RateLimitPermitLimit { get; set; }
     public int RateLimitWindowSeconds { get; set; }
-    public int RateLimitQueueLimit { get; set; }
     public string RateLimiterProvider { get; set; } = "Memory";
     public string RateLimiterConnectionString { get; set; } = string.Empty;
     public string RateLimiterFailureMode { get; set; } = "FailClosed";
@@ -78,6 +77,7 @@ public class OperabilityOptions
     public int AuditRetentionDays { get; set; }
     public string AuditRetentionMode { get; set; } = "Purge";
     public string AuditArchivePath { get; set; } = "data/audit-archive";
+    public string AuditFallbackPath { get; set; } = "data/audit-fallback.jsonl";
     public int AuditRetentionRunHourUtc { get; set; } = 2;
 }
 

@@ -621,16 +621,14 @@ public partial class SqlAgentTool(
         List<CteCondition>? cteConditions,
         QueryDefinition? fromQuery,
         List<SelectCondition>? selectColumns,
-        List<WhereCondition>? whereConditions,
-        string? topLevelAlias = null)
+        List<WhereCondition>? whereConditions)
     {
         var whitelist = ResolveTableWhitelist();
         if (whitelist is null or { Count: 0 }) return;
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(topLevelAlias)) aliases.Add(topLevelAlias);
         CollectReferencesAndAliases(tableName, joins, combineConditions, cteConditions, fromQuery, selectColumns, whereConditions, referenced, aliases);
-        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
@@ -642,7 +640,7 @@ public partial class SqlAgentTool(
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         CollectFromQueryDefinition(queryDef, referenced, aliases);
-        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
@@ -650,11 +648,14 @@ public partial class SqlAgentTool(
     internal static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (qd == null) return;
-        if (!string.IsNullOrWhiteSpace(qd.Alias)) aliases.Add(qd.Alias);
-        CollectReferencesAndAliases(qd.TableName, qd.Joins, qd.CombineConditions, qd.CteConditions, qd.FromQuery, qd.SelectColumns, qd.WhereColumnsAndValues, referenced, aliases);
-        if (qd.HavingConditions != null) CollectFromHavingConditions(qd.HavingConditions, referenced, aliases);
-        if (qd.OrderByColumns != null) CollectFromOrderByConditions(qd.OrderByColumns, referenced, aliases);
-        if (qd.GroupByConditions != null) CollectFromGroupByConditions(qd.GroupByConditions, referenced, aliases);
+        // CTE names are scoped to one query definition. Do not leak a nested CTE
+        // alias into siblings or parents where it could hide a physical table with
+        // the same name from whitelist validation.
+        var scopedAliases = new HashSet<string>(aliases, StringComparer.OrdinalIgnoreCase);
+        CollectReferencesAndAliases(qd.TableName, qd.Joins, qd.CombineConditions, qd.CteConditions, qd.FromQuery, qd.SelectColumns, qd.WhereColumnsAndValues, referenced, scopedAliases);
+        if (qd.HavingConditions != null) CollectFromHavingConditions(qd.HavingConditions, referenced, scopedAliases);
+        if (qd.OrderByColumns != null) CollectFromOrderByConditions(qd.OrderByColumns, referenced, scopedAliases);
+        if (qd.GroupByConditions != null) CollectFromGroupByConditions(qd.GroupByConditions, referenced, scopedAliases);
     }
 
     internal static void CollectReferencesAndAliases(
@@ -663,18 +664,17 @@ public partial class SqlAgentTool(
         List<SelectCondition>? selectColumns, List<WhereCondition>? whereConditions,
         HashSet<string> referenced, HashSet<string> aliases)
     {
-        if (!string.IsNullOrWhiteSpace(tableName)) referenced.Add(tableName);
         if (cteConditions != null)
             foreach (var c in cteConditions)
             {
-                if (!string.IsNullOrWhiteSpace(c.CteAliasName)) aliases.Add(c.CteAliasName);
                 CollectFromQueryDefinition(c.Query, referenced, aliases);
+                if (!string.IsNullOrWhiteSpace(c.CteAliasName)) aliases.Add(c.CteAliasName);
             }
+        if (!string.IsNullOrWhiteSpace(tableName) && !aliases.Contains(tableName)) referenced.Add(tableName);
         if (joins != null)
             foreach (var j in joins)
             {
-                if (!string.IsNullOrWhiteSpace(j.Table)) referenced.Add(j.Table);
-                if (!string.IsNullOrWhiteSpace(j.Alias)) aliases.Add(j.Alias);
+                if (!string.IsNullOrWhiteSpace(j.Table) && !aliases.Contains(j.Table)) referenced.Add(j.Table);
                 CollectFromQueryDefinition(j.SubQuery, referenced, aliases);
             }
         if (fromQuery != null) CollectFromQueryDefinition(fromQuery, referenced, aliases);

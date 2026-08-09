@@ -106,6 +106,19 @@ public class CustomToolProxyTests
     }
 
     [Fact]
+    public async Task Execute_ShouldRecheckAllowedTools_ForExistingSession()
+    {
+        _httpContextAccessorMock.Object.HttpContext!.Items[Common.Models.McpContextItemKeys.AllowedTools] = "get_tables";
+
+        var result = await _proxy.Execute(JsonSerializer.SerializeToElement(new { }));
+
+        Assert.Contains("does not have permission", result);
+        _toolServiceMock.Verify(
+            x => x.GetPublishedToolByNameAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task Execute_ShouldReplaceParameters_ForQueryTool()
     {
         var tool = new CustomSqlTool

@@ -9,6 +9,25 @@ namespace SqlAgent.Test.Services;
 public class SqlParserTests
 {
     [Fact]
+    public void Parse_OrderByWithLimit_PreservesRequestedLimit()
+    {
+        const string sql = """
+            SELECT order_id, customer_id, employee_id, order_date, required_date,
+                   shipped_date, ship_via, freight, ship_name, ship_city, ship_country
+            FROM orders
+            ORDER BY order_date DESC, order_id DESC
+            LIMIT 5
+            """;
+
+        var definition = SqlDefinitionParser.ParseQuery(sql);
+
+        Assert.Equal(5, definition.Limit);
+        Assert.NotNull(definition.OrderByColumns);
+        Assert.Equal(2, definition.OrderByColumns.Count);
+        Assert.All(definition.OrderByColumns, order => Assert.Equal(SortDirection.Desc, order.Direction));
+    }
+
+    [Fact]
     public void Parse_PostgresDateCastInSelectAndHaving_ReturnsQueryDefinition()
     {
         const string sql = """

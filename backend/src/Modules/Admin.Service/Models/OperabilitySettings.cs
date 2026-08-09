@@ -14,5 +14,6 @@ public class OperabilitySettings
     public int AuditRetentionDays { get; set; }
     public string AuditRetentionMode { get; set; } = "Purge";
     public string AuditArchivePath { get; set; } = "data/audit-archive";
+    public string AuditFallbackPath { get; set; } = "data/audit-fallback.jsonl";
     public int AuditRetentionRunHourUtc { get; set; } = 2;
 }

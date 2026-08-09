@@ -36,6 +36,8 @@ public class DbManagementServiceTests
         // Setup default DbManagement DbSet to avoid null reference exceptions in async queries
         _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement>());
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
+        _contextMock.Setup(c => c.CustomSqlTools).ReturnsDbSet(new List<CustomSqlTool>());
+        _contextMock.Setup(c => c.CustomSqlToolRevisions).ReturnsDbSet(new List<CustomSqlToolRevision>());
 
         _service = new DbManagementService(_contextMock.Object, _cryptoServiceMock.Object, _mcpKeySettingsMock.Object);
     }
@@ -386,5 +388,23 @@ public class DbManagementServiceTests
 
         _contextMock.Verify(c => c.DbManagement.Remove(existingDb), Times.Once);
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteDbAsync_ShouldReportCustomToolDependenciesBeforeForeignKeyFailure()
+    {
+        var existingDb = new DbManagement { Id = 7 };
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement> { existingDb });
+        _contextMock.Setup(c => c.CustomSqlTools).ReturnsDbSet(new List<CustomSqlTool>
+        {
+            new() { Id = 20, Name = "find_user", Description = "test", SqlTemplate = "SELECT 1", Type = "Query", DbManagementId = 7 }
+        });
+        _contextMock.Setup(c => c.CustomSqlToolRevisions).ReturnsDbSet(new List<CustomSqlToolRevision>());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.DeleteDbAsync(7, TestContext.Current.CancellationToken));
+
+        Assert.Contains("1 custom tool", error.Message);
+        _contextMock.Verify(c => c.DbManagement.Remove(It.IsAny<DbManagement>()), Times.Never);
     }
 }

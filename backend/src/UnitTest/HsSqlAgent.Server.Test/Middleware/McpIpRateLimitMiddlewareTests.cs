@@ -39,7 +39,7 @@ public class McpIpRateLimitMiddlewareTests
         Assert.Equal(1, nextCallCount);
         Assert.Equal(StatusCodes.Status429TooManyRequests, rejectedContext.Response.StatusCode);
         Assert.True(rejectedContext.Response.Headers.ContainsKey("Retry-After"));
-        Assert.Equal(1, Assert.Single(metrics.Drain()).Count);
+        Assert.Equal(1, Assert.Single(metrics.Drain()).RejectedCount);
     }
 
     private static DefaultHttpContext CreateContext()

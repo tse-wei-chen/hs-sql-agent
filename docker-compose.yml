@@ -49,10 +49,10 @@ services:
       - Operability__AuditRetentionDays=${AUDIT_RETENTION_DAYS}
       - Operability__AuditRetentionMode=${AUDIT_RETENTION_MODE}
       - Operability__AuditArchivePath=${AUDIT_ARCHIVE_PATH}
+      - Operability__AuditFallbackPath=${AUDIT_FALLBACK_PATH:-/app/data/audit-fallback.jsonl}
       - Operability__AuditRetentionRunHourUtc=${AUDIT_RETENTION_RUN_HOUR_UTC}
       - RateLimiting__PermitLimit=${RATE_LIMITING_PERMIT_LIMIT}
       - RateLimiting__WindowSeconds=${RATE_LIMITING_WINDOW_SECONDS}
-      - RateLimiting__QueueLimit=${RATE_LIMITING_QUEUE_LIMIT}
       - RateLimiter__Provider=${RATE_LIMITER_PROVIDER:-Memory}
       - RateLimiter__ConnectionString=${RATE_LIMITER_CONNECTION_STRING:-}
       - RateLimiter__FailureMode=${RATE_LIMITER_FAILURE_MODE:-FailClosed}

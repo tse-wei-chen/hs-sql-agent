@@ -70,7 +70,7 @@ onMounted(load);
       <CardContent class="space-y-2 pt-4">
         <div v-for="item in keyUsage" :key="item.accessKeyId" class="rounded border p-3 text-sm">
           <div class="font-medium">{{ item.name }} (#{{ item.accessKeyId }})</div>
-          <div class="text-muted-foreground">requests {{ item.requestCount }} · success {{ item.successCount }} · failed {{ item.failureCount }} · rate-limit 429 {{ item.rateLimitCount }} ({{ percent(item.rateLimitRejectionRate) }}) · last activity {{ item.lastUsedAt || "never" }}</div>
+          <div class="text-muted-foreground">audited tool operations {{ item.requestCount }} · success {{ item.successCount }} · failed {{ item.failureCount }} · HTTP rate-limit 429 {{ item.rateLimitCount }} ({{ percent(item.rateLimitRejectionRate) }}) · last activity {{ item.lastUsedAt || "never" }}</div>
         </div>
       </CardContent>
     </Card>

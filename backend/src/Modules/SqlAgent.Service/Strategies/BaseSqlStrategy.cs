@@ -72,7 +72,9 @@ public abstract partial class BaseSqlStrategy(
         try
         {
             var query = BuildQueryFromDefinition(definition);
-            if (policy.QueryMaxRows > 0)
+            var requestedLimit = definition.Limit.GetValueOrDefault();
+            if (policy.QueryMaxRows > 0
+                && (requestedLimit <= 0 || requestedLimit > policy.QueryMaxRows))
                 query = query.Limit(policy.QueryMaxRows);
             var result = await db.GetAsync(query, cancellationToken: cancellationToken);
             return SerializeQueryResult(result);

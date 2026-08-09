@@ -19,6 +19,7 @@ public class McpAccessKeyService(
 {
     private const int KeyPrefixLength = 8;
     private static readonly TimeSpan RevocationTombstoneExpiry = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ChangedKeyRefreshExpiry = TimeSpan.FromMinutes(6);
     private static readonly char[] CorsOriginsSeparators = [',', ';', '\n', '\r'];
     private readonly IAdminContext _context = context;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
@@ -132,8 +133,8 @@ public class McpAccessKeyService(
         entity.RateLimitMode = request.RateLimitMode;
         entity.PermitLimitOverride = request.PermitLimitOverride;
         entity.WindowSecondsOverride = request.WindowSecondsOverride;
+        await MarkKeyChangedAsync(entity.Id);
         await _context.SaveChangesAsync(cancellationToken);
-        await _cache.RemoveAsync(McpAccessKeyCacheKeys.ForStoredHash(entity.KeyHash), CancellationToken.None);
 
         var now = DateTime.UtcNow;
         var result = new McpAccessKeyListItem
@@ -207,8 +208,10 @@ public class McpAccessKeyService(
                 oldKey.ExpiresAt = graceExpiry;
         }
 
+        await MarkKeyChangedAsync(oldKey.Id);
+        if (request.GracePeriodMinutes == 0)
+            await MarkKeyRevokedAsync(oldKey.Id);
         await _context.SaveChangesAsync(cancellationToken);
-        await InvalidateChangedKeyAsync(oldKey, request.GracePeriodMinutes == 0);
         return CreateIssueResult(replacement, plaintext);
     }
 
@@ -256,17 +259,10 @@ public class McpAccessKeyService(
         key.RevokedAt = DateTime.UtcNow;
         key.RevokedBy = actorId;
 
+        // Publish the tombstone before committing so a cache failure cannot leave a
+        // successfully revoked key usable with stale validation data.
+        await MarkKeyRevokedAsync(key.Id);
         await _context.SaveChangesAsync(cancellationToken);
-        // The stored HMAC is also the validation cache identity, so revocation can
-        // invalidate the exact cached key without retaining the plaintext secret.
-        // Keep the tombstone longer than the validation cache TTL to close the race
-        // where an in-flight validation read the active row before this commit.
-        await _cache.SetAsync(
-            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
-            true,
-            absoluteExpireTime: RevocationTombstoneExpiry,
-            CancellationToken.None);
-        await _cache.RemoveAsync(McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash), CancellationToken.None);
         return true;
     }
 
@@ -439,20 +435,19 @@ public class McpAccessKeyService(
         }
     }
 
-    private async Task InvalidateChangedKeyAsync(McpAccessKey key, bool revoked)
-    {
-        if (revoked)
-        {
-            await _cache.SetAsync(
-                McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
-                true,
-                absoluteExpireTime: RevocationTombstoneExpiry,
-                CancellationToken.None);
-        }
-        await _cache.RemoveAsync(
-            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+    private Task MarkKeyChangedAsync(int keyId)
+        => _cache.SetAsync(
+            McpAccessKeyCacheKeys.ForChangedKeyId(keyId),
+            true,
+            ChangedKeyRefreshExpiry,
             CancellationToken.None);
-    }
+
+    private Task MarkKeyRevokedAsync(int keyId)
+        => _cache.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(keyId),
+            true,
+            RevocationTombstoneExpiry,
+            CancellationToken.None);
 
     private static string? NormalizeNullable(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

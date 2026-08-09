@@ -73,6 +73,7 @@ public class CustomToolProxy(
         string renderedSql = "";
         try
         {
+            ValidateToolAccess();
             var sqlConfig = ResolveSqlConfig();
             var dbManagementId = ResolveDbManagementId();
             if (dbManagementId is null)
@@ -426,18 +427,29 @@ public class CustomToolProxy(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
+    private void ValidateToolAccess()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context == null) return;
+        var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string;
+        if (string.IsNullOrWhiteSpace(allowedTools)) return;
+        var allowed = allowedTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(x => string.Equals(x, _name, StringComparison.OrdinalIgnoreCase));
+        if (!allowed)
+            throw new UnauthorizedAccessException($"API key does not have permission to use tool: {_name}");
+    }
+
     private void ValidateAllTableAccess(QueryDefinition queryDef)
     {
         var whitelist = ResolveTableWhitelist();
         if (whitelist is null or { Count: 0 }) return;
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(queryDef.Alias)) aliases.Add(queryDef.Alias);
         SqlAgentTool.CollectReferencesAndAliases(queryDef.TableName, queryDef.Joins, queryDef.CombineConditions, queryDef.CteConditions, queryDef.FromQuery, queryDef.SelectColumns, queryDef.WhereColumnsAndValues, referenced, aliases);
         SqlAgentTool.CollectFromHavingConditions(queryDef.HavingConditions, referenced, aliases);
         SqlAgentTool.CollectFromOrderByConditions(queryDef.OrderByColumns, referenced, aliases);
         SqlAgentTool.CollectFromGroupByConditions(queryDef.GroupByConditions, referenced, aliases);
-        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
@@ -449,7 +461,7 @@ public class CustomToolProxy(
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         SqlAgentTool.CollectReferencesAndAliases(dmlDef.TableName, null, null, null, dmlDef.FromQuery, null, dmlDef.WhereConditions, referenced, aliases);
-        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }

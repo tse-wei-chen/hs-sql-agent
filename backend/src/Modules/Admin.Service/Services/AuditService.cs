@@ -19,6 +19,7 @@ public class AuditService(
     IOptions<OperabilitySettings>? operabilitySettings = null,
     IEnumerable<IAuditMetricSink>? metricSinks = null) : IAuditService
 {
+    private static readonly SemaphoreSlim FallbackFileLock = new(1, 1);
     private readonly IAdminContext _context = context;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly OperabilitySettings _operabilitySettings = operabilitySettings?.Value ?? new();
@@ -351,6 +352,7 @@ public class AuditService(
             });
         }
         const int maxAttempts = 3;
+        Exception? lastException = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
@@ -362,10 +364,41 @@ public class AuditService(
             {
                 throw;
             }
-            catch when (attempt < maxAttempts)
+            catch (Exception exception)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), cancellationToken);
+                lastException = exception;
+                if (attempt < maxAttempts)
+                    await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), cancellationToken);
             }
+        }
+
+        await PersistFallbackAsync(item, lastException!, cancellationToken);
+    }
+
+    private async Task PersistFallbackAsync(
+        AuditLog item,
+        Exception persistenceError,
+        CancellationToken cancellationToken)
+    {
+        var path = Path.GetFullPath(_operabilitySettings.AuditFallbackPath, AppContext.BaseDirectory);
+        var directory = Path.GetDirectoryName(path)
+            ?? throw new InvalidOperationException("Audit fallback path must include a directory.");
+        Directory.CreateDirectory(directory);
+        var envelope = JsonSerializer.Serialize(new
+        {
+            fallbackRecordedAt = DateTime.UtcNow,
+            persistenceError = persistenceError.GetType().Name,
+            auditEvent = item
+        });
+
+        await FallbackFileLock.WaitAsync(cancellationToken);
+        try
+        {
+            await File.AppendAllTextAsync(path, envelope + Environment.NewLine, cancellationToken);
+        }
+        finally
+        {
+            FallbackFileLock.Release();
         }
     }
 

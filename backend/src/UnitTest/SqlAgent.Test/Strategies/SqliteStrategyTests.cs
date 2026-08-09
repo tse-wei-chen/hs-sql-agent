@@ -84,6 +84,34 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     }
 
     [Fact]
+    public async Task ExecuteQueryAsync_ShouldPreserveRequestedLimitBelowPolicyMaximum()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition { TableName = TestTableName, Limit = 1 },
+            Fixture.ConnectionString,
+            new SqlExecutionPolicy { QueryMaxRows = 1000, QueryTimeoutSeconds = 30 },
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldUsePolicyMaximumWhenRequestedLimitIsHigher()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition { TableName = TestTableName, Limit = 1000 },
+            Fixture.ConnectionString,
+            new SqlExecutionPolicy { QueryMaxRows = 2, QueryTimeoutSeconds = 30 },
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Equal(2, rows.Count);
+    }
+
+    [Fact]
     public async Task ExecuteDmlAsync_ShouldRejectDeleteWithoutWhere_WhenPolicyRequiresWhere()
     {
         var result = await Strategy.ExecuteDmlAsync(
@@ -137,7 +165,7 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     {
         var schemas = await Strategy.GetSchemasAsync(Fixture.ConnectionString, TestContext.Current.CancellationToken);
         Assert.Single(schemas);
-        Assert.Contains("sqlite does not support schemas", schemas[0], StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["main"], schemas);
     }
 
     [Fact]

@@ -53,8 +53,6 @@ builder.Services.AddHsSqlAgent(options =>
         options.RateLimitPermitLimit = pl;
     if (int.TryParse(builder.Configuration["RateLimiting:WindowSeconds"], out var ws))
         options.RateLimitWindowSeconds = ws;
-    if (int.TryParse(builder.Configuration["RateLimiting:QueueLimit"], out var ql))
-        options.RateLimitQueueLimit = ql;
 
     options.RateLimiterProvider = builder.Configuration["RateLimiter:Provider"] ?? "Memory";
     options.RateLimiterConnectionString = builder.Configuration["RateLimiter:ConnectionString"]

@@ -66,6 +66,8 @@ public static class HsSqlAgentServiceExtensions
             throw new InvalidOperationException("Mcp:PublicEndpoint must be an absolute HTTP or HTTPS URL.");
         ValidateWebhook("Operability Alert", options.Operability.AlertWebhookUrl, options.Operability.AlertWebhookSecret);
         ValidateWebhook("Operability SIEM", options.Operability.SiemWebhookUrl, options.Operability.SiemWebhookSecret);
+        if (string.IsNullOrWhiteSpace(options.Operability.AuditFallbackPath))
+            throw new InvalidOperationException("Operability AuditFallbackPath is required.");
         if (options.Telemetry.PrometheusEnabled && options.Telemetry.PrometheusPort is < 1 or > 65535)
             throw new InvalidOperationException("Telemetry PrometheusPort must be between 1 and 65535.");
         if (options.Telemetry.PrometheusEnabled && string.IsNullOrWhiteSpace(options.Telemetry.PrometheusHost))
@@ -218,6 +220,7 @@ public static class HsSqlAgentServiceExtensions
             operability.AuditRetentionDays = source.AuditRetentionDays;
             operability.AuditRetentionMode = source.AuditRetentionMode;
             operability.AuditArchivePath = source.AuditArchivePath;
+            operability.AuditFallbackPath = source.AuditFallbackPath;
             operability.AuditRetentionRunHourUtc = source.AuditRetentionRunHourUtc;
         });
         services.Configure<TelemetryOptions>(telemetry =>
@@ -265,7 +268,6 @@ public static class HsSqlAgentServiceExtensions
         {
             rl.PermitLimit = options.RateLimitPermitLimit;
             rl.WindowSeconds = options.RateLimitWindowSeconds;
-            rl.QueueLimit = options.RateLimitQueueLimit;
         });
 
         // --- JWT Auth ---

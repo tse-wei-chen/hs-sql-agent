@@ -112,17 +112,36 @@ public class AuditServiceTests
     }
 
     [Fact]
-    public async Task WriteAsync_ShouldPropagateFailureAfterRetryLimit()
+    public async Task WriteAsync_ShouldPersistDurableFallbackAfterRetryLimit()
     {
+        var fallbackPath = Path.Combine(
+            Path.GetTempPath(),
+            $"hsqlagent-audit-fallback-{Guid.NewGuid():N}.jsonl");
         _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("database unavailable"));
+        var service = new AuditService(
+            _contextMock.Object,
+            _httpContextAccessorMock.Object,
+            Options.Create(new OperabilitySettings { AuditFallbackPath = fallbackPath }));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _service.WriteAsync(
+        try
+        {
+            await service.WriteAsync(
                 "query",
                 "db1",
                 "success",
-                cancellationToken: TestContext.Current.CancellationToken));
+                cancellationToken: TestContext.Current.CancellationToken);
+
+            var fallback = await File.ReadAllTextAsync(
+                fallbackPath,
+                TestContext.Current.CancellationToken);
+            Assert.Contains("InvalidOperationException", fallback);
+            Assert.Contains("\"Action\":\"query\"", fallback);
+        }
+        finally
+        {
+            if (File.Exists(fallbackPath)) File.Delete(fallbackPath);
+        }
 
         _contextMock.Verify(
             c => c.SaveChangesAsync(TestContext.Current.CancellationToken),

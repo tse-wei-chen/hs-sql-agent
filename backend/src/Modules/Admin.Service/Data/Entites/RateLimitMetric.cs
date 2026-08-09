@@ -8,5 +8,6 @@ public class RateLimitMetric
     public int? AccessKeyId { get; set; }
     public int? DbManagementId { get; set; }
     public string? ToolName { get; set; }
+    public long AttemptCount { get; set; }
     public long RejectedCount { get; set; }
 }

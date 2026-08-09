@@ -28,7 +28,14 @@ public class OperabilityServiceTests
             new AuditLog { EventId = Guid.NewGuid(), Action = "mcp.query.executed", Target = "a", Result = "success", DurationMs = 10, AccessKeyId = 1, CreatedAt = now },
             new AuditLog { EventId = Guid.NewGuid(), Action = "mcp.query.executed", Target = "b", Result = "failed", DurationMs = 100, AccessKeyId = 1, CreatedAt = now },
             new AuditLog { EventId = Guid.NewGuid(), Action = "mcp.dml.executed", Target = "c", Result = "success", DurationMs = 1000, AccessKeyId = 1, CreatedAt = now });
-        context.RateLimitMetrics.Add(new RateLimitMetric { BucketStart = now, Layer = "key", AccessKeyId = 1, RejectedCount = 2 });
+        context.RateLimitMetrics.Add(new RateLimitMetric
+        {
+            BucketStart = now,
+            Layer = "key",
+            AccessKeyId = 1,
+            AttemptCount = 5,
+            RejectedCount = 2
+        });
         context.DbManagement.Add(new DbManagement { Id = 7, Name = "warehouse", SqlProvider = "Postgres", CreatedAt = now, UpdatedAt = now });
         context.DbHealthStates.Add(new DbHealthState { DbManagementId = 7, Status = "unhealthy", ConsecutiveFailures = 3, LastCheckedAt = now, OutageStartedAt = now.AddMinutes(-3) });
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);

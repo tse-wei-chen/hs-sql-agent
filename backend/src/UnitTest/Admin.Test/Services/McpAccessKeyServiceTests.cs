@@ -282,8 +282,10 @@ public class McpAccessKeyServiceTests
         Assert.Equal("new", key.Name);
         Assert.Equal("https://app.example.com", key.CorsAllowedOrigins);
         Assert.Equal(5, key.DbManagementId);
-        _cacheMock.Verify(c => c.RemoveAsync(
-            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
             CancellationToken.None), Times.Once);
     }
 
@@ -319,8 +321,10 @@ public class McpAccessKeyServiceTests
             true,
             It.IsAny<TimeSpan?>(),
             CancellationToken.None), Times.Once);
-        _cacheMock.Verify(c => c.RemoveAsync(
-            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
             CancellationToken.None), Times.Once);
     }
 
@@ -345,10 +349,9 @@ public class McpAccessKeyServiceTests
         Assert.Null(key.RevokedAt);
         Assert.True(key.ExpiresAt >= before && key.ExpiresAt <= DateTime.UtcNow.AddMinutes(16));
         _cacheMock.Verify(c => c.SetAsync(
-            It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _cacheMock.Verify(c => c.RemoveAsync(
-            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
+            McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
             CancellationToken.None), Times.Once);
     }
 
@@ -573,9 +576,6 @@ public class McpAccessKeyServiceTests
             It.Is<TimeSpan?>(expiry =>
                 expiry.HasValue &&
                 expiry.Value > TimeSpan.FromMinutes(5)),
-            CancellationToken.None), Times.Once);
-        _cacheMock.Verify(c => c.RemoveAsync(
-            McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash),
             CancellationToken.None), Times.Once);
     }
 

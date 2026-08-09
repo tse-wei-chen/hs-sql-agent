@@ -546,6 +546,9 @@ namespace Admin.Service.Data.Migrations
                     b.Property<int?>("AccessKeyId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("BucketStart")
                         .HasColumnType("TEXT");
 

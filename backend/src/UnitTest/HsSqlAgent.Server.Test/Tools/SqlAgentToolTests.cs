@@ -88,4 +88,25 @@ public class SqlAgentToolTests
         Assert.Contains("secret_order_table", referenced);
     }
 
+    [Fact]
+    public void CollectFromQueryDefinition_ShouldNotTreatTableAliasAsPhysicalTableExemption()
+    {
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var query = new QueryDefinition
+        {
+            TableName = "secret",
+            Alias = "secret",
+            SelectColumns = [new FieldSelectCondition { FieldName = "secret.id" }]
+        };
+
+        var method = typeof(SqlAgentTool).GetMethod(
+            "CollectFromQueryDefinition",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        method!.Invoke(null, [query, referenced, aliases]);
+
+        Assert.Contains("secret", referenced);
+    }
+
 }
