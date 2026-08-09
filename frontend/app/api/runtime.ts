@@ -42,6 +42,11 @@ export interface McpClientConfig {
   mcpEndpoint: string;
 }
 
+export interface AvailableMcpTool {
+  name: string;
+  type: "Query" | "DML";
+}
+
 export const getMcpClientConfig = async (): Promise<McpClientConfig> => {
   const response = await xiorInstanceToken.get<McpClientConfig>(
     "/runtime/client-config",
@@ -51,6 +56,16 @@ export const getMcpClientConfig = async (): Promise<McpClientConfig> => {
 
 export const listMcpKeys = async () => {
   const response = await xiorInstanceToken.get("/runtime/mcp-keys");
+  return response.data;
+};
+
+export const listAvailableMcpTools = async (
+  dbManagementId: number,
+): Promise<AvailableMcpTool[]> => {
+  const response = await xiorInstanceToken.get(
+    "/runtime/mcp-keys/available-tools",
+    { params: { dbManagementId } },
+  );
   return response.data;
 };
 

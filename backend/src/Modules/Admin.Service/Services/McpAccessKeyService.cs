@@ -18,6 +18,10 @@ public class McpAccessKeyService(
     ISecurityPolicyRuntimeState securityPolicyRuntimeState) : IMcpAccessKeyService
 {
     private const int KeyPrefixLength = 8;
+    private static readonly HashSet<string> BuiltInTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "execute_query_sql", "get_columns", "get_schemas", "get_tables", "execute_dml_sql"
+    };
     private static readonly TimeSpan RevocationTombstoneExpiry = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ChangedKeyRefreshExpiry = TimeSpan.FromMinutes(6);
     private static readonly char[] CorsOriginsSeparators = [',', ';', '\n', '\r'];
@@ -37,6 +41,7 @@ public class McpAccessKeyService(
             throw new ArgumentException("Key name is required.", nameof(request.Name));
         }
         NormalizeAndValidateRateLimit(request);
+        await ValidateAllowedToolsAsync(request.AllowedTools, request.DbManagementId, cancellationToken);
 
         var plaintext = GenerateRawKey();
         var entity = CreateEntity(request, plaintext, actorId);
@@ -123,6 +128,7 @@ public class McpAccessKeyService(
         var entity = await _context.McpAccessKeys.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (entity is null)
             return null;
+        await ValidateAllowedToolsAsync(request.AllowedTools, request.DbManagementId, cancellationToken);
 
         entity.Name = request.Name.Trim();
         entity.ExpiresAt = request.ExpiresAt;
@@ -448,6 +454,32 @@ public class McpAccessKeyService(
             true,
             RevocationTombstoneExpiry,
             CancellationToken.None);
+
+    private async Task ValidateAllowedToolsAsync(
+        string? allowedTools,
+        int? dbManagementId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(allowedTools)) return;
+
+        var requested = allowedTools
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var customNames = dbManagementId is > 0
+            ? await _context.CustomSqlTools.AsNoTracking()
+                .Where(x => x.Status == CustomSqlToolStatuses.Published
+                    && x.PublishedRevisionId != null
+                    && x.PublishedRevision!.DbManagementId == dbManagementId.Value)
+                .Select(x => x.PublishedRevision!.Name)
+                .ToListAsync(cancellationToken)
+            : [];
+        requested.ExceptWith(BuiltInTools);
+        requested.ExceptWith(customNames);
+        if (requested.Count > 0)
+            throw new ArgumentException(
+                $"AllowedTools contains tools that are not currently published for the selected database: {string.Join(", ", requested.Order())}.",
+                nameof(allowedTools));
+    }
 
     private static string? NormalizeNullable(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

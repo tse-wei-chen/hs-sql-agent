@@ -46,6 +46,7 @@ public class McpAccessKeyServiceTests
         // Default empty DbSet to prevent null reference errors
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>());
         _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement>());
+        _contextMock.Setup(c => c.CustomSqlTools).ReturnsDbSet(new List<CustomSqlTool>());
 
         _service = new McpAccessKeyService(
             _contextMock.Object,
@@ -56,6 +57,63 @@ public class McpAccessKeyServiceTests
     }
 
     #region IssueKeyAsync Tests
+
+    [Fact]
+    public async Task IssueKeyAsync_ShouldRejectDraftCustomTool()
+    {
+        _contextMock.Setup(c => c.CustomSqlTools).ReturnsDbSet(new List<CustomSqlTool>
+        {
+            new() { Id = 1, Name = "draft_report", Status = CustomSqlToolStatuses.Draft, DbManagementId = 7 }
+        });
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => _service.IssueKeyAsync(
+            new IssueMcpAccessKeyModel
+            {
+                Name = "draft-key",
+                DbManagementId = 7,
+                AllowedTools = "draft_report"
+            },
+            "admin",
+            TestContext.Current.CancellationToken));
+
+        Assert.Contains("not currently published", error.Message);
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task IssueKeyAsync_ShouldAcceptPublishedRevisionNameForSelectedDatabase()
+    {
+        var revision = new CustomSqlToolRevision
+        {
+            Id = 11,
+            CustomSqlToolId = 1,
+            DbManagementId = 7,
+            Name = "published_report"
+        };
+        _contextMock.Setup(c => c.CustomSqlTools).ReturnsDbSet(new List<CustomSqlTool>
+        {
+            new()
+            {
+                Id = 1,
+                Name = "unpublished_draft_name",
+                Status = CustomSqlToolStatuses.Published,
+                PublishedRevisionId = revision.Id,
+                PublishedRevision = revision
+            }
+        });
+
+        var result = await _service.IssueKeyAsync(
+            new IssueMcpAccessKeyModel
+            {
+                Name = "published-key",
+                DbManagementId = 7,
+                AllowedTools = "published_report"
+            },
+            "admin",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("published_report", result.AllowedTools);
+    }
 
     [Fact]
     public async Task IssueKeyAsync_ShouldThrowArgumentException_WhenNameIsMissing()

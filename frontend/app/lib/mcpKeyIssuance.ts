@@ -93,6 +93,7 @@ export function allowedToolsRequireElicitation(
 export interface McpOnboardingSnippets {
   claudeDesktop: string;
   cursor: string;
+  vscode: string;
   genericHttp: string;
 }
 
@@ -112,6 +113,7 @@ export function createMcpOnboardingSnippets(
   return {
     claudeDesktop: JSON.stringify({ mcpServers: { "hs-sql-agent": claudeDesktopServer } }, null, 2),
     cursor: JSON.stringify({ mcpServers: { "hs-sql-agent": server } }, null, 2),
+    vscode: JSON.stringify({ servers: { "hs-sql-agent": server } }, null, 2),
     genericHttp: JSON.stringify(genericServer, null, 2),
   };
 }

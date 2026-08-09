@@ -26,7 +26,8 @@ public class RuntimeAdminController(
     ICryptoService cryptoService,
     IOptions<McpKeySettings> mcpKeySettings,
     IOperabilityService operabilityService,
-    IAuditRetentionService auditRetentionService) : ControllerBase
+    IAuditRetentionService auditRetentionService,
+    ICustomSqlToolService customSqlToolService) : ControllerBase
 {
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
@@ -35,6 +36,19 @@ public class RuntimeAdminController(
     public async Task<IActionResult> ListKeys(CancellationToken cancellationToken)
     {
         return Ok(await keyService.ListKeysAsync(cancellationToken));
+    }
+
+    [HttpGet("mcp-keys/available-tools")]
+    [HasPermission("/runtime/mcp-keys", "view")]
+    public async Task<IActionResult> ListAvailableTools(
+        [FromQuery] int dbManagementId,
+        CancellationToken cancellationToken)
+    {
+        if (dbManagementId <= 0)
+            return BadRequest("A valid DbManagementId is required.");
+
+        var tools = await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId, cancellationToken);
+        return Ok(tools.Select(x => new { x.Name, x.Type }));
     }
 
     [HttpPost("mcp-keys")]

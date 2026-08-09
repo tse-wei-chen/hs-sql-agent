@@ -37,9 +37,10 @@ import {
   rotateMcpKey,
   testDbConnection,
   updateMcpKey,
+  listAvailableMcpTools,
+  type AvailableMcpTool,
 } from "@/api/runtime";
 import { Switch } from "@/components/ui/switch";
-import { listCustomSqlTools, type CustomSqlTool } from "@/api/custom-tools";
 import {
   listDbManagements,
   getSchemas,
@@ -97,7 +98,8 @@ const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = u
 })
 
 const keys = ref<McpKeyItem[]>([]);
-const customTools = ref<CustomSqlTool[]>([]);
+const customTools = ref<AvailableMcpTool[]>([]);
+const lifecycleCustomTools = ref<AvailableMcpTool[]>([]);
 const dbManagements = ref<DbManagement[]>([]);
 const loading = ref(false);
 const issuing = ref(false);
@@ -138,10 +140,15 @@ const expiringSoonKeys = computed(() =>
 watch(
   () => detail.value.dbManagementId,
   async (newVal) => {
+    customTools.value = [];
+    detail.value.allowedTools = detail.value.allowedTools.filter((name) =>
+      baseToolOptions.some((tool) => tool.value === name),
+    );
     selectedSchema.value = undefined;
     availableTables.value = [];
     detail.value.tableWhitelist = [];
     if (newVal) {
+      const requestedDbId = newVal;
       fetchingSchemas.value = true;
       try {
         availableSchemas.value = await getSchemas(newVal);
@@ -152,6 +159,12 @@ watch(
         availableSchemas.value = [];
       } finally {
         fetchingSchemas.value = false;
+      }
+      try {
+        const tools = await listAvailableMcpTools(requestedDbId);
+        if (detail.value.dbManagementId === requestedDbId) customTools.value = tools;
+      } catch {
+        if (detail.value.dbManagementId === requestedDbId) customTools.value = [];
       }
     } else {
       availableSchemas.value = [];
@@ -217,8 +230,20 @@ const issueRequiresElicitation = computed(() =>
 );
 const lifecycleRequiresElicitation = computed(() => allowedToolsRequireElicitation(
   lifecycleAllowedTools.value.split(",").map((name) => name.trim()).filter(Boolean),
-  dmlToolNames.value,
+  new Set(lifecycleCustomTools.value.filter((tool) => tool.type === "DML").map((tool) => tool.name)),
 ));
+
+watch(lifecycleDbManagementId, async (dbManagementId) => {
+  lifecycleCustomTools.value = [];
+  if (!dbManagementId) return;
+  const requestedDbId = dbManagementId;
+  try {
+    const tools = await listAvailableMcpTools(requestedDbId);
+    if (lifecycleDbManagementId.value === requestedDbId) lifecycleCustomTools.value = tools;
+  } catch {
+    if (lifecycleDbManagementId.value === requestedDbId) lifecycleCustomTools.value = [];
+  }
+});
 
 const onboardingSnippets = computed(() =>
   createMcpOnboardingSnippets(mcpEndpoint.value, issuedPlaintextKey.value),
@@ -227,15 +252,13 @@ const onboardingSnippets = computed(() =>
 const load = async () => {
   loading.value = true;
   try {
-    const [keysResult, customToolsResult, dbManagementsResult, clientConfig] =
+    const [keysResult, dbManagementsResult, clientConfig] =
       await Promise.all([
         listMcpKeys(),
-        listCustomSqlTools(),
         listDbManagements(),
         getMcpClientConfig(),
       ]);
     keys.value = keysResult;
-    customTools.value = customToolsResult;
     dbManagements.value = dbManagementsResult;
     mcpEndpoint.value = clientConfig.mcpEndpoint;
   } finally {
@@ -1028,6 +1051,7 @@ onMounted(async () => {
             <TabsList>
               <TabsTrigger value="claude">Claude Desktop</TabsTrigger>
               <TabsTrigger value="cursor">Cursor</TabsTrigger>
+              <TabsTrigger value="vscode">Visual Studio Code</TabsTrigger>
               <TabsTrigger value="generic">Generic HTTP</TabsTrigger>
             </TabsList>
             <TabsContent value="claude" class="space-y-2">
@@ -1041,6 +1065,11 @@ onMounted(async () => {
               <p class="text-xs text-muted-foreground">Add this entry to Cursor's MCP configuration.</p>
               <Textarea :model-value="onboardingSnippets.cursor" readonly class="min-h-48 font-mono text-xs" />
               <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.cursor)">Copy Cursor config</Button>
+            </TabsContent>
+            <TabsContent value="vscode" class="space-y-2">
+              <p class="text-xs text-muted-foreground">Add this entry to Visual Studio Code's MCP configuration.</p>
+              <Textarea :model-value="onboardingSnippets.vscode" readonly class="min-h-48 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.vscode)">Copy VS Code config</Button>
             </TabsContent>
             <TabsContent value="generic" class="space-y-2">
               <p class="text-xs text-muted-foreground">Generic Streamable HTTP client connection object.</p>
