@@ -43,15 +43,18 @@ public class MemberController(
 
     [HttpGet]
     [HasPermission("/auth/user", "view")]
-    public async Task<IActionResult> GetUsersAsync()
+    public async Task<IActionResult> GetUsersAsync(CancellationToken cancellationToken)
     {
-        var users = await memberService.GetMembersAsync();
+        var users = await memberService.GetMembersAsync(cancellationToken);
         return Ok(users);
     }
 
     [HttpPut("{id:int}/roles")]
     [HasPermission("/auth/user", "edit")]
-    public async Task<IActionResult> UpdateUserRolesAsync(int id, [FromBody] UpdateMemberRolesRequest request)
+    public async Task<IActionResult> UpdateUserRolesAsync(
+        int id,
+        [FromBody] UpdateMemberRolesRequest request,
+        CancellationToken cancellationToken)
     {
         var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
         if (currentUserId == id.ToString())
@@ -62,7 +65,7 @@ public class MemberController(
 
         try
         {
-            var result = await memberService.UpdateMemberRolesAsync(id, request);
+            var result = await memberService.UpdateMemberRolesAsync(id, request, cancellationToken);
             await auditService.WriteLogAsync("admin.users.roles.update", id.ToString(), "success");
             return Ok(result);
         }
@@ -70,13 +73,51 @@ public class MemberController(
         {
             logger.LogWarning(ex, "Update user roles failed.");
             await auditService.WriteLogAsync("admin.users.roles.update", id.ToString(), "failed", ex.Message);
-            return NotFound(ex.Message);
+            return ex.Message == "Member not found."
+                ? NotFound(ex.Message)
+                : BadRequest(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            logger.LogWarning(ex, "Invalid user roles request.");
+            await auditService.WriteLogAsync("admin.users.roles.update", id.ToString(), "failed", ex.Message, cancellationToken);
+            return BadRequest(ex.Message);
+        }
+    }
+
+    [HttpPut("{id:int}/status")]
+    [HasPermission("/auth/user", "edit")]
+    public async Task<IActionResult> UpdateUserStatusAsync(
+        int id,
+        [FromBody] UpdateMemberStatusRequest request,
+        CancellationToken cancellationToken)
+    {
+        var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        if (currentUserId == id.ToString() && !request.IsActive)
+            return BadRequest("Cannot disable yourself.");
+
+        try
+        {
+            var result = await memberService.UpdateMemberStatusAsync(id, request, cancellationToken);
+            await auditService.WriteLogAsync(
+                "admin.users.status.update",
+                id.ToString(),
+                "success",
+                request.IsActive ? "Account enabled" : "Account disabled",
+                cancellationToken);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger.LogWarning(ex, "Update user status failed.");
+            await auditService.WriteLogAsync("admin.users.status.update", id.ToString(), "failed", ex.Message, cancellationToken);
+            return BadRequest(ex.Message);
         }
     }
 
     [HttpDelete("{id:int}")]
     [HasPermission("/auth/user", "delete")]
-    public async Task<IActionResult> DeleteUserAsync(int id)
+    public async Task<IActionResult> DeleteUserAsync(int id, CancellationToken cancellationToken)
     {
         var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
         if (currentUserId == id.ToString())
@@ -87,7 +128,7 @@ public class MemberController(
 
         try
         {
-            await memberService.DeleteMemberAsync(id);
+            await memberService.DeleteMemberAsync(id, cancellationToken);
             await auditService.WriteLogAsync("admin.users.delete", id.ToString(), "success");
             return NoContent();
         }
@@ -95,7 +136,9 @@ public class MemberController(
         {
             logger.LogWarning(ex, "Delete user failed.");
             await auditService.WriteLogAsync("admin.users.delete", id.ToString(), "failed", ex.Message);
-            return NotFound(ex.Message);
+            return ex.Message == "Member not found."
+                ? NotFound(ex.Message)
+                : BadRequest(ex.Message);
         }
     }
 }

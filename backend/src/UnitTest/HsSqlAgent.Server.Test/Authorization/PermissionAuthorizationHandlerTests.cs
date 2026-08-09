@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
 using Common.Interfaces;
@@ -149,7 +150,9 @@ public class PermissionAuthorizationHandlerTests
         var user = new ClaimsPrincipal(new ClaimsIdentity(
         [
             new Claim("role_id", "1"),
-            new Claim(ClaimTypes.Role, "Operator")
+            new Claim(ClaimTypes.Role, "Operator"),
+            new Claim(JwtRegisteredClaimNames.Sub, "42"),
+            new Claim(Auth.Service.Services.AuthService.SecurityVersionClaim, "1")
         ], "test"));
         var requirement = new PermissionRequirement(
         [
@@ -209,6 +212,8 @@ public class PermissionAuthorizationHandlerTests
         foreach (var id in roleIds)
             claims.Add(new Claim("role_id", id));
         claims.Add(new Claim(ClaimTypes.Role, "Admin"));
+        claims.Add(new Claim(JwtRegisteredClaimNames.Sub, "42"));
+        claims.Add(new Claim(Auth.Service.Services.AuthService.SecurityVersionClaim, "1"));
 
         var user = new ClaimsPrincipal(new ClaimsIdentity(claims, "test"));
         var requirement = new PermissionRequirement(path, action);

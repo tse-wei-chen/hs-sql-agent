@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Edit2, Save, Trash2, UserPlus, X } from "@lucide/vue";
+import { Edit2, Power, PowerOff, Save, Trash2, UserPlus, X } from "@lucide/vue";
 import FormField from "@/components/FormField.vue";
 import PasswordInput from "@/components/PasswordInput.vue";
 import {
@@ -21,6 +21,7 @@ import {
   deleteMember,
   listMembers,
   updateMemberRoles,
+  updateMemberStatus,
   type Member,
 } from "~/api/member";
 import {
@@ -165,6 +166,19 @@ const remove = async (member: Member) => {
   }
 };
 
+const toggleStatus = async (member: Member) => {
+  const action = member.isActive ? "disable" : "enable";
+  if (!confirm(`${action[0].toUpperCase()}${action.slice(1)} user "${member.mail}"?`)) return;
+
+  try {
+    await updateMemberStatus(member.id, !member.isActive);
+    await load();
+    toast.success(`User ${action}d.`);
+  } catch (error: any) {
+    toast.error(error?.response?.data || `Failed to ${action} user.`);
+  }
+};
+
 onMounted(load);
 </script>
 
@@ -290,12 +304,26 @@ onMounted(load);
                   <UserPlus class="size-4 text-muted-foreground" />
                   <span class="truncate font-bold text-sm">{{ member.username }}</span>
                   <Badge v-if="member.id === currentUserId" class="h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors bg-green-100 text-green-700 border-green-200">You</Badge>
+                  <Badge :variant="member.isActive ? 'outline' : 'destructive'">
+                    {{ member.isActive ? "Active" : "Disabled" }}
+                  </Badge>
                 </div>
                 <p class="mt-1 truncate font-mono text-xs text-muted-foreground">
                   {{ member.mail }}
                 </p>
               </div>
               <div v-if="member.id !== currentUserId" class="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8"
+                  :title="member.isActive ? 'Disable user' : 'Enable user'"
+                  @click="toggleStatus(member)"
+                  v-permission="'edit'"
+                >
+                  <PowerOff v-if="member.isActive" class="size-4" />
+                  <Power v-else class="size-4" />
+                </Button>
                 <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(member)" v-permission="'edit'">
                   <Edit2 class="size-4" />
                 </Button>

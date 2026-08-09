@@ -14,6 +14,7 @@ namespace Auth.Service.Services;
 public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings) : IAuthService
 {
     public const string SuperUserRoleName = "SuperUser";
+    public const string SecurityVersionClaim = "security_version";
 
     private readonly IAuthContext _context = context;
     private readonly JwtSettings _jwtSettings = jwtSettings.Value;
@@ -30,7 +31,7 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Mail == email, cancellationToken);
 
-        if (member is null || !BCrypt.Net.BCrypt.Verify(password, member.PasswordHash))
+        if (member is null || !member.IsActive || !BCrypt.Net.BCrypt.Verify(password, member.PasswordHash))
         {
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
@@ -66,16 +67,23 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         return await BuildAuthResultAsync(member.Id, cancellationToken);
     }
 
-    public async Task<AuthResult> RefreshTokenAsync(string id, CancellationToken cancellationToken = default)
+    public async Task<AuthResult> RefreshTokenAsync(
+        string id,
+        int securityVersion,
+        CancellationToken cancellationToken = default)
     {
         if (!int.TryParse(id?.Trim(), out var memberId))
         {
             throw new ArgumentException("User ID is required.");
         }
 
-        if (!await _context.Members.AnyAsync(x => x.Id == memberId, cancellationToken))
+        var member = await _context.Members
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == memberId, cancellationToken);
+
+        if (member is null || !member.IsActive || member.SecurityVersion != securityVersion)
         {
-            throw new UnauthorizedAccessException("User not found.");
+            throw new UnauthorizedAccessException("Session is no longer valid.");
         }
 
         return await BuildAuthResultAsync(memberId, cancellationToken);
@@ -119,6 +127,9 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             .FirstOrDefaultAsync(x => x.Id == memberId, cancellationToken)
             ?? throw new UnauthorizedAccessException("User not found.");
 
+        if (!member.IsActive)
+            throw new UnauthorizedAccessException("Account is disabled.");
+
         var roleInfos = await _context.MemberRoles
             .AsNoTracking()
             .Where(x => x.MemberId == memberId)
@@ -138,8 +149,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             Email = member.Mail,
             Roles = roleNames,
             Permissions = permissions,
-            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, roleIds, roleNames),
-            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, roleIds, roleNames)
+            AccessToken = GenerateAccessToken(member.Id, member.Username, member.Mail, member.SecurityVersion, roleIds, roleNames),
+            RefreshToken = GenerateRefreshToken(member.Id, member.Username, member.Mail, member.SecurityVersion, roleIds, roleNames)
         };
     }
 
@@ -186,16 +197,17 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
         string ActionCode,
         string ActionName);
 
-    private string GenerateAccessToken(int memberId, string userName, string email, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
-        => GenerateToken(memberId, userName, email, roleIds, roleNames, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
+    private string GenerateAccessToken(int memberId, string userName, string email, int securityVersion, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, securityVersion, roleIds, roleNames, "access", DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes));
 
-    private string GenerateRefreshToken(int memberId, string userName, string email, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
-        => GenerateToken(memberId, userName, email, roleIds, roleNames, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
+    private string GenerateRefreshToken(int memberId, string userName, string email, int securityVersion, IReadOnlyCollection<int> roleIds, IReadOnlyCollection<string> roleNames)
+        => GenerateToken(memberId, userName, email, securityVersion, roleIds, roleNames, "refresh", DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays));
 
     private string GenerateToken(
         int memberId,
         string userName,
         string email,
+        int securityVersion,
         IReadOnlyCollection<int> roleIds,
         IReadOnlyCollection<string> roleNames,
         string tokenType,
@@ -214,7 +226,8 @@ public class AuthService(IAuthContext context, IOptions<JwtSettings> jwtSettings
             new(JwtRegisteredClaimNames.Sub, memberId.ToString()),
             new(JwtRegisteredClaimNames.UniqueName, userName),
             new(JwtRegisteredClaimNames.Email, email),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(SecurityVersionClaim, securityVersion.ToString())
         };
 
         claims.AddRange(roleNames.Select(n => new Claim(ClaimTypes.Role, n)));

@@ -79,6 +79,11 @@ namespace Auth.Service.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
+
                     b.Property<string>("Mail")
                         .IsRequired()
                         .HasMaxLength(320)
@@ -88,6 +93,11 @@ namespace Auth.Service.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("SecurityVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1);
 
                     b.Property<string>("Username")
                         .IsRequired()

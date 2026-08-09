@@ -28,7 +28,12 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
         if (roleIds.Count == 0)
             return;
 
-        var cacheKey = $"perm:roles:{string.Join("|", roleIds)}";
+        var memberId = ctx.User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+        var securityVersion = ctx.User.FindFirst(Auth.Service.Services.AuthService.SecurityVersionClaim)?.Value;
+        if (string.IsNullOrWhiteSpace(memberId) || string.IsNullOrWhiteSpace(securityVersion))
+            return;
+
+        var cacheKey = $"perm:user:{memberId}:v{securityVersion}:roles:{string.Join("|", roleIds)}";
         var permissions = await cache.GetAsync<HashSet<string>>(cacheKey);
 
         if (permissions is null)

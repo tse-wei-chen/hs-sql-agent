@@ -70,6 +70,12 @@ public class RoleService(IAuthContext context) : IRoleService
             .ToListAsync();
         _context.PermissionActions.RemoveRange(existingPermissionActions);
 
+        var affectedMembers = id is null
+            ? []
+            : await _context.Members
+                .Where(x => x.MemberRoles.Any(mr => mr.RoleId == role.Id))
+                .ToListAsync();
+
         foreach (var template in normalizedPermissionActions.Where(x => templateLookup.Contains((x.PermissionId, x.ActionId))))
         {
             _context.PermissionActions.Add(new PermissionAction
@@ -79,6 +85,9 @@ public class RoleService(IAuthContext context) : IRoleService
                 ActionId = template.ActionId
             });
         }
+
+        foreach (var member in affectedMembers)
+            member.SecurityVersion++;
 
         await _context.SaveChangesAsync();
 
@@ -95,6 +104,12 @@ public class RoleService(IAuthContext context) : IRoleService
 
         if (IsSuperUser(role.Name))
             throw new InvalidOperationException("Cannot delete the built-in SuperUser role.");
+
+        var affectedMembers = await _context.Members
+            .Where(x => x.MemberRoles.Any(mr => mr.RoleId == role.Id))
+            .ToListAsync();
+        foreach (var member in affectedMembers)
+            member.SecurityVersion++;
 
         _context.Roles.Remove(role);
         await _context.SaveChangesAsync();

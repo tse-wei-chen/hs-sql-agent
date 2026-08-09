@@ -144,7 +144,7 @@ public class AuthServiceTests
         _contextMock.Setup(c => c.MemberRoles).ReturnsDbSet(new List<MemberRole>());
         _contextMock.Setup(c => c.PermissionActions).ReturnsDbSet(new List<PermissionAction>());
 
-        var result = await _service.RefreshTokenAsync("1", TestContext.Current.CancellationToken);
+        var result = await _service.RefreshTokenAsync("1", 1, TestContext.Current.CancellationToken);
 
         Assert.Equal("user", result.UserName);
         Assert.NotNull(result.AccessToken);
@@ -155,7 +155,7 @@ public class AuthServiceTests
     public async Task RefreshTokenAsync_Throws_WhenIdNotParseable()
     {
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            _service.RefreshTokenAsync("not-a-number", TestContext.Current.CancellationToken));
+            _service.RefreshTokenAsync("not-a-number", 1, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -164,7 +164,43 @@ public class AuthServiceTests
         _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member>());
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            _service.RefreshTokenAsync("999", TestContext.Current.CancellationToken));
+            _service.RefreshTokenAsync("999", 1, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task SignInAsync_Throws_WhenAccountDisabled()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "disabled@test.com",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("pass"),
+            Username = "disabled",
+            IsActive = false
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.SignInAsync(
+                new SignInRequest { Email = member.Mail, Password = "pass" },
+                TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_Throws_WhenSecurityVersionIsStale()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "user@test.com",
+            PasswordHash = "hash",
+            Username = "user",
+            SecurityVersion = 2
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.RefreshTokenAsync("1", 1, TestContext.Current.CancellationToken));
     }
 
     [Fact]

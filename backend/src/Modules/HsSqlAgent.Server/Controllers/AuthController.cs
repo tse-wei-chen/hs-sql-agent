@@ -4,6 +4,7 @@ using Auth.Service.Data;
 using Admin.Service.Interfaces;
 using Auth.Service.Interfaces;
 using Auth.Service.Models;
+using Auth.Service.Services;
 using HsSqlAgent.Server.Attributes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -75,13 +76,15 @@ public class AuthController(
 
     [RefreshAuthorize]
     [HttpPost("refresh-token")]
-    public async Task<IActionResult> RefreshTokenAsync()
+    public async Task<IActionResult> RefreshTokenAsync(CancellationToken cancellationToken)
     {
         if (User.FindFirstValue(JwtRegisteredClaimNames.Sub) is var id && string.IsNullOrWhiteSpace(id))
             return Unauthorized("User ID is required.");
+        if (!int.TryParse(User.FindFirstValue(AuthService.SecurityVersionClaim), out var securityVersion))
+            return Unauthorized("Security version is required.");
         try
         {
-            var result = await authService.RefreshTokenAsync(id);
+            var result = await authService.RefreshTokenAsync(id, securityVersion, cancellationToken);
             return Ok(result);
         }
         catch (UnauthorizedAccessException ex)
