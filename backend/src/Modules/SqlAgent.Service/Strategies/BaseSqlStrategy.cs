@@ -138,7 +138,7 @@ public abstract partial class BaseSqlStrategy(
                 return $"Security policy denied DML: affectedRows={affected} exceeds maximum {policy.DmlMaxAffectedRows}.";
             }
 
-            var expectedToken = GenerateConfirmToken(dml.Operation, dml.TableName, affected);
+            var expectedToken = GenerateConfirmToken(dml, affected);
 
             if (dml.ConfirmToken == expectedToken)
             {
@@ -1761,16 +1761,25 @@ public abstract partial class BaseSqlStrategy(
         }
     }
 
-    private string GenerateConfirmToken(DmlOperation operation, string table, int affectedRows)
+    private string GenerateConfirmToken(DmlDefinition dml, int affectedRows)
     {
         var secret = _configuration["McpKeySettings:HmacSecretKey"]
-                     ?? "AgentSafetyFallbackSecret";
-
-        var input = $"{operation.ToString().ToLowerInvariant()}|{table.ToLowerInvariant()}|{affectedRows}|{secret}";
-        var bytes = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(input));
-
-        return Convert.ToBase64String(bytes)[..12];
+                     ?? throw new InvalidOperationException("McpKeySettings:HmacSecretKey is required for DML confirmation.");
+        // Bind approval to the complete parsed operation, not merely table and row
+        // count. ConfirmToken itself is deliberately excluded from the payload.
+        var payload = JsonSerializer.Serialize(new
+        {
+            dml.Operation,
+            TableName = dml.TableName.ToLowerInvariant(),
+            dml.Columns,
+            dml.Values,
+            dml.MultiValues,
+            dml.WhereConditions,
+            dml.FromQuery,
+            AffectedRows = affectedRows
+        });
+        using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)))[..24];
     }
 
     // =====================================================================

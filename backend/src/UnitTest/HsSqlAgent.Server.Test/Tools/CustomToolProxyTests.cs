@@ -21,24 +21,28 @@ public class CustomToolProxyTests
 {
     private sealed class AcceptingApprovalClient : IDmlApprovalClient
     {
+        private readonly TimeSpan _delay;
+        public AcceptingApprovalClient(TimeSpan? delay = null) => _delay = delay ?? TimeSpan.Zero;
         public bool SupportsElicitation => true;
         public ElicitRequestParams? LastRequest { get; private set; }
         public int RequestCount { get; private set; }
 
-        public ValueTask<ElicitResult> ElicitAsync(
+        public async ValueTask<ElicitResult> ElicitAsync(
             ElicitRequestParams request,
             CancellationToken cancellationToken)
         {
             LastRequest = request;
             RequestCount++;
-            return ValueTask.FromResult(new ElicitResult
+            if (_delay > TimeSpan.Zero)
+                await Task.Delay(_delay, cancellationToken);
+            return new ElicitResult
             {
                 Action = "accept",
                 Content = new Dictionary<string, JsonElement>
                 {
                     ["approve"] = JsonSerializer.SerializeToElement(true)
                 }
-            });
+            };
         }
     }
 
@@ -100,7 +104,7 @@ public class CustomToolProxyTests
             .ReturnsAsync((CustomSqlTool?)null);
 
         var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args);
+        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("not available", result);
     }
@@ -110,7 +114,7 @@ public class CustomToolProxyTests
     {
         _httpContextAccessorMock.Object.HttpContext!.Items[Common.Models.McpContextItemKeys.AllowedTools] = "get_tables";
 
-        var result = await _proxy.Execute(JsonSerializer.SerializeToElement(new { }));
+        var result = await _proxy.Execute(JsonSerializer.SerializeToElement(new { }), cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("does not have permission", result);
         _toolServiceMock.Verify(
@@ -145,7 +149,7 @@ public class CustomToolProxyTests
             .Returns(strategyMock.Object);
 
         var args = JsonSerializer.SerializeToElement(new { email = "test@example.com" });
-        var result = await _proxy.Execute(args);
+        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("result", result);
         strategyMock.Verify(s => s.ExecuteQueryAsync(
@@ -172,7 +176,7 @@ public class CustomToolProxyTests
             .ReturnsAsync(tool);
 
         var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args);
+        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("missing", result, StringComparison.OrdinalIgnoreCase);
     }
@@ -245,7 +249,7 @@ public class CustomToolProxyTests
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
 
-        var approvalClient = new AcceptingApprovalClient();
+        var approvalClient = new AcceptingApprovalClient(TimeSpan.FromMilliseconds(80));
 
         var dmlProxy = new CustomToolProxy("delete_user",
             _toolServiceMock.Object,
@@ -268,6 +272,13 @@ public class CustomToolProxyTests
         Assert.NotNull(approvalClient.LastRequest);
         Assert.Contains("delete_user", approvalClient.LastRequest.Message);
         Assert.Contains("1 row", approvalClient.LastRequest.Message);
+        _auditServiceMock.Verify(a => a.WriteEventAsync(
+            "mcp.delete_user.executed",
+            "delete_user",
+            "success",
+            It.Is<AuditEventContext>(c => c.DurationMs < 60),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -296,7 +307,7 @@ public class CustomToolProxyTests
             .Returns(strategyMock.Object);
 
         var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args);
+        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
         _auditServiceMock.Verify(a => a.WriteEventAsync(
             "mcp.test_tool.executed",
@@ -319,7 +330,7 @@ public class CustomToolProxyTests
             .ReturnsAsync((CustomSqlTool?)null);
 
         var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args);
+        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
         _auditServiceMock.Verify(a => a.WriteLogAsync(
             "mcp.test_tool.executed",

@@ -60,6 +60,7 @@ public class CustomToolProxy(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
+        long approvalWaitDurationMs = 0;
         var parameters = new Dictionary<string, object?>();
         if (arguments.ValueKind == JsonValueKind.Object)
         {
@@ -165,12 +166,14 @@ public class CustomToolProxy(
                     return result;
                 }
 
-                result = await ExecuteDmlWithApprovalAsync(
+                var dmlExecution = await ExecuteDmlWithApprovalAsync(
                     strategy,
                     sqlConfig.ConnectionString,
                     dmlDef,
                     approvalClient,
                     cancellationToken);
+                result = dmlExecution.Result;
+                approvalWaitDurationMs += dmlExecution.ApprovalWaitDurationMs;
 
                 if (!result.StartsWith("Success", StringComparison.Ordinal))
                 {
@@ -185,7 +188,7 @@ public class CustomToolProxy(
                         {
                             ToolName = _name,
                             Operation = dmlDef.Operation.ToString().ToLowerInvariant(),
-                            DurationMs = stopwatch.ElapsedMilliseconds,
+                            DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                             AffectedRows = ParseAffectedRows(result),
                             ApprovalStatus = auditResult == "cancelled" ? "declined" : "not-completed",
                             Definition = DescribeDml(dmlDef)
@@ -210,7 +213,9 @@ public class CustomToolProxy(
                 {
                     ToolName = _name,
                     Operation = isQuery ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
-                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    DurationMs = isDml
+                        ? ProcessingDuration(stopwatch, approvalWaitDurationMs)
+                        : stopwatch.ElapsedMilliseconds,
                     ReturnedRows = isQuery ? CountJsonRows(result) : null,
                     AffectedRows = isDml ? ParseAffectedRows(result) : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
@@ -232,7 +237,9 @@ public class CustomToolProxy(
                 {
                     ToolName = _name,
                     Operation = auditQuery != null ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
-                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    DurationMs = auditDml == null
+                        ? stopwatch.ElapsedMilliseconds
+                        : ProcessingDuration(stopwatch, approvalWaitDurationMs),
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQuery != null
                         ? DescribeQuery(auditQuery)
@@ -246,7 +253,7 @@ public class CustomToolProxy(
         }
     }
 
-    private async Task<string> ExecuteDmlWithApprovalAsync(
+    private async Task<DmlExecutionTiming> ExecuteDmlWithApprovalAsync(
         ISqlStrategy strategy,
         string connectionString,
         DmlDefinition dml,
@@ -255,8 +262,10 @@ public class CustomToolProxy(
     {
         if (approvalClient?.SupportsElicitation != true)
         {
-            return "Error: This MCP client does not support the interactive confirmation required for DML execution.";
+            return new("Error: This MCP client does not support the interactive confirmation required for DML execution.", 0);
         }
+
+        long approvalWaitDurationMs = 0;
 
         // ConfirmToken is an internal dry-run artifact. Never trust a token
         // supplied through a stored definition or a caller-controlled parameter.
@@ -266,7 +275,7 @@ public class CustomToolProxy(
         await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
-                return "Server busy: maximum concurrent SQL operations reached.";
+                return new("Server busy: maximum concurrent SQL operations reached.", approvalWaitDurationMs);
             dryRunResult = await strategy.ExecuteDmlAsync(
                 connectionString,
                 dml,
@@ -275,7 +284,7 @@ public class CustomToolProxy(
         }
         if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
         {
-            return dryRunResult;
+            return new(dryRunResult, approvalWaitDurationMs);
         }
 
         var affectedMatch = System.Text.RegularExpressions.Regex.Match(
@@ -288,49 +297,66 @@ public class CustomToolProxy(
             System.Text.RegularExpressions.RegexOptions.CultureInvariant);
         if (!affectedMatch.Success || !tokenMatch.Success)
         {
-            return "Error: Unable to verify the DML dry-run result.";
+            return new("Error: Unable to verify the DML dry-run result.", approvalWaitDurationMs);
         }
 
         var affectedRows = affectedMatch.Groups[1].Value;
-        var elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
+        ElicitResult elicitResult;
+        var approvalStopwatch = Stopwatch.StartNew();
+        try
         {
-            Message =
-                $"Custom tool '{_name}' requests {dml.Operation} on {dml.TableName} — " +
-                $"{affectedRows} row(s) affected.",
-            RequestedSchema = new RequestSchema
+            elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
             {
-                Properties =
+                Message =
+                    $"Custom tool '{_name}' requests {dml.Operation} on {dml.TableName} — " +
+                    $"{affectedRows} row(s) affected.",
+                RequestedSchema = new RequestSchema
                 {
-                    ["approve"] = new BooleanSchema
+                    Properties =
                     {
-                        Title = "Approve execution",
-                        Description =
-                            $"This will {dml.Operation.ToString().ToLowerInvariant()} " +
-                            $"{affectedRows} row(s) in {dml.TableName}"
+                        ["approve"] = new BooleanSchema
+                        {
+                            Title = "Approve execution",
+                            Description =
+                                $"This will {dml.Operation.ToString().ToLowerInvariant()} " +
+                                $"{affectedRows} row(s) in {dml.TableName}"
+                        }
                     }
                 }
-            }
-        }, cancellationToken);
+            }, cancellationToken);
+        }
+        finally
+        {
+            approvalWaitDurationMs += approvalStopwatch.ElapsedMilliseconds;
+        }
 
         if (elicitResult.Action != "accept"
             || elicitResult.Content?.TryGetValue("approve", out var approveElement) != true
             || approveElement.ValueKind != JsonValueKind.True)
         {
-            return "DML execution cancelled by user.";
+            return new("DML execution cancelled by user.", approvalWaitDurationMs);
         }
 
         dml.ConfirmToken = tokenMatch.Groups[1].Value;
         await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
-                return "Server busy: maximum concurrent SQL operations reached.";
-            return await strategy.ExecuteDmlAsync(
+                return new("Server busy: maximum concurrent SQL operations reached.", approvalWaitDurationMs);
+            var finalResult = await strategy.ExecuteDmlAsync(
                 connectionString,
                 dml,
                 executionPolicy,
                 cancellationToken);
+            return new(finalResult, approvalWaitDurationMs);
         }
     }
+
+    private readonly record struct DmlExecutionTiming(
+        string Result,
+        long ApprovalWaitDurationMs);
+
+    private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
+        => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
     private SqlExecutionPolicy ResolveExecutionPolicy()
     {

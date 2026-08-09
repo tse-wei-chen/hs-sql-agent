@@ -128,6 +128,7 @@ public partial class SqlAgentTool(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
+        long approvalWaitDurationMs = 0;
         DmlDefinition? dml = null;
         int? affectedRowCount = null;
         try
@@ -169,7 +170,8 @@ public partial class SqlAgentTool(
 
             if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
             {
-                await WriteDmlAuditAsync(dml, "failed", "not-requested", stopwatch, null, dryRunResult, cancellationToken);
+                await WriteDmlAuditAsync(dml, "failed", "not-requested", stopwatch,
+                    approvalWaitDurationMs, null, dryRunResult, cancellationToken);
                 return dryRunResult;
             }
 
@@ -196,11 +198,20 @@ public partial class SqlAgentTool(
                 }
             };
 
-            var elicitResult = await server.ElicitAsync(new ElicitRequestParams
+            ElicitResult elicitResult;
+            var approvalStopwatch = Stopwatch.StartNew();
+            try
             {
-                Message = $"{dml.Operation} on {dml.TableName} — {affectedRows} row(s) affected\n\nSQL: {sql}",
-                RequestedSchema = elicitSchema
-            }, cancellationToken);
+                elicitResult = await server.ElicitAsync(new ElicitRequestParams
+                {
+                    Message = $"{dml.Operation} on {dml.TableName} — {affectedRows} row(s) affected\n\nSQL: {sql}",
+                    RequestedSchema = elicitSchema
+                }, cancellationToken);
+            }
+            finally
+            {
+                approvalWaitDurationMs += approvalStopwatch.ElapsedMilliseconds;
+            }
 
             if (elicitResult.Action != "accept" || elicitResult.Content?.TryGetValue("approve", out var approveEl) != true || approveEl.ValueKind != JsonValueKind.True)
             {
@@ -209,6 +220,7 @@ public partial class SqlAgentTool(
                     "cancelled",
                     "declined",
                     stopwatch,
+                    approvalWaitDurationMs,
                     affectedRowCount,
                     $"Operation: {dml.Operation} (cancelled through MCP interaction)",
                     cancellationToken);
@@ -237,6 +249,7 @@ public partial class SqlAgentTool(
                     "failed",
                     "interactive-accepted",
                     stopwatch,
+                    approvalWaitDurationMs,
                     affectedRowCount,
                     finalResult,
                     cancellationToken);
@@ -248,6 +261,7 @@ public partial class SqlAgentTool(
                 "success",
                 "interactive-accepted",
                 stopwatch,
+                approvalWaitDurationMs,
                 affectedRowCount,
                 $"Operation: {dml.Operation} (committed after MCP interactive approval)",
                 cancellationToken);
@@ -263,7 +277,7 @@ public partial class SqlAgentTool(
                 {
                     ToolName = "execute_dml_sql",
                     Operation = dml?.Operation.ToString().ToLowerInvariant(),
-                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                     AffectedRows = affectedRowCount,
                     ApprovalStatus = "not-completed",
                     ErrorCategory = ex.GetType().Name,
@@ -527,6 +541,7 @@ public partial class SqlAgentTool(
         string result,
         string approvalStatus,
         Stopwatch stopwatch,
+        long approvalWaitDurationMs,
         int? affectedRows,
         string detail,
         CancellationToken cancellationToken)
@@ -539,7 +554,7 @@ public partial class SqlAgentTool(
             {
                 ToolName = "execute_dml_sql",
                 Operation = dml.Operation.ToString().ToLowerInvariant(),
-                DurationMs = stopwatch.ElapsedMilliseconds,
+                DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                 AffectedRows = affectedRows,
                 ApprovalStatus = approvalStatus,
                 ErrorCategory = result == "failed" ? "PolicyOrExecutionDenied" : null,
@@ -548,6 +563,9 @@ public partial class SqlAgentTool(
             detail,
             cancellationToken);
     }
+
+    private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
+        => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
     private static int? CountJsonRows(string json)
     {
