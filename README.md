@@ -1,60 +1,45 @@
 # hs-sql-agent
-> **The high-performance MCP server for instant SQL interaction and secure enterprise governance.**
-<img src="miscellaneous\coverImage.png" />
+
+> **A high-performance MCP server for secure SQL access and enterprise governance.**
+
+<img src="miscellaneous/coverImage.png" alt="hs-sql-agent" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![NuGet](https://img.shields.io/badge/NuGet-Install-0956cc?logo=nuget)](https://www.nuget.org/packages/HsSqlAgent.Server) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml) [![Deploy on Zeabur](https://img.shields.io/badge/Deploy_on-Zeabur-blueviolet?logo=zeabur)](https://zeabur.com/templates/RFPWDU)
 
-`hs-sql-agent` is an HTTP MCP server for relational databases (SQLite, PostgreSQL, MySQL, SQL Server, Oracle, Firebird) with a built-in Admin Panel for governance.
+`hs-sql-agent` connects MCP clients to SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird through an HTTP MCP endpoint and a built-in Admin Panel.
 
-## 🤔 Why hs-sql-agent?
+## Why hs-sql-agent?
 
-Most "Chat with your Data" tools ask the LLM to write raw SQL — a recipe for hallucinations, dialect confusion, and injection risks. **hs-sql-agent takes a structured approach**: the AI can write SQL, the server parses it into structured definitions, validates the result, and rebuilds the final query through the SQL builder before execution. Only the tested SQL subset is accepted; syntax that cannot be represented without changing its meaning is rejected before database execution.
+Instead of executing unrestricted LLM-generated SQL, the server parses supported SQL into structured definitions, validates it, and rebuilds the final statement through a provider-specific SQL compiler.
 
-- **Structured SQL Pipeline** — The AI can write SQL, but the server parses it into structured definitions, validates it, and rebuilds the final query through the SQL builder before execution.
-- **Universal DB Support** — One agent for SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird. The same MCP endpoint switches engines transparently.
-- **Enterprise Governance** — Built-in Admin Web UI, key-level connection mapping, table whitelisting, per-key CORS, rate limiting, and full audit logs.
-- **Semantic Layer** — Enrich the normal schema discovery flow: `get_tables` includes table synonyms and scoped metric metadata, while `get_columns` includes column synonyms and relationships.
+- **Six database providers** — SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird.
+- **Governed access** — Per-key database binding, table whitelisting, CORS, rate limits, and execution policies.
+- **Safe DML** — Transactional dry-run followed by MCP Elicitation for explicit human approval.
+- **Admin Panel** — Manage databases, keys, roles, custom tools, audit records, and runtime policies.
+- **Enterprise ready** — OIDC SSO, TOTP MFA, audit retention, Prometheus metrics, OTLP, and webhook/SIEM delivery.
+- **Semantic metadata** — Table and column synonyms, relationships, and scoped metric metadata for schema discovery.
 
-### Where to use it
+SQL support is intentionally bounded: unsupported syntax is rejected instead of silently changing its meaning. See the [MCP Tools Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/MCP-Tools-Reference) for the supported SQL contract.
 
-| Use case | Description |
-|----------|-------------|
-| **Cursor / Claude Desktop** | Let devs query dev/test DBs in natural language from their AI IDE. |
-| **Multi-DB agents** | One MCP server per database, each secured with its own API key. The agent aggregates multiple MCP connections to seamlessly orchestrate workflows across PostgreSQL, MySQL, and Oracle. |
-| **Enterprise chatbots** | Connect internal AI agents to ERP/CRM systems with table-level permission isolation. |
-| **Legacy modernization** | Bridge modern AI to decades-old databases via the semantic layer. |
-
-### SQL capability contract
-
-SQL support has two distinct contracts:
-
-- **Provider-native input** — an agent may use syntax associated with the configured provider when the parser can preserve it safely.
-- **Portable SQL subset** — constructs marked as portable are compiled across all supported providers; provider-specific syntax is not implicitly claimed to be portable.
-
-Each construct is treated internally as `Supported`, `Translated`, or `Rejected`. Rejection is intentional: the server does not silently drop tokens or downgrade semantics that its AST/compiler cannot preserve. The versioned provider matrix is an internal conformance-test and documentation contract, not an extra MCP discovery step. Support grows through parser/compiler tests rather than an unrestricted cross-dialect translation claim.
-
-| Construct | Current status |
-|---|---|
-| Basic SELECT, JOIN, WHERE, GROUP/HAVING, CTE and set operations | Translated within the tested subset |
-| Arithmetic, comparison and boolean expressions | Supported; emitted for the configured provider |
-| `%` modulo operator | Native on PostgreSQL/MySQL/SQLite/SQL Server; translated to `MOD` on Oracle/Firebird |
-| Basic `OVER (PARTITION BY ... ORDER BY ...)` | Translated within the tested subset |
-| `CAST` / PostgreSQL `::` | Represented structurally and translated to `CAST` on all six providers |
-| `INTERVAL` | Supported for PostgreSQL; rejected before execution on other providers |
-| `ROWS` / `RANGE` window frames | Represented structurally and translated on all six providers |
-| `NULLS FIRST/LAST` | Native on PostgreSQL/Oracle/Firebird/SQLite; rejected before execution on MySQL/SQL Server |
-| Unbound `?`, `:name`, `@name`, `$1`, or `{{name}}` parameters | Rejected; declared Custom Tool parameters are rendered before parsing |
-
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
-cp .env.example .env      # set HMAC_KEY and JWT_KEY (32+ bytes)
-docker compose up -d       # http://localhost:8080
+cp .env.example .env
+# Set HMAC_KEY and JWT_KEY to unique secrets of at least 32 bytes.
+docker compose up -d
 ```
 
-## 📦 NuGet for Existing .NET APIs
+Open the Admin Panel at <http://localhost:8080>. Configuration options and production deployment guidance are documented in the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki).
 
-Already have an ASP.NET Core API? Embed the full MCP SQL Agent + Admin UI in minutes:
+## Use with an MCP client
+
+Create an MCP key in the Admin Panel. The key dialog displays the plaintext secret once and generates configuration for Claude Desktop, Cursor, and generic Streamable HTTP clients.
+
+Set `MCP_PUBLIC_ENDPOINT` to the externally reachable MCP URL, including `/mcp`. For client compatibility, onboarding, and DML Elicitation requirements, see [MCP client onboarding](docs/mcp-onboarding.md).
+
+## NuGet for existing .NET APIs
+
+Embed the MCP SQL Agent and optional Admin UI in an ASP.NET Core application:
 
 ```bash
 dotnet add package HsSqlAgent.Server
@@ -62,65 +47,36 @@ dotnet add package HsSqlAgent.Server
 
 ```csharp
 builder.Services.AddHsSqlAgent(options => { ... });
-app.UseHsSqlAgent();                    // API-only
-// app.UseHsSqlAgent().ServeAdminUi();  // with Admin UI
+app.UseHsSqlAgent();                    // API only
+// app.UseHsSqlAgent().ServeAdminUi();  // API and Admin UI
 ```
 
-> The Admin UI is embedded in the DLL — no external files to deploy. See the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/NuGet-Package) for details.
+See the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/NuGet-Package) for configuration and deployment details.
 
-## Enterprise authentication
+## How SQL execution works
 
-The Admin Panel supports optional OIDC SSO with PKCE, verified-email account linking, configurable claim/role mapping, and auto-provisioning. The callback returns a short-lived one-time exchange code; access and refresh tokens are never placed in redirect URLs. Local password login remains available for a break-glass administrator.
+1. Authenticate the MCP key and apply its database, table, and policy scope.
+2. Parse supported SQL into a structured definition.
+3. Validate the definition and compile it for the configured database provider.
+4. Execute queries within configured limits.
+5. For DML, dry-run in a transaction and require human approval through MCP Elicitation before commit.
 
-TOTP MFA and one-time recovery codes are managed from **Account**. Forced enrollment is opt-in: roles explicitly listed in `EnterpriseIdentity:RequireMfaForRoles` cannot use the Admin Panel until MFA is enrolled; the default list is empty. Persist `EnterpriseIdentity:DataProtectionKeyPath` across deployments so existing TOTP secrets remain decryptable.
+Custom SQL tools pass through the same parser, validation, access policy, and execution limits as built-in tools. Lifecycle, parameter, and publishing rules are documented in the [Admin Panel guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Admin-Panel).
 
-For Active Directory or LDAP environments, connect the directory to an OIDC/SAML identity provider and configure that provider here. Direct LDAP binding is intentionally a separate future integration, not part of the OIDC settings.
+## Documentation
 
-## Operability and audit
+| Topic | Documentation |
+|---|---|
+| Getting started | [Getting Started](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Getting-Started) |
+| Configuration | [Configuration](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Configuration) |
+| Admin Panel | [Admin Panel](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Admin-Panel) |
+| MCP tools and SQL support | [MCP Tools Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/MCP-Tools-Reference) |
+| Security, OIDC, and MFA | [Security Governance](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Security-Governance) |
+| Deployment and observability | [Deployment](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Deployment) · [Distributed Deployment](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Distributed-Deployment) |
+| API | [API Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/API-Reference) |
+| Troubleshooting | [Troubleshooting](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Troubleshooting) |
+| Development | [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) |
 
-The optional Operability page reports scheduled database health, Query/DML success and latency, slow operations, per-key MCP activity, and IP/key rate-limit rejections. IP rejection metrics are aggregated in memory and flushed in batches, so the pre-auth IP limiter never performs a governance-database lookup for each rejected request.
-
-Audit results can be exported as filtered CSV or JSON through a separate `audit.export` permission. Retention supports dry-run estimates and scheduled purge or JSONL archive; a completed retention run writes its own audit event. Set `Operability:AuditRetentionDays` to `0` to disable scheduled retention.
-
-`Operability:AlertWebhookUrl` receives deduplicated database-unhealthy events. `Operability:SiemWebhookUrl` receives redacted audit events through the durable delivery outbox. Both integrations require a 32-byte webhook secret, use an `X-Hs-Signature: sha256=...` HMAC header, retry failed delivery, and expose pending/delivered/dead-letter status in the Admin Panel. Leave their URLs empty to disable them.
-
-Prometheus metrics are exposed from a dedicated listener at `http://localhost:9000/metrics` by default. The Admin/API/MCP listener does not serve `/metrics`, and the metrics listener does not serve application routes. Configure `Telemetry:PrometheusEnabled`, `Telemetry:PrometheusHost`, and `Telemetry:PrometheusPort` (or the matching Docker environment variables) to change or disable it. Docker exposes port 9000 only to its internal network; explicitly publish `9000:9000` when the Prometheus server runs outside that network. Set `Telemetry:OtlpEndpoint` to export the same metrics through OTLP as well.
-
-For a Prometheus container on the same Docker network, use `targets: ["hs-sql-agent:9000"]` in its `scrape_configs`. The endpoint has no application-level authentication and must remain on a trusted monitoring network.
-
-The exporter reports live process counters and histograms for MCP requests, SQL execution counts and latency, returned/affected rows, rate-limit rejections, DML approvals, database health, ASP.NET Core, Kestrel, and .NET networking. Audit records remain the source for per-key and historical administration reports; Prometheus scraping never queries the audit database.
-
-## Custom SQL tools
-
-Custom tools are saved as database-bound SQL templates. Saving creates or updates a draft; only an explicit Publish makes an immutable revision available to new MCP sessions, and only keys bound to the same database can discover or execute it. Disable removes it from new sessions, while rollback republishes an earlier snapshot as a new revision.
-
-Use unquoted `{{parameterName}}` placeholders for scalar values declared as string, number, or boolean. The server converts values to escaped SQL literals, then runs the resulting statement through the same runtime parser, AST validation, table whitelist, security policy, and concurrency limit as the built-in SQL tools. Parameters cannot substitute identifiers or arbitrary SQL fragments. DML test execution always rolls back; published DML still requires MCP Elicitation before commit.
-
-## MCP client onboarding
-
-After an MCP key is issued, rotated, or duplicated, the Admin Panel shows its plaintext secret exactly once and generates Claude Desktop, Cursor, and generic Streamable HTTP configuration. Closing the dialog removes the secret and generated snippets from the UI.
-
-Set `Mcp:PublicEndpoint` (environment variable `Mcp__PublicEndpoint`, or `MCP_PUBLIC_ENDPOINT` through the provided Compose file) to the absolute URL MCP clients can reach, including the `/mcp` path. The Admin Panel obtains this value from the authenticated backend client-config API instead of deriving it from the browser origin.
-Non-Development startup requires this setting, and invalid or non-HTTP(S) values are rejected.
-
-See [MCP client onboarding and compatibility](docs/mcp-onboarding.md) for the verified protocol baseline, client-version policy, troubleshooting, and the required manual Elicitation check for DML-capable keys.
-
-## 📖 Documentation
-
-Detailed docs are on the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki):
-
-| Topic | Link |
-|-------|------|
-| 🚀 Getting Started | [Getting-Started](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Getting-Started) |
-| 🖥️ Admin Panel | [Admin-Panel](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Admin-Panel) |
-| 🔐 Security Governance | [Security-Governance](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Security-Governance) |
-| 🛠️ Troubleshooting | [Troubleshooting](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Troubleshooting) |
-| ⚙️ Configuration | [Configuration](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Configuration) |
-| 🐳 Deployment | [Deployment](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Deployment) |
-| 🌐 Distributed Deployment | [Distributed-Deployment](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Distributed-Deployment) |
-| 📘 MCP Tools | [MCP-Tools-Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/MCP-Tools-Reference) |
-| 📡 API Reference | [API-Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/API-Reference) |
-| 🏠 Development | [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) |
 
 ## SQL Execution Flow
 
@@ -199,10 +155,10 @@ This is what the human-in-the-loop approval step looks like during `execute_dml_
 
 <img src="miscellaneous/dml-approval-prompt.png" />
 
-## 🤝 Contributing
+## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) wiki page.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development).
 
-## 📜 License
+## License
 
 [Apache License 2.0](LICENSE)
