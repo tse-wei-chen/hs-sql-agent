@@ -85,6 +85,24 @@ public class McpAccessKeyAuthMiddlewareTests
     }
 
     [Fact]
+    public async Task InvokeAsync_ShouldProtectConfiguredNonDefaultMcpPath()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/gateway/mcp";
+        context.Response.Body = new MemoryStream();
+        var nextCalled = false;
+
+        await _middleware.InvokeAsync(context, _ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        Assert.False(nextCalled);
+    }
+
+    [Fact]
     public async Task InvokeAsync_ShouldReturn401_WhenInvalidKey()
     {
         var context = new DefaultHttpContext();
@@ -263,6 +281,42 @@ public class McpAccessKeyAuthMiddlewareTests
         _keyServiceMock.Verify(
             k => k.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ShouldBypassCachedPermissions_WhenKeyWasChanged()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/mcp";
+        context.Request.Headers["X-MCP-Server-Key"] = "changed-key";
+        context.Response.Body = new MemoryStream();
+        _cacheMock.Setup(c => c.GetAsync<McpAccessKeyValidationResult>(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new McpAccessKeyValidationResult
+            {
+                IsValid = true,
+                KeyId = 42,
+                AllowedTools = "get_tables"
+            });
+        _cacheMock.Setup(c => c.GetAsync<bool>(
+                McpAccessKeyCacheKeys.ForChangedKeyId(42),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _keyServiceMock.Setup(k => k.ValidateAsync("changed-key", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new McpAccessKeyValidationResult
+            {
+                IsValid = true,
+                KeyId = 42,
+                AllowedTools = "execute_query_sql"
+            });
+        _lastUsedQueueMock.Setup(q => q.TryEnqueue(42)).Returns(true);
+
+        await _middleware.InvokeAsync(context, _ => Task.CompletedTask);
+
+        Assert.Equal("execute_query_sql", context.Items[Common.Models.McpContextItemKeys.AllowedTools]);
+        _keyServiceMock.Verify(
+            k => k.ValidateAsync("changed-key", It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

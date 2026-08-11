@@ -20,6 +20,9 @@ using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Infrastructure.Caching;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -27,6 +30,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
@@ -56,15 +61,42 @@ public static class HsSqlAgentServiceExtensions
             throw new InvalidOperationException("HmacSecretKey must be at least 32 bytes.");
         if (string.IsNullOrWhiteSpace(options.JwtSecretKey) || Encoding.UTF8.GetByteCount(options.JwtSecretKey) < 32)
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
+        if (!Uri.TryCreate(options.Mcp.PublicEndpoint, UriKind.Absolute, out var mcpPublicEndpoint)
+            || mcpPublicEndpoint.Scheme is not ("http" or "https"))
+            throw new InvalidOperationException("Mcp:PublicEndpoint must be an absolute HTTP or HTTPS URL.");
+        ValidateWebhook("Operability Alert", options.Operability.AlertWebhookUrl, options.Operability.AlertWebhookSecret);
+        ValidateWebhook("Operability SIEM", options.Operability.SiemWebhookUrl, options.Operability.SiemWebhookSecret);
+        if (string.IsNullOrWhiteSpace(options.Operability.AuditFallbackPath))
+            throw new InvalidOperationException("Operability AuditFallbackPath is required.");
+        if (options.Telemetry.PrometheusEnabled && options.Telemetry.PrometheusPort is < 1 or > 65535)
+            throw new InvalidOperationException("Telemetry PrometheusPort must be between 1 and 65535.");
+        if (options.Telemetry.PrometheusEnabled && string.IsNullOrWhiteSpace(options.Telemetry.PrometheusHost))
+            throw new InvalidOperationException("Telemetry PrometheusHost is required when Prometheus is enabled.");
+        if (string.IsNullOrWhiteSpace(options.Telemetry.ServiceName))
+            throw new InvalidOperationException("Telemetry ServiceName is required.");
+        if (!string.IsNullOrWhiteSpace(options.Telemetry.OtlpEndpoint) &&
+            (!Uri.TryCreate(options.Telemetry.OtlpEndpoint, UriKind.Absolute, out var otlpUri) ||
+             otlpUri.Scheme is not ("http" or "https")))
+            throw new InvalidOperationException("Telemetry OtlpEndpoint must be an absolute HTTP or HTTPS URL.");
 
         // --- Cache ---
         services.AddCacheProvider(
             options.CacheProvider,
             options.CacheConnectionString,
             options.CacheKeyPrefix);
+        var dataProtection = services.AddDataProtection().SetApplicationName("HsSqlAgent");
+        if (!string.IsNullOrWhiteSpace(options.EnterpriseIdentity.DataProtectionKeyPath))
+        {
+            var keyPath = Path.GetFullPath(options.EnterpriseIdentity.DataProtectionKeyPath, AppContext.BaseDirectory);
+            Directory.CreateDirectory(keyPath);
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+        }
         services.AddAdminDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
 
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IEnterpriseIdentityService, EnterpriseIdentityService>();
+        services.AddScoped<IMfaService, MfaService>();
+        services.AddScoped<IPasswordResetService, PasswordResetService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
@@ -90,11 +122,65 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<IMemberService, MemberService>();
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IOperabilityService, OperabilityService>();
+        services.AddScoped<IAuditRetentionService, AuditRetentionService>();
         services.AddScoped<ICustomSqlToolService, CustomSqlToolService>();
         services.AddScoped<IDbManagementService, DbManagementService>();
         services.AddScoped<IDbSemanticService, DbSemanticService>();
         services.AddSingleton<ICryptoService, CryptoService>();
         services.AddSingleton<IQueryValueParserService, QueryValueParserService>();
+        services.AddSingleton<HsSqlAgentMetrics>();
+        services.AddSingleton<IHsSqlAgentMetrics>(provider => provider.GetRequiredService<HsSqlAgentMetrics>());
+        services.AddSingleton<IAuditMetricSink>(provider => provider.GetRequiredService<HsSqlAgentMetrics>());
+
+        if (options.Telemetry.PrometheusEnabled || !string.IsNullOrWhiteSpace(options.Telemetry.OtlpEndpoint))
+        {
+            services.AddOpenTelemetry()
+                .ConfigureResource(resource => resource.AddService(options.Telemetry.ServiceName))
+                .WithMetrics(metrics =>
+                {
+                    metrics
+                        .AddMeter(HsSqlAgentMetrics.MeterName)
+                        .AddMeter("Microsoft.AspNetCore.Hosting")
+                        .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
+                        .AddMeter("System.Net.Http")
+                        .AddMeter("System.Net.NameResolution")
+                        .AddView(
+                            "hsqlagent.mcp.request.duration",
+                            new ExplicitBucketHistogramConfiguration
+                            {
+                                Boundaries = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60]
+                            })
+                        .AddView(
+                            "hsqlagent.sql.execution.duration",
+                            new ExplicitBucketHistogramConfiguration
+                            {
+                                Boundaries = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60]
+                            })
+                        .AddView(
+                            "hsqlagent.sql.rows.returned",
+                            new ExplicitBucketHistogramConfiguration
+                            {
+                                Boundaries = [0, 1, 10, 100, 1_000, 10_000, 100_000]
+                            })
+                        .AddView(
+                            "hsqlagent.sql.rows.affected",
+                            new ExplicitBucketHistogramConfiguration
+                            {
+                                Boundaries = [0, 1, 10, 100, 1_000, 10_000, 100_000]
+                            });
+                    if (options.Telemetry.PrometheusEnabled)
+                        metrics.AddPrometheusHttpListener(exporter =>
+                        {
+                            exporter.Host = options.Telemetry.PrometheusHost;
+                            exporter.Port = options.Telemetry.PrometheusPort;
+                            exporter.ScrapeEndpointPath = "/metrics";
+                            exporter.ScopeInfoEnabled = false;
+                        });
+                    if (!string.IsNullOrWhiteSpace(options.Telemetry.OtlpEndpoint))
+                        metrics.AddOtlpExporter(exporter => exporter.Endpoint = new Uri(options.Telemetry.OtlpEndpoint));
+                });
+        }
 
         // --- SQL strategies ---
         services.AddScoped<ISqlStrategy, MySqlStrategy>();
@@ -114,18 +200,79 @@ public static class HsSqlAgentServiceExtensions
             jwt.Audience = options.JwtAudience;
             jwt.AccessTokenExpirationMinutes = options.JwtAccessTokenExpirationMinutes;
             jwt.RefreshTokenExpirationDays = options.JwtRefreshTokenExpirationDays;
+            jwt.SignInLockoutThreshold = options.SignInLockoutThreshold;
+            jwt.SignInLockoutMinutes = options.SignInLockoutMinutes;
         });
         services.Configure<McpKeySettings>(mcp => mcp.HmacSecretKey = options.HmacSecretKey);
+        services.Configure<McpOptions>(mcp => mcp.PublicEndpoint = options.Mcp.PublicEndpoint);
+        services.Configure<OperabilitySettings>(operability =>
+        {
+            var source = options.Operability;
+            operability.HealthProbeEnabled = source.HealthProbeEnabled;
+            operability.HealthProbeIntervalSeconds = source.HealthProbeIntervalSeconds;
+            operability.HealthProbeTimeoutSeconds = source.HealthProbeTimeoutSeconds;
+            operability.SlowQueryThresholdMs = source.SlowQueryThresholdMs;
+            operability.AlertWebhookUrl = source.AlertWebhookUrl;
+            operability.AlertWebhookSecret = source.AlertWebhookSecret;
+            operability.SiemWebhookUrl = source.SiemWebhookUrl;
+            operability.SiemWebhookSecret = source.SiemWebhookSecret;
+            operability.DeliveryMaxAttempts = source.DeliveryMaxAttempts;
+            operability.AuditRetentionDays = source.AuditRetentionDays;
+            operability.AuditRetentionMode = source.AuditRetentionMode;
+            operability.AuditArchivePath = source.AuditArchivePath;
+            operability.AuditFallbackPath = source.AuditFallbackPath;
+            operability.AuditRetentionRunHourUtc = source.AuditRetentionRunHourUtc;
+        });
+        services.Configure<TelemetryOptions>(telemetry =>
+        {
+            telemetry.PrometheusEnabled = options.Telemetry.PrometheusEnabled;
+            telemetry.PrometheusHost = options.Telemetry.PrometheusHost;
+            telemetry.PrometheusPort = options.Telemetry.PrometheusPort;
+            telemetry.OtlpEndpoint = options.Telemetry.OtlpEndpoint;
+            telemetry.ServiceName = options.Telemetry.ServiceName;
+        });
+        services.Configure<PasswordResetSettings>(reset =>
+        {
+            reset.BaseUrl = options.PasswordResetBaseUrl;
+            reset.ExpirationMinutes = options.PasswordResetExpirationMinutes;
+            reset.SmtpHost = options.SmtpHost;
+            reset.SmtpPort = options.SmtpPort;
+            reset.SmtpEnableSsl = options.SmtpEnableSsl;
+            reset.SmtpUsername = options.SmtpUsername;
+            reset.SmtpPassword = options.SmtpPassword;
+            reset.SmtpFrom = options.SmtpFrom;
+        });
+        services.Configure<EnterpriseIdentitySettings>(identity =>
+        {
+            var source = options.EnterpriseIdentity;
+            identity.OidcEnabled = source.OidcEnabled;
+            identity.Authority = source.Authority;
+            identity.ClientId = source.ClientId;
+            identity.ClientSecret = source.ClientSecret;
+            identity.RequireHttpsMetadata = source.RequireHttpsMetadata;
+            identity.EmailClaim = source.EmailClaim;
+            identity.NameClaim = source.NameClaim;
+            identity.RoleClaim = source.RoleClaim;
+            identity.EmailVerifiedClaim = source.EmailVerifiedClaim;
+            identity.RequireVerifiedEmail = source.RequireVerifiedEmail;
+            identity.Scopes = [.. source.Scopes];
+            identity.RoleMappings = new(source.RoleMappings, StringComparer.OrdinalIgnoreCase);
+            identity.DefaultRoleNames = [.. source.DefaultRoleNames];
+            identity.AutoProvision = source.AutoProvision;
+            identity.FrontendCallbackUrl = source.FrontendCallbackUrl;
+            identity.LoginCodeExpirationMinutes = source.LoginCodeExpirationMinutes;
+            identity.RequireMfaForRoles = [.. source.RequireMfaForRoles];
+            identity.TotpIssuer = source.TotpIssuer;
+        });
         services.Configure<RateLimitingSettings>(rl =>
         {
             rl.PermitLimit = options.RateLimitPermitLimit;
             rl.WindowSeconds = options.RateLimitWindowSeconds;
-            rl.QueueLimit = options.RateLimitQueueLimit;
         });
 
         // --- JWT Auth ---
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.JwtSecretKey));
-        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        var authentication = services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(jwt =>
             {
                 jwt.MapInboundClaims = false;
@@ -140,10 +287,43 @@ public static class HsSqlAgentServiceExtensions
                     IssuerSigningKey = signingKey,
                     ClockSkew = TimeSpan.Zero
                 };
+            })
+            .AddCookie("ExternalCookie", cookie =>
+            {
+                cookie.Cookie.Name = "hs-sql-agent.external";
+                cookie.Cookie.HttpOnly = true;
+                cookie.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+                cookie.ExpireTimeSpan = TimeSpan.FromMinutes(10);
             });
+
+        if (options.EnterpriseIdentity.OidcEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(options.EnterpriseIdentity.Authority) ||
+                string.IsNullOrWhiteSpace(options.EnterpriseIdentity.ClientId))
+                throw new InvalidOperationException("OIDC Authority and ClientId are required when OIDC is enabled.");
+            authentication.AddOpenIdConnect("oidc", oidc =>
+            {
+                var source = options.EnterpriseIdentity;
+                oidc.SignInScheme = "ExternalCookie";
+                oidc.Authority = source.Authority;
+                oidc.ClientId = source.ClientId;
+                oidc.ClientSecret = source.ClientSecret;
+                oidc.RequireHttpsMetadata = source.RequireHttpsMetadata;
+                oidc.ResponseType = "code";
+                oidc.UsePkce = true;
+                oidc.SaveTokens = false;
+                oidc.CallbackPath = "/api/auth/oidc/signin";
+                oidc.Scope.Clear();
+                foreach (var scope in source.Scopes) oidc.Scope.Add(scope);
+            });
+        }
 
         services.AddAuthorizationBuilder()
             .SetDefaultPolicy(new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .RequireClaim("typ", "access")
+                .Build())
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()
                 .RequireClaim("typ", "access")
                 .Build())
@@ -151,6 +331,16 @@ public static class HsSqlAgentServiceExtensions
             {
                 policy.RequireAuthenticatedUser();
                 policy.RequireClaim("typ", "refresh");
+            })
+            .AddPolicy("MfaChallengePolicy", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.RequireClaim("typ", "mfa");
+            })
+            .AddPolicy("ExternalLoginPolicy", policy =>
+            {
+                policy.AddAuthenticationSchemes("ExternalCookie");
+                policy.RequireAuthenticatedUser();
             });
 
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
@@ -160,9 +350,17 @@ public static class HsSqlAgentServiceExtensions
         services.AddTransient<McpIpRateLimitMiddleware>();
         services.AddScoped<McpAccessKeyAuthMiddleware>();
         services.AddTransient<McpKeyRateLimitMiddleware>();
+        services.AddTransient<McpRequestMetricsMiddleware>();
+        services.AddSingleton<IOperationalMetricRecorder, OperationalMetricRecorder>();
         services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
         services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
         services.AddHostedService<TokenBlacklistCleanupService>();
+        services.AddHostedService<OperationalMetricFlushService>();
+        services.AddHostedService<DbHealthMonitorService>();
+        services.AddHostedService<OutboundDeliveryService>();
+        services.AddHostedService<AuditRetentionBackgroundService>();
+        services.AddHttpClient("operability-webhook", client => client.Timeout = TimeSpan.FromSeconds(15))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<SqlAgentTool>();
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
@@ -193,7 +391,12 @@ public static class HsSqlAgentServiceExtensions
                     }
 
                     var customToolService = httpContext.RequestServices.GetRequiredService<ICustomSqlToolService>();
-                    var customTools = await customToolService.GetAllToolsAsync();
+                    var dbManagementId = httpContext.Items[Common.Models.McpContextItemKeys.DbManagementId] is int id
+                        ? id
+                        : (int?)null;
+                    var customTools = dbManagementId.HasValue
+                        ? await customToolService.GetPublishedToolsForDbAsync(dbManagementId.Value, cancellationToken)
+                        : [];
 
                     foreach (var ct in customTools)
                     {
@@ -224,7 +427,7 @@ public static class HsSqlAgentServiceExtensions
                             catch { }
                         }
 
-                        var schemaObj = new { type = "object", properties };
+                        var schemaObj = new { type = "object", properties, required = properties.Keys.ToArray() };
                         var jsonSchema = JsonSerializer.SerializeToElement(schemaObj);
                         var scopeFactory = httpContext.RequestServices.GetRequiredService<IServiceScopeFactory>();
 
@@ -275,6 +478,15 @@ public static class HsSqlAgentServiceExtensions
         services.AddProblemDetails();
 
         return services;
+    }
+
+    private static void ValidateWebhook(string name, string url, string secret)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            throw new InvalidOperationException($"{name} webhook URL must be an absolute HTTP(S) URL.");
+        if (Encoding.UTF8.GetByteCount(secret) < 32)
+            throw new InvalidOperationException($"{name} webhook secret must be at least 32 bytes when enabled.");
     }
 
     private static McpServerTool[] GetToolsForType<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods)] T>(HsSqlAgentServiceOptions options) where T : class

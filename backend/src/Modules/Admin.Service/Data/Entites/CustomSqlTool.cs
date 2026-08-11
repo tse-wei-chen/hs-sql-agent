@@ -1,5 +1,7 @@
 namespace Admin.Service.Data.Entites;
 
+using System.Text.Json.Serialization;
+
 public class CustomSqlTool
 {
     public int Id { get; set; }
@@ -7,9 +9,10 @@ public class CustomSqlTool
     public string Description { get; set; } = null!;
 
     /// <summary>
-    /// JSON representation of QueryDefinition or DmlDefinition.
+    /// SQL template parsed into an AST at execution time. Dynamic values use
+    /// unquoted {{parameterName}} placeholders declared in ParametersJson.
     /// </summary>
-    public string DefinitionJson { get; set; } = null!;
+    public string SqlTemplate { get; set; } = null!;
 
     /// <summary>
     /// "Query" or "DML"
@@ -22,6 +25,22 @@ public class CustomSqlTool
     /// </summary>
     public string? ParametersJson { get; set; }
 
+    public int? DbManagementId { get; set; }
+    public string Status { get; set; } = CustomSqlToolStatuses.Draft;
+    public int? PublishedRevisionId { get; set; }
+    public string? PublishedIdentity { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastModifiedAt { get; set; }
+
+    [JsonIgnore] public DbManagement? DbManagement { get; set; }
+    [JsonIgnore] public CustomSqlToolRevision? PublishedRevision { get; set; }
+    [JsonIgnore] public ICollection<CustomSqlToolRevision> Revisions { get; set; } = [];
+}
+
+public static class CustomSqlToolStatuses
+{
+    public const string Draft = "Draft";
+    public const string Published = "Published";
+    public const string Disabled = "Disabled";
 }

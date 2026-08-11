@@ -5,7 +5,8 @@ using HsSqlAgent.Server.Services;
 namespace HsSqlAgent.Server.Middleware;
 
 public sealed class McpKeyRateLimitMiddleware(
-    ILayeredRateLimitService rateLimitService) : IMiddleware
+    ILayeredRateLimitService rateLimitService,
+    IOperationalMetricRecorder metrics) : IMiddleware
 {
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
@@ -31,6 +32,12 @@ public sealed class McpKeyRateLimitMiddleware(
                 permitLimit,
                 windowSeconds,
                 context.RequestAborted);
+            if (result.IsAvailable)
+            {
+                var dbId = context.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var dbValue)
+                    && dbValue is int configuredDbId ? configuredDbId : (int?)null;
+                metrics.RecordRateLimitAttempt("key", !result.IsAllowed, keyId, dbId);
+            }
             if (!result.IsAvailable)
             {
                 context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;

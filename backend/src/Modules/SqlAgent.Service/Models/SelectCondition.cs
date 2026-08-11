@@ -14,6 +14,8 @@ namespace SqlAgent.Service.Models;
 [JsonDerivedType(typeof(FunctionSelectCondition), "function")]
 [JsonDerivedType(typeof(CaseWhenSelectCondition), "case_when")]
 [JsonDerivedType(typeof(SubQuerySelectCondition), "subquery")]
+[JsonDerivedType(typeof(CastSelectCondition), "cast")]
+[JsonDerivedType(typeof(IntervalSelectCondition), "interval")]
 public abstract class SelectCondition
 {
     [Description("Alias for the selected field (Optional). e.g., 'total_amount'")]
@@ -35,7 +37,7 @@ public class OperationSelectCondition : SelectCondition
     public SelectCondition Left { get; set; } = null!;
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
-    [Description("Must be one of the enum values: 'Add', 'Subtract', 'Multiply', 'Divide', 'Concat'")]
+    [Description("Expression operator. Arithmetic, comparison, concatenation, and boolean operators are represented without changing their SQL semantics.")]
     public ArithmeticOperator Operator { get; set; } = ArithmeticOperator.Add;
 
     [Description("The right operand. Supports all SelectCondition types.")]
@@ -46,6 +48,21 @@ public class ConstantSelectCondition : SelectCondition
 {
     [Description("Pure literal values ONLY (numbers, strings, booleans). NO SQL code/functions allowed here.")]
     public object Constant { get; set; } = string.Empty;
+}
+
+public class CastSelectCondition : SelectCondition
+{
+    [Description("Expression being cast.")]
+    public SelectCondition Expression { get; set; } = null!;
+
+    [Description("Validated SQL type name, optionally including precision/scale.")]
+    public string TypeName { get; set; } = string.Empty;
+}
+
+public class IntervalSelectCondition : SelectCondition
+{
+    [Description("Provider-native interval literal content without surrounding quotes, e.g. '1 day'.")]
+    public string Literal { get; set; } = string.Empty;
 }
 
 internal class TemplateSqlTokenSelectCondition : SelectCondition

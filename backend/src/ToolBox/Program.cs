@@ -10,8 +10,16 @@ builder.Configuration
     .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables();
 
+if (!builder.Environment.IsDevelopment()
+    && string.IsNullOrWhiteSpace(builder.Configuration["Mcp:PublicEndpoint"]))
+{
+    throw new InvalidOperationException(
+        "Mcp:PublicEndpoint is required outside Development so generated client configuration uses the externally reachable MCP URL.");
+}
+
 builder.Services.AddHsSqlAgent(options =>
 {
+    builder.Configuration.GetSection("Mcp").Bind(options.Mcp);
     options.AdminDatabaseProvider = builder.Configuration["AdminDatabase:Provider"] ?? "Sqlite";
     options.AdminConnectionString = builder.Configuration["AdminDatabase:ConnectionString"]
         ?? builder.Configuration["AppConnectionString"]
@@ -25,12 +33,26 @@ builder.Services.AddHsSqlAgent(options =>
         options.JwtAccessTokenExpirationMinutes = atExp;
     if (int.TryParse(builder.Configuration["JwtSettings:RefreshTokenExpirationDays"], out var rtExp))
         options.JwtRefreshTokenExpirationDays = rtExp;
+    if (int.TryParse(builder.Configuration["Authentication:LockoutThreshold"], out var lockoutThreshold))
+        options.SignInLockoutThreshold = lockoutThreshold;
+    if (int.TryParse(builder.Configuration["Authentication:LockoutMinutes"], out var lockoutMinutes))
+        options.SignInLockoutMinutes = lockoutMinutes;
+    options.PasswordResetBaseUrl = builder.Configuration["PasswordReset:BaseUrl"] ?? options.PasswordResetBaseUrl;
+    if (int.TryParse(builder.Configuration["PasswordReset:ExpirationMinutes"], out var resetExpiration))
+        options.PasswordResetExpirationMinutes = resetExpiration;
+    options.SmtpHost = builder.Configuration["PasswordReset:SmtpHost"] ?? string.Empty;
+    if (int.TryParse(builder.Configuration["PasswordReset:SmtpPort"], out var smtpPort)) options.SmtpPort = smtpPort;
+    if (bool.TryParse(builder.Configuration["PasswordReset:SmtpEnableSsl"], out var smtpSsl)) options.SmtpEnableSsl = smtpSsl;
+    options.SmtpUsername = builder.Configuration["PasswordReset:SmtpUsername"] ?? string.Empty;
+    options.SmtpPassword = builder.Configuration["PasswordReset:SmtpPassword"] ?? string.Empty;
+    options.SmtpFrom = builder.Configuration["PasswordReset:SmtpFrom"] ?? string.Empty;
+    builder.Configuration.GetSection("EnterpriseIdentity").Bind(options.EnterpriseIdentity);
+    builder.Configuration.GetSection("Operability").Bind(options.Operability);
+    builder.Configuration.GetSection("Telemetry").Bind(options.Telemetry);
     if (int.TryParse(builder.Configuration["RateLimiting:PermitLimit"], out var pl))
         options.RateLimitPermitLimit = pl;
     if (int.TryParse(builder.Configuration["RateLimiting:WindowSeconds"], out var ws))
         options.RateLimitWindowSeconds = ws;
-    if (int.TryParse(builder.Configuration["RateLimiting:QueueLimit"], out var ql))
-        options.RateLimitQueueLimit = ql;
 
     options.RateLimiterProvider = builder.Configuration["RateLimiter:Provider"] ?? "Memory";
     options.RateLimiterConnectionString = builder.Configuration["RateLimiter:ConnectionString"]

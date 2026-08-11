@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
@@ -23,7 +24,10 @@ public class RuntimeAdminController(
     IAuditService auditService,
     IDbManagementService dbManagementService,
     ICryptoService cryptoService,
-    IOptions<McpKeySettings> mcpKeySettings) : ControllerBase
+    IOptions<McpKeySettings> mcpKeySettings,
+    IOperabilityService operabilityService,
+    IAuditRetentionService auditRetentionService,
+    ICustomSqlToolService customSqlToolService) : ControllerBase
 {
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
@@ -32,6 +36,19 @@ public class RuntimeAdminController(
     public async Task<IActionResult> ListKeys(CancellationToken cancellationToken)
     {
         return Ok(await keyService.ListKeysAsync(cancellationToken));
+    }
+
+    [HttpGet("mcp-keys/available-tools")]
+    [HasPermission("/runtime/mcp-keys", "view")]
+    public async Task<IActionResult> ListAvailableTools(
+        [FromQuery] int dbManagementId,
+        CancellationToken cancellationToken)
+    {
+        if (dbManagementId <= 0)
+            return BadRequest("A valid DbManagementId is required.");
+
+        var tools = await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId, cancellationToken);
+        return Ok(tools.Select(x => new { x.Name, x.Type }));
     }
 
     [HttpPost("mcp-keys")]
@@ -190,7 +207,91 @@ public class RuntimeAdminController(
         return Ok(new { days, items });
     }
 
+    [HasPermission("/runtime/audit", "export")]
+    [HttpGet("audit/export")]
+    public async Task<IActionResult> ExportAudit(
+        [FromQuery] AuditLogFilter filter,
+        [FromQuery] string format = "csv",
+        CancellationToken cancellationToken = default)
+    {
+        var items = await auditService.ExportAsync(filter, 100_001, cancellationToken);
+        if (items.Count > 100_000)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "Export exceeds 100000 rows. Narrow the current filters and retry." });
+        await auditService.WriteLogAsync("audit.exported", format, "success", $"Rows: {items.Count}", cancellationToken);
+        if (string.Equals(format, "json", StringComparison.OrdinalIgnoreCase))
+            return File(JsonSerializer.SerializeToUtf8Bytes(items), "application/json", $"audit-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
+        if (!string.Equals(format, "csv", StringComparison.OrdinalIgnoreCase)) return BadRequest("Format must be csv or json.");
+
+        var csv = new StringBuilder();
+        csv.AppendLine("eventId,createdAt,actorType,actorId,action,target,result,dbManagementId,accessKeyId,toolName,operation,durationMs,returnedRows,affectedRows,approvalStatus,errorCategory,detail,definition");
+        foreach (var x in items)
+            csv.AppendLine(string.Join(',', new object?[]
+            {
+                x.EventId, x.CreatedAt.ToString("O"), x.ActorType, x.ActorId, x.Action, x.Target, x.Result,
+                x.DbManagementId, x.AccessKeyId, x.ToolName, x.Operation, x.DurationMs, x.ReturnedRows,
+                x.AffectedRows, x.ApprovalStatus, x.ErrorCategory, x.Detail, x.Definition
+            }.Select(Csv)));
+        return File(Encoding.UTF8.GetBytes(csv.ToString()), "text/csv; charset=utf-8", $"audit-{DateTime.UtcNow:yyyyMMddHHmmss}.csv");
+    }
+
+    [HasPermission("/runtime/operability", "view")]
+    [HttpGet("operability/metrics")]
+    public async Task<IActionResult> GetMetrics([FromQuery] OperabilityFilter filter, CancellationToken cancellationToken)
+        => Ok(await operabilityService.GetMetricsAsync(filter, cancellationToken));
+
+    [HasPermission("/runtime/operability", "view")]
+    [HttpGet("operability/db-health")]
+    public async Task<IActionResult> GetDbHealth(CancellationToken cancellationToken)
+        => Ok(await operabilityService.GetDbHealthAsync(cancellationToken));
+
+    [HasPermission("/runtime/operability", "view")]
+    [HttpGet("operability/key-usage")]
+    public async Task<IActionResult> GetKeyUsage([FromQuery] OperabilityFilter filter, CancellationToken cancellationToken)
+        => Ok(await operabilityService.GetKeyUsageAsync(filter, cancellationToken));
+
+    [HasPermission("/runtime/operability", "view")]
+    [HttpGet("operability/deliveries")]
+    public async Task<IActionResult> GetDeliveries([FromQuery] int limit = 100, CancellationToken cancellationToken = default)
+        => Ok(await operabilityService.GetDeliveriesAsync(limit, cancellationToken));
+
+    [HasPermission("/runtime/operability", "edit")]
+    [HttpPost("operability/deliveries/{id:long}/retry")]
+    public async Task<IActionResult> RetryDelivery(long id, CancellationToken cancellationToken)
+        => await operabilityService.RetryDeliveryAsync(id, cancellationToken) ? NoContent() : NotFound();
+
+    [HasPermission("/runtime/audit", "view")]
+    [HttpGet("audit/retention")]
+    public IActionResult GetRetentionPolicy()
+        => Ok(auditRetentionService.GetPolicy());
+
+    [HasPermission("/runtime/audit", "edit")]
+    [HttpPost("audit/retention/dry-run")]
+    public async Task<IActionResult> DryRunRetention(CancellationToken cancellationToken)
+    {
+        if (!auditRetentionService.GetPolicy().Enabled)
+            return BadRequest("Audit retention is disabled. Set Operability:AuditRetentionDays to a positive value and restart the service.");
+
+        return Ok(await auditRetentionService.ExecuteAsync(true, cancellationToken));
+    }
+
+    [HasPermission("/runtime/audit", "edit")]
+    [HttpPost("audit/retention/execute")]
+    public async Task<IActionResult> ExecuteRetention(CancellationToken cancellationToken)
+    {
+        if (!auditRetentionService.GetPolicy().Enabled)
+            return BadRequest("Audit retention is disabled. Set Operability:AuditRetentionDays to a positive value and restart the service.");
+
+        return Ok(await auditRetentionService.ExecuteAsync(false, cancellationToken));
+    }
+
     private string? ResolveActorId()
         => User.FindFirstValue(JwtRegisteredClaimNames.Sub)
            ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+    private static string Csv(object? value)
+    {
+        var text = value?.ToString() ?? string.Empty;
+        if (text.Length > 0 && text[0] is '=' or '+' or '-' or '@') text = "'" + text;
+        return $"\"{text.Replace("\"", "\"\"")}\"";
+    }
 }

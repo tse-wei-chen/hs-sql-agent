@@ -1,252 +1,225 @@
-using System.Text.RegularExpressions;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
+using System.Globalization;
 
 namespace SqlAgent.Service.SqlParsing;
 
-public static partial class SqlDefinitionParser
+public static class SqlDefinitionParser
 {
-    public static QueryDefinition ParseQuery(string sql)
+    public static QueryDefinition ParseQuery(string sql, SqlAgentToolType? provider = null)
     {
-        RejectMultipleStatements(sql);
-        var tokens = new SqlTokenizer(sql).Tokenize();
+        var tokens = new SqlTokenizer(sql, provider).Tokenize();
+        ValidateStatementTokens(tokens);
         return new SqlParser(tokens).Parse();
     }
 
-    public static DmlDefinition ParseDml(string sql)
+    public static DmlDefinition ParseDml(string sql, SqlAgentToolType? provider = null)
     {
-        RejectMultipleStatements(sql);
-        var normalized = TrimTrailingSemicolon(sql.Trim());
-
-        if (IsInsertRegex().IsMatch(normalized))
-            return ParseInsertSql(normalized);
-        if (IsUpdateRegex().IsMatch(normalized))
-            return ParseUpdateSql(normalized);
-        if (IsDeleteRegex().IsMatch(normalized))
-            return ParseDeleteSql(normalized);
-
-        throw new SqlParseException("Expected INSERT, UPDATE, or DELETE DML statement.");
+        var tokens = new SqlTokenizer(sql, provider).Tokenize();
+        ValidateStatementTokens(tokens);
+        return new DmlTokenParser(sql, tokens, provider).Parse();
     }
 
-    private static DmlDefinition ParseInsertSql(string sql)
+    private sealed class DmlTokenParser(string sql, Token[] tokens, SqlAgentToolType? provider)
     {
-        var match = InsertRegex().Match(sql);
-        if (!match.Success)
-            throw new SqlParseException("Only INSERT INTO table (columns...) VALUES (...) is supported for execute_dml_sql.");
+        private int _pos;
 
-        var columns = SplitSqlList(match.Groups["columns"].Value).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
-        var values = SplitSqlList(match.Groups["values"].Value).Select(ParseSqlLiteral).ToList();
-
-        if (columns.Count == 0)
-            throw new SqlParseException("INSERT statements must include a column list.");
-        if (columns.Count != values.Count)
-            throw new SqlParseException("INSERT column count must match value count.");
-
-        return new DmlDefinition
+        public DmlDefinition Parse()
         {
-            Operation = DmlOperation.Insert,
-            TableName = match.Groups["table"].Value,
-            Values = [.. columns.Select((column, i) => new NameValuePair
+            DmlDefinition result;
+            if (PeekWord("INSERT")) result = ParseInsert();
+            else if (PeekWord("UPDATE")) result = ParseUpdate();
+            else if (PeekWord("DELETE")) result = ParseDelete();
+            else throw Error("Expected INSERT, UPDATE, or DELETE DML statement.");
+
+            if (Peek().Type == TokenType.Semicolon) _pos++;
+            if (Peek().Type != TokenType.EOF)
+                throw Error($"Unexpected token '{Peek().Value}'; the complete DML statement was not consumed.");
+            return result;
+        }
+
+        private DmlDefinition ParseInsert()
+        {
+            ExpectWord("INSERT");
+            ExpectWord("INTO");
+            var table = ParseQualifiedIdentifier("table name");
+            Expect(TokenType.LParen);
+            var columns = new List<string> { ParseQualifiedIdentifier("column name") };
+            while (Match(TokenType.Comma)) columns.Add(ParseQualifiedIdentifier("column name"));
+            Expect(TokenType.RParen);
+            ExpectWord("VALUES");
+
+            var rows = new List<List<object>>();
+            do
             {
-                FieldName = column.Trim(),
-                Value = values[i]
-            })]
-        };
-    }
+                Expect(TokenType.LParen);
+                var row = new List<object> { ParseLiteral()! };
+                while (Match(TokenType.Comma)) row.Add(ParseLiteral()!);
+                Expect(TokenType.RParen);
+                if (row.Count != columns.Count)
+                    throw Error("INSERT column count must match value count.");
+                rows.Add(row);
+            } while (Match(TokenType.Comma));
 
-    private static DmlDefinition ParseUpdateSql(string sql)
-    {
-        var match = UpdateRegex().Match(sql);
-        if (!match.Success)
-            throw new SqlParseException("Only UPDATE table SET column = value [, ...] [WHERE ...] is supported for execute_dml_sql.");
+            if (rows.Count == 1)
+                return new DmlDefinition
+                {
+                    Operation = DmlOperation.Insert,
+                    TableName = table,
+                    Values = [.. columns.Select((column, i) => new NameValuePair { FieldName = column, Value = rows[0][i] })]
+                };
 
-        return new DmlDefinition
-        {
-            Operation = DmlOperation.Update,
-            TableName = match.Groups["table"].Value,
-            Values = [.. SplitSqlList(match.Groups["set"].Value).Select(ParseAssignment)],
-            WhereConditions = ParseDmlWhere(match.Groups["where"].Value)
-        };
-    }
-
-    private static DmlDefinition ParseDeleteSql(string sql)
-    {
-        var match = DeleteRegex().Match(sql);
-        if (!match.Success)
-            throw new SqlParseException("Only DELETE FROM table [WHERE ...] is supported for execute_dml_sql.");
-
-        return new DmlDefinition
-        {
-            Operation = DmlOperation.Delete,
-            TableName = match.Groups["table"].Value,
-            WhereConditions = ParseDmlWhere(match.Groups["where"].Value)
-        };
-    }
-
-    private static NameValuePair ParseAssignment(string assignment)
-    {
-        var parts = SplitFirstOperator(assignment, "=");
-        return parts == null
-            ? throw new SqlParseException($"Invalid assignment: {assignment}")
-            : new NameValuePair
+            return new DmlDefinition
             {
-                FieldName = parts.Value.Left.Trim(),
-                Value = ParseSqlLiteral(parts.Value.Right.Trim())
-            };
-    }
-
-    private static List<WhereCondition>? ParseDmlWhere(string where)
-    {
-        if (string.IsNullOrWhiteSpace(where))
-            return null;
-
-        var conditions = SplitSqlKeyword(where, "AND")
-            .Select(ParseBasicWhereCondition)
-            .ToList<WhereCondition>();
-
-        return conditions.Count == 0 ? null : conditions;
-    }
-
-    private static BasicWhereCondition ParseBasicWhereCondition(string condition)
-    {
-        foreach (var op in new[] { ">=", "<=", "<>", "!=", "=", ">", "<" })
-        {
-            var parts = SplitFirstOperator(condition, op);
-            if (parts == null) continue;
-            return new BasicWhereCondition
-            {
-                FieldName = parts.Value.Left.Trim(),
-                Operator = op,
-                Value = ParseSqlLiteral(parts.Value.Right.Trim())
+                Operation = DmlOperation.Insert,
+                TableName = table,
+                Columns = columns,
+                MultiValues = rows
             };
         }
 
-        throw new SqlParseException($"Unsupported WHERE condition: {condition}");
-    }
-
-    private static (string Left, string Right)? SplitFirstOperator(string input, string op)
-    {
-        var index = IndexOfTopLevel(input, op);
-        if (index < 0) return null;
-        return (input[..index], input[(index + op.Length)..]);
-    }
-
-    private static List<string> SplitSqlList(string input)
-    {
-        var result = new List<string>();
-        var start = 0;
-        var depth = 0;
-        var inString = false;
-        for (var i = 0; i < input.Length; i++)
+        private DmlDefinition ParseUpdate()
         {
-            var c = input[i];
-            if (c == '\'' && (i + 1 >= input.Length || input[i + 1] != '\''))
-                inString = !inString;
-            else if (c == '\'' && i + 1 < input.Length && input[i + 1] == '\'')
-                i++;
-            else if (!inString && c == '(')
-                depth++;
-            else if (!inString && c == ')')
-                depth--;
-            else if (!inString && depth == 0 && c == ',')
+            ExpectWord("UPDATE");
+            var table = ParseQualifiedIdentifier("table name");
+            ExpectWord("SET");
+            var values = new List<NameValuePair>();
+            do
             {
-                result.Add(input[start..i].Trim());
-                start = i + 1;
+                var field = ParseQualifiedIdentifier("assignment column");
+                ExpectOperator("=");
+                values.Add(new NameValuePair { FieldName = field, Value = ParseLiteral() });
+            } while (Match(TokenType.Comma));
+
+            return new DmlDefinition
+            {
+                Operation = DmlOperation.Update,
+                TableName = table,
+                Values = values,
+                WhereConditions = ParseOptionalWhere()
+            };
+        }
+
+        private DmlDefinition ParseDelete()
+        {
+            ExpectWord("DELETE");
+            ExpectWord("FROM");
+            return new DmlDefinition
+            {
+                Operation = DmlOperation.Delete,
+                TableName = ParseQualifiedIdentifier("table name"),
+                WhereConditions = ParseOptionalWhere()
+            };
+        }
+
+        private List<WhereCondition>? ParseOptionalWhere()
+        {
+            if (!PeekWord("WHERE")) return null;
+            _pos++;
+            var first = Peek();
+            if (first.Type is TokenType.EOF or TokenType.Semicolon)
+                throw Error("WHERE must contain a predicate.");
+            var end = _pos;
+            while (end < tokens.Length && tokens[end].Type is not (TokenType.EOF or TokenType.Semicolon)) end++;
+            var last = tokens[end - 1];
+            var whereSql = sql[first.Pos..last.End];
+            _pos = end;
+            var parsed = ParseQuery($"SELECT * FROM __dml_source WHERE {whereSql}", provider);
+            return parsed.WhereColumnsAndValues is { Count: > 0 } conditions ? conditions : null;
+        }
+
+        private object? ParseLiteral()
+        {
+            var sign = 1;
+            if (Peek().Type == TokenType.Operator && Peek().Value is "-" or "+")
+            {
+                sign = Peek().Value == "-" ? -1 : 1;
+                _pos++;
+                if (Peek().Type != TokenType.Number)
+                    throw Error("A unary sign in a DML value must be followed by a numeric literal.");
             }
+            var token = Peek();
+            if (token.Type == TokenType.String)
+            {
+                _pos++;
+                return token.Value[1..^1].Replace("''", "'", StringComparison.Ordinal);
+            }
+            if (token.Value.Equals("NULL", StringComparison.OrdinalIgnoreCase)) { _pos++; return null; }
+            if (token.Value.Equals("TRUE", StringComparison.OrdinalIgnoreCase)) { _pos++; return true; }
+            if (token.Value.Equals("FALSE", StringComparison.OrdinalIgnoreCase)) { _pos++; return false; }
+            if (token.Type == TokenType.Number)
+            {
+                _pos++;
+                var text = sign < 0 ? $"-{token.Value}" : token.Value;
+                if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer)) return integer;
+                if (decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return number;
+            }
+            throw Error($"Unsupported DML value expression beginning with '{token.Value}'. Only scalar literals are accepted.");
         }
-        result.Add(input[start..].Trim());
-        return result;
-    }
 
-    private static List<string> SplitSqlKeyword(string input, string keyword)
-    {
-        var parts = new List<string>();
-        var start = 0;
-        var inString = false;
-        for (var i = 0; i <= input.Length - keyword.Length; i++)
+        private string ParseQualifiedIdentifier(string description)
         {
-            var c = input[i];
-            if (c == '\'' && (i + 1 >= input.Length || input[i + 1] != '\''))
-                inString = !inString;
-            else if (c == '\'' && i + 1 < input.Length && input[i + 1] == '\'')
-                i++;
-
-            if (inString || !input.AsSpan(i, keyword.Length).Equals(keyword, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var beforeOk = i == 0 || char.IsWhiteSpace(input[i - 1]);
-            var afterOk = i + keyword.Length >= input.Length || char.IsWhiteSpace(input[i + keyword.Length]);
-            if (!beforeOk || !afterOk) continue;
-            parts.Add(input[start..i].Trim());
-            start = i + keyword.Length;
+            var parts = new List<string> { ParseIdentifier(description) };
+            while (Match(TokenType.Dot)) parts.Add(ParseIdentifier(description));
+            return string.Join('.', parts);
         }
-        parts.Add(input[start..].Trim());
-        return [.. parts.Where(p => !string.IsNullOrWhiteSpace(p))];
-    }
 
-    private static int IndexOfTopLevel(string input, string value)
-    {
-        var depth = 0;
-        var inString = false;
-        for (var i = 0; i <= input.Length - value.Length; i++)
+        private string ParseIdentifier(string description)
         {
-            var c = input[i];
-            if (c == '\'' && (i + 1 >= input.Length || input[i + 1] != '\''))
-                inString = !inString;
-            else if (c == '\'' && i + 1 < input.Length && input[i + 1] == '\'')
-                i++;
-            else if (!inString && c == '(')
-                depth++;
-            else if (!inString && c == ')')
-                depth--;
-
-            if (!inString && depth == 0 && input.AsSpan(i, value.Length).Equals(value, StringComparison.Ordinal))
-                return i;
+            var token = Peek();
+            if (token.Type is not (TokenType.Identifier or TokenType.Keyword))
+                throw Error($"Expected {description} but got '{token.Value}'.");
+            _pos++;
+            return token.Value;
         }
-        return -1;
-    }
 
-    private static object? ParseSqlLiteral(string value)
-    {
-        value = value.Trim();
-        if (value.Equals("null", StringComparison.OrdinalIgnoreCase)) return null;
-        if (value.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
-        if (value.Equals("false", StringComparison.OrdinalIgnoreCase)) return false;
-        if (value.Length >= 2 && value[0] == '\'' && value[^1] == '\'')
-            return value[1..^1].Replace("''", "'");
-        if (int.TryParse(value, out var i)) return i;
-        if (decimal.TryParse(value, out var d)) return d;
-        return value;
-    }
-
-    private static void RejectMultipleStatements(string sql)
-    {
-        var trimmed = TrimTrailingSemicolon(sql.Trim());
-        var inString = false;
-        for (var i = 0; i < trimmed.Length; i++)
+        private bool PeekWord(string value) => Peek().Value.Equals(value, StringComparison.OrdinalIgnoreCase);
+        private void ExpectWord(string value)
         {
-            var c = trimmed[i];
-            if (c == '\'' && (i + 1 >= trimmed.Length || trimmed[i + 1] != '\''))
-                inString = !inString;
-            else if (c == '\'' && i + 1 < trimmed.Length && trimmed[i + 1] == '\'')
-                i++;
-            else if (!inString && c == ';')
-                throw new SqlParseException("Only one SQL statement is allowed.");
+            if (!PeekWord(value)) throw Error($"Expected keyword '{value}' but got '{Peek().Value}'.");
+            _pos++;
+        }
+
+        private void ExpectOperator(string value)
+        {
+            if (Peek().Type != TokenType.Operator || Peek().Value != value)
+                throw Error($"Expected operator '{value}' but got '{Peek().Value}'.");
+            _pos++;
+        }
+
+        private void Expect(TokenType type)
+        {
+            if (Peek().Type != type) throw Error($"Expected {type} but got {Peek().Type} ('{Peek().Value}').");
+            _pos++;
+        }
+
+        private bool Match(TokenType type)
+        {
+            if (Peek().Type != type) return false;
+            _pos++;
+            return true;
+        }
+
+        private Token Peek() => _pos < tokens.Length ? tokens[_pos] : tokens[^1];
+        private SqlParseException Error(string message) => new($"{message} Position {Peek().Pos}.");
+    }
+
+    private static void ValidateStatementTokens(Token[] tokens)
+    {
+        var content = tokens.Where(t => t.Type != TokenType.EOF).ToArray();
+        for (var i = 0; i < content.Length; i++)
+        {
+            var token = content[i];
+            if (token.Type == TokenType.Parameter)
+            {
+                throw new SqlParseException(
+                    $"Unbound SQL parameter '{token.Value}' at position {token.Pos}. " +
+                    "Runtime SQL parameters are not accepted; use a declared Custom Tool parameter.");
+            }
+
+            if (token.Type == TokenType.Semicolon && i != content.Length - 1)
+                throw new SqlParseException($"Only one SQL statement is allowed; unexpected semicolon at position {token.Pos}.");
         }
     }
 
-    private static string TrimTrailingSemicolon(string sql)
-        => sql.EndsWith(';') ? sql[..^1].TrimEnd() : sql;
-    [GeneratedRegex(@"^\s*insert\s+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex IsInsertRegex();
-    [GeneratedRegex(@"^\s*update\s+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex IsUpdateRegex();
-    [GeneratedRegex(@"^\s*delete\s+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex IsDeleteRegex();
-    [GeneratedRegex(@"^\s*insert\s+into\s+(?<table>[^\s(]+)\s*(?:\((?<columns>[^)]*)\))?\s+values\s*\((?<values>.*)\)\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant)]
-    private static partial Regex InsertRegex();
-    [GeneratedRegex(@"^\s*update\s+(?<table>[^\s]+)\s+set\s+(?<set>.*?)(?:\s+where\s+(?<where>.*))?\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant)]
-    private static partial Regex UpdateRegex();
-    [GeneratedRegex(@"^\s*delete\s+from\s+(?<table>[^\s]+)(?:\s+where\s+(?<where>.*))?\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant)]
-    private static partial Regex DeleteRegex();
 }

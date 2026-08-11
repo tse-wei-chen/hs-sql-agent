@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import PasswordInput from "@/components/PasswordInput.vue";
 import FormField from "@/components/FormField.vue";
 import { toast } from "vue-sonner"
-import { checkFirstRun, signIn } from "~/api/auth";
+import { checkFirstRun, getOidcStatus, signIn } from "~/api/auth";
 import { persistAuthSession } from "@/lib/auth-session";
 
 const props = defineProps<{
@@ -15,10 +15,13 @@ const props = defineProps<{
 }>();
 
 const submitting = ref(false);
+const oidcEnabled = ref(false);
+const startSso = () => window.location.assign("/api/auth/oidc/login");
 
 onMounted(async () => {
   try {
     const response = await checkFirstRun();
+    oidcEnabled.value = (await getOidcStatus()).enabled;
     if (response) {
       return await navigateTo("/sign-up");
     }
@@ -38,6 +41,10 @@ const submit = async (values: any) => {
     if (response?.accessToken && response?.refreshToken) {
       persistAuthSession(response);
       return await navigateTo("/home");
+    }
+    if (response?.requiresMfa && response?.mfaToken) {
+      sessionStorage.setItem("mfaToken", response.mfaToken);
+      return await navigateTo("/mfa");
     }
 
     toast.error("Login failed. Please try again.");
@@ -71,12 +78,17 @@ const submit = async (values: any) => {
             <PasswordInput v-bind="field" id="password" />
           </template>
         </FormField>
+        <NuxtLink to="/forgot-password" class="text-right text-sm text-primary hover:underline">Forgot password?</NuxtLink>
 
         <UIField>
           <Button type="submit" :disabled="!meta.valid || submitting">
             {{ submitting ? 'Logging in...' : 'Login' }}
           </Button>
         </UIField>
+        <template v-if="oidcEnabled">
+          <div class="relative text-center text-xs text-muted-foreground before:absolute before:left-0 before:right-0 before:top-1/2 before:border-t"><span class="relative bg-background px-2">or</span></div>
+          <Button type="button" variant="outline" @click="startSso">Sign in with SSO</Button>
+        </template>
       </FieldGroup>
     </VeeForm>
   </div>

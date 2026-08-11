@@ -36,6 +36,7 @@ public static class HsSqlAgentApplicationExtensions
             context => context.Request.Path.StartsWithSegments(options.McpEndpoint),
             branch =>
             {
+                branch.UseMiddleware<McpRequestMetricsMiddleware>();
                 branch.UseMiddleware<McpIpRateLimitMiddleware>();
                 branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
                 branch.UseMiddleware<McpKeyRateLimitMiddleware>();
@@ -83,6 +84,8 @@ public static class HsSqlAgentApplicationExtensions
         if (builder.App is IEndpointRouteBuilder endpoints)
         {
             var options = builder.Options;
+            endpoints.MapGet("/metrics", () => Results.NotFound())
+                .AllowAnonymous();
             endpoints.MapMcp(options.McpEndpoint)
                .AllowAnonymous();
 

@@ -11,6 +11,7 @@ public class DbSemantic
 
     public string? Description { get; set; }
     public string? DisplayName { get; set; }
+    public string? SynonymsJson { get; set; }
 
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

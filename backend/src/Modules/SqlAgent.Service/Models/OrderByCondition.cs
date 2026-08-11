@@ -11,6 +11,9 @@ public abstract class OrderByCondition
 {
     [Description("'asc' or 'desc'")]
     public SortDirection Direction { get; set; } = SortDirection.Asc;
+
+    [Description("Optional NULL ordering. Default preserves provider behavior.")]
+    public NullOrdering NullOrdering { get; set; } = NullOrdering.Default;
 }
 
 public class FieldOrderByCondition : OrderByCondition

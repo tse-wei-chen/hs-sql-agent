@@ -50,7 +50,11 @@ public class PermissionActionTemplateConfig : IEntityTypeConfiguration<Permissio
             new PermissionActionTemplate { Id = 23, PermissionId = 8, ActionId = 3},
             new PermissionActionTemplate { Id = 24, PermissionId = 9, ActionId = 1},
             new PermissionActionTemplate { Id = 25, PermissionId = 9, ActionId = 3},
-            new PermissionActionTemplate { Id = 26, PermissionId = 2, ActionId = 3}
+            new PermissionActionTemplate { Id = 26, PermissionId = 2, ActionId = 3},
+            new PermissionActionTemplate { Id = 27, PermissionId = 5, ActionId = 3},
+            new PermissionActionTemplate { Id = 28, PermissionId = 5, ActionId = 6},
+            new PermissionActionTemplate { Id = 29, PermissionId = 10, ActionId = 1},
+            new PermissionActionTemplate { Id = 30, PermissionId = 10, ActionId = 3}
         );
     }
 }

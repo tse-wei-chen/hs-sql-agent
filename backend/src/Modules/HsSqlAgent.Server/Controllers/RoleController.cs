@@ -68,11 +68,11 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
 
     [HttpDelete("{id:int}")]
     [HasPermission("/auth/role", "delete")]
-    public async Task<IActionResult> RemoveRoleAsync(int id)
+    public async Task<IActionResult> RemoveRoleAsync(int id, [FromQuery] bool force = false)
     {
         try
         {
-            await roleService.RemoveRoleAsync(id);
+            await roleService.RemoveRoleAsync(id, force);
             await auditService.WriteLogAsync("role.remove", id.ToString(), "success");
             return NoContent();
         }
@@ -88,6 +88,14 @@ public class RoleController(ILogger<RoleController> logger, IRoleService roleSer
             await auditService.WriteLogAsync("role.remove", id.ToString(), "failed", ex.Message);
             return BadRequest(ex.Message);
         }
+    }
+
+    [HttpGet("{id:int}/dependencies")]
+    [HasPermission("/auth/role", "view")]
+    public async Task<IActionResult> GetRoleDependenciesAsync(int id)
+    {
+        try { return Ok(await roleService.GetRoleDependenciesAsync(id)); }
+        catch (InvalidOperationException ex) { return NotFound(ex.Message); }
     }
 
     [HttpGet("permission-action-templates")]

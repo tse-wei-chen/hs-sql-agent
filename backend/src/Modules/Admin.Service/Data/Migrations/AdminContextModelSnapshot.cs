@@ -137,9 +137,8 @@ namespace Admin.Service.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("DefinitionJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
+                    b.Property<int?>("DbManagementId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Description")
                         .IsRequired()
@@ -157,6 +156,22 @@ namespace Admin.Service.Data.Migrations
                     b.Property<string>("ParametersJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PublishedIdentity")
+                        .HasMaxLength(220)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PublishedRevisionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SqlTemplate")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -164,7 +179,113 @@ namespace Admin.Service.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DbManagementId");
+
+                    b.HasIndex("PublishedIdentity")
+                        .IsUnique();
+
+                    b.HasIndex("PublishedRevisionId");
+
                     b.ToTable("CustomSqlTools");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlToolRevision", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CustomSqlToolId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DiffJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ParametersJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("PublishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PublishedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RevisionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SqlTemplate")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DbManagementId");
+
+                    b.HasIndex("CustomSqlToolId", "RevisionNumber")
+                        .IsUnique();
+
+                    b.ToTable("CustomSqlToolRevisions");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbHealthState", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastSuccessAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LatencyMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("OutageStartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DbManagementId")
+                        .IsUnique();
+
+                    b.ToTable("DbHealthStates");
                 });
 
             modelBuilder.Entity("Admin.Service.Data.Entites.DbManagement", b =>
@@ -252,6 +373,10 @@ namespace Admin.Service.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SynonymsJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TableName")
                         .IsRequired()
                         .HasMaxLength(256)
@@ -266,6 +391,143 @@ namespace Admin.Service.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("DbSemantics");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbSemanticMetric", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Aggregation")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Filter")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Formula")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Grain")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SchemaName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SynonymsJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TableName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DbManagementId", "SchemaName", "TableName", "Name")
+                        .IsUnique();
+
+                    b.ToTable("DbSemanticMetrics");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbSemanticRelationship", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Cardinality")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceColumn")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceSchema")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceTable")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetColumn")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetSchema")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetTable")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DbManagementId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("DbSemanticRelationships");
                 });
 
             modelBuilder.Entity("Admin.Service.Data.Entites.McpAccessKey", b =>
@@ -355,6 +617,108 @@ namespace Admin.Service.Data.Migrations
                     b.ToTable("McpAccessKeys");
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.OutboundDelivery", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DedupeKey")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeliveredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastAttemptAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetUrl")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DedupeKey")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.ToTable("OutboundDeliveries");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.RateLimitMetric", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AccessKeyId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("BucketStart")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("DbManagementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Layer")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("RejectedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ToolName")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccessKeyId");
+
+                    b.HasIndex("BucketStart");
+
+                    b.HasIndex("DbManagementId");
+
+                    b.ToTable("RateLimitMetrics");
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.SecurityPolicySettings", b =>
                 {
                     b.Property<int>("Id")
@@ -420,6 +784,51 @@ namespace Admin.Service.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlTool", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
+                        .WithMany()
+                        .HasForeignKey("DbManagementId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Admin.Service.Data.Entites.CustomSqlToolRevision", "PublishedRevision")
+                        .WithMany()
+                        .HasForeignKey("PublishedRevisionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("DbManagement");
+
+                    b.Navigation("PublishedRevision");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlToolRevision", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.CustomSqlTool", "CustomSqlTool")
+                        .WithMany("Revisions")
+                        .HasForeignKey("CustomSqlToolId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
+                        .WithMany()
+                        .HasForeignKey("DbManagementId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CustomSqlTool");
+
+                    b.Navigation("DbManagement");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbHealthState", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", null)
+                        .WithOne()
+                        .HasForeignKey("Admin.Service.Data.Entites.DbHealthState", "DbManagementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.DbSemantic", b =>
                 {
                     b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
@@ -429,6 +838,33 @@ namespace Admin.Service.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("DbManagement");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbSemanticMetric", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
+                        .WithMany()
+                        .HasForeignKey("DbManagementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DbManagement");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.DbSemanticRelationship", b =>
+                {
+                    b.HasOne("Admin.Service.Data.Entites.DbManagement", "DbManagement")
+                        .WithMany()
+                        .HasForeignKey("DbManagementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DbManagement");
+                });
+
+            modelBuilder.Entity("Admin.Service.Data.Entites.CustomSqlTool", b =>
+                {
+                    b.Navigation("Revisions");
                 });
 #pragma warning restore 612, 618
         }

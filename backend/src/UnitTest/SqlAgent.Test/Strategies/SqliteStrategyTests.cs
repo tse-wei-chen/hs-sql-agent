@@ -7,6 +7,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using Xunit;
 
@@ -84,6 +85,53 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     }
 
     [Fact]
+    public async Task ExecuteQueryAsync_ShouldPreserveRequestedLimitBelowPolicyMaximum()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition { TableName = TestTableName, Limit = 1 },
+            Fixture.ConnectionString,
+            new SqlExecutionPolicy { QueryMaxRows = 1000, QueryTimeoutSeconds = 30 },
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldUsePolicyMaximumWhenRequestedLimitIsHigher()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition { TableName = TestTableName, Limit = 1000 },
+            Fixture.ConnectionString,
+            new SqlExecutionPolicy { QueryMaxRows = 2, QueryTimeoutSeconds = 30 },
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Equal(2, rows.Count);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShouldPreserveParsedModuloComparisonAndBooleanOperators()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT Age % 10 AS remainder, Age >= 30 AS is_senior, " +
+            "Age >= 30 AND Active = TRUE AS matches FROM Users ORDER BY Id LIMIT 1");
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        var row = Assert.Single(rows!);
+        Assert.Equal(0, row.GetProperty("remainder").GetInt32());
+        Assert.Equal(1, row.GetProperty("is_senior").GetInt32());
+        Assert.Equal(1, row.GetProperty("matches").GetInt32());
+    }
+
+    [Fact]
     public async Task ExecuteDmlAsync_ShouldRejectDeleteWithoutWhere_WhenPolicyRequiresWhere()
     {
         var result = await Strategy.ExecuteDmlAsync(
@@ -133,11 +181,34 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     }
 
     [Fact]
+    public async Task ParsedDml_WithKeywordInsideString_ShouldCompileAndDryRunWithoutChangingData()
+    {
+        var definition = SqlDefinitionParser.ParseDml(
+            "UPDATE Users SET Name = 'where, set' WHERE Id = 1",
+            SqlAgentToolType.Sqlite);
+
+        var result = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            definition,
+            new SqlExecutionPolicy
+            {
+                RequireWhereForUpdate = true,
+                AllowFullTableUpdate = false,
+                DmlMaxAffectedRows = 10
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains("Dry Run Result | affectedRows=1", result);
+        await using var connection = new SqliteConnection(Fixture.ConnectionString);
+        Assert.Equal("Alice", await connection.ExecuteScalarAsync<string>("SELECT Name FROM Users WHERE Id = 1"));
+    }
+
+    [Fact]
     public override async Task GetSchemasAsync_ShouldReturnAvailableSchemas()
     {
         var schemas = await Strategy.GetSchemasAsync(Fixture.ConnectionString, TestContext.Current.CancellationToken);
         Assert.Single(schemas);
-        Assert.Contains("sqlite does not support schemas", schemas[0], StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["main"], schemas);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.Data;
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
 using Auth.Service.Interfaces;
@@ -70,6 +71,12 @@ public class RoleService(IAuthContext context) : IRoleService
             .ToListAsync();
         _context.PermissionActions.RemoveRange(existingPermissionActions);
 
+        var affectedMembers = id is null
+            ? []
+            : await _context.Members
+                .Where(x => x.MemberRoles.Any(mr => mr.RoleId == role.Id))
+                .ToListAsync();
+
         foreach (var template in normalizedPermissionActions.Where(x => templateLookup.Contains((x.PermissionId, x.ActionId))))
         {
             _context.PermissionActions.Add(new PermissionAction
@@ -80,6 +87,9 @@ public class RoleService(IAuthContext context) : IRoleService
             });
         }
 
+        foreach (var member in affectedMembers)
+            member.SecurityVersion++;
+
         await _context.SaveChangesAsync();
 
         return await _context.Roles
@@ -89,15 +99,48 @@ public class RoleService(IAuthContext context) : IRoleService
             .FirstAsync();
     }
 
-    public async Task RemoveRoleAsync(int? id)
+    public async Task<RoleDependencyVM> GetRoleDependenciesAsync(int id)
     {
+        var role = await _context.Roles.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id)
+            ?? throw new InvalidOperationException("Role Not Found");
+        return new RoleDependencyVM
+        {
+            RoleId = role.Id,
+            RoleName = role.Name,
+            Permissions = await _context.PermissionActions.AsNoTracking()
+                .Where(x => x.RoleId == id)
+                .OrderBy(x => x.Permission.Path).ThenBy(x => x.Action.Code)
+                .Select(x => x.Permission.Path + "." + x.Action.Code)
+                .ToListAsync(),
+            Members = await _context.Members.AsNoTracking()
+                .Where(x => x.MemberRoles.Any(mr => mr.RoleId == id))
+                .OrderBy(x => x.Mail)
+                .Select(x => new MemberDependencyVM { Id = x.Id, Username = x.Username, Mail = x.Mail })
+                .ToListAsync()
+        };
+    }
+
+    public async Task RemoveRoleAsync(int? id, bool force = false)
+    {
+        await using var transaction = _context is AuthContext db
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable)
+            : null;
         var role = await _context.Roles.FirstOrDefaultAsync(x => x.Id == id) ?? throw new InvalidOperationException("Role Not Found");
 
         if (IsSuperUser(role.Name))
             throw new InvalidOperationException("Cannot delete the built-in SuperUser role.");
 
+        var affectedMembers = await _context.Members
+            .Where(x => x.MemberRoles.Any(mr => mr.RoleId == role.Id))
+            .ToListAsync();
+        if (affectedMembers.Count > 0 && !force)
+            throw new InvalidOperationException($"Role is assigned to {affectedMembers.Count} member(s). Review dependencies and confirm removal.");
+        foreach (var member in affectedMembers)
+            member.SecurityVersion++;
+
         _context.Roles.Remove(role);
         await _context.SaveChangesAsync();
+        if (transaction is not null) await transaction.CommitAsync();
     }
 
     public async Task<IEnumerable<PermissionActionTemplateVM>> GetPermissionActionTemplatesAsync()

@@ -70,7 +70,134 @@ namespace Auth.Service.Data.Migrations
                             Id = 5,
                             Code = "revoke",
                             Name = "revoke"
+                        },
+                        new
+                        {
+                            Id = 6,
+                            Code = "export",
+                            Name = "export"
                         });
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.AuthSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CurrentRefreshTokenHash")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastUsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TokenFamilyId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("TokenFamilyId");
+
+                    b.ToTable("AuthSessions");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalIdentity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("Provider", "Subject")
+                        .IsUnique();
+
+                    b.ToTable("ExternalIdentities");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalLoginCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CodeHash")
+                        .IsUnique();
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.ToTable("ExternalLoginCodes");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Member", b =>
@@ -79,7 +206,36 @@ namespace Auth.Service.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FailedSignInCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
+
+                    b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LockoutEnd")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Mail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("MfaEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MfaSecretProtected")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedMail")
                         .IsRequired()
                         .HasMaxLength(320)
                         .HasColumnType("TEXT");
@@ -89,6 +245,14 @@ namespace Auth.Service.Data.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("RequirePasswordChangeAtNextSignIn")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SecurityVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1);
+
                     b.Property<string>("Username")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -96,7 +260,7 @@ namespace Auth.Service.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Mail")
+                    b.HasIndex("NormalizedMail")
                         .IsUnique();
 
                     b.ToTable("Members");
@@ -115,6 +279,70 @@ namespace Auth.Service.Data.Migrations
                     b.HasIndex("RoleId");
 
                     b.ToTable("MemberRoles");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.MfaRecoveryCode", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MemberId", "CodeHash")
+                        .IsUnique();
+
+                    b.ToTable("MfaRecoveryCodes");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.PasswordResetToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("PasswordResetTokens");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Permission", b =>
@@ -194,6 +422,12 @@ namespace Auth.Service.Data.Migrations
                             Id = 9,
                             Name = "Security Policy",
                             Path = "/runtime/security"
+                        },
+                        new
+                        {
+                            Id = 10,
+                            Name = "Operability",
+                            Path = "/runtime/operability"
                         });
                 });
 
@@ -401,6 +635,30 @@ namespace Auth.Service.Data.Migrations
                             Id = 26,
                             ActionId = 3,
                             PermissionId = 2
+                        },
+                        new
+                        {
+                            Id = 27,
+                            ActionId = 3,
+                            PermissionId = 5
+                        },
+                        new
+                        {
+                            Id = 28,
+                            ActionId = 6,
+                            PermissionId = 5
+                        },
+                        new
+                        {
+                            Id = 29,
+                            ActionId = 1,
+                            PermissionId = 10
+                        },
+                        new
+                        {
+                            Id = 30,
+                            ActionId = 3,
+                            PermissionId = 10
                         });
                 });
 
@@ -454,6 +712,39 @@ namespace Auth.Service.Data.Migrations
                     b.ToTable("TokenBlacklistEntries");
                 });
 
+            modelBuilder.Entity("Auth.Service.Data.Entites.AuthSession", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany("AuthSessions")
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalIdentity", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany("ExternalIdentities")
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalLoginCode", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany()
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
             modelBuilder.Entity("Auth.Service.Data.Entites.MemberRole", b =>
                 {
                     b.HasOne("Auth.Service.Data.Entites.Member", "Member")
@@ -471,6 +762,28 @@ namespace Auth.Service.Data.Migrations
                     b.Navigation("Member");
 
                     b.Navigation("Role");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.MfaRecoveryCode", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany("MfaRecoveryCodes")
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.PasswordResetToken", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany()
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.PermissionAction", b =>
@@ -528,7 +841,13 @@ namespace Auth.Service.Data.Migrations
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Member", b =>
                 {
+                    b.Navigation("AuthSessions");
+
+                    b.Navigation("ExternalIdentities");
+
                     b.Navigation("MemberRoles");
+
+                    b.Navigation("MfaRecoveryCodes");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Permission", b =>

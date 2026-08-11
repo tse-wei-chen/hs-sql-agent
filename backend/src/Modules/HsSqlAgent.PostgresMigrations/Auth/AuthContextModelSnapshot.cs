@@ -77,7 +77,136 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                             Id = 5,
                             Code = "revoke",
                             Name = "revoke"
+                        },
+                        new
+                        {
+                            Id = 6,
+                            Code = "export",
+                            Name = "export"
                         });
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.AuthSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CurrentRefreshTokenHash")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TokenFamilyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("TokenFamilyId");
+
+                    b.ToTable("AuthSessions");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalIdentity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("Provider", "Subject")
+                        .IsUnique();
+
+                    b.ToTable("ExternalIdentities");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalLoginCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CodeHash")
+                        .IsUnique();
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.ToTable("ExternalLoginCodes");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Member", b =>
@@ -88,7 +217,36 @@ namespace HsSqlAgent.PostgresMigrations.Auth
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedSignInCount")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LockoutEnd")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Mail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<bool>("MfaEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MfaSecretProtected")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("NormalizedMail")
                         .IsRequired()
                         .HasMaxLength(320)
                         .HasColumnType("character varying(320)");
@@ -98,6 +256,14 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
+                    b.Property<bool>("RequirePasswordChangeAtNextSignIn")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("SecurityVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.Property<string>("Username")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -105,7 +271,7 @@ namespace HsSqlAgent.PostgresMigrations.Auth
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Mail")
+                    b.HasIndex("NormalizedMail")
                         .IsUnique();
 
                     b.ToTable("Members");
@@ -124,6 +290,72 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                     b.HasIndex("RoleId");
 
                     b.ToTable("MemberRoles");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.MfaRecoveryCode", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MemberId", "CodeHash")
+                        .IsUnique();
+
+                    b.ToTable("MfaRecoveryCodes");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.PasswordResetToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("MemberId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("PasswordResetTokens");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Permission", b =>
@@ -205,6 +437,12 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                             Id = 9,
                             Name = "Security Policy",
                             Path = "/runtime/security"
+                        },
+                        new
+                        {
+                            Id = 10,
+                            Name = "Operability",
+                            Path = "/runtime/operability"
                         });
                 });
 
@@ -416,6 +654,30 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                             Id = 26,
                             ActionId = 3,
                             PermissionId = 2
+                        },
+                        new
+                        {
+                            Id = 27,
+                            ActionId = 3,
+                            PermissionId = 5
+                        },
+                        new
+                        {
+                            Id = 28,
+                            ActionId = 6,
+                            PermissionId = 5
+                        },
+                        new
+                        {
+                            Id = 29,
+                            ActionId = 1,
+                            PermissionId = 10
+                        },
+                        new
+                        {
+                            Id = 30,
+                            ActionId = 3,
+                            PermissionId = 10
                         });
                 });
 
@@ -473,6 +735,39 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                     b.ToTable("TokenBlacklistEntries");
                 });
 
+            modelBuilder.Entity("Auth.Service.Data.Entites.AuthSession", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany("AuthSessions")
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalIdentity", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany("ExternalIdentities")
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.ExternalLoginCode", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany()
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
             modelBuilder.Entity("Auth.Service.Data.Entites.MemberRole", b =>
                 {
                     b.HasOne("Auth.Service.Data.Entites.Member", "Member")
@@ -490,6 +785,28 @@ namespace HsSqlAgent.PostgresMigrations.Auth
                     b.Navigation("Member");
 
                     b.Navigation("Role");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.MfaRecoveryCode", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany("MfaRecoveryCodes")
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
+                });
+
+            modelBuilder.Entity("Auth.Service.Data.Entites.PasswordResetToken", b =>
+                {
+                    b.HasOne("Auth.Service.Data.Entites.Member", "Member")
+                        .WithMany()
+                        .HasForeignKey("MemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Member");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.PermissionAction", b =>
@@ -547,7 +864,13 @@ namespace HsSqlAgent.PostgresMigrations.Auth
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Member", b =>
                 {
+                    b.Navigation("AuthSessions");
+
+                    b.Navigation("ExternalIdentities");
+
                     b.Navigation("MemberRoles");
+
+                    b.Navigation("MfaRecoveryCodes");
                 });
 
             modelBuilder.Entity("Auth.Service.Data.Entites.Permission", b =>

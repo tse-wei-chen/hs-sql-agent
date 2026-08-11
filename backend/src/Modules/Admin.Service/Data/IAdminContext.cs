@@ -8,8 +8,14 @@ public interface IAdminContext
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<McpAccessKey> McpAccessKeys { get; }
     DbSet<CustomSqlTool> CustomSqlTools { get; }
+    DbSet<CustomSqlToolRevision> CustomSqlToolRevisions { get; }
     DbSet<DbManagement> DbManagement { get; }
     DbSet<DbSemantic> DbSemantics { get; }
+    DbSet<DbSemanticRelationship> DbSemanticRelationships { get; }
+    DbSet<DbSemanticMetric> DbSemanticMetrics { get; }
     DbSet<SecurityPolicySettings> SecurityPolicySettings { get; }
+    DbSet<DbHealthState> DbHealthStates { get; }
+    DbSet<RateLimitMetric> RateLimitMetrics { get; }
+    DbSet<OutboundDelivery> OutboundDeliveries { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

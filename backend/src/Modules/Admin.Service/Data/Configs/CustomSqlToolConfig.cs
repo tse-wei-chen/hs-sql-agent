@@ -18,7 +18,7 @@ public class CustomSqlToolConfig : IEntityTypeConfiguration<CustomSqlTool>
             .IsRequired()
             .HasMaxLength(500);
 
-        builder.Property(x => x.DefinitionJson)
+        builder.Property(x => x.SqlTemplate)
             .IsRequired();
 
         builder.Property(x => x.Type)
@@ -26,6 +26,23 @@ public class CustomSqlToolConfig : IEntityTypeConfiguration<CustomSqlTool>
             .HasMaxLength(20);
 
         builder.Property(x => x.ParametersJson);
+
+        builder.Property(x => x.Status)
+            .IsRequired()
+            .HasMaxLength(20);
+
+        builder.Property(x => x.PublishedIdentity).HasMaxLength(220);
+        builder.HasIndex(x => x.PublishedIdentity).IsUnique();
+
+        builder.HasOne(x => x.DbManagement)
+            .WithMany()
+            .HasForeignKey(x => x.DbManagementId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(x => x.PublishedRevision)
+            .WithMany()
+            .HasForeignKey(x => x.PublishedRevisionId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.Property(x => x.CreatedAt)
             .IsRequired();

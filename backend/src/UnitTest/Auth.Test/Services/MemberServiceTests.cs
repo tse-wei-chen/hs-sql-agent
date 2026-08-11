@@ -91,6 +91,7 @@ public class MemberServiceTests
         Assert.Equal(1, result.Id);
         Assert.Contains("Admin", result.Roles);
         Assert.Contains("User", result.Roles);
+        Assert.Equal(2, member.SecurityVersion);
     }
 
     [Fact]
@@ -125,6 +126,81 @@ public class MemberServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _service.DeleteMemberAsync(999));
+    }
+
+    [Fact]
+    public async Task UpdateMemberStatusAsync_DisablesMemberAndInvalidatesSessions()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "user@test.com",
+            Username = "user",
+            PasswordHash = "h",
+            IsActive = true,
+            SecurityVersion = 3,
+            MemberRoles = []
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        var result = await _service.UpdateMemberStatusAsync(
+            1,
+            new UpdateMemberStatusRequest { IsActive = false },
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsActive);
+        Assert.False(member.IsActive);
+        Assert.Equal(4, member.SecurityVersion);
+    }
+
+    [Fact]
+    public async Task UpdateMemberStatusAsync_RejectsDisablingLastActiveSuperUser()
+    {
+        var superRole = new Role { Id = 1, Name = AuthService.SuperUserRoleName };
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "admin@test.com",
+            Username = "admin",
+            PasswordHash = "h",
+            IsActive = true,
+            MemberRoles = [new MemberRole { RoleId = 1, Role = superRole }]
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.UpdateMemberStatusAsync(
+                1,
+                new UpdateMemberStatusRequest { IsActive = false },
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("active SuperUser", exception.Message);
+        Assert.True(member.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateMemberRolesAsync_RejectsUnknownRoleIds()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "user@test.com",
+            Username = "user",
+            PasswordHash = "h",
+            MemberRoles = []
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+        _contextMock.Setup(c => c.Roles).ReturnsDbSet(new List<Role>
+        {
+            new() { Id = 1, Name = "User" }
+        });
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _service.UpdateMemberRolesAsync(
+                1,
+                new UpdateMemberRolesRequest { RoleIds = [1, 999] },
+                TestContext.Current.CancellationToken));
     }
 
     [Fact]

@@ -15,6 +15,7 @@ public class DbSemanticConfig : IEntityTypeConfiguration<DbSemantic>
         builder.Property(x => x.SchemaName).HasMaxLength(256);
         builder.Property(x => x.Description).HasMaxLength(2000);
         builder.Property(x => x.DisplayName).HasMaxLength(256);
+        builder.Property(x => x.SynonymsJson).HasMaxLength(4000);
 
         builder.HasOne(x => x.DbManagement)
             .WithMany()

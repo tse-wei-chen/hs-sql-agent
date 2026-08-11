@@ -28,6 +28,12 @@ export default defineNuxtConfig({
     "/api/**": {
       proxy: "http://localhost:8080/api/**",
     },
+    "/mcp": {
+      proxy: "http://localhost:8080/mcp",
+    },
+    "/mcp/**": {
+      proxy: "http://localhost:8080/mcp/**",
+    },
   },
 
   $production: {

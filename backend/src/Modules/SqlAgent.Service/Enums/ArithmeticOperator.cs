@@ -6,5 +6,14 @@ public enum ArithmeticOperator
     Subtract,
     Multiply,
     Divide,
-    Concat
+    Modulo,
+    Concat,
+    Equal,
+    NotEqual,
+    GreaterThan,
+    LessThan,
+    GreaterThanOrEqual,
+    LessThanOrEqual,
+    And,
+    Or
 }

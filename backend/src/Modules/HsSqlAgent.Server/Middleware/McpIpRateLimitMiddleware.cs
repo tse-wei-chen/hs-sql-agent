@@ -5,7 +5,8 @@ namespace HsSqlAgent.Server.Middleware;
 
 public sealed class McpIpRateLimitMiddleware(
     IRateLimitingRuntimeState runtimeState,
-    IRequestRateLimiter rateLimiter) : IMiddleware
+    IRequestRateLimiter rateLimiter,
+    IOperationalMetricRecorder metrics) : IMiddleware
 {
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
@@ -26,6 +27,7 @@ public sealed class McpIpRateLimitMiddleware(
 
         if (!result.IsAllowed)
         {
+            metrics.RecordRateLimit("ip");
             await WriteRejectedResponseAsync(context, result.RetryAfter);
             return;
         }

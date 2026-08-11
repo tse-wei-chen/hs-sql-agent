@@ -10,8 +10,7 @@ public class RateLimitingRuntimeState(IConfiguration configuration) : IRateLimit
     private RateLimitingSettings _current = new()
     {
         PermitLimit = ParseInt(configuration["RateLimiting:PermitLimit"], 0),
-        WindowSeconds = ParseInt(configuration["RateLimiting:WindowSeconds"], 0),
-        QueueLimit = ParseInt(configuration["RateLimiting:QueueLimit"], 0)
+        WindowSeconds = ParseInt(configuration["RateLimiting:WindowSeconds"], 0)
     };
 
     public RateLimitingSettings GetCurrent()
@@ -21,8 +20,7 @@ public class RateLimitingRuntimeState(IConfiguration configuration) : IRateLimit
             return new RateLimitingSettings
             {
                 PermitLimit = _current.PermitLimit,
-                WindowSeconds = _current.WindowSeconds,
-                QueueLimit = _current.QueueLimit
+                WindowSeconds = _current.WindowSeconds
             };
         }
     }
@@ -34,8 +32,7 @@ public class RateLimitingRuntimeState(IConfiguration configuration) : IRateLimit
             _current = new RateLimitingSettings
             {
                 PermitLimit = settings.PermitLimit,
-                WindowSeconds = settings.WindowSeconds,
-                QueueLimit = settings.QueueLimit
+                WindowSeconds = settings.WindowSeconds
             };
         }
     }

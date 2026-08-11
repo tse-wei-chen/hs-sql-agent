@@ -8,13 +8,22 @@ using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Common.Models;
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
 
 namespace Admin.Service.Services;
 
-public class AuditService(IAdminContext context, IHttpContextAccessor httpContextAccessor) : IAuditService
+public class AuditService(
+    IAdminContext context,
+    IHttpContextAccessor httpContextAccessor,
+    IOptions<OperabilitySettings>? operabilitySettings = null,
+    IEnumerable<IAuditMetricSink>? metricSinks = null) : IAuditService
 {
+    private static readonly SemaphoreSlim FallbackFileLock = new(1, 1);
     private readonly IAdminContext _context = context;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
+    private readonly OperabilitySettings _operabilitySettings = operabilitySettings?.Value ?? new();
+    private readonly IReadOnlyCollection<IAuditMetricSink> _metricSinks = metricSinks?.ToArray() ?? [];
 
     public async Task WriteAsync(
         string action,
@@ -68,6 +77,9 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
         string? detail = null,
         CancellationToken cancellationToken = default)
     {
+        foreach (var sink in _metricSinks)
+            sink.Record(action, result, eventContext);
+
         var httpContext = _httpContextAccessor.HttpContext;
         var inferred = CreateHttpContext();
         var actorId = httpContext?.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
@@ -262,6 +274,44 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
             .Select(x => x.Value)];
     }
 
+    public async Task<IReadOnlyCollection<AuditLogItem>> ExportAsync(
+        AuditLogFilter filter,
+        int maxRows = 100_000,
+        CancellationToken cancellationToken = default)
+    {
+        var query = ApplyFilter(_context.AuditLogs.AsNoTracking(), filter);
+        return await query.OrderByDescending(x => x.CreatedAt)
+            .Take(Math.Clamp(maxRows, 1, 100_001))
+            .Select(x => new AuditLogItem
+            {
+                Id = x.Id, EventId = x.EventId, ActorType = x.ActorType, ActorId = x.ActorId,
+                Action = x.Action, Target = x.Target, Detail = x.Detail, Result = x.Result,
+                IpAddress = x.IpAddress, UserAgent = x.UserAgent, RequestId = x.RequestId,
+                SessionId = x.SessionId, AccessKeyId = x.AccessKeyId, DbManagementId = x.DbManagementId,
+                DatabaseName = x.DatabaseName, ToolName = x.ToolName, Operation = x.Operation,
+                DurationMs = x.DurationMs, ReturnedRows = x.ReturnedRows, AffectedRows = x.AffectedRows,
+                ApprovalStatus = x.ApprovalStatus, ErrorCategory = x.ErrorCategory,
+                Definition = x.Definition, CreatedAt = x.CreatedAt
+            }).ToListAsync(cancellationToken);
+    }
+
+    private static IQueryable<AuditLog> ApplyFilter(IQueryable<AuditLog> query, AuditLogFilter filter)
+    {
+        if (!string.IsNullOrWhiteSpace(filter.Action)) query = query.Where(x => x.Action == filter.Action);
+        if (!string.IsNullOrWhiteSpace(filter.Keyword)) query = query.Where(x =>
+            (x.Target != null && x.Target.Contains(filter.Keyword)) ||
+            (x.Detail != null && x.Detail.Contains(filter.Keyword)) ||
+            (x.ActorId != null && x.ActorId.Contains(filter.Keyword)));
+        if (filter.From.HasValue) query = query.Where(x => x.CreatedAt >= filter.From.Value);
+        if (filter.To.HasValue) query = query.Where(x => x.CreatedAt <= filter.To.Value);
+        if (!string.IsNullOrWhiteSpace(filter.Result)) query = query.Where(x => x.Result == filter.Result);
+        if (!string.IsNullOrWhiteSpace(filter.Actor)) query = query.Where(x => x.ActorId == filter.Actor || x.ActorType == filter.Actor);
+        if (filter.DbManagementId.HasValue) query = query.Where(x => x.DbManagementId == filter.DbManagementId);
+        if (filter.AccessKeyId.HasValue) query = query.Where(x => x.AccessKeyId == filter.AccessKeyId);
+        if (!string.IsNullOrWhiteSpace(filter.ToolName)) query = query.Where(x => x.ToolName == filter.ToolName);
+        return query;
+    }
+
     private AuditEventContext CreateHttpContext()
     {
         var context = _httpContextAccessor.HttpContext;
@@ -288,7 +338,21 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
     private async Task PersistAsync(AuditLog item, CancellationToken cancellationToken)
     {
         _context.AuditLogs.Add(item);
+        if (!string.IsNullOrWhiteSpace(_operabilitySettings.SiemWebhookUrl))
+        {
+            _context.OutboundDeliveries.Add(new OutboundDelivery
+            {
+                Category = "siem",
+                DedupeKey = $"siem:{item.EventId:N}",
+                TargetUrl = _operabilitySettings.SiemWebhookUrl,
+                Payload = JsonSerializer.Serialize(item),
+                Status = "pending",
+                CreatedAt = DateTime.UtcNow,
+                NextAttemptAt = DateTime.UtcNow
+            });
+        }
         const int maxAttempts = 3;
+        Exception? lastException = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
@@ -300,10 +364,41 @@ public class AuditService(IAdminContext context, IHttpContextAccessor httpContex
             {
                 throw;
             }
-            catch when (attempt < maxAttempts)
+            catch (Exception exception)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), cancellationToken);
+                lastException = exception;
+                if (attempt < maxAttempts)
+                    await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), cancellationToken);
             }
+        }
+
+        await PersistFallbackAsync(item, lastException!, cancellationToken);
+    }
+
+    private async Task PersistFallbackAsync(
+        AuditLog item,
+        Exception persistenceError,
+        CancellationToken cancellationToken)
+    {
+        var path = Path.GetFullPath(_operabilitySettings.AuditFallbackPath, AppContext.BaseDirectory);
+        var directory = Path.GetDirectoryName(path)
+            ?? throw new InvalidOperationException("Audit fallback path must include a directory.");
+        Directory.CreateDirectory(directory);
+        var envelope = JsonSerializer.Serialize(new
+        {
+            fallbackRecordedAt = DateTime.UtcNow,
+            persistenceError = persistenceError.GetType().Name,
+            auditEvent = item
+        });
+
+        await FallbackFileLock.WaitAsync(cancellationToken);
+        try
+        {
+            await File.AppendAllTextAsync(path, envelope + Environment.NewLine, cancellationToken);
+        }
+        finally
+        {
+            FallbackFileLock.Release();
         }
     }
 

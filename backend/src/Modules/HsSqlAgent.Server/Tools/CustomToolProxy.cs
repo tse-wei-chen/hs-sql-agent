@@ -12,6 +12,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Validation;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
@@ -38,12 +39,6 @@ public class CustomToolProxy(
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
-    private static readonly JsonSerializerOptions _jsonOptions = new(McpJsonUtilities.DefaultOptions)
-    {
-        AllowOutOfOrderMetadataProperties = true,
-        PropertyNameCaseInsensitive = true
-    };
-
     public async Task<string> Execute(
         JsonElement arguments,
         McpServer? server = null,
@@ -65,7 +60,8 @@ public class CustomToolProxy(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        var parameters = new Dictionary<string, object>();
+        long approvalWaitDurationMs = 0;
+        var parameters = new Dictionary<string, object?>();
         if (arguments.ValueKind == JsonValueKind.Object)
         {
             foreach (var prop in arguments.EnumerateObject())
@@ -75,14 +71,25 @@ public class CustomToolProxy(
         CustomSqlTool? tool = null;
         QueryDefinition? auditQuery = null;
         DmlDefinition? auditDml = null;
-        string finalDefinitionJson = "";
+        string renderedSql = "";
         try
         {
+            ValidateToolAccess();
             var sqlConfig = ResolveSqlConfig();
-            tool = await _customSqlToolService.GetToolByNameAsync(_name);
+            var dbManagementId = ResolveDbManagementId();
+            if (dbManagementId is null)
+            {
+                var error = "Error: The authenticated key is not bound to a database.";
+                await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
+                return error;
+            }
+            tool = await _customSqlToolService.GetPublishedToolByNameAsync(
+                _name,
+                dbManagementId.Value,
+                cancellationToken);
             if (tool == null)
             {
-                var error = $"Error: Tool '{_name}' not found.";
+                var error = $"Error: Published tool '{_name}' is not available for this database.";
                 await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
                 return error;
             }
@@ -101,7 +108,7 @@ public class CustomToolProxy(
                 return error;
             }
 
-            finalDefinitionJson = ReplaceParameters(tool.DefinitionJson, parameters);
+            renderedSql = CustomToolSqlTemplate.Render(tool.SqlTemplate, tool.ParametersJson, parameters);
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 
             string result;
@@ -110,7 +117,7 @@ public class CustomToolProxy(
 
             if (isQuery)
             {
-                var queryDef = JsonSerializer.Deserialize<QueryDefinition>(finalDefinitionJson, _jsonOptions);
+                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(renderedSql), dbType);
                 auditQuery = queryDef;
                 if (queryDef == null)
                 {
@@ -141,7 +148,7 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var dmlDef = JsonSerializer.Deserialize<DmlDefinition>(finalDefinitionJson, _jsonOptions);
+                var dmlDef = SqlDefinitionParser.ParseDml(renderedSql, dbType);
                 auditDml = dmlDef;
                 if (dmlDef == null)
                 {
@@ -159,12 +166,14 @@ public class CustomToolProxy(
                     return result;
                 }
 
-                result = await ExecuteDmlWithApprovalAsync(
+                var dmlExecution = await ExecuteDmlWithApprovalAsync(
                     strategy,
                     sqlConfig.ConnectionString,
                     dmlDef,
                     approvalClient,
                     cancellationToken);
+                result = dmlExecution.Result;
+                approvalWaitDurationMs += dmlExecution.ApprovalWaitDurationMs;
 
                 if (!result.StartsWith("Success", StringComparison.Ordinal))
                 {
@@ -179,7 +188,7 @@ public class CustomToolProxy(
                         {
                             ToolName = _name,
                             Operation = dmlDef.Operation.ToString().ToLowerInvariant(),
-                            DurationMs = stopwatch.ElapsedMilliseconds,
+                            DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                             AffectedRows = ParseAffectedRows(result),
                             ApprovalStatus = auditResult == "cancelled" ? "declined" : "not-completed",
                             Definition = DescribeDml(dmlDef)
@@ -204,7 +213,9 @@ public class CustomToolProxy(
                 {
                     ToolName = _name,
                     Operation = isQuery ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
-                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    DurationMs = isDml
+                        ? ProcessingDuration(stopwatch, approvalWaitDurationMs)
+                        : stopwatch.ElapsedMilliseconds,
                     ReturnedRows = isQuery ? CountJsonRows(result) : null,
                     AffectedRows = isDml ? ParseAffectedRows(result) : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
@@ -226,7 +237,9 @@ public class CustomToolProxy(
                 {
                     ToolName = _name,
                     Operation = auditQuery != null ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
-                    DurationMs = stopwatch.ElapsedMilliseconds,
+                    DurationMs = auditDml == null
+                        ? stopwatch.ElapsedMilliseconds
+                        : ProcessingDuration(stopwatch, approvalWaitDurationMs),
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQuery != null
                         ? DescribeQuery(auditQuery)
@@ -236,11 +249,11 @@ public class CustomToolProxy(
                 cancellationToken);
             var toolType = tool?.Type ?? "Unknown";
             var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase) ? "execute_query_sql" : "execute_dml_sql";
-            return $"Error: {ex.Message}\nerror definition: {finalDefinitionJson}\nplease fix the parameters or definition and use '{suggestedTool}' tools to try again.";
+            return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
         }
     }
 
-    private async Task<string> ExecuteDmlWithApprovalAsync(
+    private async Task<DmlExecutionTiming> ExecuteDmlWithApprovalAsync(
         ISqlStrategy strategy,
         string connectionString,
         DmlDefinition dml,
@@ -249,8 +262,10 @@ public class CustomToolProxy(
     {
         if (approvalClient?.SupportsElicitation != true)
         {
-            return "Error: This MCP client does not support the interactive confirmation required for DML execution.";
+            return new("Error: This MCP client does not support the interactive confirmation required for DML execution.", 0);
         }
+
+        long approvalWaitDurationMs = 0;
 
         // ConfirmToken is an internal dry-run artifact. Never trust a token
         // supplied through a stored definition or a caller-controlled parameter.
@@ -260,7 +275,7 @@ public class CustomToolProxy(
         await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
-                return "Server busy: maximum concurrent SQL operations reached.";
+                return new("Server busy: maximum concurrent SQL operations reached.", approvalWaitDurationMs);
             dryRunResult = await strategy.ExecuteDmlAsync(
                 connectionString,
                 dml,
@@ -269,7 +284,7 @@ public class CustomToolProxy(
         }
         if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
         {
-            return dryRunResult;
+            return new(dryRunResult, approvalWaitDurationMs);
         }
 
         var affectedMatch = System.Text.RegularExpressions.Regex.Match(
@@ -282,49 +297,66 @@ public class CustomToolProxy(
             System.Text.RegularExpressions.RegexOptions.CultureInvariant);
         if (!affectedMatch.Success || !tokenMatch.Success)
         {
-            return "Error: Unable to verify the DML dry-run result.";
+            return new("Error: Unable to verify the DML dry-run result.", approvalWaitDurationMs);
         }
 
         var affectedRows = affectedMatch.Groups[1].Value;
-        var elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
+        ElicitResult elicitResult;
+        var approvalStopwatch = Stopwatch.StartNew();
+        try
         {
-            Message =
-                $"Custom tool '{_name}' requests {dml.Operation} on {dml.TableName} — " +
-                $"{affectedRows} row(s) affected.",
-            RequestedSchema = new RequestSchema
+            elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
             {
-                Properties =
+                Message =
+                    $"Custom tool '{_name}' requests {dml.Operation} on {dml.TableName} — " +
+                    $"{affectedRows} row(s) affected.",
+                RequestedSchema = new RequestSchema
                 {
-                    ["approve"] = new BooleanSchema
+                    Properties =
                     {
-                        Title = "Approve execution",
-                        Description =
-                            $"This will {dml.Operation.ToString().ToLowerInvariant()} " +
-                            $"{affectedRows} row(s) in {dml.TableName}"
+                        ["approve"] = new BooleanSchema
+                        {
+                            Title = "Approve execution",
+                            Description =
+                                $"This will {dml.Operation.ToString().ToLowerInvariant()} " +
+                                $"{affectedRows} row(s) in {dml.TableName}"
+                        }
                     }
                 }
-            }
-        }, cancellationToken);
+            }, cancellationToken);
+        }
+        finally
+        {
+            approvalWaitDurationMs += approvalStopwatch.ElapsedMilliseconds;
+        }
 
         if (elicitResult.Action != "accept"
             || elicitResult.Content?.TryGetValue("approve", out var approveElement) != true
             || approveElement.ValueKind != JsonValueKind.True)
         {
-            return "DML execution cancelled by user.";
+            return new("DML execution cancelled by user.", approvalWaitDurationMs);
         }
 
         dml.ConfirmToken = tokenMatch.Groups[1].Value;
         await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
-                return "Server busy: maximum concurrent SQL operations reached.";
-            return await strategy.ExecuteDmlAsync(
+                return new("Server busy: maximum concurrent SQL operations reached.", approvalWaitDurationMs);
+            var finalResult = await strategy.ExecuteDmlAsync(
                 connectionString,
                 dml,
                 executionPolicy,
                 cancellationToken);
+            return new(finalResult, approvalWaitDurationMs);
         }
     }
+
+    private readonly record struct DmlExecutionTiming(
+        string Result,
+        long ApprovalWaitDurationMs);
+
+    private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
+        => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
     private SqlExecutionPolicy ResolveExecutionPolicy()
     {
@@ -402,22 +434,13 @@ public class CustomToolProxy(
         };
     }
 
-    private static string ReplaceParameters(string json, Dictionary<string, object> parameters)
+    private int? ResolveDbManagementId()
     {
-        if (parameters == null || parameters.Count == 0) return json;
-        foreach (var param in parameters)
-        {
-            var key = System.Text.RegularExpressions.Regex.Escape(param.Key);
-
-            // "{{key}}" — placeholder inside a JSON string (lookbehind/lookahead verify quotes)
-            var innerPattern = @"\{\{\s*" + key + @"\s*\}\}";
-            var quotedPattern = @"(?<="")" + innerPattern + @"(?="")";
-            json = System.Text.RegularExpressions.Regex.Replace(json, quotedPattern, (param.Value?.ToString() ?? "null").Replace("\"", "\\\""));
-
-            // {{key}} — bare placeholder: serialize as proper JSON token (type-aware)
-            json = System.Text.RegularExpressions.Regex.Replace(json, innerPattern, System.Text.Json.JsonSerializer.Serialize(param.Value));
-        }
-        return json;
+        var context = _httpContextAccessor.HttpContext;
+        return context?.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var value) == true
+            && value is int id
+            ? id
+            : null;
     }
 
     private HashSet<string>? ResolveTableWhitelist()
@@ -430,18 +453,29 @@ public class CustomToolProxy(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
+    private void ValidateToolAccess()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context == null) return;
+        var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string;
+        if (string.IsNullOrWhiteSpace(allowedTools)) return;
+        var allowed = allowedTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(x => string.Equals(x, _name, StringComparison.OrdinalIgnoreCase));
+        if (!allowed)
+            throw new UnauthorizedAccessException($"API key does not have permission to use tool: {_name}");
+    }
+
     private void ValidateAllTableAccess(QueryDefinition queryDef)
     {
         var whitelist = ResolveTableWhitelist();
         if (whitelist is null or { Count: 0 }) return;
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(queryDef.Alias)) aliases.Add(queryDef.Alias);
         SqlAgentTool.CollectReferencesAndAliases(queryDef.TableName, queryDef.Joins, queryDef.CombineConditions, queryDef.CteConditions, queryDef.FromQuery, queryDef.SelectColumns, queryDef.WhereColumnsAndValues, referenced, aliases);
         SqlAgentTool.CollectFromHavingConditions(queryDef.HavingConditions, referenced, aliases);
         SqlAgentTool.CollectFromOrderByConditions(queryDef.OrderByColumns, referenced, aliases);
         SqlAgentTool.CollectFromGroupByConditions(queryDef.GroupByConditions, referenced, aliases);
-        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
@@ -453,7 +487,7 @@ public class CustomToolProxy(
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         SqlAgentTool.CollectReferencesAndAliases(dmlDef.TableName, null, null, null, dmlDef.FromQuery, null, dmlDef.WhereConditions, referenced, aliases);
-        var violations = referenced.Where(t => !aliases.Contains(t)).Where(t => !whitelist.Contains(t)).ToList();
+        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }

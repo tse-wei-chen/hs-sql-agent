@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -9,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getRuntimeAudit } from "@/api/runtime";
+import { dryRunAuditRetention, executeAuditRetention, exportRuntimeAudit, getAuditRetentionPolicy, getRuntimeAudit } from "@/api/runtime";
 
 definePageMeta({
   layout: "default",
@@ -41,6 +42,13 @@ interface AuditItem {
   createdAt: string;
 }
 
+interface AuditRetentionPolicy {
+  enabled: boolean;
+  retentionDays: number;
+  mode: string;
+  runHourUtc: number;
+}
+
 const page = ref(1);
 const pageSize = ref(20);
 const action = ref("");
@@ -55,6 +63,23 @@ const toolName = ref("");
 const totalCount = ref(0);
 const items = ref<AuditItem[]>([]);
 const loading = ref(false);
+const retentionResult = ref<any>(null);
+const retentionPolicy = ref<AuditRetentionPolicy | null>(null);
+const retentionLoading = ref(false);
+const retentionError = ref("");
+const { $can } = useNuxtApp();
+
+const currentFilters = () => ({
+  action: action.value || undefined,
+  keyword: keyword.value || undefined,
+  from: from.value ? new Date(`${from.value}T00:00:00`).toISOString() : undefined,
+  to: to.value ? new Date(`${to.value}T23:59:59.999`).toISOString() : undefined,
+  result: resultFilter.value || undefined,
+  actor: actor.value || undefined,
+  dbManagementId: dbManagementId.value || undefined,
+  accessKeyId: accessKeyId.value || undefined,
+  toolName: toolName.value || undefined,
+});
 
 const load = async () => {
   loading.value = true;
@@ -62,22 +87,47 @@ const load = async () => {
     const result = await getRuntimeAudit(
       page.value,
       pageSize.value,
-      {
-        action: action.value || undefined,
-        keyword: keyword.value || undefined,
-        from: from.value ? new Date(`${from.value}T00:00:00`).toISOString() : undefined,
-        to: to.value ? new Date(`${to.value}T23:59:59.999`).toISOString() : undefined,
-        result: resultFilter.value || undefined,
-        actor: actor.value || undefined,
-        dbManagementId: dbManagementId.value || undefined,
-        accessKeyId: accessKeyId.value || undefined,
-        toolName: toolName.value || undefined,
-      },
+      currentFilters(),
     );
     items.value = result.items || [];
     totalCount.value = result.totalCount || 0;
   } finally {
     loading.value = false;
+  }
+};
+
+const exportAudit = async (format: "csv" | "json") => {
+  const blob = await exportRuntimeAudit(format, currentFilters());
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a"); link.href = url; link.download = `audit-${new Date().toISOString()}.${format}`; link.click();
+  URL.revokeObjectURL(url);
+};
+const loadRetentionPolicy = async () => {
+  retentionLoading.value = true;
+  retentionError.value = "";
+  try {
+    retentionPolicy.value = await getAuditRetentionPolicy();
+  } catch {
+    retentionError.value = "Unable to load the configured retention policy.";
+  } finally {
+    retentionLoading.value = false;
+  }
+};
+
+const previewRetention = async () => {
+  try {
+    retentionResult.value = await dryRunAuditRetention();
+  } catch (error: any) {
+    toast.error(error?.response?.data || "Failed to preview audit retention.");
+  }
+};
+const runRetention = async () => {
+  if (!confirm("Delete/archive all audit rows shown by the retention dry-run?")) return;
+  try {
+    retentionResult.value = await executeAuditRetention();
+    await load();
+  } catch (error: any) {
+    toast.error(error?.response?.data || "Failed to run audit retention.");
   }
 };
 
@@ -93,7 +143,12 @@ const prevPage = async () => {
   await load();
 };
 
-onMounted(load);
+onMounted(async () => {
+  await Promise.all([
+    load(),
+    $can("/runtime/audit.edit") ? loadRetentionPolicy() : Promise.resolve(),
+  ]);
+});
 </script>
 
 <template>
@@ -115,6 +170,23 @@ onMounted(load);
           <Input v-model="from" type="date" aria-label="From date" />
           <Input v-model="to" type="date" aria-label="To date" />
           <Button @click="load">Search</Button>
+          <Button v-if="$can('/runtime/audit.export')" variant="outline" @click="exportAudit('csv')">Export CSV</Button>
+          <Button v-if="$can('/runtime/audit.export')" variant="outline" @click="exportAudit('json')">Export JSON</Button>
+        </div>
+
+        <div v-if="$can('/runtime/audit.edit')" class="mb-4 rounded border p-3 text-sm">
+          <div class="font-medium">Retention policy</div>
+          <div v-if="retentionLoading" class="mt-2 text-muted-foreground">Loading retention policy...</div>
+          <div v-else-if="retentionError" class="mt-2 text-destructive">{{ retentionError }}</div>
+          <div v-else-if="retentionPolicy && !retentionPolicy.enabled" class="mt-2 text-muted-foreground">
+            Disabled. Set <code>Operability:AuditRetentionDays</code> to a positive value and restart the service to enable automatic and manual retention.
+          </div>
+          <div v-else-if="retentionPolicy" class="mt-2 flex flex-wrap items-center gap-2">
+            <span class="text-muted-foreground">{{ retentionPolicy.mode }} records older than {{ retentionPolicy.retentionDays }} days · scheduled at {{ retentionPolicy.runHourUtc }}:00 UTC</span>
+            <Button size="sm" variant="outline" @click="previewRetention">Dry run</Button>
+            <Button size="sm" variant="destructive" :disabled="!retentionResult?.dryRun" @click="runRetention">Run configured retention</Button>
+            <span v-if="retentionResult" class="text-muted-foreground">{{ retentionResult.matchingCount }} rows before {{ retentionResult.cutoff }} · {{ retentionResult.mode }}<template v-if="retentionResult.deletedCount"> · deleted {{ retentionResult.deletedCount }}</template></span>
+          </div>
         </div>
 
         <div v-if="loading">Loading audit logs...</div>

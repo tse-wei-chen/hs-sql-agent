@@ -135,6 +135,34 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         await CleanupInsertedDmlRecord(dml);
     }
 
+    [Fact]
+    public async Task ExecuteDmlAsync_ShouldBindConfirmationTokenToCompleteDefinition()
+    {
+        var approvedDefinition = CreateInsertDml();
+        ValidateDml(approvedDefinition);
+        var dryRun = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            approvedDefinition,
+            TestContext.Current.CancellationToken);
+        var tokenStart = dryRun.IndexOf("TokenRequired=", StringComparison.Ordinal);
+        if (tokenStart < 0) return;
+        var start = tokenStart + 14;
+        var end = dryRun.IndexOf(" |", start, StringComparison.Ordinal);
+
+        var differentDefinition = CreateInsertDml();
+        var mutableValue = differentDefinition.Values?.FirstOrDefault(value => value.Value is string);
+        Assert.NotNull(mutableValue);
+        mutableValue.Value = $"{mutableValue.Value}-different-{Guid.NewGuid():N}";
+        differentDefinition.ConfirmToken = dryRun[start..end];
+
+        var result = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            differentDefinition,
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Dry Run Result", result);
+    }
+
     private async Task CleanupInsertedDmlRecord(DmlDefinition dml)
     {
         if (dml.Operation != DmlOperation.Insert || dml.Values == null || dml.Values.Count == 0)

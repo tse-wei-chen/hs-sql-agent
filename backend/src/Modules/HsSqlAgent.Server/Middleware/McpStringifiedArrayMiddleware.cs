@@ -9,7 +9,7 @@ public class McpStringifiedArrayMiddleware(RequestDelegate next)
 
     public async Task InvokeAsync(HttpContext context)
     {
-        if (context.Request.Path.StartsWithSegments("/mcp") && context.Request.Method == "POST")
+        if (context.Request.Method == "POST")
         {
             context.Request.EnableBuffering();
 

@@ -65,9 +65,10 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {
-        // SQLite does not support multiple schemas in the same way as other RDBMS.
-        // Returning an empty list or a list with a single default schema.
-        return ["sqlite does not support schemas, please use get_tables to see available tables."];
+        // SQLite exposes the primary database as "main" and supports qualified
+        // references such as main.orders. Returning a real identifier keeps
+        // table-whitelist values executable and comparable with parsed SQL.
+        return ["main"];
     }
 
     public override async Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default)

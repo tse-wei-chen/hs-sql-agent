@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Edit2, Save, Trash2, UserPlus, X } from "@lucide/vue";
+import { Edit2, LogOut, Power, PowerOff, Save, Trash2, UserPlus, X } from "@lucide/vue";
 import FormField from "@/components/FormField.vue";
 import PasswordInput from "@/components/PasswordInput.vue";
 import {
@@ -21,6 +21,9 @@ import {
   deleteMember,
   listMembers,
   updateMemberRoles,
+  updateMemberStatus,
+  revokeMemberSessions,
+  requireMemberPasswordChange,
   type Member,
 } from "~/api/member";
 import {
@@ -70,6 +73,11 @@ const loading = ref(false);
 const saving = ref(false);
 const editingId = ref<number | null>(null);
 const loadError = ref("");
+const search = ref("");
+const statusFilter = ref("");
+const roleFilter = ref("");
+const page = ref(1);
+const totalCount = ref(0);
 
 const roleMap = computed(() => new Map(roles.value.map((role) => [role.id, role])));
 
@@ -99,8 +107,15 @@ const load = async () => {
   loading.value = true;
   loadError.value = "";
   try {
-    const [memberData, roleData] = await Promise.all([listMembers(), listRoles()]);
-    members.value = memberData;
+    const [memberData, roleData] = await Promise.all([listMembers({
+      search: search.value || undefined,
+      isActive: statusFilter.value === "" ? undefined : statusFilter.value === "active",
+      roleId: roleFilter.value || undefined,
+      page: page.value,
+      pageSize: 20,
+    }), listRoles()]);
+    members.value = memberData.items;
+    totalCount.value = memberData.totalCount;
     roles.value = roleData;
   } catch (error: any) {
     loadError.value = error?.response?.data || "Failed to load users.";
@@ -165,6 +180,39 @@ const remove = async (member: Member) => {
   }
 };
 
+const toggleStatus = async (member: Member) => {
+  const action = member.isActive ? "disable" : "enable";
+  if (!confirm(`${action[0].toUpperCase()}${action.slice(1)} user "${member.mail}"?`)) return;
+
+  try {
+    await updateMemberStatus(member.id, !member.isActive);
+    await load();
+    toast.success(`User ${action}d.`);
+  } catch (error: any) {
+    toast.error(error?.response?.data || `Failed to ${action} user.`);
+  }
+};
+
+const revokeSessions = async (member: Member) => {
+  if (!confirm(`Sign out all sessions for "${member.mail}"?`)) return;
+  try {
+    await revokeMemberSessions(member.id);
+    toast.success("All user sessions were revoked.");
+  } catch (error: any) {
+    toast.error(error?.response?.data || "Failed to revoke user sessions.");
+  }
+};
+
+const requirePasswordChange = async (member: Member) => {
+  if (!confirm(`Require "${member.mail}" to change password on next sign-in?`)) return;
+  try {
+    await requireMemberPasswordChange(member.id);
+    toast.success("Password change is now required and existing sessions were revoked.");
+  } catch (error: any) {
+    toast.error(error?.response?.data || "Failed to require password change.");
+  }
+};
+
 onMounted(load);
 </script>
 
@@ -213,7 +261,7 @@ onMounted(load);
                 v-model="assignAllRoles"
               />
               <Label for="assignAllRoles" class="cursor-pointer text-sm">
-                Assign all roles
+                Select all current roles
               </Label>
             </div>
 
@@ -272,6 +320,16 @@ onMounted(load);
         <CardTitle>Registered Users</CardTitle>
       </CardHeader>
       <CardContent class="pt-6">
+        <div class="mb-4 grid gap-2 md:grid-cols-4">
+          <Input v-model="search" placeholder="Search email or username" />
+          <select v-model="statusFilter" class="h-9 rounded-md border bg-background px-3 text-sm">
+            <option value="">All statuses</option><option value="active">Active</option><option value="disabled">Disabled</option>
+          </select>
+          <select v-model="roleFilter" class="h-9 rounded-md border bg-background px-3 text-sm">
+            <option value="">All roles</option><option v-for="role in roles" :key="role.id" :value="role.id">{{ role.name }}</option>
+          </select>
+          <Button @click="page = 1; load()">Search</Button>
+        </div>
         <div v-if="loading" class="py-8 text-center text-sm text-muted-foreground">
           Loading users...
         </div>
@@ -290,12 +348,35 @@ onMounted(load);
                   <UserPlus class="size-4 text-muted-foreground" />
                   <span class="truncate font-bold text-sm">{{ member.username }}</span>
                   <Badge v-if="member.id === currentUserId" class="h-5 min-w-5 rounded-full px-1 font-mono tabular-nums transition-colors bg-green-100 text-green-700 border-green-200">You</Badge>
+                  <Badge :variant="member.isActive ? 'outline' : 'destructive'">
+                    {{ member.isActive ? "Active" : "Disabled" }}
+                  </Badge>
                 </div>
                 <p class="mt-1 truncate font-mono text-xs text-muted-foreground">
                   {{ member.mail }}
                 </p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Created {{ new Date(member.createdAt).toLocaleString() }} · Last login {{ member.lastLoginAt ? new Date(member.lastLoginAt).toLocaleString() : "Never" }} · {{ member.activeSessionCount }} sessions
+                </p>
               </div>
               <div v-if="member.id !== currentUserId" class="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <Button variant="ghost" size="icon" class="h-8 w-8" title="Sign out all sessions" @click="revokeSessions(member)" v-permission="'edit'">
+                  <LogOut class="size-4" />
+                </Button>
+                <Button variant="ghost" size="sm" class="h-8" title="Require password change" @click="requirePasswordChange(member)" v-permission="'edit'">
+                  Reset password
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8"
+                  :title="member.isActive ? 'Disable user' : 'Enable user'"
+                  @click="toggleStatus(member)"
+                  v-permission="'edit'"
+                >
+                  <PowerOff v-if="member.isActive" class="size-4" />
+                  <Power v-else class="size-4" />
+                </Button>
                 <Button variant="ghost" size="icon" class="h-8 w-8" @click="startEdit(member)" v-permission="'edit'">
                   <Edit2 class="size-4" />
                 </Button>
@@ -317,6 +398,11 @@ onMounted(load);
               <div v-else class="text-xs text-muted-foreground">No roles assigned.</div>
             </div>
           </div>
+        </div>
+        <div class="mt-4 flex items-center justify-end gap-2">
+          <Button variant="outline" :disabled="page <= 1" @click="page--; load()">Previous</Button>
+          <span class="text-sm text-muted-foreground">Page {{ page }} · Total {{ totalCount }}</span>
+          <Button variant="outline" :disabled="page * 20 >= totalCount" @click="page++; load()">Next</Button>
         </div>
       </CardContent>
     </Card>

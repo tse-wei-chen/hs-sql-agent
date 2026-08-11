@@ -42,8 +42,8 @@ public class CustomSqlToolServiceTests
         // Arrange
         var tools = new List<CustomSqlTool>
         {
-            new() { Id = 1, Name = "Tool1", Description = "Desc1", DefinitionJson = "{}" },
-            new() { Id = 2, Name = "Tool2", Description = "Desc2", DefinitionJson = "{}" }
+            new() { Id = 1, Name = "Tool1", Description = "Desc1", SqlTemplate = "SELECT 1" },
+            new() { Id = 2, Name = "Tool2", Description = "Desc2", SqlTemplate = "SELECT 2" }
         };
         _contextMock.Setup(c => c.CustomSqlTools).ReturnsDbSet(tools);
 
@@ -139,7 +139,7 @@ public class CustomSqlToolServiceTests
         {
             Name = "NewTool",
             Description = "New tool desc",
-            DefinitionJson = "{}"
+            SqlTemplate = "SELECT 1"
         };
 
         var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<CustomSqlTool>>();
@@ -168,6 +168,7 @@ public class CustomSqlToolServiceTests
         };
 
         var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<CustomSqlTool>>();
+        mockDbSet.Setup(x => x.FindAsync(It.IsAny<object[]>())).ReturnsAsync(existingTool);
         _contextMock.Setup(c => c.CustomSqlTools).Returns(mockDbSet.Object);
 
         var beforeUpdate = DateTime.UtcNow;
@@ -179,7 +180,6 @@ public class CustomSqlToolServiceTests
         Assert.NotNull(result);
         Assert.True(result.LastModifiedAt >= beforeUpdate);
 
-        mockDbSet.Verify(m => m.Update(It.Is<CustomSqlTool>(t => t.Id == 1)), Times.Once);
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 

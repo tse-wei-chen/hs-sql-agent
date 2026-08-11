@@ -4,6 +4,8 @@ import {
   formatAllowedToolsLabel,
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
+  createMcpOnboardingSnippets,
+  allowedToolsRequireElicitation,
 } from "./mcpKeyIssuance";
 
 describe("MCP key issuance helpers", () => {
@@ -65,4 +67,30 @@ describe("MCP key issuance helpers", () => {
     expect(second.allowedTools).not.toBe(first.allowedTools);
     expect(second.tableWhitelist).not.toBe(first.tableWhitelist);
   });
+
+  it("builds direct Streamable HTTP snippets with the MCP server key header", () => {
+    const snippets = createMcpOnboardingSnippets("https://sql.example.com/mcp", "secret-key");
+    expect(JSON.parse(snippets.cursor).mcpServers["hs-sql-agent"]).toEqual({
+      type: "http",
+      url: "https://sql.example.com/mcp",
+      headers: { "X-MCP-Server-Key": "secret-key" },
+    });
+    expect(JSON.parse(snippets.claudeDesktop).mcpServers["hs-sql-agent"]).toEqual({
+      url: "https://sql.example.com/mcp",
+      headers: { "X-MCP-Server-Key": "secret-key" },
+    });
+    expect(JSON.parse(snippets.genericHttp)).toEqual({
+      type: "streamable-http",
+      url: "https://sql.example.com/mcp",
+      headers: { "X-MCP-Server-Key": "secret-key" },
+    });
+  });
+
+  it("requires Elicitation for unrestricted, built-in DML, and custom DML access", () => {
+    expect(allowedToolsRequireElicitation([])).toBe(true);
+    expect(allowedToolsRequireElicitation(["execute_dml_sql"])).toBe(true);
+    expect(allowedToolsRequireElicitation(["archive_customer"], ["archive_customer"])).toBe(true);
+    expect(allowedToolsRequireElicitation(["execute_query_sql"], ["archive_customer"])).toBe(false);
+  });
+
 });

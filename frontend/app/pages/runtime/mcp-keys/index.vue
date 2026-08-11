@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -30,14 +31,16 @@ import { CircleAlert, CircleCheck, KeyRound , CircleQuestionMark  } from "@lucid
 import {
   issueMcpKey,
   cloneMcpKey,
+  getMcpClientConfig,
   listMcpKeys,
   revokeMcpKey,
   rotateMcpKey,
   testDbConnection,
   updateMcpKey,
+  listAvailableMcpTools,
+  type AvailableMcpTool,
 } from "@/api/runtime";
 import { Switch } from "@/components/ui/switch";
-import { listCustomSqlTools, type CustomSqlTool } from "@/api/custom-tools";
 import {
   listDbManagements,
   getSchemas,
@@ -57,6 +60,8 @@ import {
   formatAllowedToolsLabel,
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
+  createMcpOnboardingSnippets,
+  allowedToolsRequireElicitation,
   type McpKeyDetail,
   type McpKeyRateLimitMode,
 } from "@/lib/mcpKeyIssuance";
@@ -93,7 +98,8 @@ const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = u
 })
 
 const keys = ref<McpKeyItem[]>([]);
-const customTools = ref<CustomSqlTool[]>([]);
+const customTools = ref<AvailableMcpTool[]>([]);
+const lifecycleCustomTools = ref<AvailableMcpTool[]>([]);
 const dbManagements = ref<DbManagement[]>([]);
 const loading = ref(false);
 const issuing = ref(false);
@@ -111,6 +117,8 @@ const connectionTestResult = ref<{
   errorMessage: string;
 } | null>(null);
 const issuedPlaintextKey = ref("");
+const issuedKeyName = ref("");
+const mcpEndpoint = ref("");
 const lifecycleMode = ref<"edit" | "rotate" | "clone" | null>(null);
 const lifecycleKey = ref<McpKeyItem | null>(null);
 const lifecycleSaving = ref(false);
@@ -132,10 +140,15 @@ const expiringSoonKeys = computed(() =>
 watch(
   () => detail.value.dbManagementId,
   async (newVal) => {
+    customTools.value = [];
+    detail.value.allowedTools = detail.value.allowedTools.filter((name) =>
+      baseToolOptions.some((tool) => tool.value === name),
+    );
     selectedSchema.value = undefined;
     availableTables.value = [];
     detail.value.tableWhitelist = [];
     if (newVal) {
+      const requestedDbId = newVal;
       fetchingSchemas.value = true;
       try {
         availableSchemas.value = await getSchemas(newVal);
@@ -146,6 +159,12 @@ watch(
         availableSchemas.value = [];
       } finally {
         fetchingSchemas.value = false;
+      }
+      try {
+        const tools = await listAvailableMcpTools(requestedDbId);
+        if (detail.value.dbManagementId === requestedDbId) customTools.value = tools;
+      } catch {
+        if (detail.value.dbManagementId === requestedDbId) customTools.value = [];
       }
     } else {
       availableSchemas.value = [];
@@ -202,18 +221,46 @@ const selectedToolLabel = computed(() => {
   return formatAllowedToolsLabel(detail.value.allowedTools);
 });
 
+const dmlToolNames = computed(() => new Set(
+  customTools.value.filter((tool) => tool.type === "DML").map((tool) => tool.name),
+));
+
+const issueRequiresElicitation = computed(() =>
+  allowedToolsRequireElicitation(detail.value.allowedTools, dmlToolNames.value),
+);
+const lifecycleRequiresElicitation = computed(() => allowedToolsRequireElicitation(
+  lifecycleAllowedTools.value.split(",").map((name) => name.trim()).filter(Boolean),
+  new Set(lifecycleCustomTools.value.filter((tool) => tool.type === "DML").map((tool) => tool.name)),
+));
+
+watch(lifecycleDbManagementId, async (dbManagementId) => {
+  lifecycleCustomTools.value = [];
+  if (!dbManagementId) return;
+  const requestedDbId = dbManagementId;
+  try {
+    const tools = await listAvailableMcpTools(requestedDbId);
+    if (lifecycleDbManagementId.value === requestedDbId) lifecycleCustomTools.value = tools;
+  } catch {
+    if (lifecycleDbManagementId.value === requestedDbId) lifecycleCustomTools.value = [];
+  }
+});
+
+const onboardingSnippets = computed(() =>
+  createMcpOnboardingSnippets(mcpEndpoint.value, issuedPlaintextKey.value),
+);
+
 const load = async () => {
   loading.value = true;
   try {
-    const [keysResult, customToolsResult, dbManagementsResult] =
+    const [keysResult, dbManagementsResult, clientConfig] =
       await Promise.all([
         listMcpKeys(),
-        listCustomSqlTools(),
         listDbManagements(),
+        getMcpClientConfig(),
       ]);
     keys.value = keysResult;
-    customTools.value = customToolsResult;
     dbManagements.value = dbManagementsResult;
+    mcpEndpoint.value = clientConfig.mcpEndpoint;
   } finally {
     loading.value = false;
   }
@@ -226,6 +273,7 @@ const resetForm = () => {
   isWhitelistEnabled.value = false
   selectedSchema.value = undefined
   issuedPlaintextKey.value = ""
+  issuedKeyName.value = ""
 };
 
 const issue = async () => {
@@ -263,6 +311,7 @@ const issue = async () => {
     resetForm()
     await load();
     issuedPlaintextKey.value = result.plaintextKey || "";
+    issuedKeyName.value = result.name || values.name;
   } catch (error: any) {
     toast.error(
       error?.response?.data?.error ||
@@ -373,6 +422,7 @@ const saveLifecycle = async () => {
         expiresAt: lifecycleExpiry(),
       });
       issuedPlaintextKey.value = result.plaintextKey || "";
+      issuedKeyName.value = result.name || lifecycleKey.value.name;
       toast.success("MCP key rotated. Save the replacement key now.");
     } else {
       result = await cloneMcpKey(lifecycleKey.value.id, {
@@ -380,6 +430,7 @@ const saveLifecycle = async () => {
         expiresAt: lifecycleExpiry(),
       });
       issuedPlaintextKey.value = result.plaintextKey || "";
+      issuedKeyName.value = result.name || lifecycleName.value;
       toast.success("MCP key duplicated. Save the new key now.");
     }
     lifecycleMode.value = null;
@@ -401,7 +452,19 @@ const copyIssuedKey = async () => {
   toast.success("Key copied to clipboard.");
 };
 
-onMounted(load);
+const copySnippet = async (value: string) => {
+  await navigator.clipboard.writeText(value);
+  toast.success("Configuration copied to clipboard.");
+};
+
+const closeOnboarding = () => {
+  issuedPlaintextKey.value = "";
+  issuedKeyName.value = "";
+};
+
+onMounted(async () => {
+  await load();
+});
 </script>
 
 <template>
@@ -641,6 +704,12 @@ onMounted(load);
                   </div>
                 </template>
               </MultiSelect>
+              <div
+                v-if="issueRequiresElicitation"
+                class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                This key can invoke DML. Its MCP client must support form Elicitation so a human can approve each commit; unsupported clients will be refused. An unrestricted tool list also includes DML.
+              </div>
             </Field>
             <Field class="md:col-span-2">
               <div class="flex items-center justify-start gap-2">
@@ -748,16 +817,6 @@ onMounted(load);
           </span>
         </form>
 
-        <div
-          v-if="issuedPlaintextKey"
-          class="mt-4 rounded border border-border bg-muted/40 p-3 text-sm"
-        >
-          <div class="font-medium">One-time key value</div>
-          <div class="mt-1 break-all">{{ issuedPlaintextKey }}</div>
-          <Button class="mt-2" size="sm" variant="outline" @click="copyIssuedKey">
-            Copy key
-          </Button>
-        </div>
       </CardContent>
     </Card>
 
@@ -901,6 +960,12 @@ onMounted(load);
             <Field>
               <FieldLabel>Allowed tools</FieldLabel>
               <Input v-model="lifecycleAllowedTools" placeholder="Comma-separated tool names" />
+              <div
+                v-if="lifecycleRequiresElicitation"
+                class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
+              >
+                DML is enabled (an empty list means all tools). The client must support MCP form Elicitation.
+              </div>
             </Field>
             <Field>
               <FieldLabel>Table whitelist</FieldLabel>
@@ -954,6 +1019,69 @@ onMounted(load);
           >
             {{ lifecycleSaving ? "Saving..." : lifecycleMode === "edit" ? "Save changes" : lifecycleMode === "rotate" ? "Rotate key" : "Duplicate key" }}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog :open="Boolean(issuedPlaintextKey)" @update:open="(open) => { if (!open) closeOnboarding() }">
+      <DialogContent class="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Save and connect {{ issuedKeyName || "this MCP key" }}</DialogTitle>
+          <DialogDescription>
+            This secret and every generated configuration are available only in this dialog. Closing it permanently removes the plaintext value from the Admin UI.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-4">
+          <div class="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            Treat copied snippets as secrets. Do not commit them to source control or paste them into tickets.
+          </div>
+          <Field>
+            <FieldLabel>One-time key value</FieldLabel>
+            <div class="break-all rounded border bg-muted/40 p-3 font-mono text-xs">{{ issuedPlaintextKey }}</div>
+            <Button class="mt-2" size="sm" variant="outline" @click="copyIssuedKey">Copy key</Button>
+          </Field>
+          <Field>
+            <FieldLabel>MCP endpoint</FieldLabel>
+            <Input :model-value="mcpEndpoint" readonly />
+            <p class="text-xs text-muted-foreground">Configured by the server through Mcp:PublicEndpoint.</p>
+          </Field>
+
+          <Tabs default-value="claude">
+            <TabsList>
+              <TabsTrigger value="claude">Claude Desktop</TabsTrigger>
+              <TabsTrigger value="cursor">Cursor</TabsTrigger>
+              <TabsTrigger value="vscode">Visual Studio Code</TabsTrigger>
+              <TabsTrigger value="generic">Generic HTTP</TabsTrigger>
+            </TabsList>
+            <TabsContent value="claude" class="space-y-2">
+              <p class="text-xs text-muted-foreground">
+                Add this direct HTTP entry to Claude Desktop's MCP configuration. It connects without a local Node.js bridge.
+              </p>
+              <Textarea :model-value="onboardingSnippets.claudeDesktop" readonly class="min-h-48 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.claudeDesktop)">Copy Claude config</Button>
+            </TabsContent>
+            <TabsContent value="cursor" class="space-y-2">
+              <p class="text-xs text-muted-foreground">Add this entry to Cursor's MCP configuration.</p>
+              <Textarea :model-value="onboardingSnippets.cursor" readonly class="min-h-48 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.cursor)">Copy Cursor config</Button>
+            </TabsContent>
+            <TabsContent value="vscode" class="space-y-2">
+              <p class="text-xs text-muted-foreground">Add this entry to Visual Studio Code's MCP configuration.</p>
+              <Textarea :model-value="onboardingSnippets.vscode" readonly class="min-h-48 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.vscode)">Copy VS Code config</Button>
+            </TabsContent>
+            <TabsContent value="generic" class="space-y-2">
+              <p class="text-xs text-muted-foreground">Generic Streamable HTTP client connection object.</p>
+              <Textarea :model-value="onboardingSnippets.genericHttp" readonly class="min-h-40 font-mono text-xs" />
+              <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.genericHttp)">Copy HTTP config</Button>
+            </TabsContent>
+          </Tabs>
+
+        </div>
+
+        <DialogFooter>
+          <Button variant="destructive" @click="closeOnboarding">I saved it — close and forget secret</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

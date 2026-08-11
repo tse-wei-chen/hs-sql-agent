@@ -75,7 +75,7 @@ const logOut = async () => {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
-            <DropdownMenuItem>
+            <DropdownMenuItem @click="navigateTo('/account')">
               <BadgeCheck />
               Account
             </DropdownMenuItem>

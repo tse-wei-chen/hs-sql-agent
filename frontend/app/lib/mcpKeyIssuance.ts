@@ -79,3 +79,41 @@ export function formatAllowedToolsLabel(selectedTools: string[]): string {
     ? "Global (no restriction)"
     : `${selectedTools.length} tools selected`;
 }
+
+export function allowedToolsRequireElicitation(
+  allowedTools: string[],
+  customDmlToolNames: Iterable<string> = [],
+): boolean {
+  const customDml = new Set(customDmlToolNames);
+  return allowedTools.length === 0 ||
+    allowedTools.includes("execute_dml_sql") ||
+    allowedTools.some((name) => customDml.has(name));
+}
+
+export interface McpOnboardingSnippets {
+  claudeDesktop: string;
+  cursor: string;
+  vscode: string;
+  genericHttp: string;
+}
+
+export function createMcpOnboardingSnippets(
+  endpoint: string,
+  plaintextKey: string,
+): McpOnboardingSnippets {
+  const headers = { "X-MCP-Server-Key": plaintextKey };
+  const server = {
+    type: "http",
+    url: endpoint,
+    headers,
+  };
+  const genericServer = { ...server, type: "streamable-http" };
+  const claudeDesktopServer = { url: endpoint, headers };
+
+  return {
+    claudeDesktop: JSON.stringify({ mcpServers: { "hs-sql-agent": claudeDesktopServer } }, null, 2),
+    cursor: JSON.stringify({ mcpServers: { "hs-sql-agent": server } }, null, 2),
+    vscode: JSON.stringify({ servers: { "hs-sql-agent": server } }, null, 2),
+    genericHttp: JSON.stringify(genericServer, null, 2),
+  };
+}

@@ -16,6 +16,7 @@ public class RoleServiceTests
     public RoleServiceTests()
     {
         _contextMock = new Mock<IAuthContext>();
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member>());
         _service = new RoleService(_contextMock.Object);
     }
 
@@ -107,6 +108,36 @@ public class RoleServiceTests
         });
 
         Assert.Equal("UpdatedName", result.Name);
+    }
+
+    [Fact]
+    public async Task UpsertRoleAsync_InvalidatesSessionsForAssignedMembers()
+    {
+        var existingRole = new Role { Id = 1, Name = "Operator", PermissionActions = [] };
+        var member = new Member
+        {
+            Id = 7,
+            Username = "operator",
+            Mail = "operator@test.com",
+            PasswordHash = "h",
+            SecurityVersion = 4,
+            MemberRoles = [new MemberRole { RoleId = 1, Role = existingRole }]
+        };
+        _contextMock.Setup(c => c.Roles).ReturnsDbSet(new List<Role> { existingRole });
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+        _contextMock.Setup(c => c.PermissionActionTemplates)
+            .ReturnsDbSet(new List<PermissionActionTemplate>());
+        _contextMock.Setup(c => c.PermissionActions)
+            .ReturnsDbSet(new List<PermissionAction>());
+        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        await _service.UpsertRoleAsync(1, new RolePayload
+        {
+            Name = "Operator",
+            PermissionActions = []
+        });
+
+        Assert.Equal(5, member.SecurityVersion);
     }
 
     [Fact]

@@ -38,8 +38,34 @@ export interface AuditDailySummaryItem {
   failed: number;
 }
 
+export interface McpClientConfig {
+  mcpEndpoint: string;
+}
+
+export interface AvailableMcpTool {
+  name: string;
+  type: "Query" | "DML";
+}
+
+export const getMcpClientConfig = async (): Promise<McpClientConfig> => {
+  const response = await xiorInstanceToken.get<McpClientConfig>(
+    "/runtime/client-config",
+  );
+  return response.data;
+};
+
 export const listMcpKeys = async () => {
   const response = await xiorInstanceToken.get("/runtime/mcp-keys");
+  return response.data;
+};
+
+export const listAvailableMcpTools = async (
+  dbManagementId: number,
+): Promise<AvailableMcpTool[]> => {
+  const response = await xiorInstanceToken.get(
+    "/runtime/mcp-keys/available-tools",
+    { params: { dbManagementId } },
+  );
   return response.data;
 };
 
@@ -121,6 +147,41 @@ export const getRuntimeAuditDailySummary = async (days = 7) => {
   });
   return response.data;
 };
+
+export const exportRuntimeAudit = async (
+  format: "csv" | "json",
+  filters: Record<string, string | number | undefined>,
+) => {
+  const response = await xiorInstanceToken.get("/runtime/audit/export", {
+    params: { format, ...filters },
+    responseType: "blob",
+  });
+  return response.data as Blob;
+};
+
+export const getOperabilityMetrics = async (filters: Record<string, string | number | undefined> = {}) =>
+  (await xiorInstanceToken.get("/runtime/operability/metrics", { params: filters })).data;
+
+export const getDbHealth = async () =>
+  (await xiorInstanceToken.get("/runtime/operability/db-health")).data;
+
+export const getKeyUsage = async (filters: Record<string, string | number | undefined> = {}) =>
+  (await xiorInstanceToken.get("/runtime/operability/key-usage", { params: filters })).data;
+
+export const getDeliveryStatuses = async () =>
+  (await xiorInstanceToken.get("/runtime/operability/deliveries")).data;
+
+export const retryDelivery = async (id: number) =>
+  xiorInstanceToken.post(`/runtime/operability/deliveries/${id}/retry`);
+
+export const getAuditRetentionPolicy = async () =>
+  (await xiorInstanceToken.get("/runtime/audit/retention")).data;
+
+export const dryRunAuditRetention = async () =>
+  (await xiorInstanceToken.post("/runtime/audit/retention/dry-run")).data;
+
+export const executeAuditRetention = async () =>
+  (await xiorInstanceToken.post("/runtime/audit/retention/execute")).data;
 
 export const testDbConnection = async (payload: TestDbConnectionRequest) => {
   const response = await xiorInstanceToken.post(

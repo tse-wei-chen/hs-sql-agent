@@ -109,6 +109,19 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
                     "This database connection is still used by an active MCP access key. Revoke or let the key expire before deleting the connection.");
             }
 
+            var dependentDraftTools = await _context.CustomSqlTools.CountAsync(
+                tool => tool.DbManagementId == id,
+                cancellationToken);
+            var dependentRevisions = await _context.CustomSqlToolRevisions.CountAsync(
+                revision => revision.DbManagementId == id,
+                cancellationToken);
+            if (dependentDraftTools > 0 || dependentRevisions > 0)
+            {
+                throw new InvalidOperationException(
+                    $"This database connection is referenced by {dependentDraftTools} custom tool(s) and " +
+                    $"{dependentRevisions} published revision(s). Delete or rebind those custom tools before deleting the connection.");
+            }
+
             _context.DbManagement.Remove(existingDbManagement);
             await _context.SaveChangesAsync(cancellationToken);
         }

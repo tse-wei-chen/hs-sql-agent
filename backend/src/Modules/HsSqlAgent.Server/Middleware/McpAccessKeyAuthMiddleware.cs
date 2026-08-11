@@ -53,12 +53,6 @@ public class McpAccessKeyAuthMiddleware(
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
-        if (!context.Request.Path.StartsWithSegments("/mcp"))
-        {
-            await next(context);
-            return;
-        }
-
         if (TryHandleCorsPreflight(context))
         {
             return;
@@ -262,7 +256,7 @@ public class McpAccessKeyAuthMiddleware(
     {
         await _auditService.WriteAsync(
             action: "mcp.key.auth.failed",
-            target: "/mcp",
+            target: context.Request.Path.Value ?? "mcp",
             result: "failed",
             detail: reason,
             actorType: "mcp-key",
@@ -338,7 +332,7 @@ public class McpAccessKeyAuthMiddleware(
         var cacheKey = McpAccessKeyCacheKeys.ForRawKey(rawKey, _hmacSecret);
 
         var cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
-        if (cached is not null)
+        if (cached is not null && !await RequiresFreshValidationAsync(cached, ct))
         {
             return await RejectIfRevokedOrExpiredAsync(cached, ct);
         }
@@ -350,7 +344,7 @@ public class McpAccessKeyAuthMiddleware(
         try
         {
             cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
-            if (cached is not null)
+            if (cached is not null && !await RequiresFreshValidationAsync(cached, ct))
             {
                 return await RejectIfRevokedOrExpiredAsync(cached, ct);
             }
@@ -367,6 +361,14 @@ public class McpAccessKeyAuthMiddleware(
             semaphore.Release();
         }
     }
+
+    private async Task<bool> RequiresFreshValidationAsync(
+        McpAccessKeyValidationResult result,
+        CancellationToken cancellationToken)
+        => result.IsValid && result.KeyId.HasValue &&
+           await _cache.GetAsync<bool>(
+               McpAccessKeyCacheKeys.ForChangedKeyId(result.KeyId.Value),
+               cancellationToken);
 
     internal static int GetStripedLockIndex(int hashCode, int lockCount)
         => (int)((uint)hashCode % (uint)lockCount);

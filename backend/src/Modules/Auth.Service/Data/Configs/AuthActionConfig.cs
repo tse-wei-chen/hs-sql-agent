@@ -18,7 +18,8 @@ public class AuthActionConfig : IEntityTypeConfiguration<AuthAction>
             new AuthAction { Id = 2, Code = "create", Name = "create" },
             new AuthAction { Id = 3, Code = "edit", Name = "edit" },
             new AuthAction { Id = 4, Code = "delete", Name = "delete" },
-            new AuthAction { Id = 5, Code = "revoke", Name = "revoke" }
+            new AuthAction { Id = 5, Code = "revoke", Name = "revoke" },
+            new AuthAction { Id = 6, Code = "export", Name = "export" }
         );
     }
 }

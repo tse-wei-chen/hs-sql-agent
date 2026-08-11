@@ -8,9 +8,15 @@ public class AdminContext(DbContextOptions<AdminContext> options) : DbContext(op
     public DbSet<AuditLog> AuditLogs { get; set; } = null!;
     public DbSet<McpAccessKey> McpAccessKeys { get; set; } = null!;
     public DbSet<CustomSqlTool> CustomSqlTools { get; set; } = null!;
+    public DbSet<CustomSqlToolRevision> CustomSqlToolRevisions { get; set; } = null!;
     public DbSet<DbManagement> DbManagement { get; set; } = null!;
     public DbSet<DbSemantic> DbSemantics { get; set; } = null!;
+    public DbSet<DbSemanticRelationship> DbSemanticRelationships { get; set; } = null!;
+    public DbSet<DbSemanticMetric> DbSemanticMetrics { get; set; } = null!;
     public DbSet<SecurityPolicySettings> SecurityPolicySettings { get; set; } = null!;
+    public DbSet<DbHealthState> DbHealthStates { get; set; } = null!;
+    public DbSet<RateLimitMetric> RateLimitMetrics { get; set; } = null!;
+    public DbSet<OutboundDelivery> OutboundDeliveries { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -6,8 +6,13 @@ namespace Auth.Service.Data;
 public interface IAuthContext
 {
     DbSet<AuthAction> AuthActions { get; }
+    DbSet<AuthSession> AuthSessions { get; }
+    DbSet<ExternalIdentity> ExternalIdentities { get; }
+    DbSet<ExternalLoginCode> ExternalLoginCodes { get; }
     DbSet<Member> Members { get; }
+    DbSet<PasswordResetToken> PasswordResetTokens { get; }
     DbSet<MemberRole> MemberRoles { get; }
+    DbSet<MfaRecoveryCode> MfaRecoveryCodes { get; }
     DbSet<Permission> Permissions { get; }
     DbSet<PermissionAction> PermissionActions { get; }
     DbSet<PermissionActionTemplate> PermissionActionTemplates { get; }

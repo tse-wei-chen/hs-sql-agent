@@ -8,6 +8,8 @@ using Moq.EntityFrameworkCore;
 using Xunit;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
+using Admin.Service.Models;
+using Microsoft.Extensions.Options;
 
 namespace Admin.Test.Services;
 
@@ -110,17 +112,36 @@ public class AuditServiceTests
     }
 
     [Fact]
-    public async Task WriteAsync_ShouldPropagateFailureAfterRetryLimit()
+    public async Task WriteAsync_ShouldPersistDurableFallbackAfterRetryLimit()
     {
+        var fallbackPath = Path.Combine(
+            Path.GetTempPath(),
+            $"hsqlagent-audit-fallback-{Guid.NewGuid():N}.jsonl");
         _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("database unavailable"));
+        var service = new AuditService(
+            _contextMock.Object,
+            _httpContextAccessorMock.Object,
+            Options.Create(new OperabilitySettings { AuditFallbackPath = fallbackPath }));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _service.WriteAsync(
+        try
+        {
+            await service.WriteAsync(
                 "query",
                 "db1",
                 "success",
-                cancellationToken: TestContext.Current.CancellationToken));
+                cancellationToken: TestContext.Current.CancellationToken);
+
+            var fallback = await File.ReadAllTextAsync(
+                fallbackPath,
+                TestContext.Current.CancellationToken);
+            Assert.Contains("InvalidOperationException", fallback);
+            Assert.Contains("\"Action\":\"query\"", fallback);
+        }
+        finally
+        {
+            if (File.Exists(fallbackPath)) File.Delete(fallbackPath);
+        }
 
         _contextMock.Verify(
             c => c.SaveChangesAsync(TestContext.Current.CancellationToken),
@@ -129,7 +150,47 @@ public class AuditServiceTests
 
     #endregion
 
+    [Fact]
+    public async Task WriteAsync_ShouldQueueSignedSiemDelivery_WhenConfigured()
+    {
+        _contextMock.Setup(c => c.OutboundDeliveries).ReturnsDbSet(new List<OutboundDelivery>());
+        var service = new AuditService(
+            _contextMock.Object,
+            _httpContextAccessorMock.Object,
+            Options.Create(new OperabilitySettings { SiemWebhookUrl = "https://siem.example/events" }));
+
+        await service.WriteAsync("query", "db1", "success", cancellationToken: TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.OutboundDeliveries.Add(It.Is<OutboundDelivery>(x =>
+            x.Category == "siem" && x.TargetUrl == "https://siem.example/events" && x.Status == "pending")), Times.Once);
+    }
+
     #region WriteLogAsync Tests
+
+    [Fact]
+    public async Task WriteEventAsync_ShouldPublishExecutionToMetricSinks()
+    {
+        var sink = new Mock<IAuditMetricSink>();
+        var service = new AuditService(
+            _contextMock.Object,
+            _httpContextAccessorMock.Object,
+            metricSinks: [sink.Object]);
+        var eventContext = new AuditEventContext
+        {
+            ToolName = "execute_query_sql",
+            Operation = "select",
+            DurationMs = 42
+        };
+
+        await service.WriteEventAsync(
+            "mcp.query.executed",
+            "users",
+            "success",
+            eventContext,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        sink.Verify(x => x.Record("mcp.query.executed", "success", eventContext), Times.Once);
+    }
 
     [Fact]
     public async Task WriteLogAsync_ShouldCaptureContextInfo_WhenHttpContextIsAvailable()
