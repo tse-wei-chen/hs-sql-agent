@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { Monitor, RefreshCw, ShieldX } from "@lucide/vue";
+import QRCode from "qrcode";
 import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,7 +41,7 @@ const mfaEnabled = ref(false);
 const mfaEnrollmentRequired = ref(false);
 const recoveryCodesRemaining = ref(0);
 const mfaSetupSecret = ref("");
-const mfaSetupUri = ref("");
+const mfaSetupQrCode = ref("");
 const mfaCode = ref("");
 const recoveryCodes = ref<string[]>([]);
 
@@ -76,7 +77,11 @@ const startMfaSetup = async () => {
   try {
     const setup = await beginMfaSetup();
     mfaSetupSecret.value = setup.secret;
-    mfaSetupUri.value = setup.otpAuthUri;
+    mfaSetupQrCode.value = await QRCode.toDataURL(setup.otpAuthUri, {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 256,
+    });
   } catch (error: any) { toast.error(error?.response?.data || "Failed to start MFA setup."); }
 };
 
@@ -163,8 +168,16 @@ onMounted(load);
         <template v-else-if="!mfaEnabled">
           <Button v-if="!mfaSetupSecret" @click="startMfaSetup">Set up authenticator</Button>
           <template v-else>
-            <div class="space-y-2"><Label>Setup key</Label><code class="block break-all rounded border p-3">{{ mfaSetupSecret }}</code></div>
-            <div class="space-y-2"><Label>Authenticator URI</Label><code class="block break-all rounded border p-3 text-xs">{{ mfaSetupUri }}</code></div>
+            <div class="space-y-2">
+              <Label>Scan with your authenticator app</Label>
+              <div class="w-fit rounded-lg border bg-white p-3">
+                <img v-if="mfaSetupQrCode" :src="mfaSetupQrCode" alt="MFA authenticator setup QR code" class="size-64" />
+              </div>
+            </div>
+            <div class="space-y-2">
+              <Label>Can't scan? Enter this setup key manually</Label>
+              <code class="block break-all rounded border p-3">{{ mfaSetupSecret }}</code>
+            </div>
             <div class="space-y-2"><Label for="mfa-confirm">6-digit code</Label><Input id="mfa-confirm" v-model="mfaCode" autocomplete="one-time-code" /></div>
             <Button @click="confirmMfa">Enable MFA</Button>
           </template>
