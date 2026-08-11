@@ -28,7 +28,7 @@ public class SqlParserTests
     }
 
     [Fact]
-    public void Parse_PostgresDateCastInSelectAndHaving_ReturnsQueryDefinition()
+    public void Parse_PostgresDateCastInSelectAndHaving_PreservesCastAst()
     {
         const string sql = """
             WITH SystemMax AS (
@@ -57,26 +57,244 @@ public class SqlParserTests
             ORDER BY days_since_last_order DESC;
             """;
 
-        var qd = new SqlParser(new SqlTokenizer(sql).Tokenize()).Parse();
-        var errors = DefinitionValidator.Validate(qd);
+        var definition = SqlDefinitionParser.ParseQuery(sql);
+        var errors = DefinitionValidator.Validate(definition);
 
         Assert.Empty(errors);
-        Assert.Equal("customers", qd.TableName);
-        Assert.Equal("c", qd.Alias);
-        Assert.NotNull(qd.CteConditions);
-        Assert.Single(qd.CteConditions);
-        Assert.Equal("SystemMax", qd.CteConditions[0].CteAliasName);
-        Assert.NotNull(qd.Joins);
-        Assert.Equal(2, qd.Joins.Count);
-        Assert.Equal(JoinType.Cross, qd.Joins[1].Type);
-        Assert.Empty(qd.Joins[1].OnConditions);
-        Assert.NotNull(qd.SelectColumns);
-        var dateDiffColumn = Assert.IsType<OperationSelectCondition>(qd.SelectColumns[6]);
-        Assert.Equal("days_since_last_order", dateDiffColumn.Alias);
-        Assert.NotNull(qd.HavingConditions);
-        var havingGroup = Assert.IsType<GroupHavingCondition>(qd.HavingConditions[0]);
-        var expressionHaving = Assert.IsType<ExpressionHavingCondition>(havingGroup.Groups[0]);
-        Assert.IsType<OperationSelectCondition>(expressionHaving.LeftExpression);
-        Assert.Equal(">", expressionHaving.Operator);
+        var dateDiff = Assert.IsType<OperationSelectCondition>(definition.SelectColumns![6]);
+        Assert.Equal(ArithmeticOperator.Subtract, dateDiff.Operator);
+        Assert.Equal("DATE", Assert.IsType<CastSelectCondition>(dateDiff.Left).TypeName, ignoreCase: true);
+        Assert.Equal("DATE", Assert.IsType<CastSelectCondition>(dateDiff.Right).TypeName, ignoreCase: true);
+        var havingGroup = Assert.IsType<GroupHavingCondition>(Assert.Single(definition.HavingConditions!));
+        var having = Assert.IsType<ExpressionHavingCondition>(havingGroup.Groups[0]);
+        var havingDifference = Assert.IsType<OperationSelectCondition>(having.LeftExpression);
+        Assert.IsType<CastSelectCondition>(havingDifference.Left);
+        Assert.IsType<CastSelectCondition>(havingDifference.Right);
+    }
+
+    [Theory]
+    [InlineData("SELECT price % 10 FROM products", ArithmeticOperator.Modulo)]
+    [InlineData("SELECT price >= 10 FROM products", ArithmeticOperator.GreaterThanOrEqual)]
+    [InlineData("SELECT active = TRUE AND deleted = FALSE FROM products", ArithmeticOperator.And)]
+    [InlineData("SELECT active = TRUE OR deleted = FALSE FROM products", ArithmeticOperator.Or)]
+    public void Parse_SelectExpression_PreservesOperator(string sql, ArithmeticOperator expected)
+    {
+        var definition = SqlDefinitionParser.ParseQuery(sql);
+
+        var operation = Assert.IsType<OperationSelectCondition>(Assert.Single(definition.SelectColumns!));
+        Assert.Equal(expected, operation.Operator);
+    }
+
+    [Fact]
+    public void Parse_NullsFirst_PreservesOrdering()
+    {
+        var definition = SqlDefinitionParser.ParseQuery("SELECT value FROM t ORDER BY value NULLS FIRST");
+
+        Assert.Equal(NullOrdering.First, Assert.Single(definition.OrderByColumns!).NullOrdering);
+    }
+
+    [Fact]
+    public void Parse_WindowFrame_PreservesUnitAndBounds()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT SUM(value) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t");
+
+        var function = Assert.IsType<FunctionSelectCondition>(Assert.Single(definition.SelectColumns!));
+        var frame = Assert.IsType<WindowFrameDefinition>(function.Window!.Frame);
+        Assert.Equal(WindowFrameUnit.Rows, frame.Unit);
+        Assert.Equal(WindowFrameBoundKind.Preceding, frame.Start.Kind);
+        Assert.Equal(2, frame.Start.Offset);
+        Assert.Equal(WindowFrameBoundKind.CurrentRow, frame.End!.Kind);
+    }
+
+    [Fact]
+    public void Parse_Interval_PreservesLiteral()
+    {
+        var definition = SqlDefinitionParser.ParseQuery("SELECT created_at + INTERVAL '1 day' FROM t");
+
+        var operation = Assert.IsType<OperationSelectCondition>(Assert.Single(definition.SelectColumns!));
+        Assert.Equal("1 day", Assert.IsType<IntervalSelectCondition>(operation.Right).Literal);
+    }
+
+    [Fact]
+    public void Parse_Cast_PreservesTypeAndPrecision()
+    {
+        var definition = SqlDefinitionParser.ParseQuery("SELECT CAST(amount AS DECIMAL(12,2)) FROM t");
+
+        var cast = Assert.IsType<CastSelectCondition>(Assert.Single(definition.SelectColumns!));
+        Assert.Equal("DECIMAL(12,2)", cast.TypeName, ignoreCase: true);
+    }
+
+    [Theory]
+    [InlineData("SELECT ? FROM t", "?")]
+    [InlineData("SELECT :name FROM t", ":name")]
+    [InlineData("SELECT @name FROM t", "@name")]
+    [InlineData("SELECT $1 FROM t", "$1")]
+    [InlineData("SELECT {{name}} FROM t", "{{name}}")]
+    public void Parse_UnboundParameter_RejectsExplicitly(string sql, string parameter)
+    {
+        var error = Assert.Throws<SqlParseException>(() => SqlDefinitionParser.ParseQuery(sql));
+
+        Assert.Contains(parameter, error.Message);
+        Assert.Contains("Unbound SQL parameter", error.Message);
+    }
+
+    [Theory]
+    [InlineData("SELECT 'unterminated FROM t", "Unterminated string literal")]
+    [InlineData("SELECT \"unterminated FROM t", "Unterminated quoted identifier")]
+    [InlineData("SELECT * FROM t /* unterminated", "Unterminated block comment")]
+    [InlineData("SELECT {{bad FROM t", "Unterminated template parameter")]
+    [InlineData("SELECT # FROM t", "Unexpected character")]
+    [InlineData("SELECT 1.2.3 FROM t", "Invalid numeric literal")]
+    public void Tokenize_MalformedInput_FailsClosedWithSpan(string sql, string expectedMessage)
+    {
+        var error = Assert.Throws<SqlParseException>(() => new SqlTokenizer(sql).Tokenize());
+
+        Assert.Contains(expectedMessage, error.Message);
+        Assert.Contains("span [", error.Message);
+    }
+
+    [Fact]
+    public void Parse_TrailingUnconsumedTokens_Rejects()
+    {
+        var error = Assert.Throws<SqlParseException>(() => SqlDefinitionParser.ParseQuery("SELECT id FROM users garbage extra"));
+
+        Assert.Contains("complete statement was not consumed", error.Message);
+    }
+
+    [Fact]
+    public void Parse_StringLiteral_PreservesEscapedQuoteValue()
+    {
+        var definition = SqlDefinitionParser.ParseQuery("SELECT 'O''Brien' AS name");
+
+        var constant = Assert.IsType<ConstantSelectCondition>(Assert.Single(definition.SelectColumns!));
+        Assert.Equal("O'Brien", constant.Constant);
+    }
+
+    [Theory]
+    [InlineData("UPDATE users SET name = 'unterminated WHERE id = 1", "Unterminated string literal")]
+    [InlineData("UPDATE users SET name = :name WHERE id = 1", "Unbound SQL parameter")]
+    [InlineData("UPDATE users SET login_count = login_count + 1 WHERE id = 1", "Unsupported DML value expression")]
+    [InlineData("DELETE FROM users; DELETE FROM audit", "Only one SQL statement")]
+    public void ParseDml_MalformedOrUnboundInput_FailsClosed(string sql, string expectedMessage)
+    {
+        var error = Assert.Throws<SqlParseException>(() => SqlDefinitionParser.ParseDml(sql));
+
+        Assert.Contains(expectedMessage, error.Message);
+    }
+
+    [Fact]
+    public void ParseDml_MultiRowInsert_PreservesRowsAndNulls()
+    {
+        var definition = SqlDefinitionParser.ParseDml(
+            "INSERT INTO users (id, name, score) VALUES (1, 'A', NULL), (2, 'B', 9.5)");
+
+        Assert.Equal(DmlOperation.Insert, definition.Operation);
+        Assert.Equal(["id", "name", "score"], definition.Columns);
+        Assert.Equal(2, definition.MultiValues!.Count);
+        Assert.Null(definition.MultiValues[0][2]);
+        Assert.Equal(9.5m, definition.MultiValues[1][2]);
+    }
+
+    [Fact]
+    public void ParseDml_ComplexPredicate_UsesStructuredWhereParser()
+    {
+        var definition = SqlDefinitionParser.ParseDml(
+            "DELETE FROM users WHERE (status = 'old' OR status IS NULL) AND id IN (1, 2) AND age BETWEEN 18 AND 65");
+
+        var root = Assert.IsType<GroupWhereCondition>(Assert.Single(definition.WhereConditions!));
+        Assert.Contains(root.Groups, condition => condition is GroupWhereCondition { IsOr: true });
+        Assert.Contains(root.Groups, condition => condition is BasicWhereCondition { Operator: "IN" });
+        Assert.Contains(root.Groups, condition => condition is BasicWhereCondition { Operator: "BETWEEN" });
+    }
+
+    [Fact]
+    public void ParseDml_UpdateStringContainingWhere_DoesNotSplitInsideLiteral()
+    {
+        var definition = SqlDefinitionParser.ParseDml(
+            "UPDATE main.notes SET body = 'look where the value is', title = 'set, where' WHERE id = 7");
+
+        Assert.Equal("main.notes", definition.TableName);
+        Assert.Equal("look where the value is", definition.Values![0].Value);
+        Assert.Equal("set, where", definition.Values[1].Value);
+        var where = Assert.IsType<BasicWhereCondition>(Assert.Single(definition.WhereConditions!));
+        Assert.Equal("id", where.FieldName);
+        Assert.Equal(7, where.Value);
+    }
+
+    [Fact]
+    public void ParseDml_QuotedIdentifiers_AreNormalizedByTokenizer()
+    {
+        var definition = SqlDefinitionParser.ParseDml(
+            "UPDATE \"app\".\"Order\" SET \"Display Name\" = 'ready' WHERE \"Id\" = 1",
+            SqlAgentToolType.Postgres);
+
+        Assert.Equal("app.Order", definition.TableName);
+        Assert.Equal("Display Name", Assert.Single(definition.Values!).FieldName);
+        Assert.Equal("Id", Assert.IsType<BasicWhereCondition>(Assert.Single(definition.WhereConditions!)).FieldName);
+    }
+
+    [Fact]
+    public void Parse_QuotedIdentifiers_NormalizesForTargetCompiler()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT \"Order\".\"Value\" FROM \"Order\"",
+            SqlAgentToolType.Postgres);
+
+        Assert.Equal("Order", definition.TableName);
+        Assert.Equal("Order.Value", Assert.IsType<FieldSelectCondition>(Assert.Single(definition.SelectColumns!)).FieldName);
+    }
+
+    [Theory]
+    [InlineData("SELECT $$O'Brien$$ AS value", "O'Brien")]
+    [InlineData("SELECT $tag$line 1\nline '2'$tag$ AS value", "line 1\nline '2'")]
+    [InlineData("SELECT E'line\\n2' AS value", "line\n2")]
+    public void Parse_PostgresStringForms_PreserveDecodedValue(string sql, string expected)
+    {
+        var definition = SqlDefinitionParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var constant = Assert.IsType<ConstantSelectCondition>(Assert.Single(definition.SelectColumns!));
+        Assert.Equal(expected, constant.Constant);
+    }
+
+    [Fact]
+    public void Parse_OracleQString_PreservesDecodedValue()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT q'[O'Brien]' AS value",
+            SqlAgentToolType.Oracle);
+
+        var constant = Assert.IsType<ConstantSelectCondition>(Assert.Single(definition.SelectColumns!));
+        Assert.Equal("O'Brien", constant.Constant);
+    }
+
+    [Fact]
+    public void Tokenize_MySqlHashComment_IsProviderSpecific()
+    {
+        var mysql = new SqlTokenizer("SELECT 1 # comment", SqlAgentToolType.MySQL).Tokenize();
+        Assert.DoesNotContain(mysql, token => token.Value == "#");
+
+        Assert.Throws<SqlParseException>(() =>
+            new SqlTokenizer("SELECT 1 # comment", SqlAgentToolType.Postgres).Tokenize());
+    }
+
+    [Fact]
+    public void Parse_SqlServerTempTable_DoesNotTreatHashAsComment()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT id FROM #agent_results",
+            SqlAgentToolType.MsSqlServer);
+
+        Assert.Equal("#agent_results", definition.TableName);
+    }
+
+    [Fact]
+    public void Tokenize_UnterminatedDollarQuote_FailsClosed()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            new SqlTokenizer("SELECT $tag$unterminated", SqlAgentToolType.Postgres).Tokenize());
+
+        Assert.Contains("Unterminated PostgreSQL dollar-quoted string", error.Message);
+        Assert.Contains("span [", error.Message);
     }
 }

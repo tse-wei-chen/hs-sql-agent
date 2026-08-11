@@ -250,6 +250,20 @@ public static class DefinitionValidator
                     AddError(errors, AppendPath(path, "constant"), "must not be explicitly null for type: 'constant'.");
                 break;
 
+            case CastSelectCondition cast:
+                if (cast.Expression == null)
+                    AddError(errors, AppendPath(path, "expression"), "must not be null for type: 'cast'.");
+                else
+                    ValidateSelectCondition(cast.Expression, AppendPath(path, "expression"), errors);
+                if (string.IsNullOrWhiteSpace(cast.TypeName))
+                    AddError(errors, AppendPath(path, "typeName"), "must not be empty for type: 'cast'.");
+                break;
+
+            case IntervalSelectCondition interval:
+                if (string.IsNullOrWhiteSpace(interval.Literal))
+                    AddError(errors, AppendPath(path, "literal"), "must not be empty for type: 'interval'.");
+                break;
+
             case FunctionSelectCondition func:
                 if (string.IsNullOrWhiteSpace(func.FunctionName))
                     AddError(errors, AppendPath(path, "functionName"), "must not be empty for type: 'function'.");
@@ -335,6 +349,10 @@ public static class DefinitionValidator
                     AddError(errors, AppendPath(path, "leftExpression"), "must not be null for type: 'expression'.");
                 if (string.IsNullOrWhiteSpace(ex.Operator))
                     AddError(errors, AppendPath(path, "operator"), "must not be empty for type: 'expression'.");
+                if (ex.LeftExpression != null)
+                    ValidateSelectCondition(ex.LeftExpression, AppendPath(path, "leftExpression"), errors);
+                if (ex.RightExpression != null)
+                    ValidateSelectCondition(ex.RightExpression, AppendPath(path, "rightExpression"), errors);
                 break;
 
             case SubQueryWhereCondition sq:
@@ -554,7 +572,30 @@ public static class DefinitionValidator
                     ValidateOrderByCondition(window.OrderBy[i], AppendPath(path, $"orderBy[{i}]"), errors);
                 }
             }
+            if (window.Frame != null)
+            {
+                var framePath = AppendPath(path, "frame");
+                if (window.Frame.Start == null)
+                    AddError(errors, AppendPath(framePath, "start"), "must not be null.");
+                else
+                    ValidateWindowFrameBound(window.Frame.Start, AppendPath(framePath, "start"), errors);
+                if (window.Frame.End != null)
+                    ValidateWindowFrameBound(window.Frame.End, AppendPath(framePath, "end"), errors);
+                if (window.Frame.Start?.Kind == WindowFrameBoundKind.UnboundedFollowing)
+                    AddError(errors, AppendPath(framePath, "start"), "cannot be UNBOUNDED FOLLOWING.");
+                if (window.Frame.End?.Kind == WindowFrameBoundKind.UnboundedPreceding)
+                    AddError(errors, AppendPath(framePath, "end"), "cannot be UNBOUNDED PRECEDING.");
+            }
         }
+    }
+
+    private static void ValidateWindowFrameBound(WindowFrameBound bound, string path, List<string> errors)
+    {
+        var needsOffset = bound.Kind is WindowFrameBoundKind.Preceding or WindowFrameBoundKind.Following;
+        if (needsOffset && bound.Offset is null or < 0)
+            AddError(errors, AppendPath(path, "offset"), "must be a non-negative integer for PRECEDING/FOLLOWING.");
+        if (!needsOffset && bound.Offset != null)
+            AddError(errors, AppendPath(path, "offset"), "is only valid for PRECEDING/FOLLOWING.");
     }
 
     private static QueryDefinition ConvertSubQueryToDefinition(SubQuerySelectCondition sq)

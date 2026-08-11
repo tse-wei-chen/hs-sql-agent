@@ -1,5 +1,6 @@
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
+using System.Text;
 
 namespace SqlAgent.Service.SqlParsing;
 
@@ -11,8 +12,14 @@ public class SqlParser(Token[] tokens)
     public QueryDefinition Parse()
     {
         var qd = ParseSelectStatement();
+        if (Peek().Type == TokenType.Semicolon)
+            Advance();
         if (Peek().Type != TokenType.EOF)
-            Expect(TokenType.Semicolon);
+        {
+            var token = Peek();
+            throw new SqlParseException(
+                $"Unexpected token '{token.Value}' at position {token.Pos}; the complete statement was not consumed.");
+        }
         return qd;
     }
 
@@ -396,6 +403,7 @@ public class SqlParser(Token[] tokens)
 
         if (Peek().Type == TokenType.LParen)
         {
+            var isParenthesizedValueExpression = ParenthesizedValueIsCompared();
             Advance();
             if (PeekKeyword("SELECT") || PeekKeyword("WITH"))
             {
@@ -409,6 +417,12 @@ public class SqlParser(Token[] tokens)
                 Expect(TokenType.RParen);
                 var sub = new SubQueryWhereCondition { FieldName = null, Operator = "EXISTS", SubQuery = subQd };
                 return sub;
+            }
+            if (!isParenthesizedValueExpression)
+            {
+                var nested = ParseWhereOrExpr();
+                Expect(TokenType.RParen);
+                return nested;
             }
             // Parenthesized expression - check if followed by comparison operator
             var expr = ParseExpr();
@@ -436,6 +450,22 @@ public class SqlParser(Token[] tokens)
         }
 
         return ParseWhereComparison();
+    }
+
+    private bool ParenthesizedValueIsCompared()
+    {
+        var depth = 0;
+        for (var offset = 0; ; offset++)
+        {
+            var token = Peek(offset);
+            if (token.Type == TokenType.EOF) return false;
+            if (token.Type == TokenType.LParen) depth++;
+            else if (token.Type == TokenType.RParen && --depth == 0)
+            {
+                var next = Peek(offset + 1);
+                return next.Type == TokenType.Operator && IsComparisonOp(next.Value);
+            }
+        }
     }
 
     private WhereCondition ParseWhereComparison()
@@ -805,28 +835,43 @@ public class SqlParser(Token[] tokens)
     {
         var expr = ParseAdditiveExpr(null);
         var dir = SortDirection.Asc;
+        var nullOrdering = NullOrdering.Default;
         if (PeekKeyword("ASC")) { Advance(); }
         else if (PeekKeyword("DESC")) { dir = SortDirection.Desc; Advance(); }
 
         if (PeekKeyword("NULLS"))
         {
             Advance();
-            if (PeekKeyword("FIRST") || (Peek().Type == TokenType.Identifier && Peek().Value.Equals("FIRST", StringComparison.OrdinalIgnoreCase)))
+            if (PeekKeyword("FIRST"))
+            {
+                nullOrdering = NullOrdering.First;
                 Advance();
-            else if (PeekKeyword("LAST") || (Peek().Type == TokenType.Identifier && Peek().Value.Equals("LAST", StringComparison.OrdinalIgnoreCase)))
+            }
+            else if (PeekKeyword("LAST"))
+            {
+                nullOrdering = NullOrdering.Last;
                 Advance();
+            }
+            else
+            {
+                var token = Peek();
+                throw new SqlParseException($"Expected FIRST or LAST after NULLS at position {token.Pos}.");
+            }
         }
 
         if (expr is FieldSelectCondition f)
-            return new FieldOrderByCondition { FieldName = f.FieldName, Direction = dir };
+            return new FieldOrderByCondition { FieldName = f.FieldName, Direction = dir, NullOrdering = nullOrdering };
         if (expr is FunctionSelectCondition fn)
             return new FunctionOrderByCondition
             {
                 FunctionName = fn.FunctionName,
                 Arguments = fn.Arguments,
                 IsDistinct = fn.IsDistinct,
-                Direction = dir
+                Direction = dir,
+                NullOrdering = nullOrdering
             };
+        if (nullOrdering != NullOrdering.Default)
+            throw CapabilityError("NULL ordering on non-field/function expressions", Peek(-1));
         return new FieldOrderByCondition { FieldName = ExtractExprText(expr), Direction = dir };
     }
 
@@ -906,7 +951,7 @@ public class SqlParser(Token[] tokens)
             left = new OperationSelectCondition
             {
                 Left = left,
-                Operator = ArithmeticOperator.Add,
+                Operator = ArithmeticOperator.Or,
                 Right = right
             };
         }
@@ -923,7 +968,7 @@ public class SqlParser(Token[] tokens)
             left = new OperationSelectCondition
             {
                 Left = left,
-                Operator = ArithmeticOperator.Add,
+                Operator = ArithmeticOperator.And,
                 Right = right
             };
         }
@@ -955,7 +1000,7 @@ public class SqlParser(Token[] tokens)
             return new OperationSelectCondition
             {
                 Left = left,
-                Operator = ArithmeticOperator.Add,
+                Operator = ComparisonOperator(opToken.Value),
                 Right = right
             };
         }
@@ -991,7 +1036,9 @@ public class SqlParser(Token[] tokens)
             left = new OperationSelectCondition
             {
                 Left = left,
-                Operator = op == "*" ? ArithmeticOperator.Multiply : op == "/" ? ArithmeticOperator.Divide : ArithmeticOperator.Add,
+                Operator = op == "*" ? ArithmeticOperator.Multiply
+                    : op == "/" ? ArithmeticOperator.Divide
+                    : ArithmeticOperator.Modulo,
                 Right = right,
             };
         }
@@ -1003,16 +1050,12 @@ public class SqlParser(Token[] tokens)
         var expr = ParsePrimary();
         while (Peek().Type == TokenType.Operator && Peek().Value == "::")
         {
-            var castType = ConsumePostgresCast();
-            // Convert string constant to DateTime when casting to date/time types
-            if ((castType.Equals("DATE", StringComparison.OrdinalIgnoreCase) ||
-                 castType.Equals("TIMESTAMP", StringComparison.OrdinalIgnoreCase) ||
-                 castType.Equals("DATETIME", StringComparison.OrdinalIgnoreCase)) &&
-                expr is ConstantSelectCondition cs && cs.Constant is string str)
+            Advance();
+            expr = new CastSelectCondition
             {
-                if (System.DateTime.TryParse(str, out var dt))
-                    expr = new ConstantSelectCondition { Constant = dt };
-            }
+                Expression = expr,
+                TypeName = ParseCastTypeName()
+            };
         }
         return expr;
     }
@@ -1025,10 +1068,18 @@ public class SqlParser(Token[] tokens)
         if (PeekKeyword("CAST"))
             return ParseCastExpr();
 
+        if (Peek().Type == TokenType.Parameter)
+        {
+            var parameter = Peek();
+            throw new SqlParseException(
+                $"Unbound SQL parameter '{parameter.Value}' at position {parameter.Pos}. " +
+                "Runtime SQL parameters are not accepted by execute_query_sql; use a declared Custom Tool parameter.");
+        }
+
         if (PeekKeyword("NULL"))
         {
             Advance();
-            return new ConstantSelectCondition { Constant = null };
+            return new ConstantSelectCondition { Constant = null! };
         }
 
         if (PeekKeyword("TRUE"))
@@ -1109,14 +1160,14 @@ public class SqlParser(Token[] tokens)
             var val = Advance().Value;
             return new ConstantSelectCondition
             {
-                Constant = val.Contains('.') ? (object)decimal.Parse(val) : int.Parse(val)
+                Constant = ParseNumericLiteral(val)
             };
         }
 
         if (Peek().Type == TokenType.String)
         {
             var val = Advance().Value;
-            return new ConstantSelectCondition { Constant = val[1..^1] };
+            return new ConstantSelectCondition { Constant = DecodeStringLiteral(val) };
         }
 
         if (Peek().Type == TokenType.Operator && Peek().Value == "*")
@@ -1144,9 +1195,8 @@ public class SqlParser(Token[] tokens)
             && Peek(1).Type == TokenType.String)
         {
             Advance();
-            var strVal = Advance().Value;
-            var raw = strVal[1..^1];
-            return new ConstantSelectCondition { Constant = raw };
+            var literal = DecodeStringLiteral(Advance().Value);
+            return new IntervalSelectCondition { Literal = literal };
         }
 
         if ((Peek().Type == TokenType.Keyword || Peek().Type == TokenType.Identifier) && Peek(1).Type == TokenType.LParen)
@@ -1249,21 +1299,7 @@ public class SqlParser(Token[] tokens)
 
         if (PeekKeyword("ROWS") || PeekKeyword("RANGE"))
         {
-            Advance();
-            if (PeekKeyword("BETWEEN"))
-            {
-                Advance();
-                if (PeekKeyword("UNBOUNDED")) { Advance(); ExpectKeyword("PRECEDING"); ExpectKeyword("AND"); }
-                else if (PeekKeyword("CURRENT")) { Advance(); ExpectKeyword("ROW"); ExpectKeyword("AND"); }
-                else { var n = Expect(TokenType.Number); if (PeekKeyword("PRECEDING")) Advance(); else if (PeekKeyword("FOLLOWING")) Advance(); ExpectKeyword("AND"); }
-
-                if (PeekKeyword("UNBOUNDED")) { Advance(); ExpectKeyword("FOLLOWING"); }
-                else if (PeekKeyword("CURRENT")) { Advance(); ExpectKeyword("ROW"); }
-                else { var n = Expect(TokenType.Number); if (PeekKeyword("PRECEDING")) Advance(); else if (PeekKeyword("FOLLOWING")) Advance(); }
-            }
-            else if (PeekKeyword("UNBOUNDED")) { Advance(); ExpectKeyword("PRECEDING"); }
-            else if (PeekKeyword("CURRENT")) { Advance(); ExpectKeyword("ROW"); }
-            else { var n = Expect(TokenType.Number); if (PeekKeyword("PRECEDING")) Advance(); else if (PeekKeyword("FOLLOWING")) Advance(); }
+            window.Frame = ParseWindowFrame();
         }
 
         Expect(TokenType.RParen);
@@ -1327,68 +1363,122 @@ public class SqlParser(Token[] tokens)
         Expect(TokenType.LParen);
         var expr = ParseExpr();
         ExpectKeyword("AS");
-        var castType = string.Empty;
-        while (Peek().Type != TokenType.RParen && Peek().Type != TokenType.EOF)
-        {
-            if (PeekTypeKeyword("SIGNED") || PeekTypeKeyword("UNSIGNED") || PeekTypeKeyword("CHAR") || PeekTypeKeyword("VARCHAR")
-                || PeekTypeKeyword("INT") || PeekTypeKeyword("INTEGER") || PeekTypeKeyword("BIGINT") || PeekTypeKeyword("SMALLINT")
-                || PeekTypeKeyword("TINYINT") || PeekTypeKeyword("DECIMAL") || PeekTypeKeyword("NUMERIC")
-                || PeekTypeKeyword("FLOAT") || PeekTypeKeyword("DOUBLE") || PeekTypeKeyword("REAL")
-                || PeekTypeKeyword("DATE") || PeekTypeKeyword("TIME") || PeekTypeKeyword("DATETIME") || PeekTypeKeyword("TIMESTAMP")
-                || PeekTypeKeyword("TEXT") || PeekTypeKeyword("BOOLEAN") || PeekTypeKeyword("BLOB")
-                || PeekTypeKeyword("JSON") || PeekTypeKeyword("UUID"))
-            {
-                castType = Advance().Value;
-            }
-            else if (Peek().Type == TokenType.LParen)
-            {
-                Advance();
-                if (Peek().Type == TokenType.Number) Advance();
-                if (Peek().Type == TokenType.Comma) { Advance(); if (Peek().Type == TokenType.Number) Advance(); }
-                Expect(TokenType.RParen);
-            }
-            else break;
-        }
+        var castType = ParseCastTypeName();
         Expect(TokenType.RParen);
-        // Convert string constant to DateTime when casting to date/time types
-        if ((castType.Equals("DATE", StringComparison.OrdinalIgnoreCase) ||
-             castType.Equals("TIMESTAMP", StringComparison.OrdinalIgnoreCase) ||
-             castType.Equals("DATETIME", StringComparison.OrdinalIgnoreCase)) &&
-            expr is ConstantSelectCondition cs && cs.Constant is string str)
-        {
-            if (System.DateTime.TryParse(str, out var dt))
-                return new ConstantSelectCondition { Constant = dt };
-        }
-        return expr;
+        return new CastSelectCondition { Expression = expr, TypeName = castType };
     }
 
-    private string ConsumePostgresCast()
+    private string ParseCastTypeName()
     {
-        ExpectOperator("::");
-        var typeName = string.Empty;
-
-        if (Peek().Type == TokenType.Identifier || Peek().Type == TokenType.Keyword)
+        var parts = new List<string>();
+        if (Peek().Type is not (TokenType.Identifier or TokenType.Keyword))
         {
-            typeName = Advance().Value;
-            while (Peek().Type == TokenType.Dot)
-            {
-                Advance();
-                if (Peek().Type == TokenType.Identifier || Peek().Type == TokenType.Keyword)
-                    typeName = Advance().Value;
-                else
-                    break;
-            }
+            var token = Peek();
+            throw new SqlParseException($"Expected cast type at position {token.Pos}.");
         }
+
+        parts.Add(Advance().Value);
+        while (Peek().Type == TokenType.Dot)
+        {
+            Advance();
+            if (Peek().Type is not (TokenType.Identifier or TokenType.Keyword))
+                throw new SqlParseException($"Expected cast type component at position {Peek().Pos}.");
+            parts[^1] += "." + Advance().Value;
+        }
+
+        while (Peek().Type is TokenType.Identifier or TokenType.Keyword
+               && IsCastTypeQualifier(Peek().Value))
+            parts.Add(Advance().Value);
 
         if (Peek().Type == TokenType.LParen)
         {
+            var suffix = new StringBuilder("(");
             Advance();
-            while (Peek().Type != TokenType.RParen && Peek().Type != TokenType.EOF)
+            var first = Expect(TokenType.Number);
+            if (!int.TryParse(first.Value, out _))
+                throw new SqlParseException($"Cast type precision must be an integer at position {first.Pos}.");
+            suffix.Append(first.Value);
+            if (Peek().Type == TokenType.Comma)
+            {
                 Advance();
+                var second = Expect(TokenType.Number);
+                if (!int.TryParse(second.Value, out _))
+                    throw new SqlParseException($"Cast type scale must be an integer at position {second.Pos}.");
+                suffix.Append(',').Append(second.Value);
+            }
             Expect(TokenType.RParen);
+            suffix.Append(')');
+            parts[^1] += suffix.ToString();
         }
 
-        return typeName;
+        return string.Join(' ', parts);
+    }
+
+    private static bool IsCastTypeQualifier(string value) => value.Equals("PRECISION", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("VARYING", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("WITH", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("WITHOUT", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("TIME", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("ZONE", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("SIGNED", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("UNSIGNED", StringComparison.OrdinalIgnoreCase);
+
+    private WindowFrameDefinition ParseWindowFrame()
+    {
+        var unitToken = Advance();
+        var frame = new WindowFrameDefinition
+        {
+            Unit = unitToken.Value.Equals("ROWS", StringComparison.OrdinalIgnoreCase)
+                ? WindowFrameUnit.Rows
+                : WindowFrameUnit.Range
+        };
+
+        if (PeekKeyword("BETWEEN"))
+        {
+            Advance();
+            frame.Start = ParseWindowFrameBound();
+            ExpectKeyword("AND");
+            frame.End = ParseWindowFrameBound();
+        }
+        else
+        {
+            frame.Start = ParseWindowFrameBound();
+        }
+
+        return frame;
+    }
+
+    private WindowFrameBound ParseWindowFrameBound()
+    {
+        if (PeekKeyword("UNBOUNDED"))
+        {
+            Advance();
+            if (PeekKeyword("PRECEDING"))
+            {
+                Advance();
+                return new WindowFrameBound { Kind = WindowFrameBoundKind.UnboundedPreceding };
+            }
+            ExpectKeyword("FOLLOWING");
+            return new WindowFrameBound { Kind = WindowFrameBoundKind.UnboundedFollowing };
+        }
+
+        if (PeekKeyword("CURRENT"))
+        {
+            Advance();
+            ExpectKeyword("ROW");
+            return new WindowFrameBound { Kind = WindowFrameBoundKind.CurrentRow };
+        }
+
+        var offsetToken = Expect(TokenType.Number);
+        if (!int.TryParse(offsetToken.Value, out var offset) || offset < 0)
+            throw new SqlParseException($"Window frame offset must be a non-negative integer at position {offsetToken.Pos}.");
+        if (PeekKeyword("PRECEDING"))
+        {
+            Advance();
+            return new WindowFrameBound { Kind = WindowFrameBoundKind.Preceding, Offset = offset };
+        }
+        ExpectKeyword("FOLLOWING");
+        return new WindowFrameBound { Kind = WindowFrameBoundKind.Following, Offset = offset };
     }
 
     private SelectCondition ParseColumnRef()
@@ -1441,19 +1531,33 @@ public class SqlParser(Token[] tokens)
         if (Peek().Type == TokenType.Number)
         {
             var val = Advance().Value;
-            return val.Contains('.') ? (object)decimal.Parse(val) : int.Parse(val);
+            return ParseNumericLiteral(val);
         }
         if (Peek().Type == TokenType.String)
         {
             var val = Advance().Value;
-            return val[1..^1];
+            return DecodeStringLiteral(val);
         }
-        if (PeekKeyword("NULL")) { Advance(); return null; }
+        if (PeekKeyword("NULL")) { Advance(); return null!; }
         if (PeekKeyword("TRUE")) { Advance(); return true; }
         if (PeekKeyword("FALSE")) { Advance(); return false; }
         var idVal = Advance().Value;
         return idVal;
     }
+
+    private static object ParseNumericLiteral(string value)
+    {
+        if (!value.Contains('.') && !value.Contains('e', StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var integer))
+            return integer;
+
+        return decimal.Parse(value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string DecodeStringLiteral(string token) =>
+        token[1..^1].Replace("''", "'", StringComparison.Ordinal);
 
     private static WhereCondition ConvertSelectToWhereCondition(SelectCondition expr)
     {
@@ -1463,10 +1567,11 @@ public class SqlParser(Token[] tokens)
             return new BasicWhereCondition { FieldName = "1", Operator = "=", Value = 1 };
         if (expr is OperationSelectCondition op)
         {
-            if (op.Operator == ArithmeticOperator.Add)
+            if (op.Operator is ArithmeticOperator.And or ArithmeticOperator.Or)
                 return new GroupWhereCondition
                 {
-                    Groups = [ConvertSelectToWhereCondition(op.Left), ConvertSelectToWhereCondition(op.Right)]
+                    Groups = [ConvertSelectToWhereCondition(op.Left), ConvertSelectToWhereCondition(op.Right)],
+                    IsOr = op.Operator == ArithmeticOperator.Or
                 };
             return new BasicWhereCondition { FieldName = ExtractExprText(expr), Operator = "=", Value = true };
         }
@@ -1501,6 +1606,10 @@ public class SqlParser(Token[] tokens)
             return $"({ExtractExprText(o.Left)} {OpToStr(o.Operator)} {ExtractExprText(o.Right)})";
         if (expr is FunctionSelectCondition fn)
             return $"{fn.FunctionName}(...)";
+        if (expr is CastSelectCondition cast)
+            return $"CAST({ExtractExprText(cast.Expression)} AS {cast.TypeName})";
+        if (expr is IntervalSelectCondition interval)
+            return $"INTERVAL '{interval.Literal.Replace("'", "''", StringComparison.Ordinal)}'";
         return "";
     }
 
@@ -1510,8 +1619,28 @@ public class SqlParser(Token[] tokens)
         ArithmeticOperator.Subtract => "-",
         ArithmeticOperator.Multiply => "*",
         ArithmeticOperator.Divide => "/",
+        ArithmeticOperator.Modulo => "%",
         ArithmeticOperator.Concat => "||",
-        _ => "+"
+        ArithmeticOperator.Equal => "=",
+        ArithmeticOperator.NotEqual => "<>",
+        ArithmeticOperator.GreaterThan => ">",
+        ArithmeticOperator.LessThan => "<",
+        ArithmeticOperator.GreaterThanOrEqual => ">=",
+        ArithmeticOperator.LessThanOrEqual => "<=",
+        ArithmeticOperator.And => "AND",
+        ArithmeticOperator.Or => "OR",
+        _ => throw new ArgumentOutOfRangeException(nameof(op), op, "Unknown expression operator.")
+    };
+
+    private static ArithmeticOperator ComparisonOperator(string op) => op switch
+    {
+        "=" => ArithmeticOperator.Equal,
+        "<>" or "!=" => ArithmeticOperator.NotEqual,
+        ">" => ArithmeticOperator.GreaterThan,
+        "<" => ArithmeticOperator.LessThan,
+        ">=" => ArithmeticOperator.GreaterThanOrEqual,
+        "<=" => ArithmeticOperator.LessThanOrEqual,
+        _ => throw new SqlParseException($"Unsupported comparison operator '{op}'.")
     };
 
     private static bool IsKeyword(string value) =>
@@ -1525,7 +1654,7 @@ public class SqlParser(Token[] tokens)
         "OFFSET", "ASC", "DESC", "DISTINCT", "ALL", "UNION", "INTERSECT",
         "EXCEPT", "WITH", "RECURSIVE", "CASE", "WHEN", "THEN", "ELSE", "END",
         "TRUE", "FALSE", "EXISTS", "OVER", "PARTITION", "FILTER", "SET",
-        "ROW", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT",
+        "ROW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT",
         "LATERAL", "USING", "NATURAL", "SOME", "ANY",
         "NULLS", "FIRST", "LAST", "INTERVAL"
     };
@@ -1565,9 +1694,13 @@ public class SqlParser(Token[] tokens)
             && t.Value.Equals(keyword, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static SqlParseException CapabilityError(string capability, Token token) =>
+        new($"Unsupported SQL capability '{capability}' at position {token.Pos}; the statement was rejected to preserve semantics.");
+
     private Token Peek(int offset = 0)
     {
         var idx = _pos + offset;
+        if (idx < 0) return tokens[0];
         return idx < tokens.Length ? tokens[idx] : tokens[^1];
     }
 

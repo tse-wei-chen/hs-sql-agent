@@ -117,7 +117,7 @@ public class CustomToolProxy(
 
             if (isQuery)
             {
-                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(renderedSql));
+                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(renderedSql), dbType);
                 auditQuery = queryDef;
                 if (queryDef == null)
                 {
@@ -148,7 +148,7 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var dmlDef = SqlDefinitionParser.ParseDml(renderedSql);
+                var dmlDef = SqlDefinitionParser.ParseDml(renderedSql, dbType);
                 auditDml = dmlDef;
                 if (dmlDef == null)
                 {

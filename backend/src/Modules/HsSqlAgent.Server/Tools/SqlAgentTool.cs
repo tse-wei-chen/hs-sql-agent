@@ -61,7 +61,7 @@ public partial class SqlAgentTool(
                 return "Error: SQL is missing.";
 
             sql = NormalizeSql(sql);
-            definition = SqlDefinitionParser.ParseQuery(sql);
+            definition = SqlDefinitionParser.ParseQuery(sql, dbType);
 
             ValidateAllTableAccess(definition);
 
@@ -140,11 +140,12 @@ public partial class SqlAgentTool(
             if (server.ClientCapabilities?.Elicitation == null)
                 return "Error: This MCP client does not support the interactive confirmation required for DML execution.";
 
-            dml = SqlDefinitionParser.ParseDml(sql);
-            ValidateAllTableAccess(dml.TableName, null, null, null, dml.FromQuery, null, dml.WhereConditions);
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+
+            dml = SqlDefinitionParser.ParseDml(sql, dbType);
+            ValidateAllTableAccess(dml.TableName, null, null, null, dml.FromQuery, null, dml.WhereConditions);
 
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
 
@@ -317,22 +318,30 @@ public partial class SqlAgentTool(
             var dbId = ResolveDbManagementId();
             if (dbId.HasValue)
             {
-                var semantics = await _semanticService.GetSemanticsByDbIdAsync(dbId.Value);
-                var tableSemantics = semantics.Where(s =>
+                var whitelist = ResolveTableWhitelist();
+                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value);
+                var tableSemantics = semanticModel.Entities.Where(s =>
                     string.Equals(s.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(s.TableName, tableName, StringComparison.OrdinalIgnoreCase)).ToList();
 
                 foreach (var col in columns)
                 {
                     var semantic = tableSemantics.FirstOrDefault(s => string.Equals(s.ColumnName, col.Name, StringComparison.OrdinalIgnoreCase));
+                    var parts = new List<string>();
                     if (semantic != null)
                     {
-                        var parts = new List<string>();
                         if (!string.IsNullOrWhiteSpace(semantic.DisplayName)) parts.Add($"Display Name: {semantic.DisplayName}");
                         if (!string.IsNullOrWhiteSpace(semantic.Description)) parts.Add(semantic.Description);
-                        if (parts.Count > 0)
-                            col.Description = string.Join(". ", parts);
+                        if (semantic.Synonyms.Count > 0) parts.Add($"Synonyms: {string.Join(", ", semantic.Synonyms)}");
                     }
+                    var relationships = semanticModel.Relationships.Where(r =>
+                        IsSemanticTableAllowed(whitelist, r.SourceSchema, r.SourceTable) &&
+                        IsSemanticTableAllowed(whitelist, r.TargetSchema, r.TargetTable) &&
+                        ((SameIdentifier(r.SourceSchema, schemaName) && SameIdentifier(r.SourceTable, tableName) && SameIdentifier(r.SourceColumn, col.Name)) ||
+                         (SameIdentifier(r.TargetSchema, schemaName) && SameIdentifier(r.TargetTable, tableName) && SameIdentifier(r.TargetColumn, col.Name))));
+                    parts.AddRange(relationships.Select(DescribeRelationship));
+                    if (parts.Count > 0)
+                        col.Description = string.Join(". ", parts);
                 }
             }
 
@@ -405,17 +414,20 @@ public partial class SqlAgentTool(
             var dbId = ResolveDbManagementId();
             if (dbId.HasValue)
             {
-                var semantics = await _semanticService.GetSemanticsByDbIdAsync(dbId.Value);
+                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value);
                 var tablesWithDesc = tables.Select(t =>
                 {
-                    var s = semantics.FirstOrDefault(item =>
+                    var s = semanticModel.Entities.FirstOrDefault(item =>
                         string.Equals(item.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(item.TableName, t, StringComparison.OrdinalIgnoreCase) &&
                         string.IsNullOrEmpty(item.ColumnName));
-                    if (s == null) return t;
                     var parts = new List<string>();
-                    if (!string.IsNullOrWhiteSpace(s.DisplayName)) parts.Add($"Display Name: {s.DisplayName}");
-                    if (!string.IsNullOrWhiteSpace(s.Description)) parts.Add(s.Description);
+                    if (!string.IsNullOrWhiteSpace(s?.DisplayName)) parts.Add($"Display Name: {s.DisplayName}");
+                    if (!string.IsNullOrWhiteSpace(s?.Description)) parts.Add(s.Description);
+                    if (s?.Synonyms.Count > 0) parts.Add($"Synonyms: {string.Join(", ", s.Synonyms)}");
+                    var metrics = semanticModel.Metrics.Where(metric =>
+                        SameIdentifier(metric.SchemaName, schemaName) && SameIdentifier(metric.TableName, t));
+                    parts.AddRange(metrics.Select(DescribeMetric));
                     return parts.Count > 0 ? $"{t} ({string.Join(". ", parts)})" : t;
                 });
 
@@ -460,7 +472,8 @@ public partial class SqlAgentTool(
                     TableName = entry.TableName,
                     ColumnName = entry.ColumnName,
                     Description = entry.Description,
-                    DisplayName = entry.DisplayName
+                    DisplayName = entry.DisplayName,
+                    Synonyms = entry.Synonyms
                 };
                 await _semanticService.UpsertSemanticAsync(request);
                 var target = string.IsNullOrEmpty(entry.ColumnName)
@@ -563,6 +576,32 @@ public partial class SqlAgentTool(
             detail,
             cancellationToken);
     }
+
+    private static bool SameIdentifier(string? left, string? right)
+        => string.Equals(left ?? string.Empty, right ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSemanticTableAllowed(HashSet<string>? whitelist, string? schema, string table)
+        => whitelist is null or { Count: 0 } || whitelist.Contains(QualifiedTable(schema, table));
+
+    private static string DescribeRelationship(DbSemanticRelationshipModel relationship)
+        => $"Relationship {relationship.Name}: {QualifiedColumn(relationship.SourceSchema, relationship.SourceTable, relationship.SourceColumn)} " +
+           $"-> {QualifiedColumn(relationship.TargetSchema, relationship.TargetTable, relationship.TargetColumn)} " +
+           $"[{relationship.Cardinality}, {relationship.Direction}]";
+
+    private static string DescribeMetric(DbSemanticMetricModel metric)
+    {
+        var details = new List<string> { $"aggregation={metric.Aggregation}", $"formula={metric.Formula}" };
+        if (!string.IsNullOrWhiteSpace(metric.Grain)) details.Add($"grain={metric.Grain}");
+        if (!string.IsNullOrWhiteSpace(metric.Filter)) details.Add($"filter={metric.Filter}");
+        if (metric.Synonyms is { Count: > 0 }) details.Add($"synonyms={string.Join("/", metric.Synonyms)}");
+        return $"Metric {metric.DisplayName ?? metric.Name} [{string.Join("; ", details)}]";
+    }
+
+    private static string QualifiedColumn(string? schema, string table, string column)
+        => string.IsNullOrWhiteSpace(schema) ? $"{table}.{column}" : $"{schema}.{table}.{column}";
+
+    private static string QualifiedTable(string? schema, string table)
+        => string.IsNullOrWhiteSpace(schema) ? table : $"{schema}.{table}";
 
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
         => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
@@ -734,6 +773,8 @@ public partial class SqlAgentTool(
                     CollectFromExpression(opSel.Left, referenced, aliases);
                     CollectFromExpression(opSel.Right, referenced, aliases);
                 }
+                else if (s is CastSelectCondition castSel)
+                    CollectFromExpression(castSel.Expression, referenced, aliases);
                 else if (s is CaseWhenSelectCondition cwSel)
                     CollectFromCaseWhenClauses(cwSel.CaseWhen, referenced, aliases);
             }
@@ -817,6 +858,8 @@ public partial class SqlAgentTool(
             CollectFromExpression(op.Left, referenced, aliases);
             CollectFromExpression(op.Right, referenced, aliases);
         }
+        else if (condition is CastSelectCondition cast)
+            CollectFromExpression(cast.Expression, referenced, aliases);
         else if (condition is CaseWhenSelectCondition cw)
             CollectFromCaseWhenClauses(cw.CaseWhen, referenced, aliases);
         else if (condition is SubQuerySelectCondition sq)

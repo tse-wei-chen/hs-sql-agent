@@ -28,6 +28,9 @@ public abstract partial class BaseSqlStrategy(
     [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")]
     private static partial Regex SafeFunctionNamePattern();
 
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_.]*(?:\s+(?:PRECISION|VARYING|WITH|WITHOUT|TIME|ZONE|SIGNED|UNSIGNED))*(?:\([0-9]+(?:,[0-9]+)?\))?$", RegexOptions.IgnoreCase)]
+    private static partial Regex SafeCastTypePattern();
+
     private readonly IQueryValueParserService _valueParser = valueParser;
 
     private static SqlFunctionCondition ToFunc(
@@ -43,6 +46,12 @@ public abstract partial class BaseSqlStrategy(
     // =====================================================================
     // Public API
     // =====================================================================
+
+    public string CompileQuerySql(QueryDefinition definition)
+    {
+        var compiler = CreateCompiler();
+        return compiler.Compile(BuildQueryFromDefinition(definition)).RawSql;
+    }
 
     public async Task<string> ExecuteQueryAsync(
         QueryDefinition definition,
@@ -308,6 +317,10 @@ public abstract partial class BaseSqlStrategy(
                 CheckExprLeak(op.Right, innerAliases, subAlias);
                 break;
 
+            case CastSelectCondition cast:
+                CheckExprLeak(cast.Expression, innerAliases, subAlias);
+                break;
+
             case CaseWhenSelectCondition cw when cw.CaseWhen != null:
                 foreach (var clause in cw.CaseWhen)
                     CheckWhereLeak(clause.Condition, innerAliases, subAlias);
@@ -362,6 +375,10 @@ public abstract partial class BaseSqlStrategy(
                 CheckExprLeak(a.Right, innerAliases, subAlias);
                 break;
 
+            case CastSelectCondition cast:
+                CheckExprLeak(cast.Expression, innerAliases, subAlias);
+                break;
+
             case CaseWhenSelectCondition cw when cw.CaseWhen != null:
                 foreach (var clause in cw.CaseWhen)
                     CheckWhereLeak(clause.Condition, innerAliases, subAlias);
@@ -385,6 +402,10 @@ public abstract partial class BaseSqlStrategy(
             case OperationSelectCondition op:
                 CheckExprLeak(op.Left, innerAliases, subAlias);
                 CheckExprLeak(op.Right, innerAliases, subAlias);
+                break;
+
+            case CastSelectCondition cast:
+                CheckExprLeak(cast.Expression, innerAliases, subAlias);
                 break;
 
             case CaseWhenSelectCondition cw when cw.CaseWhen != null:
@@ -492,6 +513,8 @@ public abstract partial class BaseSqlStrategy(
             {
                 OperationSelectCondition opCol => MapArithmetic(opCol),
                 ConstantSelectCondition constCol => MapArithmetic(constCol),
+                CastSelectCondition castCol => MapArithmetic(castCol),
+                IntervalSelectCondition intervalCol => MapArithmetic(intervalCol),
                 FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window)),
                 CaseWhenSelectCondition caseWhenCol => MapCaseWhen(caseWhenCol.CaseWhen, caseWhenCol.ElseValue),
                 SubQuerySelectCondition subQueryCol => MapSubQueryColumn(subQueryCol),
@@ -620,14 +643,13 @@ public abstract partial class BaseSqlStrategy(
     {
         return expr switch
         {
-            OperationSelectCondition op => new ArithmeticColumn
-            {
-                Left = MapArithmetic(op.Left),
-                Right = MapArithmetic(op.Right),
-                Operator = GetOperatorString(op.Operator)
-            },
+            OperationSelectCondition op => MapOperation(op),
 
             FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window)),
+
+            CastSelectCondition cast => MapCast(cast),
+
+            IntervalSelectCondition interval => MapInterval(interval),
 
             ConstantSelectCondition cst => MapConstantValue(cst.Constant),
 
@@ -645,6 +667,65 @@ public abstract partial class BaseSqlStrategy(
                 $"Unsupported expression type in arithmetic context: {expr?.GetType().Name}")
         };
     }
+
+    private AbstractColumn MapOperation(OperationSelectCondition op)
+    {
+        var left = MapArithmetic(op.Left);
+        var right = MapArithmetic(op.Right);
+
+        if (op.Operator == ArithmeticOperator.Modulo
+            && DbType is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+            return new FunctionColumn { Name = "MOD", Arguments = [left, right] };
+
+        if (op.Operator == ArithmeticOperator.Concat)
+        {
+            if (DbType == SqlAgentToolType.MySQL)
+                return new FunctionColumn { Name = "CONCAT", Arguments = [left, right] };
+            if (DbType == SqlAgentToolType.MsSqlServer)
+                return new ArithmeticColumn { Left = left, Right = right, Operator = "+" };
+        }
+
+        if (op.Operator is ArithmeticOperator.Equal or ArithmeticOperator.NotEqual
+            or ArithmeticOperator.GreaterThan or ArithmeticOperator.LessThan
+            or ArithmeticOperator.GreaterThanOrEqual or ArithmeticOperator.LessThanOrEqual
+            or ArithmeticOperator.And or ArithmeticOperator.Or)
+        {
+            if (DbType is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer)
+                throw CapabilityError("boolean/comparison expressions in SELECT");
+        }
+
+        return new ArithmeticColumn
+        {
+            Left = left,
+            Right = right,
+            Operator = GetOperatorString(op.Operator)
+        };
+    }
+
+    private CastColumn MapCast(CastSelectCondition cast)
+    {
+        var typeName = cast.TypeName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(typeName) || !SafeCastTypePattern().IsMatch(typeName))
+            throw new InvalidOperationException($"Unsupported or unsafe CAST type '{cast.TypeName}'.");
+        return new CastColumn
+        {
+            Expression = MapArithmetic(cast.Expression),
+            TypeName = typeName.ToUpperInvariant()
+        };
+    }
+
+    private AbstractColumn MapInterval(IntervalSelectCondition interval)
+    {
+        if (DbType != SqlAgentToolType.Postgres)
+            throw CapabilityError("INTERVAL expressions");
+        if (string.IsNullOrWhiteSpace(interval.Literal))
+            throw new InvalidOperationException("INTERVAL literal must not be empty.");
+        var escaped = interval.Literal.Replace("'", "''", StringComparison.Ordinal);
+        return new RawColumn { Expression = $"INTERVAL '{escaped}'", Bindings = [] };
+    }
+
+    private InvalidOperationException CapabilityError(string capability) =>
+        new($"Unsupported SQL capability '{capability}' for provider {DbType}; the statement was rejected before execution.");
 
     private NumberColumn MapConstantValue(object? rawConstant)
     {
@@ -699,7 +780,16 @@ public abstract partial class BaseSqlStrategy(
             ArithmeticOperator.Subtract => "-",
             ArithmeticOperator.Multiply => "*",
             ArithmeticOperator.Divide => "/",
+            ArithmeticOperator.Modulo => "%",
             ArithmeticOperator.Concat => "||",
+            ArithmeticOperator.Equal => "=",
+            ArithmeticOperator.NotEqual => "<>",
+            ArithmeticOperator.GreaterThan => ">",
+            ArithmeticOperator.LessThan => "<",
+            ArithmeticOperator.GreaterThanOrEqual => ">=",
+            ArithmeticOperator.LessThanOrEqual => "<=",
+            ArithmeticOperator.And => "AND",
+            ArithmeticOperator.Or => "OR",
             _ => throw new ArgumentOutOfRangeException(nameof(op), $"Unknown operator: {op}")
         };
     }
@@ -866,6 +956,7 @@ public abstract partial class BaseSqlStrategy(
 
             if (function.Window.OrderBy?.Count > 0)
             {
+                EnsureNullOrderingSupported(function.Window.OrderBy);
                 result.OverOrderBy = [.. function.Window.OrderBy
                     .Select(o =>
                     {
@@ -875,15 +966,21 @@ public abstract partial class BaseSqlStrategy(
                             FunctionOrderByCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
                             _ => null
                         };
-                        if (col == null) return ((AbstractColumn?)null, string.Empty);
-                        return (col, o.Direction == SortDirection.Desc ? "desc" : "asc");
+                        if (col == null) return ((AbstractColumn?)null, string.Empty, string.Empty);
+                        return (col,
+                            o.Direction == SortDirection.Desc ? "desc" : "asc",
+                            NullOrderingSql(o.NullOrdering));
                     })
                     .Where(x => x.Item1 != null)
-                    .Select(x => (x.Item1!, x.Item2))];
+                    .Select(x => (x.Item1!, x.Item2, x.Item3))];
             }
 
+            if (function.Window.Frame != null)
+                result.OverFrame = CompileWindowFrame(function.Window.Frame);
+
             // Empty OVER () → force SqlKata to emit OVER (PARTITION BY 1)
-            if (result.OverPartitionBy == null && result.OverOrderBy == null)
+            if (result.OverPartitionBy == null && result.OverOrderBy == null
+                && string.IsNullOrWhiteSpace(result.OverFrame))
             {
                 result.OverPartitionBy = [new RawColumn { Expression = "1", Bindings = [] }];
             }
@@ -900,6 +997,8 @@ public abstract partial class BaseSqlStrategy(
             ConstantSelectCondition constantArg => MapConstantValue(constantArg.Constant),
             TemplateSqlTokenSelectCondition tokenArg => MapTemplateSqlToken(tokenArg),
             CaseWhenSelectCondition caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
+            CastSelectCondition castArg => MapCast(castArg),
+            IntervalSelectCondition intervalArg => MapInterval(intervalArg),
             FieldSelectCondition fieldArg when !string.IsNullOrWhiteSpace(fieldArg.FieldName)
                 => fieldArg.FieldName.Trim() == "*"
                     ? new RawColumn { Expression = "*", Bindings = [] }
@@ -1495,6 +1594,8 @@ public abstract partial class BaseSqlStrategy(
         {
             FieldSelectCondition f => f.FieldName,
             ConstantSelectCondition c => BuildHavingConstPart(c.Constant, bindings),
+            CastSelectCondition cast => $"CAST({BuildHavingArgPart(cast.Expression, bindings)} AS {ValidateCastType(cast.TypeName)})",
+            IntervalSelectCondition interval => BuildHavingIntervalPart(interval),
             FunctionSelectCondition n => BuildHavingFuncExpr(
                 new SqlFunctionCondition
                 {
@@ -1551,7 +1652,15 @@ public abstract partial class BaseSqlStrategy(
             OperationSelectCondition nested => BuildHavingArithPart(nested, bindings),
             _ => "?"
         };
-        return $"({left} {GetOperatorString(op.Operator)} {right})";
+        if (op.Operator == ArithmeticOperator.Modulo
+            && DbType is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+            return $"MOD({left}, {right})";
+        if (op.Operator == ArithmeticOperator.Concat && DbType == SqlAgentToolType.MySQL)
+            return $"CONCAT({left}, {right})";
+        var operatorText = op.Operator == ArithmeticOperator.Concat && DbType == SqlAgentToolType.MsSqlServer
+            ? "+"
+            : GetOperatorString(op.Operator);
+        return $"({left} {operatorText} {right})";
     }
 
     private Query ApplySimpleHaving(Query query, string field, string op, object? val)
@@ -1676,14 +1785,19 @@ public abstract partial class BaseSqlStrategy(
 
         foreach (var col in cols)
         {
+            EnsureNullOrderingSupported([col]);
             switch (col)
             {
                 case FieldOrderByCondition f:
-                    query = ApplyOrderByField(query, f.FieldName?.Trim() ?? string.Empty, f.Direction);
+                    query = ApplyOrderByField(query, f.FieldName?.Trim() ?? string.Empty, f.Direction, f.NullOrdering);
                     break;
 
                 case FunctionOrderByCondition f:
-                    query = ApplyOrderByFunction(query, MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)), f.Direction);
+                    query = ApplyOrderByFunction(
+                        query,
+                        MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions)),
+                        f.Direction,
+                        f.NullOrdering);
                     break;
             }
         }
@@ -1691,10 +1805,20 @@ public abstract partial class BaseSqlStrategy(
         return query;
     }
 
-    private static Query ApplyOrderByField(Query query, string field, SortDirection direction)
+    private static Query ApplyOrderByField(
+        Query query,
+        string field,
+        SortDirection direction,
+        NullOrdering nullOrdering)
     {
         if (string.IsNullOrWhiteSpace(field))
             return query;
+
+        if (nullOrdering != NullOrdering.Default)
+            return query.OrderBy(
+                new Column { Name = field },
+                direction != SortDirection.Desc,
+                NullOrderingSql(nullOrdering));
 
         return direction switch
         {
@@ -1704,14 +1828,76 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
-    private static Query ApplyOrderByFunction(Query query, AbstractColumn function, SortDirection direction)
+    private static Query ApplyOrderByFunction(
+        Query query,
+        AbstractColumn function,
+        SortDirection direction,
+        NullOrdering nullOrdering)
     {
+        if (nullOrdering != NullOrdering.Default)
+            return query.OrderBy(function, direction != SortDirection.Desc, NullOrderingSql(nullOrdering));
         return direction switch
         {
             SortDirection.Desc => query.OrderByDesc(function),
             _ => query.OrderBy(function)
         };
     }
+
+    private void EnsureNullOrderingSupported(IEnumerable<OrderByCondition> orderBy)
+    {
+        if (!orderBy.Any(x => x.NullOrdering != NullOrdering.Default))
+            return;
+        if (DbType is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
+            throw CapabilityError("NULLS FIRST/LAST ordering");
+    }
+
+    private static string NullOrderingSql(NullOrdering nullOrdering) => nullOrdering switch
+    {
+        NullOrdering.First => "first",
+        NullOrdering.Last => "last",
+        _ => string.Empty
+    };
+
+    private static string CompileWindowFrame(WindowFrameDefinition frame)
+    {
+        ValidateWindowFrame(frame);
+        var unit = frame.Unit == WindowFrameUnit.Rows ? "ROWS" : "RANGE";
+        var start = CompileWindowFrameBound(frame.Start);
+        return frame.End == null
+            ? $"{unit} {start}"
+            : $"{unit} BETWEEN {start} AND {CompileWindowFrameBound(frame.End)}";
+    }
+
+    private static void ValidateWindowFrame(WindowFrameDefinition frame)
+    {
+        if (frame.Start == null)
+            throw new InvalidOperationException("Window frame start bound is required.");
+        if (frame.Start.Kind == WindowFrameBoundKind.UnboundedFollowing)
+            throw new InvalidOperationException("Window frame cannot start with UNBOUNDED FOLLOWING.");
+        if (frame.End?.Kind == WindowFrameBoundKind.UnboundedPreceding)
+            throw new InvalidOperationException("Window frame cannot end with UNBOUNDED PRECEDING.");
+        ValidateWindowFrameOffset(frame.Start);
+        if (frame.End != null) ValidateWindowFrameOffset(frame.End);
+    }
+
+    private static void ValidateWindowFrameOffset(WindowFrameBound bound)
+    {
+        var requiresOffset = bound.Kind is WindowFrameBoundKind.Preceding or WindowFrameBoundKind.Following;
+        if (requiresOffset && bound.Offset is null or < 0)
+            throw new InvalidOperationException("Window PRECEDING/FOLLOWING bound requires a non-negative offset.");
+        if (!requiresOffset && bound.Offset != null)
+            throw new InvalidOperationException("Window frame offset is only valid for PRECEDING/FOLLOWING bounds.");
+    }
+
+    private static string CompileWindowFrameBound(WindowFrameBound bound) => bound.Kind switch
+    {
+        WindowFrameBoundKind.UnboundedPreceding => "UNBOUNDED PRECEDING",
+        WindowFrameBoundKind.Preceding => $"{bound.Offset} PRECEDING",
+        WindowFrameBoundKind.CurrentRow => "CURRENT ROW",
+        WindowFrameBoundKind.Following => $"{bound.Offset} FOLLOWING",
+        WindowFrameBoundKind.UnboundedFollowing => "UNBOUNDED FOLLOWING",
+        _ => throw new ArgumentOutOfRangeException(nameof(bound.Kind), bound.Kind, "Unknown window frame bound.")
+    };
 
     // =====================================================================
     // DML helpers
@@ -1780,6 +1966,23 @@ public abstract partial class BaseSqlStrategy(
         });
         using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(secret));
         return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)))[..24];
+    }
+
+    private static string ValidateCastType(string typeName)
+    {
+        var normalized = typeName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalized) || !SafeCastTypePattern().IsMatch(normalized))
+            throw new InvalidOperationException($"Unsupported or unsafe CAST type '{typeName}'.");
+        return normalized.ToUpperInvariant();
+    }
+
+    private string BuildHavingIntervalPart(IntervalSelectCondition interval)
+    {
+        if (DbType != SqlAgentToolType.Postgres)
+            throw CapabilityError("INTERVAL expressions");
+        if (string.IsNullOrWhiteSpace(interval.Literal))
+            throw new InvalidOperationException("INTERVAL literal must not be empty.");
+        return $"INTERVAL '{interval.Literal.Replace("'", "''", StringComparison.Ordinal)}'";
     }
 
     // =====================================================================

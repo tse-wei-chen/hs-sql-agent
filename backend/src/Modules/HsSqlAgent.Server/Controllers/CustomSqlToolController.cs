@@ -308,7 +308,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             string result;
             if (isQuery)
             {
-                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql));
+                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql), dbType);
                 var errors = DefinitionValidator.Validate(queryDef);
                 if (errors.Count > 0)
                     return BadRequest(new { error = "Validation failed.", errors });
@@ -321,7 +321,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             }
             else
             {
-                var dmlDef = SqlDefinitionParser.ParseDml(sql);
+                var dmlDef = SqlDefinitionParser.ParseDml(sql, dbType);
                 var errors = DefinitionValidator.Validate(dmlDef);
                 if (errors.Count > 0)
                     return BadRequest(new { error = "Validation failed.", errors });
