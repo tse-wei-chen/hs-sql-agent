@@ -150,9 +150,9 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var end = dryRun.IndexOf(" |", start, StringComparison.Ordinal);
 
         var differentDefinition = CreateInsertDml();
-        var mutableValue = differentDefinition.Values?.FirstOrDefault();
+        var mutableValue = differentDefinition.Values?.FirstOrDefault(value => value.Value is string);
         Assert.NotNull(mutableValue);
-        mutableValue.Value = $"different-{Guid.NewGuid():N}";
+        mutableValue.Value = $"{mutableValue.Value}-different-{Guid.NewGuid():N}";
         differentDefinition.ConfirmToken = dryRun[start..end];
 
         var result = await Strategy.ExecuteDmlAsync(
