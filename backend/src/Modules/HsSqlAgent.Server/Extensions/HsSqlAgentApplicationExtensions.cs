@@ -106,7 +106,7 @@ public static class HsSqlAgentApplicationExtensions
             {
                 FileProvider = fileProvider,
                 RequestPath = requestPath
-            });
+            }).AllowAnonymous();
         }
     }
 
