@@ -1,0 +1,243 @@
+# yaml-language-server: $schema=https://schema.zeabur.app/template.json
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: hs-sql-agent
+spec:
+  description: hs-sql-agent is an HTTP MCP server for relational databases with an integrated admin panel.
+  coverImage: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/coverImage.png
+  icon: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/logo.png
+  variables:
+    - key: PUBLIC_DOMAIN
+      type: DOMAIN
+      name: Admin Panel Domain
+      description: The custom domain for accessing the hs-sql-agent admin panel.
+  tags:
+    - MCP
+    - MCP Server
+    - SQL
+    - PostgreSQL
+    - SQL Agent
+    - hs-sql-agent
+  readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` is an HTTP MCP server for relational databases with an integrated admin panel.\nIt lets MCP clients call safe SQL tools while you manage access keys, audit logs, per-key database mapping, and global rate limits.\n\n## ⚠️ Project Status\n\nThis project is under **rapid development**. Bugs may occur.\nIf you find any issues or have suggestions, please let us know:\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## How to Use\n\n### First-time setup flow\n\n1. Deploy the template (you will need to enter a subdomain). Wait for the deployment to complete and the service to be running.\n2. Open the admin panel using the provided domain (shown in Zeabur Instructions).\n3. First run: create the first admin account.\n4. Sign in with that admin account.\n5. Go to Runtime MCP Keys page (`/runtime/mcp-keys`).\n6. Fill the form and click `Issue Key` to create a new MCP key.\n7. Copy the `One-time key value` immediately (it is only shown once).\n8. Paste that value into MCP client config headers: `\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`.\n9. Replace `<YOUR_MCP_Endpoint>` with the actual MCP endpoint URL shown in Zeabur Instructions.\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"
+  services:
+    - name: hs-sql-agent
+      icon: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/logo.png
+      template: PREBUILT_V2
+      spec:
+        id: hs-sql-agent
+        source:
+          image: ghcr.io/tse-wei-chen/hs-sql-agent:v1.10.5
+        ports:
+          - id: web
+            port: 8080
+            type: HTTP
+        instructions:
+          - title: MCP Endpoint
+            content: ${ZEABUR_WEB_URL}mcp
+          - title: Admin Panel URL
+            content: ${ZEABUR_WEB_URL}
+        env:
+          AdminDatabase__Provider:
+            default: Postgres
+            expose: false
+          AdminDatabase__ConnectionString:
+            default: ${POSTGRES_ADO_NET_CONNECTION_STRING}
+            expose: false
+          Mcp__PublicEndpoint:
+            default: ${ZEABUR_WEB_URL}mcp
+            expose: false
+          CacheConfig__Provider:
+            default: Redis
+            expose: false
+          CacheConfig__ConnectionString:
+            default: ${REDIS_ADO_NET_CONNECTION_STRING}
+            expose: false
+          CacheConfig__KeyPrefix:
+            default: "hsqlagent:cache:"
+            expose: false
+          RateLimiter__Provider:
+            default: Redis
+            expose: false
+          RateLimiter__ConnectionString:
+            default: ${REDIS_ADO_NET_CONNECTION_STRING}
+            expose: false
+          RateLimiter__FailureMode:
+            default: "FailClosed"
+            expose: false
+          RateLimiter__KeyPrefix:
+            default: "hsqlagent:ratelimiter:"
+            expose: false
+          SecurityPolicySync__Provider:
+            default: Redis
+            expose: false
+          SecurityPolicySync__ConnectionString:
+            default: ${REDIS_ADO_NET_CONNECTION_STRING}
+            expose: false
+          SecurityPolicySync__KeyPrefix:
+            default: "hsqlagent:security-policy:"
+            expose: false
+          SecurityPolicySync__RefreshIntervalSeconds:
+            default: "30"
+            expose: false
+          SqlConcurrency__Provider:
+            default: Redis
+            expose: false
+          SqlConcurrency__ConnectionString:
+            default: ${REDIS_ADO_NET_CONNECTION_STRING}
+            expose: false
+          SqlConcurrency__FailureMode:
+            default: "FailClosed"
+            expose: false
+          SqlConcurrency__KeyPrefix:
+            default: "hsqlagent:sql-concurrency:"
+            expose: false
+          SqlConcurrency__LeaseSeconds:
+            default: "30"
+            expose: false
+          JwtSettings__AccessTokenExpirationMinutes:
+            default: "60"
+            expose: false
+          JwtSettings__Audience:
+            default: HS-Agent-Users
+            expose: false
+          JwtSettings__Issuer:
+            default: HS-Agent
+            expose: false
+          JwtSettings__RefreshTokenExpirationDays:
+            default: "30"
+            expose: false
+          JwtSettings__SecretKey:
+            default: ${PASSWORD}
+            expose: false
+          McpKeySettings__HmacSecretKey:
+            default: ${PASSWORD}
+            expose: false
+          PORT:
+            default: ${WEB_PORT}
+            expose: false
+          RateLimiting__PermitLimit:
+            default: "0"
+            expose: false
+          RateLimiting__QueueLimit:
+            default: "0"
+            expose: false
+          RateLimiting__WindowSeconds:
+            default: "0"
+            expose: false
+      domainKey: PUBLIC_DOMAIN
+      dependencies:
+        - postgresql
+        - redis
+    - name: postgresql
+      icon: https://cdn.zeabur.com/marketplace/postgresql.svg
+      template: PREBUILT
+      spec:
+        id: postgresql
+        source:
+            image: postgres:18
+            command:
+                - docker-entrypoint.sh
+                - -c
+                - config_file=/etc/postgresql/postgresql.conf
+        ports:
+            - id: database
+              port: 5432
+              type: TCP
+        volumes:
+            - id: data
+              dir: /var/lib/postgresql/18/docker
+        env:
+            PGDATA:
+                default: /var/lib/postgresql/18/docker/pgdata
+                expose: false
+            POSTGRES_ADO_NET_CONNECTION_STRING:
+                default: Host=${POSTGRES_HOST};Port=${POSTGRES_PORT};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};
+                expose: true
+            POSTGRES_DATABASE:
+                default: ${POSTGRES_DB}
+                expose: true
+            POSTGRES_DB:
+                default: zeabur
+            POSTGRES_HOST:
+                default: ${CONTAINER_HOSTNAME}
+                expose: true
+            POSTGRES_PASSWORD:
+                default: ${PASSWORD}
+                expose: true
+            POSTGRES_PORT:
+                default: ${DATABASE_PORT}
+                expose: true
+            POSTGRES_USER:
+                default: root
+            POSTGRES_USERNAME:
+                default: ${POSTGRES_USER}
+                expose: true
+        configs:
+            - path: /etc/postgresql/postgresql.conf
+              template: |
+                # https://github.com/postgres/postgres/blob/master/src/backend/utils/misc/postgresql.conf.sample
+                listen_addresses = '*'
+                max_connections = 256
+                shared_buffers = 256MB
+                dynamic_shared_memory_type = posix
+                max_wal_size = 1GB
+                min_wal_size = 80MB
+                log_timezone = 'UTC'
+                datestyle = 'iso, mdy'
+                timezone = 'UTC'
+                lc_messages = 'en_US.UTF-8'
+                lc_monetary = 'en_US.UTF-8'
+                lc_numeric = 'en_US.UTF-8'
+                lc_time = 'en_US.UTF-8'
+                default_text_search_config = 'pg_catalog.english'
+              permission: null
+              envsubst: null
+    - name: redis
+      icon: https://raw.githubusercontent.com/zeabur/service-icons/main/marketplace/redis.svg
+      template: PREBUILT
+      spec:
+        id: redis
+        source:
+          image: redis/redis-stack-server:latest
+        ports:
+          - id: database
+            port: 6379
+            type: TCP
+        volumes:
+          - id: data
+            dir: /data
+        env:
+          CONFFILE:
+            default: /etc/redis-stack.conf
+          REDIS_ARGS:
+            default: --requirepass ${REDIS_PASSWORD}
+          REDIS_ADO_NET_CONNECTION_STRING:
+            default: ${REDIS_HOST}:${REDIS_PORT},password=${REDIS_PASSWORD}
+            expose: true
+          REDIS_HOST:
+            default: ${CONTAINER_HOSTNAME}
+            expose: true
+          REDIS_PASSWORD:
+            default: ${PASSWORD}
+            expose: true
+          REDIS_PORT:
+            default: ${DATABASE_PORT}
+            expose: true
+        configs:
+          - path: /etc/redis-stack.conf
+            template: |
+              port 6379
+              daemonize no
+            permission: null
+            envsubst: null
+localization:
+  ja-JP:
+    description: hs-sql-agent は、管理用コントロールパネルを内蔵した、リレーショナルデータベース向けの HTTP MCP サーバーです。
+    readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` は、管理用コントロールパネルを内蔵した、リレーショナルデータベース向けの HTTP MCP サーバーです。\nMCP クライアントから安全な SQL ツールを呼び出せる一方で、アクセスキー、監査ログ、キーごとのデータベースマッピング、グローバルなレート制限を管理できます。\n\n## ⚠️ 開発ステータス\n\nこのプロジェクトは**急速に開発中**であり、バグが発生する可能性があります。\n問題を見つけた場合や提案がある場合は、お気軽にお知らせください。\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub リポジトリ](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## 利用手順\n\n### 初回セットアップの流れ\n\n1. テンプレートをデプロイします（子ドメインの入力が必要です）。デプロイが完了し、サービスが起動するまで待ちます。\n2. 提供されたドメイン（Zeabur Instructions に表示）で管理パネルを開きます。\n3. 初回起動時に、最初の管理者アカウントを作成します。\n4. 作成した管理者アカウントでサインインします。\n5. Runtime MCP Keys ページ（`/runtime/mcp-keys`）へ移動します。\n6. フォームに入力し、`Issue Key` をクリックして新しい MCP キーを発行します。\n7. `One-time key value` をすぐにコピーします（この値は一度だけ表示されます）。\n8. MCP クライアントの設定ヘッダーにその値を貼り付けます: `\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`。\n9. `<YOUR_MCP_Endpoint>` を Zeabur Instructions に表示される実際の MCP エンドポイント URL に置き換えます。\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"
+  zh-CN:
+    description: hs-sql-agent 是一个面向关系型数据库的 HTTP MCP 服务器，集成了管理控制面板。
+    readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` 是一个面向关系型数据库的 HTTP MCP 服务器，集成了管理控制面板。\n它允许 MCP 客户端调用安全的 SQL 工具，同时您可以管理访问密钥、审计日志、每个密钥的数据库映射以及全局速率限制。\n\n## ⚠️ 项目状态\n\n本项目前正处于**快速迭代階段**，可能存在 Bug。\n如果您发现任何问题或有改进建议，欢迎通过以下方式反馈：\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub 代码库](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## 使用说明\n\n### 首次设置流程\n\n1. 部署模板(需输入子域名)。等待部署完成并且服务运行。\n2. 使用提供的域名（在 Zeabur 使用说明中显示）打开管理面板。\n3. 首次运行：创建第一个管理员账户。\n4. 使用该管理员账户登录。\n5. 转到运行时 MCP 密钥页面（`/runtime/mcp-keys`）。\n6. 填写表单并点击 `Issue Key` 创建新的 MCP 密钥。\n7. 立即复制 `一次性密钥值`（只显示一次）。\n8. 将该值粘贴到 MCP 客户端配置头中：`\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`。\n9. 将 `<YOUR_MCP_Endpoint>` 替换为 Zeabur 使用说明中显示的实际 MCP 端点 URL。\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"
+  zh-TW:
+    description: hs-sql-agent 是一個針對關聯式資料庫所設計的 HTTP MCP 伺服器，並整合了管理控制面板。
+    readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` 是一個針對關聯式資料庫所設計的 HTTP MCP 伺服器，並整合了管理控制面板。\n它允許 MCP 客戶端調用安全的 SQL 工具，同時您可以管理訪問密鑰、審計日誌、每個密鑰的資料庫映射以及全局速率限制。\n\n## ⚠️ 專案狀態\n\n本專案目前處於**快速開發階段**，可能存有 Bug。\n如果您發現任何問題或有改進建議，歡迎隨時提出：\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub 原始碼庫](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## 使用說明\n\n### 首次設置流程\n\n1. 部署模板(需輸入子域名)。等待部署完成並且服務運行。\n2. 使用提供的域名（在 Zeabur 使用說明中顯示）打開管理面板。\n3. 首次運行：創建第一個管理員帳戶。\n4. 使用該管理員帳戶登錄。\n5. 轉到運行時 MCP 密鑰頁面（`/runtime/mcp-keys`）。\n6. 填寫表單並點擊 `Issue Key` 創建新的 MCP 密鑰。\n7. 立即複製 `一次性密鑰值`（只顯示一次）。\n8. 將該值粘貼到 MCP 客戶端配置頭中：`\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`。\n9. 將 `<YOUR_MCP_Endpoint>` 替換為 Zeabur 使用說明中顯示的實際 MCP 端點 URL。\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"

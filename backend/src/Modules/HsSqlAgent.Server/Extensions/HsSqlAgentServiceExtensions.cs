@@ -323,10 +323,6 @@ public static class HsSqlAgentServiceExtensions
                 .RequireAuthenticatedUser()
                 .RequireClaim("typ", "access")
                 .Build())
-            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
-                .RequireAuthenticatedUser()
-                .RequireClaim("typ", "access")
-                .Build())
             .AddPolicy("RefreshTokenPolicy", policy =>
             {
                 policy.RequireAuthenticatedUser();
