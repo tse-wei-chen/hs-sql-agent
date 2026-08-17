@@ -2,7 +2,7 @@
 
 > **A high-performance MCP server for secure SQL access and enterprise governance.**
 
-<img src="miscellaneous/coverImage.png" alt="hs-sql-agent" />
+<img width="1000" height="500" alt="coverImage" src="https://github.com/user-attachments/assets/e317cee2-7bf3-4b11-94b9-4fdeedb29689" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![NuGet](https://img.shields.io/badge/NuGet-Install-0956cc?logo=nuget)](https://www.nuget.org/packages/HsSqlAgent.Server) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml) [![Deploy on Zeabur](https://img.shields.io/badge/Deploy_on-Zeabur-blueviolet?logo=zeabur)](https://zeabur.com/templates/RFPWDU)
 
@@ -87,7 +87,7 @@ Custom SQL tools pass through the same parser, validation, access policy, and ex
 
 This is what the human-in-the-loop approval step looks like during `execute_dml_sql`:
 
-<img src="miscellaneous/dml-approval-prompt.png" />
+<img width="1199" height="890" alt="dml-approval-prompt" src="https://github.com/user-attachments/assets/ebd40519-e0b3-43d6-9e83-24238f3c00d6" />
 
 ## Contributing
 
