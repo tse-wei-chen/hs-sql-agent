@@ -80,74 +80,8 @@ Custom SQL tools pass through the same parser, validation, access policy, and ex
 
 ## SQL Execution Flow
 
-```mermaid
-%%{init: { 'theme': 'neutral' }}%%
-flowchart TD
-    LLM(["Client :: LLM / MCP Client"])
-    MCP["Server :: HsSqlAgent"]
-    AUTH["Middleware :: Authentication<br/>Access Key | DB Binding | Whitelist"]
-    ROUTE{"Gateway :: Router"}
+<img width="970" height="1850" alt="image" src="https://github.com/user-attachments/assets/2c3306fb-5962-4ba6-88fc-db192d57e684" />
 
-    LLM -->|Call tool with SQL| MCP
-    MCP --> AUTH
-    AUTH --> ROUTE
-
-    subgraph Query_Flow [" 🔍 Query Pipeline (SELECT) "]
-        QPARSE["Parse Query SQL<br/>SqlDefinitionParser.ParseQuery"]
-        QDEF["QueryDefinition<br/>AST Structure Data"]
-        QVALID["DefinitionValidator<br/>Rule Verification"]
-        QBUILD["SQL Strategy Compiler<br/>Compile Strategy"]
-        QEXEC["Execution Engine<br/>Execute SELECT"]
-        QRESULT(["Result :: Rows / JSON"])
-
-        QPARSE --> QDEF
-        QDEF --> QVALID
-        QVALID --> QBUILD
-        QBUILD --> QEXEC
-        QEXEC --> QRESULT
-    end
-
-    subgraph DML_Flow [" ✏️ Mutation Pipeline (DML) "]
-        DPARSE["Parse Mutation SQL<br/>SqlDefinitionParser.ParseDml"]
-        DDEF["DmlDefinition<br/>AST Structure Data"]
-        DVALID["DefinitionValidator<br/>Rule Verification"]
-        DRYRUN["Transaction Dry-run<br/>Uncommitted State"]
-        ELICIT["MCP Elicitation<br/>User Approval Prompt"]
-        DECIDE{" Action :: Decision"}
-        DEXEC["Transaction :: Commit<br/>Apply Changes"]
-        DROLLBACK["Transaction :: Rollback<br/>Discard Changes"]
-
-        DPARSE --> DDEF
-        DDEF --> DVALID
-        DVALID --> DRYRUN
-        DRYRUN --> ELICIT
-        ELICIT --> DECIDE
-        DECIDE -->|Allowed| DEXEC
-        DECIDE -->|Denied| DROLLBACK
-    end
-
-    ROUTE -->|execute_query_sql| QPARSE
-    ROUTE -->|execute_dml_sql| DPARSE
-    AUDIT[("Storage :: Async Audit Log")]
-
-    QRESULT --> AUDIT
-    DEXEC --> AUDIT
-    DROLLBACK --> AUDIT
-
-    classDef client fill:#f3f4f6,stroke:#374151,stroke-width:1px,color:#111827;
-    classDef server fill:#e5e7eb,stroke:#4b5563,stroke-width:1px,color:#1f2937;
-    classDef auth fill:#f9fafb,stroke:#9ca3af,stroke-width:1px,color:#4b5563;
-    classDef cond fill:#ffffff,stroke:#111827,stroke-width:1.5px,color:#111827;
-    classDef danger fill:#fee2e2,stroke:#ef4444,stroke-width:1px,color:#991b1b;
-    classDef success fill:#dcfce7,stroke:#22c55e,stroke-width:1px,color:#166534;
-
-    class LLM client;
-    class MCP,AUDIT server;
-    class AUTH auth;
-    class ROUTE,DECIDE cond;
-    class QRESULT,DEXEC success;
-    class DROLLBACK danger;
-```
 
 ### DML Approval Prompt
 
