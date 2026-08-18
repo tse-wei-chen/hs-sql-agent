@@ -71,6 +71,14 @@ builder.Services.AddHsSqlAgent(options =>
     if (int.TryParse(builder.Configuration["SecurityPolicySync:RefreshIntervalSeconds"], out var refreshInterval))
         options.SecurityPolicySyncRefreshIntervalSeconds = refreshInterval;
 
+    options.OutboundDeliverySyncProvider = builder.Configuration["OutboundDeliverySync:Provider"] ?? "Memory";
+    options.OutboundDeliverySyncConnectionString = builder.Configuration["OutboundDeliverySync:ConnectionString"]
+        ?? builder.Configuration["RateLimiter:ConnectionString"]
+        ?? builder.Configuration["CacheConfig:ConnectionString"]
+        ?? string.Empty;
+    options.OutboundDeliverySyncKeyPrefix = builder.Configuration["OutboundDeliverySync:KeyPrefix"]
+        ?? "hsqlagent:outbound-delivery:";
+
     options.SqlConcurrencyProvider = builder.Configuration["SqlConcurrency:Provider"] ?? "Memory";
     options.SqlConcurrencyConnectionString = builder.Configuration["SqlConcurrency:ConnectionString"]
         ?? builder.Configuration["RateLimiter:ConnectionString"]

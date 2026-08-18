@@ -17,13 +17,15 @@ public class AuditService(
     IAdminContext context,
     IHttpContextAccessor httpContextAccessor,
     IOptions<OperabilitySettings>? operabilitySettings = null,
-    IEnumerable<IAuditMetricSink>? metricSinks = null) : IAuditService
+    IEnumerable<IAuditMetricSink>? metricSinks = null,
+    IOutboundDeliverySignal? deliverySignal = null) : IAuditService
 {
     private static readonly SemaphoreSlim FallbackFileLock = new(1, 1);
     private readonly IAdminContext _context = context;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly OperabilitySettings _operabilitySettings = operabilitySettings?.Value ?? new();
     private readonly IReadOnlyCollection<IAuditMetricSink> _metricSinks = metricSinks?.ToArray() ?? [];
+    private readonly IOutboundDeliverySignal? _deliverySignal = deliverySignal;
 
     public async Task WriteAsync(
         string action,
@@ -358,6 +360,7 @@ public class AuditService(
             try
             {
                 await _context.SaveChangesAsync(cancellationToken);
+                _deliverySignal?.Notify();
                 return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

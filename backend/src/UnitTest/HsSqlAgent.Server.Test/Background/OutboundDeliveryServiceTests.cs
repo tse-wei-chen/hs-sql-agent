@@ -104,6 +104,17 @@ public class OutboundDeliveryServiceTests
         Assert.NotNull(item.LastError);
     }
 
+    [Fact]
+    public async Task OutboundDeliverySignal_Notify_ShouldTriggerWaitAsync()
+    {
+        var signal = new Admin.Service.Services.OutboundDeliverySignal();
+        signal.Notify();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        var hasSignal = await signal.WaitAsync(cts.Token);
+        Assert.True(hasSignal);
+        Assert.True(signal.TryRead());
+    }
+
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

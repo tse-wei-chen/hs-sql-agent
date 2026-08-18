@@ -7,7 +7,10 @@ using Microsoft.Extensions.Options;
 
 namespace Admin.Service.Services;
 
-public class OperabilityService(IAdminContext context, IOptions<OperabilitySettings> settings) : IOperabilityService
+public class OperabilityService(
+    IAdminContext context,
+    IOptions<OperabilitySettings> settings,
+    IOutboundDeliverySignal? deliverySignal = null) : IOperabilityService
 {
     private readonly OperabilitySettings _settings = settings.Value;
 
@@ -133,6 +136,7 @@ public class OperabilityService(IAdminContext context, IOptions<OperabilitySetti
         if (item is null) return false;
         item.Status = "pending"; item.AttemptCount = 0; item.NextAttemptAt = DateTime.UtcNow; item.LastError = null;
         await context.SaveChangesAsync(cancellationToken);
+        deliverySignal?.Notify();
         return true;
     }
 
@@ -147,6 +151,7 @@ public class OperabilityService(IAdminContext context, IOptions<OperabilitySetti
         });
         try { await context.SaveChangesAsync(cancellationToken); }
         catch (DbUpdateException) { return false; }
+        deliverySignal?.Notify();
         return true;
     }
 

@@ -61,6 +61,10 @@ services:
       - SecurityPolicySync__ConnectionString=${SECURITY_POLICY_SYNC_CONNECTION_STRING:-}
       - SecurityPolicySync__KeyPrefix=${SECURITY_POLICY_SYNC_KEY_PREFIX:-hsqlagent:security-policy:}
       - SecurityPolicySync__RefreshIntervalSeconds=${SECURITY_POLICY_SYNC_REFRESH_INTERVAL_SECONDS:-30}
+      - OutboundDeliverySync__Provider=${OUTBOUND_DELIVERY_SYNC_PROVIDER:-Memory}
+      - OutboundDeliverySync__ConnectionString=${OUTBOUND_DELIVERY_SYNC_CONNECTION_STRING:-}
+      - OutboundDeliverySync__KeyPrefix=${OUTBOUND_DELIVERY_SYNC_KEY_PREFIX:-hsqlagent:outbound-delivery:}
+      - Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command=${LOGGING_EFCORE_COMMAND_LOGLEVEL:-Warning}
       - SqlConcurrency__Provider=${SQL_CONCURRENCY_PROVIDER:-Memory}
       - SqlConcurrency__ConnectionString=${SQL_CONCURRENCY_CONNECTION_STRING:-}
       - SqlConcurrency__FailureMode=${SQL_CONCURRENCY_FAILURE_MODE:-FailClosed}

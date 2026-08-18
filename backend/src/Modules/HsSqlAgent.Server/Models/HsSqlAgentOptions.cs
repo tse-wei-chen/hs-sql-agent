@@ -38,6 +38,9 @@ public class HsSqlAgentServiceOptions
     public string SecurityPolicySyncConnectionString { get; set; } = string.Empty;
     public string SecurityPolicySyncKeyPrefix { get; set; } = "hsqlagent:security-policy:";
     public int SecurityPolicySyncRefreshIntervalSeconds { get; set; } = 30;
+    public string OutboundDeliverySyncProvider { get; set; } = "Memory";
+    public string OutboundDeliverySyncConnectionString { get; set; } = string.Empty;
+    public string OutboundDeliverySyncKeyPrefix { get; set; } = "hsqlagent:outbound-delivery:";
     public string SqlConcurrencyProvider { get; set; } = "Memory";
     public string SqlConcurrencyConnectionString { get; set; } = string.Empty;
     public string SqlConcurrencyFailureMode { get; set; } = "FailClosed";
