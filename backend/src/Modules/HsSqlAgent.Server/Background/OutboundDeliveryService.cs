@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Data;
+using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -12,13 +13,33 @@ public class OutboundDeliveryService(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     IOptions<OperabilitySettings> settings,
-    ILogger<OutboundDeliveryService> logger) : BackgroundService
+    ILogger<OutboundDeliveryService> logger,
+    IOutboundDeliverySignal? signal = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
-        do { await DispatchBatchAsync(stoppingToken); }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+        await DispatchBatchAsync(stoppingToken);
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (signal != null)
+                {
+                    await signal.WaitAsync(stoppingToken);
+                    signal.TryRead();
+                    await DispatchBatchAsync(stoppingToken);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
     }
 
     private async Task DispatchBatchAsync(CancellationToken cancellationToken)

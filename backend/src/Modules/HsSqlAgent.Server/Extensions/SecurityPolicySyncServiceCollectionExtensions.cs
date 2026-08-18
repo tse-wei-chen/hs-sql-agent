@@ -16,9 +16,6 @@ internal static class SecurityPolicySyncServiceCollectionExtensions
             throw new InvalidOperationException("SecurityPolicySync refresh interval must be greater than zero.");
 
         services.AddScoped<SecurityPolicyDatabaseSynchronizer>();
-        services.AddSingleton(new SecurityPolicyRefreshOptions(
-            TimeSpan.FromSeconds(refreshIntervalSeconds)));
-        services.AddHostedService<SecurityPolicyRefreshBackgroundService>();
 
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
         {

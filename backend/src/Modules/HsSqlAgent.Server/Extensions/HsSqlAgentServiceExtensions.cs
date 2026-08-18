@@ -349,6 +349,20 @@ public static class HsSqlAgentServiceExtensions
         services.AddTransient<McpRequestMetricsMiddleware>();
         services.AddSingleton<IOperationalMetricRecorder, OperationalMetricRecorder>();
         services.AddSingleton<IMcpAccessKeyLastUsedQueue, McpAccessKeyLastUsedQueue>();
+        if (string.Equals(options.OutboundDeliverySyncProvider, "Redis", StringComparison.OrdinalIgnoreCase))
+        {
+            var connStr = string.IsNullOrWhiteSpace(options.OutboundDeliverySyncConnectionString)
+                ? options.CacheConnectionString
+                : options.OutboundDeliverySyncConnectionString;
+            services.AddSingleton(new RedisOutboundDeliverySignalOptions(connStr, $"{options.OutboundDeliverySyncKeyPrefix}notify"));
+            services.AddSingleton<RedisOutboundDeliverySignal>();
+            services.AddSingleton<IOutboundDeliverySignal>(sp => sp.GetRequiredService<RedisOutboundDeliverySignal>());
+            services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<RedisOutboundDeliverySignal>());
+        }
+        else
+        {
+            services.AddSingleton<IOutboundDeliverySignal, OutboundDeliverySignal>();
+        }
         services.AddHostedService<McpAccessKeyLastUsedBackgroundService>();
         services.AddHostedService<TokenBlacklistCleanupService>();
         services.AddHostedService<OperationalMetricFlushService>();

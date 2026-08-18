@@ -19,7 +19,139 @@ spec:
     - PostgreSQL
     - SQL Agent
     - hs-sql-agent
-  readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` is an HTTP MCP server for relational databases with an integrated admin panel.\nIt lets MCP clients call safe SQL tools while you manage access keys, audit logs, per-key database mapping, and global rate limits.\n\n## ⚠️ Project Status\n\nThis project is under **rapid development**. Bugs may occur.\nIf you find any issues or have suggestions, please let us know:\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## How to Use\n\n### First-time setup flow\n\n1. Deploy the template (you will need to enter a subdomain). Wait for the deployment to complete and the service to be running.\n2. Open the admin panel using the provided domain (shown in Zeabur Instructions).\n3. First run: create the first admin account.\n4. Sign in with that admin account.\n5. Go to Runtime MCP Keys page (`/runtime/mcp-keys`).\n6. Fill the form and click `Issue Key` to create a new MCP key.\n7. Copy the `One-time key value` immediately (it is only shown once).\n8. Paste that value into MCP client config headers: `\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`.\n9. Replace `<YOUR_MCP_Endpoint>` with the actual MCP endpoint URL shown in Zeabur Instructions.\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"
+  readme: "
+    # hs-sql-agent
+
+    Deploy your own **HTTP MCP server for relational databases** with a built-in administration panel.
+
+    `hs-sql-agent` allows MCP clients such as **Claude Desktop, Cursor, and Visual Studio Code** to securely access relational databases while giving administrators centralized control over database connections, MCP keys, permissions, audit logs, and security policies.
+
+    This Zeabur template automatically deploys:
+
+    * **hs-sql-agent** — MCP server and administration panel
+
+    * **PostgreSQL** — internal administration database
+
+    * **Redis** — caching, rate limiting, concurrency control, and security policy synchronization
+
+    ## ✨ Features
+
+    * 🔌 HTTP MCP endpoint
+
+    * 🔑 Per-client MCP access keys
+
+    * 🗄️ Multiple database connections
+
+    * 🔐 Per-key database mapping
+
+    * 🧰 Per-key MCP tool permissions
+
+    * 🚦 Configurable rate limits
+
+    * 📋 SQL execution audit logs
+
+    * 🛡️ Centralized security policies
+
+    * ⚡ Redis-backed caching and concurrency control
+
+    * 🖥️ Built-in administration panel
+
+    * 📋 Ready-to-copy MCP client configurations
+
+    ## 🚀 Getting Started
+
+    ### 1. Deploy the Template
+
+    Deploy this template on Zeabur and choose a subdomain for the administration panel.
+
+    Zeabur automatically provisions and connects all required services.
+
+    Once deployment is complete, open the **Admin Panel URL** shown in the Zeabur deployment instructions.
+
+    ### 2. Create the Administrator Account
+
+    On the first launch, create the initial administrator account and sign in to the admin panel.
+
+    ### 3. Add a Database
+
+    Open **DB Management** and add the relational database you want MCP clients to access.
+
+    Test the connection before issuing an MCP key.
+
+    ### 4. Issue an MCP Access Key
+
+    Open:
+
+    `Runtime Admin → MCP Keys`
+
+    Create a new MCP key and configure its access settings, including:
+
+    * Key name
+
+    * Expiration
+
+    * Database
+
+    * Rate limit
+
+    * Allowed MCP tools
+
+    * Optional data-access restrictions
+
+    * Optional CORS origins
+
+    Click **Test DB Connection** to verify the selected database, then click **Issue Key**.
+
+    ### 5. Copy Your MCP Configuration
+
+    After the key is issued, hs-sql-agent immediately displays a **Save and connect** dialog containing:
+
+    * The one-time MCP key
+
+    * Your MCP endpoint
+
+    * Ready-to-use configuration for supported MCP clients
+
+    Choose your client:
+
+    * **Claude Desktop**
+
+    * **Cursor**
+
+    * **Visual Studio Code**
+
+    * **Generic HTTP**
+
+    Then click the corresponding **Copy config** button and paste the configuration into your MCP client.
+
+    > ⚠️ The MCP key is shown in plaintext only once.
+    >
+    > Save the key or copy the generated client configuration before closing the dialog. Once closed, the plaintext key cannot be retrieved again from the Admin UI.
+
+    That's it — no manual endpoint or header configuration is required.
+
+    ## 🔐 Security
+
+    Treat MCP keys as secrets.
+
+    Do not commit generated configurations containing MCP keys to source control, paste them into public issue trackers, or share them publicly.
+
+    If a key is exposed, revoke it from the **MCP Keys** page and issue a replacement.
+
+    For production databases, use dedicated database accounts with the minimum permissions required for the intended MCP tools.
+
+    ## ⚠️ Project Status
+
+    `hs-sql-agent` is currently under **active development**.
+
+    Features and configuration options may change between releases, and bugs may still occur.
+
+    If you encounter a problem or have a feature request:
+
+    * 🔗 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)
+
+    * ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)
+    "
   services:
     - name: hs-sql-agent
       icon: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/logo.png
@@ -79,6 +211,15 @@ spec:
             expose: false
           SecurityPolicySync__RefreshIntervalSeconds:
             default: "30"
+            expose: false
+          OutboundDeliverySync__Provider:
+            default: Redis
+            expose: false
+          OutboundDeliverySync__ConnectionString:
+            default: ${REDIS_ADO_NET_CONNECTION_STRING}
+            expose: false
+          OutboundDeliverySync__KeyPrefix:
+            default: "hsqlagent:outbound-delivery:"
             expose: false
           SqlConcurrency__Provider:
             default: Redis
@@ -234,10 +375,709 @@ spec:
 localization:
   ja-JP:
     description: hs-sql-agent は、管理用コントロールパネルを内蔵した、リレーショナルデータベース向けの HTTP MCP サーバーです。
-    readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` は、管理用コントロールパネルを内蔵した、リレーショナルデータベース向けの HTTP MCP サーバーです。\nMCP クライアントから安全な SQL ツールを呼び出せる一方で、アクセスキー、監査ログ、キーごとのデータベースマッピング、グローバルなレート制限を管理できます。\n\n## ⚠️ 開発ステータス\n\nこのプロジェクトは**急速に開発中**であり、バグが発生する可能性があります。\n問題を見つけた場合や提案がある場合は、お気軽にお知らせください。\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub リポジトリ](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## 利用手順\n\n### 初回セットアップの流れ\n\n1. テンプレートをデプロイします（子ドメインの入力が必要です）。デプロイが完了し、サービスが起動するまで待ちます。\n2. 提供されたドメイン（Zeabur Instructions に表示）で管理パネルを開きます。\n3. 初回起動時に、最初の管理者アカウントを作成します。\n4. 作成した管理者アカウントでサインインします。\n5. Runtime MCP Keys ページ（`/runtime/mcp-keys`）へ移動します。\n6. フォームに入力し、`Issue Key` をクリックして新しい MCP キーを発行します。\n7. `One-time key value` をすぐにコピーします（この値は一度だけ表示されます）。\n8. MCP クライアントの設定ヘッダーにその値を貼り付けます: `\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`。\n9. `<YOUR_MCP_Endpoint>` を Zeabur Instructions に表示される実際の MCP エンドポイント URL に置き換えます。\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"
+    readme: "
+      # hs-sql-agent
+
+      組み込みの管理パネルを備えた、**リレーショナルデータベース向け HTTP MCP サーバー**を簡単にデプロイできます。
+
+      `hs-sql-agent` を使用すると、**Claude Desktop、Cursor、Visual Studio Code** などの MCP クライアントからリレーショナルデータベースへ安全にアクセスできます。また、管理者はデータベース接続、MCP キー、権限、監査ログ、セキュリティポリシーを一元管理できます。
+
+      この Zeabur テンプレートでは、以下のサービスが自動的にデプロイされます。
+
+      * **hs-sql-agent** — MCP サーバーおよび管理パネル
+
+      * **PostgreSQL** — 内部管理用データベース
+
+      * **Redis** — キャッシュ、レート制限、同時実行制御、セキュリティポリシー同期
+
+      ## ✨ 主な機能
+
+      * 🔌 HTTP MCP エンドポイント
+
+      * 🔑 クライアントごとの MCP アクセスキー
+
+      * 🗄️ 複数のデータベース接続管理
+
+      * 🔐 MCP キーごとのデータベース割り当て
+
+      * 🧰 MCP キーごとのツール権限
+
+      * 🚦 設定可能なレート制限
+
+      * 📋 SQL 実行監査ログ
+
+      * 🛡️ 一元化されたセキュリティポリシー
+
+      * ⚡ Redis を利用したキャッシュおよび同時実行制御
+
+      * 🖥️ 組み込みの Web 管理パネル
+
+      * 📋 そのままコピーできる MCP クライアント設定
+
+      ## 🚀 はじめに
+
+      ### 1. テンプレートをデプロイ
+
+      Zeabur でこのテンプレートをデプロイし、管理パネル用のサブドメインを設定します。
+
+      必要なサービスは Zeabur によって自動的に作成・接続されます。
+
+      デプロイ完了後、Zeabur のデプロイ手順に表示される **Admin Panel URL** を開きます。
+
+      ### 2. 管理者アカウントを作成
+
+      初回起動時に、最初の管理者アカウントを作成します。
+
+      作成したアカウントで管理パネルにサインインしてください。
+
+      ### 3. データベースを追加
+
+      **DB Management** を開き、MCP クライアントからアクセスさせたいリレーショナルデータベースを追加します。
+
+      MCP キーを発行する前に、データベース接続をテストすることを推奨します。
+
+      ### 4. MCP アクセスキーを発行
+
+      以下を開きます。
+
+      `Runtime Admin → MCP Keys`
+
+      新しい MCP キーを作成し、アクセス設定を行います。
+
+      設定可能な項目には以下が含まれます。
+
+      * キー名
+
+      * 有効期限
+
+      * データベース
+
+      * レート制限
+
+      * 利用可能な MCP ツール
+
+      * 任意のデータアクセス制限
+
+      * 任意の CORS オリジン
+
+      **Test DB Connection** をクリックして選択したデータベースへの接続を確認し、その後 **Issue Key** をクリックします。
+
+      ### 5. MCP 設定をコピー
+
+      キーを発行すると、`hs-sql-agent` はすぐに **Save and connect** ダイアログを表示します。
+
+      このダイアログには以下が含まれます。
+
+      * 一度だけ表示される MCP キー
+
+      * MCP エンドポイント
+
+      * 対応 MCP クライアント向けの設定済み構成
+
+      利用するクライアントを選択します。
+
+      * **Claude Desktop**
+
+      * **Cursor**
+
+      * **Visual Studio Code**
+
+      * **Generic HTTP**
+
+      その後、対応する **Copy config** ボタンをクリックし、コピーした設定を MCP クライアントへ貼り付けます。
+
+      > ⚠️ MCP キーの平文値は一度しか表示されません。
+      >
+      > ダイアログを閉じる前に、キーまたは生成されたクライアント設定を必ず保存してください。ダイアログを閉じた後、Admin UI から平文のキーを再表示することはできません。
+
+      これで完了です。MCP エンドポイントや認証ヘッダーを手動で組み立てる必要はありません。
+
+      ## 🔐 セキュリティ
+
+      MCP キーはパスワードと同様に秘密情報として扱ってください。
+
+      MCP キーを含む生成済み設定をソースコード管理へコミットしたり、公開 Issue やチケットへ貼り付けたり、第三者へ公開したりしないでください。
+
+      キーが漏洩した場合は、**MCP Keys** ページから該当キーを失効させ、新しいキーを発行してください。
+
+      本番環境のデータベースでは、利用する MCP ツールに必要な最小限の権限のみを持つ専用データベースアカウントを使用することを推奨します。
+
+      ## ⚠️ プロジェクトステータス
+
+      `hs-sql-agent` は現在 **活発に開発中** です。
+
+      リリース間で機能や設定項目が変更される可能性があり、バグが含まれている場合があります。
+
+      問題や機能要望がある場合はこちらからお知らせください。
+
+      * 🔗 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)
+
+      * ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)
+      "
   zh-CN:
     description: hs-sql-agent 是一个面向关系型数据库的 HTTP MCP 服务器，集成了管理控制面板。
-    readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` 是一个面向关系型数据库的 HTTP MCP 服务器，集成了管理控制面板。\n它允许 MCP 客户端调用安全的 SQL 工具，同时您可以管理访问密钥、审计日志、每个密钥的数据库映射以及全局速率限制。\n\n## ⚠️ 项目状态\n\n本项目前正处于**快速迭代階段**，可能存在 Bug。\n如果您发现任何问题或有改进建议，欢迎通过以下方式反馈：\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub 代码库](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## 使用说明\n\n### 首次设置流程\n\n1. 部署模板(需输入子域名)。等待部署完成并且服务运行。\n2. 使用提供的域名（在 Zeabur 使用说明中显示）打开管理面板。\n3. 首次运行：创建第一个管理员账户。\n4. 使用该管理员账户登录。\n5. 转到运行时 MCP 密钥页面（`/runtime/mcp-keys`）。\n6. 填写表单并点击 `Issue Key` 创建新的 MCP 密钥。\n7. 立即复制 `一次性密钥值`（只显示一次）。\n8. 将该值粘贴到 MCP 客户端配置头中：`\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`。\n9. 将 `<YOUR_MCP_Endpoint>` 替换为 Zeabur 使用说明中显示的实际 MCP 端点 URL。\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"
+    readme: "
+      # hs-sql-agent
+
+      快速部署一个内置管理面板的 **关系型数据库 HTTP MCP 服务器**。
+
+      `hs-sql-agent` 允许 **Claude Desktop、Cursor、Visual Studio Code** 等 MCP 客户端安全访问关系型数据库，同时让管理员集中管理数据库连接、MCP 密钥、权限、审计日志以及安全策略。
+
+      此 Zeabur 模板会自动部署：
+
+      * **hs-sql-agent** — MCP 服务器及管理面板
+
+      * **PostgreSQL** — 内部管理数据库
+
+      * **Redis** — 缓存、速率限制、并发控制以及安全策略同步
+
+      ## ✨ 功能特性
+
+      * 🔌 HTTP MCP 端点
+
+      * 🔑 每个客户端独立的 MCP 访问密钥
+
+      * 🗄️ 多数据库连接管理
+
+      * 🔐 每个 MCP 密钥独立绑定数据库
+
+      * 🧰 每个 MCP 密钥独立配置工具权限
+
+      * 🚦 可配置速率限制
+
+      * 📋 SQL 执行审计日志
+
+      * 🛡️ 集中式安全策略
+
+      * ⚡ 基于 Redis 的缓存与并发控制
+
+      * 🖥️ 内置 Web 管理面板
+
+      * 📋 可直接复制的 MCP 客户端配置
+
+      ## 🚀 快速开始
+
+      ### 1. 部署模板
+
+      在 Zeabur 中部署此模板，并为管理面板设置一个子域名。
+
+      Zeabur 会自动创建并连接所有必需的服务。
+
+      部署完成后，打开 Zeabur 部署说明中显示的 **Admin Panel URL**。
+
+      ### 2. 创建管理员账户
+
+      首次启动时，需要创建第一个管理员账户。
+
+      创建完成后，使用该账户登录管理面板。
+
+      ### 3. 添加数据库
+
+      进入 **DB Management**，添加希望 MCP 客户端访问的关系型数据库。
+
+      建议在签发 MCP 密钥之前先测试数据库连接。
+
+      ### 4. 签发 MCP 访问密钥
+
+      进入：
+
+      `Runtime Admin → MCP Keys`
+
+      创建新的 MCP 密钥，并配置对应的访问权限。
+
+      可配置项目包括：
+
+      * 密钥名称
+
+      * 过期时间
+
+      * 数据库
+
+      * 速率限制
+
+      * 允许使用的 MCP 工具
+
+      * 可选的数据访问限制
+
+      * 可选的 CORS Origins
+
+      点击 **Test DB Connection** 验证所选数据库连接，然后点击 **Issue Key**。
+
+      ### 5. 复制 MCP 配置
+
+      密钥签发成功后，`hs-sql-agent` 会立即显示 **Save and connect** 对话框。
+
+      其中包含：
+
+      * 仅显示一次的 MCP 密钥
+      * MCP 端点
+      * 已生成好的 MCP 客户端配置
+
+      选择你使用的客户端：
+
+      * **Claude Desktop**
+
+      * **Cursor**
+
+      * **Visual Studio Code**
+
+      * **Generic HTTP**
+
+      然后点击对应的 **Copy config** 按钮，将配置直接粘贴到 MCP 客户端中即可。
+
+      > ⚠️ MCP 密钥的明文值只会显示一次。
+      >
+      > 请在关闭对话框之前保存密钥，或者复制生成好的客户端配置。关闭后，无法再从 Admin UI 查看该密钥的明文值。
+
+      完成。无需手动填写 MCP 端点或认证 Header。
+
+      ## 🔐 安全建议
+
+      请将 MCP 密钥视为密码等敏感信息。
+
+      不要将包含 MCP 密钥的配置提交到源代码仓库，也不要粘贴到公开 Issue、工单或其他公开位置。
+
+      如果密钥意外泄露，请前往 **MCP Keys** 页面撤销该密钥，并重新签发一个新的密钥。
+
+      对于生产环境数据库，建议使用专用数据库账户，并遵循最小权限原则，仅授予实际 MCP 工具所需的权限。
+
+      ## ⚠️ 项目状态
+
+      `hs-sql-agent` 当前仍处于 **积极开发阶段**。
+
+      不同版本之间的功能和配置可能发生变化，也可能仍存在 Bug。
+
+      如果遇到问题或希望提出功能建议：
+
+      * 🔗 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)
+
+      * ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)
+      "
   zh-TW:
     description: hs-sql-agent 是一個針對關聯式資料庫所設計的 HTTP MCP 伺服器，並整合了管理控制面板。
-    readme: "# hs-sql-agent\n\nversion: latest\n\n`hs-sql-agent` 是一個針對關聯式資料庫所設計的 HTTP MCP 伺服器，並整合了管理控制面板。\n它允許 MCP 客戶端調用安全的 SQL 工具，同時您可以管理訪問密鑰、審計日誌、每個密鑰的資料庫映射以及全局速率限制。\n\n## ⚠️ 專案狀態\n\n本專案目前處於**快速開發階段**，可能存有 Bug。\n如果您發現任何問題或有改進建議，歡迎隨時提出：\n- \U0001F517 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)\n- ⭐ [GitHub 原始碼庫](https://github.com/tse-wei-chen/hs-sql-agent)\n\n## 使用說明\n\n### 首次設置流程\n\n1. 部署模板(需輸入子域名)。等待部署完成並且服務運行。\n2. 使用提供的域名（在 Zeabur 使用說明中顯示）打開管理面板。\n3. 首次運行：創建第一個管理員帳戶。\n4. 使用該管理員帳戶登錄。\n5. 轉到運行時 MCP 密鑰頁面（`/runtime/mcp-keys`）。\n6. 填寫表單並點擊 `Issue Key` 創建新的 MCP 密鑰。\n7. 立即複製 `一次性密鑰值`（只顯示一次）。\n8. 將該值粘貼到 MCP 客戶端配置頭中：`\"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\"`。\n9. 將 `<YOUR_MCP_Endpoint>` 替換為 Zeabur 使用說明中顯示的實際 MCP 端點 URL。\n\n### Claude Desktop\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### VS Code\n\n```json\n{\n  \"servers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```\n\n### Cursor\n\n```json\n{\n  \"mcpServers\": {\n    \"hs-sql-agent\": {\n      \"type\": \"http\",\n      \"url\": \"<YOUR_MCP_Endpoint>\",\n      \"headers\": { \"X-MCP-Server-Key\": \"<YOUR_MCP_KEY>\" }\n    }\n  }\n}\n```"
+    readme: 
+      "
+      # hs-sql-agent
+
+      快速部署一套內建管理面板的 **關聯式資料庫 HTTP MCP 伺服器**。
+
+      `hs-sql-agent` 可讓 **Claude Desktop、Cursor、Visual Studio Code** 等 MCP 用戶端安全地存取關聯式資料庫，同時讓管理員集中管理資料庫連線、MCP 金鑰、權限、稽核紀錄與安全性政策。
+
+      此 Zeabur 範本會自動部署：
+
+      * **hs-sql-agent** — MCP 伺服器與管理面板
+
+      * **PostgreSQL** — 內部管理資料庫
+
+      * **Redis** — 快取、速率限制、並行控制與安全性政策同步
+
+      ## ✨ 功能特色
+
+      * 🔌 HTTP MCP Endpoint
+
+      * 🔑 每個用戶端獨立的 MCP Access Key
+
+      * 🗄️ 多資料庫連線管理
+
+      * 🔐 每個 MCP Key 可獨立綁定資料庫
+
+      * 🧰 每個 MCP Key 可獨立設定工具權限
+
+      * 🚦 可設定 Rate Limit
+
+      * 📋 SQL 執行稽核紀錄
+
+      * 🛡️ 集中式安全性政策
+
+      * ⚡ 基於 Redis 的快取與並行控制
+
+      * 🖥️ 內建 Web 管理面板
+
+      * 📋 可直接複製使用的 MCP Client 設定
+
+      ## 🚀 快速開始
+
+      ### 1. 部署範本
+
+      在 Zeabur 部署此範本，並替管理面板設定一個子網域。
+
+      Zeabur 會自動建立並連接所有必要服務。
+
+      部署完成後，開啟 Zeabur 部署說明中顯示的 **Admin Panel URL**。
+
+      ### 2. 建立管理員帳號
+
+      第一次啟動時，需要建立第一個管理員帳號。
+
+      建立完成後，使用該帳號登入管理面板。
+
+      ### 3. 新增資料庫
+
+      進入 **DB Management**，新增你希望 MCP 用戶端可以存取的關聯式資料庫。
+
+      建議在簽發 MCP Key 前先測試資料庫連線。
+
+      ### 4. 簽發 MCP Access Key
+
+      進入：
+
+      `Runtime Admin → MCP Keys`
+
+      建立新的 MCP Key，並設定對應的存取權限。
+
+      可設定的項目包含：
+
+      * Key 名稱
+
+      * 到期時間
+
+      * 資料庫
+
+      * Rate Limit
+
+      * 允許使用的 MCP Tools
+
+      * 選用的資料存取限制
+
+      * 選用的 CORS Origins
+
+      先點擊 **Test DB Connection** 確認所選資料庫可以正常連線，再點擊 **Issue Key**。
+
+      ### 5. 複製 MCP 設定
+
+      MCP Key 簽發成功後，`hs-sql-agent` 會立即顯示 **Save and connect** 視窗。
+
+      其中會直接提供：
+
+      * 僅顯示一次的 MCP Key
+
+      * MCP Endpoint
+
+      * 已產生好的 MCP Client 完整設定
+
+      選擇你使用的 MCP Client：
+
+      * **Claude Desktop**
+
+      * **Cursor**
+
+      * **Visual Studio Code**
+
+      * **Generic HTTP**
+
+      接著點擊對應的 **Copy config** 按鈕，將設定直接貼到 MCP Client 即可。
+
+      > ⚠️ MCP Key 的明文只會顯示一次。
+      >
+      > 關閉視窗前，請先保存 MCP Key，或直接複製已產生好的 Client 設定。視窗關閉後，將無法再從 Admin UI 查看此 Key 的明文內容。
+
+      完成。你不需要再手動組合 MCP Endpoint 或 Authentication Header。
+
+      ## 🔐 安全性建議
+
+      請將 MCP Key 視為密碼等級的敏感資訊。
+
+      請勿將包含 MCP Key 的設定提交到 Git Repository，也不要貼到公開 Issue、Ticket 或其他公開位置。
+
+      如果 MCP Key 不慎外洩，請前往 **MCP Keys** 頁面撤銷該 Key，並重新簽發新的 Key。
+
+      正式環境的資料庫建議使用專用資料庫帳號，並遵循最小權限原則，只提供實際 MCP Tools 所需的資料庫權限。
+
+      ## ⚠️ 專案狀態
+
+      `hs-sql-agent` 目前仍處於 **積極開發階段**。
+
+      不同版本之間的功能與設定可能有所變更，也可能仍存在 Bug。
+
+      如果遇到問題或有功能建議，歡迎透過以下管道提出：
+
+      * 🔗 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)
+
+      * ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)
+      "
+  es-ES:
+    description: hs-sql-agent es un servidor HTTP MCP para bases de datos relacionales con un panel de administración integrado.
+    readme: 
+      "
+      # hs-sql-agent
+
+      Despliega fácilmente un **servidor HTTP MCP para bases de datos relacionales** con un panel de administración integrado.
+
+      `hs-sql-agent` permite que clientes MCP como **Claude Desktop, Cursor y Visual Studio Code** accedan de forma segura a bases de datos relacionales, mientras los administradores gestionan de forma centralizada las conexiones, claves MCP, permisos, registros de auditoría y políticas de seguridad.
+
+      Esta plantilla de Zeabur despliega automáticamente:
+
+      * **hs-sql-agent** — servidor MCP y panel de administración
+
+      * **PostgreSQL** — base de datos interna de administración
+
+      * **Redis** — caché, limitación de solicitudes, control de concurrencia y sincronización de políticas de seguridad
+
+      ## ✨ Funciones principales
+
+      * 🔌 Endpoint HTTP MCP
+
+      * 🔑 Claves de acceso MCP independientes por cliente
+
+      * 🗄️ Gestión de múltiples conexiones de base de datos
+
+      * 🔐 Asociación de una base de datos por clave MCP
+
+      * 🧰 Permisos de herramientas MCP configurables por clave
+
+      * 🚦 Límites de solicitudes configurables
+
+      * 📋 Registros de auditoría de ejecución SQL
+
+      * 🛡️ Políticas de seguridad centralizadas
+
+      * ⚡ Caché y control de concurrencia mediante Redis
+
+      * 🖥️ Panel de administración web integrado
+
+      * 📋 Configuraciones de cliente MCP listas para copiar
+
+      ## 🚀 Primeros pasos
+
+      ### 1. Desplegar la plantilla
+
+      Despliega esta plantilla en Zeabur y configura un subdominio para el panel de administración.
+
+      Zeabur creará y conectará automáticamente todos los servicios necesarios.
+
+      Cuando finalice el despliegue, abre la **Admin Panel URL** que aparece en las instrucciones del despliegue de Zeabur.
+
+      ### 2. Crear la cuenta de administrador
+
+      En el primer inicio, deberás crear la primera cuenta de administrador.
+
+      Después, inicia sesión en el panel de administración con esa cuenta.
+
+      ### 3. Añadir una base de datos
+
+      Abre **DB Management** y añade la base de datos relacional a la que quieres permitir acceso desde los clientes MCP.
+
+      Se recomienda probar la conexión antes de emitir una clave MCP.
+
+      ### 4. Emitir una clave de acceso MCP
+
+      Abre:
+
+      `Runtime Admin → MCP Keys`
+
+      Crea una nueva clave MCP y configura sus permisos de acceso.
+
+      Las opciones configurables incluyen:
+
+      * Nombre de la clave
+
+      * Fecha de expiración
+
+      * Base de datos
+
+      * Rate Limit
+
+      * Herramientas MCP permitidas
+
+      * Restricciones opcionales de acceso a datos
+
+      * CORS Origins opcionales
+
+      Haz clic en **Test DB Connection** para verificar la conexión con la base de datos seleccionada y, a continuación, en **Issue Key**.
+
+      ### 5. Copiar la configuración MCP
+
+      Después de emitir la clave, `hs-sql-agent` mostrará inmediatamente el cuadro de diálogo **Save and connect**.
+
+      Este incluye:
+
+      * La clave MCP, visible una sola vez
+
+      * El MCP Endpoint
+
+      * La configuración completa ya generada para clientes MCP compatibles
+
+      Selecciona el cliente que utilizas:
+
+      * **Claude Desktop**
+
+      * **Cursor**
+
+      * **Visual Studio Code**
+
+      * **Generic HTTP**
+
+      Después, haz clic en el botón **Copy config** correspondiente y pega directamente la configuración en tu cliente MCP.
+
+      > ⚠️ El valor en texto plano de la clave MCP solo se muestra una vez.
+      >
+      > Guarda la clave o copia la configuración generada antes de cerrar el cuadro de diálogo. Una vez cerrado, el valor en texto plano de la clave no podrá volver a consultarse desde la Admin UI.
+
+      Eso es todo. No es necesario configurar manualmente el MCP Endpoint ni el header de autenticación.
+
+      ## 🔐 Seguridad
+
+      Trata las claves MCP como información sensible, igual que una contraseña.
+
+      No envíes configuraciones que contengan claves MCP a repositorios de código fuente, Issues públicos, tickets ni otros lugares públicos.
+
+      Si una clave queda expuesta, revócala desde la página **MCP Keys** y emite una nueva.
+
+      Para bases de datos de producción, se recomienda utilizar cuentas de base de datos dedicadas y aplicar el principio de mínimo privilegio, concediendo únicamente los permisos necesarios para las herramientas MCP utilizadas.
+
+      ## ⚠️ Estado del proyecto
+
+      `hs-sql-agent` se encuentra actualmente en **desarrollo activo**.
+
+      Las funciones y opciones de configuración pueden cambiar entre versiones y todavía pueden existir errores.
+
+      Si encuentras un problema o quieres solicitar una función:
+
+      * 🔗 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)
+      
+      * ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)
+
+      "
+  id-ID:
+    description: hs-sql-agent adalah server HTTP MCP untuk basis data relasional dengan panel admin terintegrasi.
+    readme: 
+      "
+      # hs-sql-agent
+
+      Deploy dengan mudah **server HTTP MCP untuk database relasional** yang dilengkapi panel administrasi bawaan.
+
+      `hs-sql-agent` memungkinkan client MCP seperti **Claude Desktop, Cursor, dan Visual Studio Code** mengakses database relasional secara aman, sekaligus memungkinkan administrator mengelola koneksi database, MCP key, permission, audit log, dan security policy secara terpusat.
+
+      Template Zeabur ini akan secara otomatis men-deploy:
+
+      * **hs-sql-agent** — MCP server dan panel administrasi
+
+      * **PostgreSQL** — database internal untuk administrasi
+
+      * **Redis** — cache, rate limiting, concurrency control, dan sinkronisasi security policy
+
+      ## ✨ Fitur Utama
+
+      * 🔌 HTTP MCP Endpoint
+
+      * 🔑 MCP Access Key terpisah untuk setiap client
+
+      * 🗄️ Manajemen beberapa koneksi database
+
+      * 🔐 Mapping database per MCP Key
+
+      * 🧰 Permission MCP Tools per MCP Key
+
+      * 🚦 Rate Limit yang dapat dikonfigurasi
+
+      * 📋 Audit log eksekusi SQL
+
+      * 🛡️ Security policy terpusat
+
+      * ⚡ Cache dan concurrency control berbasis Redis
+
+      * 🖥️ Panel administrasi web bawaan
+
+      * 📋 Konfigurasi MCP Client siap salin
+
+      ## 🚀 Memulai
+
+      ### 1. Deploy Template
+
+      Deploy template ini di Zeabur dan tentukan subdomain untuk panel administrasi.
+
+      Zeabur akan secara otomatis membuat dan menghubungkan seluruh service yang dibutuhkan.
+
+      Setelah deployment selesai, buka **Admin Panel URL** yang ditampilkan pada instruksi deployment Zeabur.
+
+      ### 2. Buat Akun Administrator
+
+      Pada saat pertama kali dijalankan, buat akun administrator pertama.
+
+      Setelah itu, login ke panel administrasi menggunakan akun tersebut.
+
+      ### 3. Tambahkan Database
+
+      Buka **DB Management** dan tambahkan database relasional yang ingin kamu izinkan untuk diakses oleh MCP Client.
+
+      Sebaiknya lakukan pengujian koneksi terlebih dahulu sebelum menerbitkan MCP Key.
+
+      ### 4. Terbitkan MCP Access Key
+
+      Buka:
+
+      `Runtime Admin → MCP Keys`
+
+      Buat MCP Key baru dan atur hak aksesnya.
+
+      Pengaturan yang tersedia meliputi:
+
+      * Nama key
+
+      * Masa berlaku
+
+      * Database
+
+      * Rate Limit
+
+      * MCP Tools yang diizinkan
+
+      * Pembatasan akses data opsional
+
+      * CORS Origins opsional
+
+      Klik **Test DB Connection** untuk memastikan koneksi database yang dipilih berfungsi, lalu klik **Issue Key**.
+
+      ### 5. Salin Konfigurasi MCP
+
+      Setelah key berhasil diterbitkan, `hs-sql-agent` akan langsung menampilkan dialog **Save and connect**.
+
+      Dialog tersebut berisi:
+
+      * MCP Key yang hanya ditampilkan satu kali
+
+      * MCP Endpoint
+
+      * Konfigurasi lengkap yang sudah dibuat untuk MCP Client yang didukung
+
+      Pilih client yang digunakan:
+
+      * **Claude Desktop**
+
+      * **Cursor**
+
+      * **Visual Studio Code**
+
+      * **Generic HTTP**
+
+      Kemudian klik tombol **Copy config** yang sesuai dan tempelkan konfigurasi tersebut langsung ke MCP Client.
+
+      > ⚠️ Nilai plaintext MCP Key hanya ditampilkan satu kali.
+      >
+      > Simpan key atau salin konfigurasi client yang telah dibuat sebelum menutup dialog. Setelah dialog ditutup, nilai plaintext key tidak dapat ditampilkan kembali dari Admin UI.
+
+      Selesai. Kamu tidak perlu menyusun MCP Endpoint atau authentication header secara manual.
+
+      ## 🔐 Keamanan
+
+      Perlakukan MCP Key sebagai informasi rahasia, sama seperti password.
+
+      Jangan commit konfigurasi yang berisi MCP Key ke source control, dan jangan menempelkannya ke Issue publik, ticket, atau tempat publik lainnya.
+
+      Jika key terekspos, revoke key tersebut melalui halaman **MCP Keys**, lalu terbitkan key baru.
+
+      Untuk database production, sebaiknya gunakan akun database khusus dan terapkan prinsip least privilege, dengan hanya memberikan permission yang benar-benar dibutuhkan oleh MCP Tools yang digunakan.
+
+      ## ⚠️ Status Proyek
+
+      `hs-sql-agent` saat ini masih dalam **pengembangan aktif**.
+
+      Fitur dan opsi konfigurasi dapat berubah antarversi, dan bug mungkin masih ditemukan.
+
+      Jika menemukan masalah atau ingin mengajukan fitur:
+
+      * 🔗 [GitHub Issues](https://github.com/tse-wei-chen/hs-sql-agent/issues)
+
+      * ⭐ [GitHub Repository](https://github.com/tse-wei-chen/hs-sql-agent)
+
+      "
