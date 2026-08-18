@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   hs-sql-agent:
-    image: ghcr.io/tse-wei-chen/hs-sql-agent:v1.10.6
+    image: ghcr.io/tse-wei-chen/hs-sql-agent:v1.10.7
     container_name: hs-sql-agent
     depends_on:
       - postgres
