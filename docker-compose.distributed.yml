@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: hs-sql-agent-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-hsqlagent}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: hs-sql-agent-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  hs-sql-agent:
+    image: ghcr.io/tse-wei-chen/hs-sql-agent:v1.10.6
+    container_name: hs-sql-agent
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8080:8080"
+    expose:
+      - "9000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - AdminDatabase__Provider=${ADMIN_DATABASE_PROVIDER:-Postgres}
+      - AdminDatabase__ConnectionString=${ADMIN_DATABASE_CONNECTION_STRING:-Host=postgres;Port=5432;Database=hsqlagent;Username=postgres;Password=postgres;}
+      - CacheConfig__Provider=${CACHE_PROVIDER:-Redis}
+      - CacheConfig__ConnectionString=${CACHE_CONNECTION_STRING:-redis:6379}
+      - CacheConfig__KeyPrefix=${CACHE_KEY_PREFIX:-hsqlagent:cache:}
+      - McpKeySettings__HmacSecretKey=${HMAC_KEY}
+      - Mcp__PublicEndpoint=${MCP_PUBLIC_ENDPOINT:-http://localhost:8080/mcp}
+      - JwtSettings__SecretKey=${JWT_KEY}
+      - JwtSettings__Issuer=${JWT_ISS}
+      - JwtSettings__Audience=${JWT_AUD}
+      - JwtSettings__AccessTokenExpirationMinutes=${JWT_ACCESS_TOKEN_EXPIRATION_MINUTES}
+      - JwtSettings__RefreshTokenExpirationDays=${JWT_REFRESH_TOKEN_EXPIRATION_DAYS}
+      - Authentication__LockoutThreshold=${AUTH_LOCKOUT_THRESHOLD}
+      - Authentication__LockoutMinutes=${AUTH_LOCKOUT_MINUTES}
+      - PasswordReset__BaseUrl=${PASSWORD_RESET_BASE_URL}
+      - PasswordReset__ExpirationMinutes=${PASSWORD_RESET_EXPIRATION_MINUTES}
+      - PasswordReset__SmtpHost=${SMTP_HOST}
+      - PasswordReset__SmtpPort=${SMTP_PORT}
+      - PasswordReset__SmtpEnableSsl=${SMTP_ENABLE_SSL}
+      - PasswordReset__SmtpUsername=${SMTP_USERNAME}
+      - PasswordReset__SmtpPassword=${SMTP_PASSWORD}
+      - PasswordReset__SmtpFrom=${SMTP_FROM}
+      - EnterpriseIdentity__OidcEnabled=${OIDC_ENABLED}
+      - EnterpriseIdentity__Authority=${OIDC_AUTHORITY}
+      - EnterpriseIdentity__ClientId=${OIDC_CLIENT_ID}
+      - EnterpriseIdentity__ClientSecret=${OIDC_CLIENT_SECRET}
+      - EnterpriseIdentity__RequireHttpsMetadata=${OIDC_REQUIRE_HTTPS_METADATA}
+      - EnterpriseIdentity__DataProtectionKeyPath=${DATA_PROTECTION_KEY_PATH}
+      - Operability__HealthProbeEnabled=${HEALTH_PROBE_ENABLED}
+      - Operability__HealthProbeIntervalSeconds=${HEALTH_PROBE_INTERVAL_SECONDS}
+      - Operability__HealthProbeTimeoutSeconds=${HEALTH_PROBE_TIMEOUT_SECONDS}
+      - Operability__SlowQueryThresholdMs=${SLOW_QUERY_THRESHOLD_MS}
+      - Operability__AlertWebhookUrl=${ALERT_WEBHOOK_URL}
+      - Operability__AlertWebhookSecret=${ALERT_WEBHOOK_SECRET}
+      - Operability__SiemWebhookUrl=${SIEM_WEBHOOK_URL}
+      - Operability__SiemWebhookSecret=${SIEM_WEBHOOK_SECRET}
+      - Operability__DeliveryMaxAttempts=${DELIVERY_MAX_ATTEMPTS}
+      - Operability__AuditRetentionDays=${AUDIT_RETENTION_DAYS}
+      - Operability__AuditRetentionMode=${AUDIT_RETENTION_MODE}
+      - Operability__AuditArchivePath=${AUDIT_ARCHIVE_PATH}
+      - Operability__AuditFallbackPath=${AUDIT_FALLBACK_PATH:-/app/data/audit-fallback.jsonl}
+      - Operability__AuditRetentionRunHourUtc=${AUDIT_RETENTION_RUN_HOUR_UTC}
+      - RateLimiting__PermitLimit=${RATE_LIMITING_PERMIT_LIMIT}
+      - RateLimiting__WindowSeconds=${RATE_LIMITING_WINDOW_SECONDS}
+      - RateLimiter__Provider=${RATE_LIMITER_PROVIDER:-Redis}
+      - RateLimiter__ConnectionString=${RATE_LIMITER_CONNECTION_STRING:-redis:6379}
+      - RateLimiter__FailureMode=${RATE_LIMITER_FAILURE_MODE:-FailClosed}
+      - RateLimiter__KeyPrefix=${RATE_LIMITER_KEY_PREFIX:-hsqlagent:ratelimit:}
+      - SecurityPolicySync__Provider=${SECURITY_POLICY_SYNC_PROVIDER:-Redis}
+      - SecurityPolicySync__ConnectionString=${SECURITY_POLICY_SYNC_CONNECTION_STRING:-redis:6379}
+      - SecurityPolicySync__KeyPrefix=${SECURITY_POLICY_SYNC_KEY_PREFIX:-hsqlagent:security-policy:}
+      - SecurityPolicySync__RefreshIntervalSeconds=${SECURITY_POLICY_SYNC_REFRESH_INTERVAL_SECONDS:-30}
+      - OutboundDeliverySync__Provider=${OUTBOUND_DELIVERY_SYNC_PROVIDER:-Redis}
+      - OutboundDeliverySync__ConnectionString=${OUTBOUND_DELIVERY_SYNC_CONNECTION_STRING:-redis:6379}
+      - OutboundDeliverySync__KeyPrefix=${OUTBOUND_DELIVERY_SYNC_KEY_PREFIX:-hsqlagent:outbound-delivery:}
+      - Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command=${LOGGING_EFCORE_COMMAND_LOGLEVEL:-Warning}
+      - SqlConcurrency__Provider=${SQL_CONCURRENCY_PROVIDER:-Redis}
+      - SqlConcurrency__ConnectionString=${SQL_CONCURRENCY_CONNECTION_STRING:-redis:6379}
+      - SqlConcurrency__FailureMode=${SQL_CONCURRENCY_FAILURE_MODE:-FailClosed}
+      - SqlConcurrency__Key=${SQL_CONCURRENCY_KEY:-hsqlagent:sql-concurrency}
+      - SqlConcurrency__LeaseSeconds=${SQL_CONCURRENCY_LEASE_SECONDS:-30}
+      - Telemetry__PrometheusEnabled=${PROMETHEUS_ENABLED:-true}
+      - Telemetry__PrometheusHost=${PROMETHEUS_HOST:-0.0.0.0}
+      - Telemetry__PrometheusPort=${PROMETHEUS_PORT:-9000}
+      - Telemetry__OtlpEndpoint=${OTLP_ENDPOINT:-}
+      - Telemetry__ServiceName=${OTEL_SERVICE_NAME:-hs-sql-agent}
+    restart: unless-stopped
