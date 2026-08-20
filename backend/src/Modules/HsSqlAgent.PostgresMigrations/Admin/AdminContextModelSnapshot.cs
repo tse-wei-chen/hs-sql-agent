@@ -309,6 +309,10 @@ namespace HsSqlAgent.PostgresMigrations.Admin
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("BootstrapId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -356,6 +360,9 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                         .HasColumnType("character varying(100)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BootstrapId")
+                        .IsUnique();
 
                     b.ToTable("DbManagement");
                 });
@@ -563,6 +570,10 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)");
 
+                    b.Property<string>("BootstrapId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<string>("CorsAllowedOrigins")
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
@@ -629,6 +640,9 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BootstrapId")
+                        .IsUnique();
 
                     b.HasIndex("IsActive");
 

@@ -20,6 +20,7 @@ if (!builder.Environment.IsDevelopment()
 builder.Services.AddHsSqlAgent(options =>
 {
     builder.Configuration.GetSection("Mcp").Bind(options.Mcp);
+    builder.Configuration.GetSection("Bootstrap").Bind(options.Bootstrap);
     options.AdminDatabaseProvider = builder.Configuration["AdminDatabase:Provider"] ?? "Sqlite";
     options.AdminConnectionString = builder.Configuration["AdminDatabase:ConnectionString"]
         ?? builder.Configuration["AppConnectionString"]

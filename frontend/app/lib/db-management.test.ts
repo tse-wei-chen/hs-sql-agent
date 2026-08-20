@@ -24,7 +24,6 @@ describe("requiresDbPassword", () => {
 
   it("does not require a password where the form has no credential field", () => {
     expect(requiresDbPassword("Sqlite")).toBe(false);
-    expect(requiresDbPassword("Global")).toBe(false);
   });
 });
 

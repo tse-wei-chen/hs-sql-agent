@@ -12,7 +12,7 @@ export interface DbConnectionFormValues {
 }
 
 export const requiresDbPassword = (sqlProvider: string): boolean =>
-  !["Sqlite", "Global"].includes(sqlProvider);
+  sqlProvider !== "Sqlite";
 
 export const buildDbConnectionTestRequest = (
   values: DbConnectionFormValues,

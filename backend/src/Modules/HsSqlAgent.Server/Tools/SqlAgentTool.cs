@@ -19,7 +19,6 @@ namespace HsSqlAgent.Server.Tools;
 
 [McpServerToolType]
 public partial class SqlAgentTool(
-    IConfiguration configuration,
     IHttpContextAccessor httpContextAccessor,
     ISqlStrategyFactory sqlStrategyFactory,
     IAuditService auditService,
@@ -27,7 +26,6 @@ public partial class SqlAgentTool(
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
     ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter)
 {
-    private readonly IConfiguration _configuration = configuration;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
     private readonly IAuditService _auditService = auditService;
@@ -527,11 +525,7 @@ public partial class SqlAgentTool(
             if (!string.IsNullOrWhiteSpace(provider) && !string.IsNullOrWhiteSpace(connectionString))
                 return new SqlRuntimeConfig { Provider = provider, ConnectionString = connectionString };
         }
-        return new SqlRuntimeConfig
-        {
-            Provider = _configuration["SqlConfig:Provider"] ?? string.Empty,
-            ConnectionString = _configuration["SqlConfig:ConnectionString"] ?? string.Empty
-        };
+        return new SqlRuntimeConfig();
     }
 
     private SqlExecutionPolicy ResolveExecutionPolicy()

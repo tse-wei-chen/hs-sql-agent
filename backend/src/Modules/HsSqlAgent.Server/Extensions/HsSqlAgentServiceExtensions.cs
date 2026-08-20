@@ -209,6 +209,11 @@ public static class HsSqlAgentServiceExtensions
         });
         services.Configure<McpKeySettings>(mcp => mcp.HmacSecretKey = options.HmacSecretKey);
         services.Configure<McpOptions>(mcp => mcp.PublicEndpoint = options.Mcp.PublicEndpoint);
+        services.Configure<BootstrapOptions>(bootstrap =>
+        {
+            bootstrap.Enabled = options.Bootstrap.Enabled;
+            bootstrap.Databases = options.Bootstrap.Databases;
+        });
         services.Configure<OperabilitySettings>(operability =>
         {
             var source = options.Operability;
@@ -442,7 +447,6 @@ public static class HsSqlAgentServiceExtensions
                                     ct.Name,
                                     sp.GetRequiredService<ICustomSqlToolService>(),
                                     sp.GetRequiredService<IHttpContextAccessor>(),
-                                    sp.GetRequiredService<IConfiguration>(),
                                     sp.GetRequiredService<ISqlStrategyFactory>(),
                                     sp.GetRequiredService<IAuditService>(),
                                     sp.GetRequiredService<IQueryValueParserService>(),

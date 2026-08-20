@@ -48,7 +48,6 @@ public class CustomToolProxyTests
 
     private readonly Mock<ICustomSqlToolService> _toolServiceMock;
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
-    private readonly Mock<IConfiguration> _configMock;
     private readonly Mock<ISqlStrategyFactory> _strategyFactoryMock;
     private readonly Mock<IAuditService> _auditServiceMock;
     private readonly Mock<IQueryValueParserService> _queryValueParserMock;
@@ -60,7 +59,6 @@ public class CustomToolProxyTests
     {
         _toolServiceMock = new Mock<ICustomSqlToolService>();
         _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
-        _configMock = new Mock<IConfiguration>();
         _strategyFactoryMock = new Mock<ISqlStrategyFactory>();
         _auditServiceMock = new Mock<IAuditService>();
         _queryValueParserMock = new Mock<IQueryValueParserService>();
@@ -89,7 +87,6 @@ public class CustomToolProxyTests
         _proxy = new CustomToolProxy("test_tool",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
-            _configMock.Object,
             _strategyFactoryMock.Object,
             _auditServiceMock.Object,
             _queryValueParserMock.Object,
@@ -200,7 +197,6 @@ public class CustomToolProxyTests
         var dmlProxy = new CustomToolProxy("delete_user",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
-            _configMock.Object,
             _strategyFactoryMock.Object,
             _auditServiceMock.Object,
             _queryValueParserMock.Object,
@@ -254,7 +250,6 @@ public class CustomToolProxyTests
         var dmlProxy = new CustomToolProxy("delete_user",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
-            _configMock.Object,
             _strategyFactoryMock.Object,
             _auditServiceMock.Object,
             _queryValueParserMock.Object,

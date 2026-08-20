@@ -22,4 +22,5 @@ public class McpAccessKeyListItem
     public int? WindowSecondsOverride { get; set; }
     public int? EffectivePermitLimit { get; set; }
     public int? EffectiveWindowSeconds { get; set; }
+    public bool IsBootstrapManaged { get; set; }
 }

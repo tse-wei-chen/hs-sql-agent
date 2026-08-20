@@ -26,9 +26,6 @@ public static class SqlCapabilityMatrix
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
-        if (provider == SqlAgentToolType.Global)
-            throw new ArgumentOutOfRangeException(nameof(provider), provider, "Global is not a SQL execution provider.");
-
         var capabilities = new List<SqlCapability>
         {
             new("select.basic", "query", SqlCapabilityStatus.Translated,

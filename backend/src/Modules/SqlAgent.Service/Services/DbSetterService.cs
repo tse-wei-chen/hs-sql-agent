@@ -1,15 +1,13 @@
 using System.Data.Common;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Enums;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Factories;
 
 namespace SqlAgent.Service.Services
 {
-    public class DbSetterService(IConfiguration configuration, ISqlStrategyFactory strategyFactory) : IDbSetterService
+    public class DbSetterService(ISqlStrategyFactory strategyFactory) : IDbSetterService
     {
-        private readonly IConfiguration _configuration = configuration;
         private readonly ISqlStrategyFactory _strategyFactory = strategyFactory;
         public async Task<TestDbConnectionVM> TestDbConnectionAsync(TestDbConnectionBase request, CancellationToken cancellationToken = default)
         {
@@ -18,38 +16,20 @@ namespace SqlAgent.Service.Services
             try
             {
                 var provider = request.SqlProvider;
-                var connString = string.Empty;
-                if (provider == SqlAgentToolType.Global)
-                {
-                    if (!string.IsNullOrWhiteSpace(connString))
-                    {
-                        return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is set to Global but connection string is provided in request." };
-                    }
-                    var section = _configuration.GetSection("SqlConfig");
-                    provider = Enum.Parse<SqlAgentToolType>(section["Provider"] ?? "MsSqlServer");
-                    connString = section["ConnectionString"];
-                    if (string.IsNullOrWhiteSpace(connString))
-                    {
-                        return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Global connection string is not configured." };
-                    }
-                }
                 if (provider == null)
                 {
                     return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is null." };
                 }
                 var strategy = _strategyFactory.GetStrategy(provider.Value);
-                if (string.IsNullOrWhiteSpace(connString))
+                var connString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
                 {
-                    connString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
-                    {
-                        Host = request.Host,
-                        Port = request.Port,
-                        Username = request.Username,
-                        Password = request.Password,
-                        Database = request.Database,
-                        ExtraSettings = request.ExtraSettings
-                    });
-                }
+                    Host = request.Host,
+                    Port = request.Port,
+                    Username = request.Username,
+                    Password = request.Password,
+                    Database = request.Database,
+                    ExtraSettings = request.ExtraSettings
+                });
                 connection = strategy.CreateConnection(connString);
                 await connection.OpenAsync(cancellationToken);
                 await connection.CloseAsync();
@@ -72,10 +52,6 @@ namespace SqlAgent.Service.Services
         public async Task<string?> BuildDbConnectionAsync(BuildDbConnectionModel model, CancellationToken cancellationToken = default)
         {
             var provider = Enum.Parse<SqlAgentToolType>(model.Provider);
-            if (provider == SqlAgentToolType.Global)
-            {
-                return null;
-            }
             var strategy = _strategyFactory.GetStrategy(provider);
             return strategy.BuildConnectionString(model);
         }

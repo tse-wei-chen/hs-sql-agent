@@ -21,6 +21,7 @@ public class McpAccessKey
     public int? WindowSecondsOverride { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
+    public string? BootstrapId { get; set; }
     public DateTime? RevokedAt { get; set; }
     public string? RevokedBy { get; set; }
 }

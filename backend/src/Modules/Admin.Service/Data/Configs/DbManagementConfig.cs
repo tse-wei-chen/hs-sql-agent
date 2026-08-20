@@ -18,6 +18,8 @@ public class DbManagementConfig : IEntityTypeConfiguration<DbManagement>
         builder.Property(x => x.Database).HasMaxLength(100);
         builder.Property(x => x.CreatedAt).IsRequired();
         builder.Property(x => x.CreatedBy).HasMaxLength(100);
+        builder.Property(x => x.BootstrapId).HasMaxLength(100);
+        builder.HasIndex(x => x.BootstrapId).IsUnique();
         builder.Property(x => x.UpdatedAt).IsRequired();
         builder.Property(x => x.UpdatedBy).HasMaxLength(100);
     }

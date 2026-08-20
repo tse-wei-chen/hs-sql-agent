@@ -17,6 +17,7 @@ public class DbManagementBase
     public string CreatedBy { get; init; } = string.Empty;
     public string UpdatedAt { get; init; } = string.Empty;
     public string UpdatedBy { get; init; } = string.Empty;
+    public bool IsBootstrapManaged { get; init; }
 }
 
 public class DbManagementVM : DbManagementBase
@@ -34,7 +35,8 @@ public class DbManagementVM : DbManagementBase
         CreatedAt = db.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
         CreatedBy = db.CreatedBy ?? string.Empty,
         UpdatedAt = db.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
-        UpdatedBy = db.UpdatedBy ?? string.Empty
+        UpdatedBy = db.UpdatedBy ?? string.Empty,
+        IsBootstrapManaged = db.BootstrapId != null
     };
 }
 
@@ -55,6 +57,7 @@ public class DbManagementPwdVM : DbManagementBase
         CreatedAt = db.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
         CreatedBy = db.CreatedBy ?? string.Empty,
         UpdatedAt = db.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
-        UpdatedBy = db.UpdatedBy ?? string.Empty
+        UpdatedBy = db.UpdatedBy ?? string.Empty,
+        IsBootstrapManaged = db.BootstrapId != null
     };
 }

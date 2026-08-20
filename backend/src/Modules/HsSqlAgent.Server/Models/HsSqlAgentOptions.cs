@@ -6,6 +6,7 @@ namespace HsSqlAgent.Server.Models;
 public class HsSqlAgentServiceOptions
 {
     public McpOptions Mcp { get; } = new();
+    public BootstrapOptions Bootstrap { get; } = new();
     public EnterpriseIdentityOptions EnterpriseIdentity { get; } = new();
     public OperabilityOptions Operability { get; } = new();
     public TelemetryOptions Telemetry { get; } = new();
@@ -55,6 +56,34 @@ public class HsSqlAgentServiceOptions
 public class McpOptions
 {
     public string PublicEndpoint { get; set; } = "http://localhost:8080/mcp";
+}
+
+public class BootstrapOptions
+{
+    public bool Enabled { get; set; } = true;
+    public List<BootstrapDatabaseOptions> Databases { get; set; } = [];
+}
+
+public class BootstrapDatabaseOptions
+{
+    public string? BootstrapId { get; set; }
+    public string? Name { get; set; }
+    public string? Provider { get; set; }
+    public string? Host { get; set; }
+    public string? Port { get; set; }
+    public string? Database { get; set; }
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public string? ExtraSettings { get; set; }
+    public List<BootstrapMcpKeyOptions> McpKeys { get; set; } = [];
+}
+
+public class BootstrapMcpKeyOptions
+{
+    public string? BootstrapId { get; set; }
+    public string? Name { get; set; }
+    public string? Key { get; set; }
+    public string? AllowedTools { get; set; }
 }
 
 public class TelemetryOptions
