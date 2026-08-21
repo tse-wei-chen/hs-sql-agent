@@ -23,7 +23,6 @@ public class CustomToolProxy(
     string name,
     ICustomSqlToolService customSqlToolService,
     IHttpContextAccessor httpContextAccessor,
-    IConfiguration configuration,
     ISqlStrategyFactory sqlStrategyFactory,
     IAuditService auditService,
     IQueryValueParserService queryValueParserService,
@@ -33,7 +32,6 @@ public class CustomToolProxy(
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
-    private readonly IConfiguration _configuration = configuration;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
     private readonly IAuditService _auditService = auditService;
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
@@ -427,11 +425,7 @@ public class CustomToolProxy(
             if (!string.IsNullOrWhiteSpace(provider) && !string.IsNullOrWhiteSpace(connectionString))
                 return new SqlRuntimeConfig { Provider = provider, ConnectionString = connectionString };
         }
-        return new SqlRuntimeConfig
-        {
-            Provider = _configuration["SqlConfig:Provider"] ?? string.Empty,
-            ConnectionString = _configuration["SqlConfig:ConnectionString"] ?? string.Empty
-        };
+        return new SqlRuntimeConfig();
     }
 
     private int? ResolveDbManagementId()

@@ -14,6 +14,7 @@ export interface DbManagement {
   createdBy?: string | null;
   updatedAt: string;
   updatedBy?: string | null;
+  isBootstrapManaged: boolean;
 
   visible?: boolean; // For UI purposes, not from backend
 }

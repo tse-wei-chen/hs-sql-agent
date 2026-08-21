@@ -516,6 +516,7 @@ onMounted(load);
                   /></NuxtLink>
                 </Button>
                 <Button
+                  v-if="!db.isBootstrapManaged"
                   variant="ghost"
                   size="icon"
                   class="h-8 w-8"
@@ -525,6 +526,7 @@ onMounted(load);
                   <Edit2 class="size-4" />
                 </Button>
                 <Button
+                  v-if="!db.isBootstrapManaged"
                   variant="ghost"
                   size="icon"
                   class="h-8 w-8 text-destructive"

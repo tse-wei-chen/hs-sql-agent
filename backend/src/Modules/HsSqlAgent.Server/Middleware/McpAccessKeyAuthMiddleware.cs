@@ -17,7 +17,6 @@ public class McpAccessKeyAuthMiddleware(
     IAuditService auditService,
     IMcpAccessKeyLastUsedQueue lastUsedQueue,
     ICacheService cache,
-    IConfiguration configuration,
     IDbManagementService dbManagementService,
     IDbSetterService dbSetterService,
     ICryptoService cryptoService,
@@ -44,7 +43,6 @@ public class McpAccessKeyAuthMiddleware(
     private readonly IAuditService _auditService = auditService;
     private readonly IMcpAccessKeyLastUsedQueue _lastUsedQueue = lastUsedQueue;
     private readonly ICacheService _cache = cache;
-    private readonly IConfiguration _configuration = configuration;
     private readonly IDbManagementService _dbManagementService = dbManagementService;
     private readonly IDbSetterService _dbSetterService = dbSetterService;
     private readonly ICryptoService _cryptoService = cryptoService;
@@ -94,12 +92,6 @@ public class McpAccessKeyAuthMiddleware(
                     ExtraSettings = pwdDbc.ExtraSettings
                 }, context.RequestAborted) ?? string.Empty;
             }
-        }
-        else if (string.Equals(provider, "Global", StringComparison.OrdinalIgnoreCase))
-        {
-            var globalConfig = _configuration.GetSection("SqlConfig");
-            provider = globalConfig["Provider"] ?? "MsSqlServer";
-            connString = globalConfig["ConnectionString"] ?? string.Empty;
         }
 
         context.Items[McpContextItemKeys.AccessKeyId] = validation.KeyId.Value;

@@ -73,6 +73,7 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
         var existingDbManagement = await _context.DbManagement.FirstOrDefaultAsync(db => db.Id == id, cancellationToken);
         if (existingDbManagement != null)
         {
+            EnsureNotBootstrapManaged(existingDbManagement);
             existingDbManagement.Name = dbManagement.Name;
             existingDbManagement.SqlProvider = dbManagement.SqlProvider;
             existingDbManagement.Host = dbManagement.Host;
@@ -96,6 +97,7 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
         var existingDbManagement = await _context.DbManagement.FirstOrDefaultAsync(db => db.Id == id, cancellationToken);
         if (existingDbManagement != null)
         {
+            EnsureNotBootstrapManaged(existingDbManagement);
             var now = DateTime.UtcNow;
             var hasUsableKeys = await _context.McpAccessKeys.AnyAsync(
                 key => key.DbManagementId == id &&
@@ -127,4 +129,9 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
         }
     }
 
+    private static void EnsureNotBootstrapManaged(DbManagement entity)
+    {
+        if (!string.IsNullOrWhiteSpace(entity.BootstrapId))
+            throw new InvalidOperationException("Bootstrap-managed database connections can only be changed through configuration.");
+    }
 }

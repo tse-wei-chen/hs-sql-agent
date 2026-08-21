@@ -25,6 +25,7 @@ public class McpAccessKeyConfig : IEntityTypeConfiguration<McpAccessKey>
         builder.Property(x => x.PermitLimitOverride);
         builder.Property(x => x.WindowSecondsOverride);
         builder.Property(x => x.CreatedBy).HasMaxLength(64);
+        builder.Property(x => x.BootstrapId).HasMaxLength(100);
         builder.Property(x => x.RevokedBy).HasMaxLength(64);
         builder.Property(x => x.CreatedAt).IsRequired();
         builder.Property(x => x.RevokedAt);
@@ -32,5 +33,6 @@ public class McpAccessKeyConfig : IEntityTypeConfiguration<McpAccessKey>
         builder.HasIndex(x => x.KeyHash).IsUnique();
         builder.HasIndex(x => x.KeyPrefix);
         builder.HasIndex(x => x.IsActive);
+        builder.HasIndex(x => x.BootstrapId).IsUnique();
     }
 }

@@ -79,7 +79,8 @@ public class McpAccessKeyService(
                 RateLimitMode = x.RateLimitMode,
                 PermitLimitOverride = x.PermitLimitOverride,
                 WindowSecondsOverride = x.WindowSecondsOverride,
-                CreatedAt = x.CreatedAt
+                CreatedAt = x.CreatedAt,
+                IsBootstrapManaged = x.BootstrapId != null
             })
             .ToListAsync(cancellationToken);
 
@@ -128,6 +129,7 @@ public class McpAccessKeyService(
         var entity = await _context.McpAccessKeys.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (entity is null)
             return null;
+        EnsureNotBootstrapManaged(entity);
         await ValidateAllowedToolsAsync(request.AllowedTools, request.DbManagementId, cancellationToken);
 
         entity.Name = request.Name.Trim();
@@ -163,7 +165,8 @@ public class McpAccessKeyService(
             RateLimitMode = entity.RateLimitMode,
             PermitLimitOverride = entity.PermitLimitOverride,
             WindowSecondsOverride = entity.WindowSecondsOverride,
-            CreatedAt = entity.CreatedAt
+            CreatedAt = entity.CreatedAt,
+            IsBootstrapManaged = entity.BootstrapId != null
         };
         var policy = _securityPolicyRuntimeState.GetCurrent();
         ApplyEffectiveRateLimit(result, policy.KeyPermitLimit, policy.KeyWindowSeconds);
@@ -182,6 +185,7 @@ public class McpAccessKeyService(
         var oldKey = await _context.McpAccessKeys.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (oldKey is null)
             return null;
+        EnsureNotBootstrapManaged(oldKey);
         if (!oldKey.IsActive || oldKey.RevokedAt.HasValue ||
             (oldKey.ExpiresAt.HasValue && oldKey.ExpiresAt <= DateTime.UtcNow))
             throw new InvalidOperationException("Only an active key can be rotated.");
@@ -260,6 +264,7 @@ public class McpAccessKeyService(
         {
             return false;
         }
+        EnsureNotBootstrapManaged(key);
 
         key.IsActive = false;
         key.RevokedAt = DateTime.UtcNow;
@@ -454,6 +459,12 @@ public class McpAccessKeyService(
             true,
             RevocationTombstoneExpiry,
             CancellationToken.None);
+
+    private static void EnsureNotBootstrapManaged(McpAccessKey entity)
+    {
+        if (!string.IsNullOrWhiteSpace(entity.BootstrapId))
+            throw new InvalidOperationException("Bootstrap-managed MCP keys can only be changed through configuration.");
+    }
 
     private async Task ValidateAllowedToolsAsync(
         string? allowedTools,

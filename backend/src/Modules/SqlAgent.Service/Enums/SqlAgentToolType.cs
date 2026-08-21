@@ -7,6 +7,5 @@ public enum SqlAgentToolType
     MySQL,
     MsSqlServer,
     Oracle,
-    Firebird,
-    Global
+    Firebird
 }

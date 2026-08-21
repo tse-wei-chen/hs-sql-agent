@@ -53,15 +53,11 @@ public class McpAccessKeyAuthMiddlewareTests
         _settings = Options.Create(new McpKeySettings { HmacSecretKey = "test-secret-key-at-least-32-bytes-long!" });
         _loggerMock = new Mock<ILogger<McpAccessKeyAuthMiddleware>>();
 
-        var configMock = new Mock<IConfiguration>();
-        configMock.Setup(c => c.GetSection("SqlConfig")).Returns(new Mock<IConfigurationSection>().Object);
-
         _middleware = new McpAccessKeyAuthMiddleware(
             _keyServiceMock.Object,
             _auditServiceMock.Object,
             _lastUsedQueueMock.Object,
             _cacheMock.Object,
-            configMock.Object,
             _dbManagementServiceMock.Object,
             _dbSetterServiceMock.Object,
             _cryptoServiceMock.Object,

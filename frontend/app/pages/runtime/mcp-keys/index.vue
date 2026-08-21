@@ -91,6 +91,7 @@ interface McpKeyItem {
   windowSecondsOverride?: number | null;
   effectivePermitLimit?: number | null;
   effectiveWindowSeconds?: number | null;
+  isBootstrapManaged: boolean;
 }
 
 const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<{ name: string; dbManagementId: number | null }>({
@@ -885,6 +886,7 @@ onMounted(async () => {
             </div>
             <div class="flex flex-wrap gap-2">
               <Button
+                v-if="!key.isBootstrapManaged"
                 variant="outline"
                 @click="openLifecycle('edit', key)"
                 v-permission="'edit'"
@@ -895,12 +897,14 @@ onMounted(async () => {
                 v-permission="'create'"
               >Duplicate</Button>
               <Button
+                v-if="!key.isBootstrapManaged"
                 variant="outline"
                 :disabled="!key.isActive"
                 @click="openLifecycle('rotate', key)"
                 v-permission="'edit'"
               >Rotate</Button>
               <Button
+                v-if="!key.isBootstrapManaged"
                 variant="destructive"
                 :disabled="!key.isActive"
                 @click="revoke(key.id)"

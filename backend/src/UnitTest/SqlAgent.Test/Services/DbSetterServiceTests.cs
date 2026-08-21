@@ -1,5 +1,4 @@
 using System.Data.Common;
-using Microsoft.Extensions.Configuration;
 using Moq;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
@@ -13,15 +12,13 @@ namespace SqlAgent.Test.Services;
 
 public class DbSetterServiceTests
 {
-    private readonly Mock<IConfiguration> _configurationMock;
     private readonly Mock<ISqlStrategyFactory> _strategyFactoryMock;
     private readonly DbSetterService _service;
 
     public DbSetterServiceTests()
     {
-        _configurationMock = new Mock<IConfiguration>();
         _strategyFactoryMock = new Mock<ISqlStrategyFactory>();
-        _service = new DbSetterService(_configurationMock.Object, _strategyFactoryMock.Object);
+        _service = new DbSetterService(_strategyFactoryMock.Object);
     }
 
     private Mock<DbConnection> CreateMockDbConnection(bool throwOnOpen = false, string errorMessage = "Connection failed")
@@ -52,54 +49,6 @@ public class DbSetterServiceTests
         // Assert
         Assert.False(result.IsSuccess);
         Assert.Equal("Provider is null.", result.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task TestDbConnectionAsync_ShouldReturnError_WhenGlobalProviderHasNoConnectionStringConfigured()
-    {
-        // Arrange
-        var request = new TestDbConnectionBase { SqlProvider = SqlAgentToolType.Global };
-
-        var mockSection = new Mock<IConfigurationSection>();
-        mockSection.Setup(s => s["Provider"]).Returns("MsSqlServer");
-        mockSection.Setup(s => s["ConnectionString"]).Returns(string.Empty);
-
-        _configurationMock.Setup(c => c.GetSection("SqlConfig")).Returns(mockSection.Object);
-
-        // Act
-        var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
-
-        // Assert
-        Assert.False(result.IsSuccess);
-        Assert.Equal("Global connection string is not configured.", result.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task TestDbConnectionAsync_ShouldUseGlobalProviderAndReturnSuccess_WhenConfiguredCorrectly()
-    {
-        // Arrange
-        var request = new TestDbConnectionBase { SqlProvider = SqlAgentToolType.Global };
-        var globalConnString = "Server=myServer;Database=myDB;";
-
-        var mockSection = new Mock<IConfigurationSection>();
-        mockSection.Setup(s => s["Provider"]).Returns("MsSqlServer");
-        mockSection.Setup(s => s["ConnectionString"]).Returns(globalConnString);
-
-        _configurationMock.Setup(c => c.GetSection("SqlConfig")).Returns(mockSection.Object);
-
-        var mockStrategy = new Mock<ISqlStrategy>();
-        var mockConnection = CreateMockDbConnection();
-        mockStrategy.Setup(s => s.CreateConnection(globalConnString)).Returns(mockConnection.Object);
-
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.MsSqlServer)).Returns(mockStrategy.Object);
-
-        // Act
-        var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
-
-        // Assert
-        Assert.True(result.IsSuccess);
-        Assert.Null(result.ErrorMessage);
-        mockConnection.Verify(c => c.OpenAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -159,20 +108,7 @@ public class DbSetterServiceTests
     }
 
     [Fact]
-    public async Task BuildDbConnectionAsync_ShouldReturnNull_WhenProviderIsGlobal()
-    {
-        // Arrange
-        var model = new BuildDbConnectionModel { Provider = "Global" };
-
-        // Act
-        var result = await _service.BuildDbConnectionAsync(model, TestContext.Current.CancellationToken);
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task BuildDbConnectionAsync_ShouldReturnConnectionString_WhenProviderIsNotGlobal()
+    public async Task BuildDbConnectionAsync_ShouldReturnConnectionString()
     {
         // Arrange
         var providerStr = "MsSqlServer";
