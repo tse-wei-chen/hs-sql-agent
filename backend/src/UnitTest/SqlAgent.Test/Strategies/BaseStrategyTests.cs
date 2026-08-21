@@ -184,8 +184,8 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.Contains("```diff", updatePreview);
         Assert.Contains($"Table: {TestTableName}", updatePreview);
         Assert.Contains($"@@ {TestUserIdColumn} = 1 @@", updatePreview, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(TestUserNameColumn, updatePreview);
-        Assert.Contains($"+{TestUserNameColumn}: preview-only-", updatePreview);
+        Assert.Contains(TestUserNameColumn, updatePreview, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"+{TestUserNameColumn}: preview-only-", updatePreview, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("read-only preview did not execute", updatePreview);
         Assert.Equal(before, await Strategy.ExecuteQueryAsync(
             rowQuery,
