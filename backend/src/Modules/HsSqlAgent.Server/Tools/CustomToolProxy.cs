@@ -299,6 +299,12 @@ public class CustomToolProxy(
         }
 
         var affectedRows = affectedMatch.Groups[1].Value;
+        var previewMatch = System.Text.RegularExpressions.Regex.Match(
+            dryRunResult,
+            @"Preview=(.*) \| Security Note:",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant |
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        var preview = previewMatch.Success ? previewMatch.Groups[1].Value : "[]";
         ElicitResult elicitResult;
         var approvalStopwatch = Stopwatch.StartNew();
         try
@@ -306,8 +312,9 @@ public class CustomToolProxy(
             elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
             {
                 Message =
-                    $"Custom tool '{_name}' requests {dml.Operation} on {dml.TableName} — " +
-                    $"{affectedRows} row(s) affected.",
+                    $"## Custom tool `{_name}`\n\n" +
+                    $"**{dml.Operation} on `{dml.TableName}` — {affectedRows} row(s) affected**\n\n" +
+                    $"### Impact preview\n\n{preview}",
                 RequestedSchema = new RequestSchema
                 {
                     Properties =
@@ -316,8 +323,8 @@ public class CustomToolProxy(
                         {
                             Title = "Approve execution",
                             Description =
-                                $"This will {dml.Operation.ToString().ToLowerInvariant()} " +
-                                $"{affectedRows} row(s) in {dml.TableName}"
+                                $"This will **{dml.Operation.ToString().ToUpperInvariant()} " +
+                                $"{affectedRows} row(s)** in `{dml.TableName}`."
                         }
                     }
                 }

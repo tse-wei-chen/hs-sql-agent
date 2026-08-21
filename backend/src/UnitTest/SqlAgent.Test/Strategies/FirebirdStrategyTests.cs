@@ -106,6 +106,8 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     protected override string TestOrderDetailsDiscountColumn => "DISCOUNT";
     protected override string TestSchemaName => "Default";
     protected override string TestOrdersUserIdColumn => "USER_ID";
+    protected override string TestUserIdColumn => "ID";
+    protected override string TestUserNameColumn => "NAME";
 
     // Firebird returns SQL code -204 for table-not-found and -206 for column-not-found errors.
     protected override string TableNotFoundErrorCode => "FB_SQL_-204";

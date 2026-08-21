@@ -114,10 +114,11 @@ public partial class SqlAgentTool(
 
     [McpServerTool, Description(@"
         Execute one DML SQL statement (INSERT, UPDATE, DELETE). The server parses SQL,
-        validates it, applies table whitelist checks, then runs it inside a transaction
-        (dry-run) and presents the result to you for approval via an interactive prompt.
+        validates it, applies table whitelist checks, then builds a read-only preview
+        and presents the result to you for approval via an interactive prompt.
 
-        You will see how many rows would be affected before deciding to commit or cancel.
+        You will see how many rows and a sample of which rows would be affected before
+        deciding to commit or cancel. The mutation runs only after approval.
     ")]
     public async Task<string> ExecuteDmlSql(
         [Description("A single INSERT, UPDATE, or DELETE SQL statement to parse and validate.")]
@@ -182,6 +183,8 @@ public partial class SqlAgentTool(
             var affectedRows = affectedMatch.Groups[1].Value;
             affectedRowCount = int.TryParse(affectedRows, out var parsedRows) ? parsedRows : null;
             var detToken = tokenMatch.Groups[1].Value;
+            var previewMatch = PreviewMatchRegex().Match(dryRunResult);
+            var preview = previewMatch.Success ? previewMatch.Groups[1].Value : "[]";
 
             // ── Present to user for approval via Elicitation ─────────────────
 
@@ -192,7 +195,9 @@ public partial class SqlAgentTool(
                     ["approve"] = new BooleanSchema
                     {
                         Title = "Approve execution",
-                        Description = $"This will {dml.Operation.ToString().ToLowerInvariant()} {affectedRows} row(s) in {dml.TableName}"
+                        Description =
+                            $"This will **{dml.Operation.ToString().ToUpperInvariant()} {affectedRows} row(s)** " +
+                            $"in `{dml.TableName}`."
                     }
                 }
             };
@@ -203,7 +208,10 @@ public partial class SqlAgentTool(
             {
                 elicitResult = await server.ElicitAsync(new ElicitRequestParams
                 {
-                    Message = $"{dml.Operation} on {dml.TableName} — {affectedRows} row(s) affected\n\nSQL: {sql}",
+                    Message = $"## {dml.Operation} on `{dml.TableName}`\n\n" +
+                              $"**{affectedRows} row(s) affected**\n\n" +
+                              $"### Impact preview\n\n{preview}\n\n" +
+                              $"### SQL\n\n```sql\n{sql}\n```",
                     RequestedSchema = elicitSchema
                 }, cancellationToken);
             }
@@ -903,4 +911,6 @@ public partial class SqlAgentTool(
     private static partial Regex TokenMatchRegex();
     [GeneratedRegex(@"affectedRows=(\d+)")]
     private static partial Regex AffectedMatchRegex();
+    [GeneratedRegex(@"Preview=(.*) \| Security Note:", RegexOptions.Singleline)]
+    private static partial Regex PreviewMatchRegex();
 }
