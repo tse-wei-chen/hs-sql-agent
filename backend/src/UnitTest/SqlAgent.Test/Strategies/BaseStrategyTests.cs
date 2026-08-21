@@ -41,6 +41,8 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected virtual string TestOrderDetailsDiscountColumn => "discount";
     protected abstract string TestSchemaName { get; }
     protected virtual string TestOrdersUserIdColumn => "user_id";
+    protected virtual string TestUserIdColumn => "id";
+    protected virtual string TestUserNameColumn => "Name";
 
     [Fact]
     public virtual async Task GetTablesAsync_ShouldReturnTables()
@@ -117,6 +119,13 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         ValidateDml(dml);
         var dryRun = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
 
+        Assert.StartsWith("Dry Run Result", dryRun);
+        Assert.Contains("Preview=### INSERT preview", dryRun);
+        Assert.Contains("```diff", dryRun);
+        Assert.Contains($"Table: {TestTableName}", dryRun);
+        Assert.Contains("+", dryRun);
+        Assert.Contains("read-only preview did not execute", dryRun);
+
         var tokenStart = dryRun.IndexOf("TokenRequired=");
         if (tokenStart == -1)
         {
@@ -133,6 +142,76 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
         // Cleanup: delete the inserted record to avoid polluting shared fixture DB
         await CleanupInsertedDmlRecord(dml);
+    }
+
+    [Fact]
+    public async Task ExecuteDmlAsync_ShouldPreviewUpdateAndDeleteWithoutChangingRows()
+    {
+        var rowQuery = new QueryDefinition
+        {
+            TableName = TestTableName,
+            WhereColumnsAndValues =
+            [
+                new BasicWhereCondition { FieldName = TestUserIdColumn, Operator = "=", Value = 1 }
+            ]
+        };
+        var before = await Strategy.ExecuteQueryAsync(
+            rowQuery,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotEqual("[]", before);
+
+        var updatePreview = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            new DmlDefinition
+            {
+                Operation = DmlOperation.Update,
+                TableName = TestTableName,
+                Values =
+                [
+                    new NameValuePair
+                    {
+                        FieldName = TestUserNameColumn,
+                        Value = $"preview-only-{Guid.NewGuid():N}"
+                    }
+                ],
+                WhereConditions = rowQuery.WhereColumnsAndValues
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Dry Run Result | affectedRows=1", updatePreview);
+        Assert.Contains("Preview=### UPDATE preview", updatePreview);
+        Assert.Contains("```diff", updatePreview);
+        Assert.Contains($"Table: {TestTableName}", updatePreview);
+        Assert.Contains($"@@ {TestUserIdColumn} = 1 @@", updatePreview, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(TestUserNameColumn, updatePreview, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"+{TestUserNameColumn}: preview-only-", updatePreview, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("read-only preview did not execute", updatePreview);
+        Assert.Equal(before, await Strategy.ExecuteQueryAsync(
+            rowQuery,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        var deletePreview = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            new DmlDefinition
+            {
+                Operation = DmlOperation.Delete,
+                TableName = TestTableName,
+                WhereConditions = rowQuery.WhereColumnsAndValues
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Dry Run Result | affectedRows=1", deletePreview);
+        Assert.Contains("Preview=### DELETE preview", deletePreview);
+        Assert.Contains("```diff", deletePreview);
+        Assert.Contains($"@@ {TestUserIdColumn} = 1 @@", deletePreview, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("-", deletePreview);
+        Assert.Contains("read-only preview did not execute", deletePreview);
+        Assert.Equal(before, await Strategy.ExecuteQueryAsync(
+            rowQuery,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]

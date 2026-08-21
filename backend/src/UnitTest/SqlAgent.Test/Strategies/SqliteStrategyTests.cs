@@ -199,8 +199,59 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
             TestContext.Current.CancellationToken);
 
         Assert.Contains("Dry Run Result | affectedRows=1", result);
+        Assert.Contains("Preview=### UPDATE preview", result);
+        Assert.Contains("```diff", result);
+        Assert.Contains("Table: Users", result);
+        Assert.Contains("@@ Id = 1 @@", result);
+        Assert.Contains("-Name: Alice", result);
+        Assert.Contains("+Name: where, set", result);
+        Assert.Contains("read-only preview did not execute", result);
         await using var connection = new SqliteConnection(Fixture.ConnectionString);
         Assert.Equal("Alice", await connection.ExecuteScalarAsync<string>("SELECT Name FROM Users WHERE Id = 1"));
+    }
+
+    [Fact]
+    public async Task ExecuteDmlAsync_Preview_ShouldNotFireUpdateTriggers()
+    {
+        await using var connection = new SqliteConnection(Fixture.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await connection.ExecuteAsync("""
+            CREATE TRIGGER RejectPreviewWrites
+            BEFORE UPDATE ON Users
+            BEGIN
+                SELECT RAISE(ABORT, 'an UPDATE trigger was executed');
+            END;
+            """);
+
+        try
+        {
+            var result = await Strategy.ExecuteDmlAsync(
+                Fixture.ConnectionString,
+                new DmlDefinition
+                {
+                    Operation = DmlOperation.Update,
+                    TableName = TestTableName,
+                    Values = [new NameValuePair { FieldName = "Active", Value = false }],
+                    WhereConditions =
+                    [
+                        new BasicWhereCondition { FieldName = "Id", Operator = "=", Value = 1 }
+                    ]
+                },
+                new SqlExecutionPolicy
+                {
+                    RequireWhereForUpdate = true,
+                    AllowFullTableUpdate = false,
+                    DmlMaxAffectedRows = 10
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.Contains("Dry Run Result | affectedRows=1", result);
+            Assert.Contains("read-only preview did not execute", result);
+        }
+        finally
+        {
+            await connection.ExecuteAsync("DROP TRIGGER RejectPreviewWrites");
+        }
     }
 
     [Fact]

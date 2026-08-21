@@ -126,42 +126,48 @@ public abstract partial class BaseSqlStrategy(
             QueryTimeout = NormalizeTimeout(policy.QueryTimeoutSeconds)
         };
 
-        using var transaction = connection.BeginTransaction();
-
         try
         {
-            var query = new Query(dml.TableName);
-
-            if (dml.WhereConditions?.Count > 0)
-                query = ApplyWhereConditions(query, dml.WhereConditions);
-
-            var terminalQuery = BuildDmlTerminalQuery(query, dml);
-            if (terminalQuery == null)
-                return $"Unsupported DML operation: {dml.Operation}";
-
-            int affected = await db.ExecuteAsync(terminalQuery, transaction, cancellationToken: cancellationToken);
+            var (affected, preview) = await PreviewDmlAsync(db, dml, cancellationToken);
 
             if (policy.DmlMaxAffectedRows > 0 && affected > policy.DmlMaxAffectedRows)
-            {
-                transaction.Rollback();
                 return $"Security policy denied DML: affectedRows={affected} exceeds maximum {policy.DmlMaxAffectedRows}.";
-            }
 
             var expectedToken = GenerateConfirmToken(dml, affected);
+            if (dml.ConfirmToken != expectedToken)
+                return $"Dry Run Result | affectedRows={affected} | TokenRequired={expectedToken} | " +
+                       $"Preview={preview} | Security Note: This read-only preview did not execute the DML statement.";
 
-            if (dml.ConfirmToken == expectedToken)
+            using var transaction = connection.BeginTransaction();
+            try
             {
-                transaction.Commit();
-                return $"Success | affectedRows={affected} | Operation Committed.";
-            }
+                var query = BuildDmlSourceQuery(dml);
+                var terminalQuery = BuildDmlTerminalQuery(query, dml);
+                if (terminalQuery == null)
+                    return $"Unsupported DML operation: {dml.Operation}";
 
-            transaction.Rollback();
-            return $"Dry Run Result | affectedRows={affected} | TokenRequired={expectedToken} | " +
-                   "Security Note: This operation HAS NOT been committed. To proceed, call me again with the provided Token.";
+                var committedAffected = await db.ExecuteAsync(
+                    terminalQuery,
+                    transaction,
+                    cancellationToken: cancellationToken);
+                if (committedAffected != affected)
+                {
+                    transaction.Rollback();
+                    return $"DML execution cancelled: the affected row count changed after approval " +
+                           $"(approved={affected}, current={committedAffected}).";
+                }
+
+                transaction.Commit();
+                return $"Success | affectedRows={committedAffected} | Operation Committed.";
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
         }
         catch (Exception ex)
         {
-            transaction.Rollback();
             throw new Exception(BuildExecutionErrorMessage(ex, "DML"), ex);
         }
     }
@@ -1902,6 +1908,201 @@ public abstract partial class BaseSqlStrategy(
     // =====================================================================
     // DML helpers
     // =====================================================================
+
+    private Query BuildDmlSourceQuery(DmlDefinition dml)
+    {
+        var query = new Query(dml.TableName);
+        return dml.WhereConditions?.Count > 0
+            ? ApplyWhereConditions(query, dml.WhereConditions)
+            : query;
+    }
+
+    private async Task<(int AffectedRows, string Preview)> PreviewDmlAsync(
+        QueryFactory db,
+        DmlDefinition dml,
+        CancellationToken cancellationToken)
+    {
+        const int previewRowLimit = 20;
+
+        if (dml.Operation == DmlOperation.Insert && dml.FromQuery == null)
+        {
+            var insertRows = BuildInsertPreviewRows(dml).ToList();
+            return (insertRows.Count, FormatRowsDiffPreview(
+                dml.TableName, "INSERT preview", insertRows.Take(previewRowLimit), '+'));
+        }
+
+        var source = dml.Operation == DmlOperation.Insert
+            ? BuildQueryFromDefinition(dml.FromQuery!)
+            : BuildDmlSourceQuery(dml);
+        var affected = await db.CountAsync<long>(source.Clone(), cancellationToken: cancellationToken);
+        if (affected > int.MaxValue)
+            throw new InvalidOperationException($"DML preview matched {affected} rows, exceeding the supported maximum.");
+
+        var previewRows = await db.GetAsync(
+            source.Clone().Limit(previewRowLimit),
+            cancellationToken: cancellationToken);
+        var rows = previewRows
+            .Select(row => ((IDictionary<string, object>)row).ToDictionary(
+                pair => pair.Key,
+                pair => (object?)pair.Value,
+                StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        var preview = dml.Operation switch
+        {
+            DmlOperation.Update => FormatUpdatePreview(rows, dml),
+            DmlOperation.Delete => FormatRowsDiffPreview(dml.TableName, "DELETE preview", rows, '-'),
+            DmlOperation.Insert => FormatRowsDiffPreview(dml.TableName, "INSERT preview", rows, '+'),
+            _ => throw new ArgumentOutOfRangeException(nameof(dml.Operation), dml.Operation, "Unknown DML operation.")
+        };
+        return ((int)affected, preview);
+    }
+
+    private string FormatUpdatePreview(
+        IReadOnlyList<Dictionary<string, object?>> rows,
+        DmlDefinition dml)
+    {
+        var builder = new StringBuilder("### UPDATE preview");
+        if (rows.Count == 0)
+            return builder.AppendLine().Append("_No matching rows._").ToString();
+
+        builder.AppendLine().AppendLine("```diff");
+        builder.Append("Table: ").AppendLine(FormatCodeValue(dml.TableName));
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            var before = rows[rowIndex];
+            var after = ApplyUpdateValues(before, dml.Values);
+            var identifier = FindPreviewIdentifier(before, dml.TableName);
+            builder.Append("@@ ").Append(FormatCodeValue(identifier.Key)).Append(" = ")
+                .Append(FormatCodeValue(identifier.Value)).AppendLine(" @@");
+            foreach (var value in dml.Values ?? [])
+            {
+                var column = before.Keys.FirstOrDefault(key =>
+                    string.Equals(key, value.FieldName, StringComparison.OrdinalIgnoreCase)) ?? value.FieldName;
+                before.TryGetValue(column, out var beforeValue);
+                after.TryGetValue(column, out var afterValue);
+                builder.Append('-').Append(FormatCodeValue(column)).Append(": ")
+                    .AppendLine(FormatCodeValue(beforeValue));
+                builder.Append('+').Append(FormatCodeValue(column)).Append(": ")
+                    .AppendLine(FormatCodeValue(afterValue));
+            }
+        }
+        return builder.Append("```").ToString();
+    }
+
+    private static KeyValuePair<string, object?> FindPreviewIdentifier(
+        IDictionary<string, object?> row,
+        string tableName)
+        => TryFindPreviewIdentifier(row, tableName) ?? row.First();
+
+    private static KeyValuePair<string, object?>? TryFindPreviewIdentifier(
+        IDictionary<string, object?> row,
+        string tableName)
+    {
+        var unqualifiedTable = tableName.Split('.').Last();
+        var singularTable = unqualifiedTable.EndsWith('s')
+            ? unqualifiedTable[..^1]
+            : unqualifiedTable;
+        var candidates = new[] { "id", $"{singularTable}_id", $"{unqualifiedTable}_id" };
+        foreach (var candidate in candidates)
+        {
+            var match = row.FirstOrDefault(pair =>
+                string.Equals(pair.Key, candidate, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(match.Key))
+                return match;
+        }
+
+        var foreignKey = row.FirstOrDefault(pair =>
+            pair.Key.EndsWith("_id", StringComparison.OrdinalIgnoreCase));
+        return !string.IsNullOrEmpty(foreignKey.Key) ? foreignKey : null;
+    }
+
+    private static string FormatCodeValue(object? value)
+    {
+        var text = value switch
+        {
+            null => "null",
+            DateTime dateTime => dateTime.ToString("O", CultureInfo.InvariantCulture),
+            DateTimeOffset dateTimeOffset => dateTimeOffset.ToString("O", CultureInfo.InvariantCulture),
+            byte[] bytes => Convert.ToBase64String(bytes),
+            _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty
+        };
+        return text.Replace("\r\n", " ↵ ", StringComparison.Ordinal)
+            .Replace("\n", " ↵ ", StringComparison.Ordinal)
+            .Replace("\r", " ↵ ", StringComparison.Ordinal)
+            .Replace("```", "` ` `", StringComparison.Ordinal);
+    }
+
+    private static string FormatRowsDiffPreview(
+        string tableName,
+        string title,
+        IEnumerable<IDictionary<string, object?>> sourceRows,
+        char prefix)
+    {
+        var rows = sourceRows.ToList();
+        var builder = new StringBuilder("### ").Append(title);
+        if (rows.Count == 0)
+            return builder.AppendLine().Append("_No rows._").ToString();
+
+        builder.AppendLine().AppendLine("```diff");
+        builder.Append("Table: ").AppendLine(FormatCodeValue(tableName));
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            var row = rows[rowIndex];
+            var identifier = TryFindPreviewIdentifier(row, tableName);
+            if (identifier is { } found)
+                builder.Append("@@ ").Append(FormatCodeValue(found.Key)).Append(" = ")
+                    .Append(FormatCodeValue(found.Value)).AppendLine(" @@");
+            else
+                builder.Append("@@ new row ").Append(rowIndex + 1).AppendLine(" @@");
+
+            foreach (var (column, value) in row)
+                builder.Append(prefix).Append(FormatCodeValue(column)).Append(": ")
+                    .AppendLine(FormatCodeValue(value));
+        }
+        return builder.Append("```").ToString();
+    }
+
+    private Dictionary<string, object?> ApplyUpdateValues(
+        IDictionary<string, object?> source,
+        List<NameValuePair>? values)
+    {
+        var result = new Dictionary<string, object?>(source, StringComparer.OrdinalIgnoreCase);
+        foreach (var value in values ?? [])
+        {
+            var existingKey = result.Keys.FirstOrDefault(key =>
+                string.Equals(key, value.FieldName, StringComparison.OrdinalIgnoreCase));
+            result[existingKey ?? value.FieldName] = UnwrapDmlValue(value.Value);
+        }
+        return result;
+    }
+
+    private IEnumerable<IDictionary<string, object?>> BuildInsertPreviewRows(DmlDefinition dml)
+    {
+        if (dml.MultiValues?.Count > 0)
+        {
+            var columns = dml.Columns ?? [];
+            foreach (var values in dml.MultiValues)
+            {
+                var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                for (var i = 0; i < columns.Count && i < values.Count; i++)
+                    row[columns[i]] = UnwrapDmlValue(values[i]);
+                yield return row;
+            }
+            yield break;
+        }
+
+        if (dml.Values?.Count > 0)
+        {
+            yield return dml.Values.ToDictionary(
+                value => value.FieldName,
+                value => UnwrapDmlValue(value.Value),
+                StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private object? UnwrapDmlValue(object? value)
+        => value is JsonElement json ? _valueParser.UnwrapJsonElement(json) : value;
 
     private Query? BuildDmlTerminalQuery(Query query, DmlDefinition dml)
     {
