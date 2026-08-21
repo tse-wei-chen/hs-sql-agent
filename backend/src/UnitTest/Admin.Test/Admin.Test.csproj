@@ -20,10 +20,12 @@
     </PackageReference>
     <PackageReference Include="Moq" />
     <PackageReference Include="Moq.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Modules\Admin.Service\Admin.Service.csproj" />
     <ProjectReference Include="..\..\Modules\Auth.Service\Auth.Service.csproj" />
+    <ProjectReference Include="..\..\Modules\HsSqlAgent.SqliteMigrations\HsSqlAgent.SqliteMigrations.csproj" />
   </ItemGroup>
 </Project>

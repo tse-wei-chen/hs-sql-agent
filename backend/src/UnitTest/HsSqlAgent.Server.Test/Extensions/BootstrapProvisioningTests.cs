@@ -6,6 +6,7 @@ using Common.Interfaces;
 using Common.Services;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Models;
+using HsSqlAgent.SqliteMigrations;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -24,10 +25,12 @@ public class BootstrapProvisioningTests
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
         var adminDbOptions = new DbContextOptionsBuilder<AdminContext>()
-            .UseSqlite(connection)
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName))
             .Options;
         var authDbOptions = new DbContextOptionsBuilder<Auth.Service.Data.AuthContext>()
-            .UseSqlite(connection)
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName))
             .Options;
 
         var hmacKey = "test-hmac-key-that-is-at-least-32-bytes";
@@ -102,10 +105,12 @@ public class BootstrapProvisioningTests
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
         var adminDbOptions = new DbContextOptionsBuilder<AdminContext>()
-            .UseSqlite(connection)
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName))
             .Options;
         var authDbOptions = new DbContextOptionsBuilder<Auth.Service.Data.AuthContext>()
-            .UseSqlite(connection)
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName))
             .Options;
 
         var hmacKey = "test-hmac-key-that-is-at-least-32-bytes";

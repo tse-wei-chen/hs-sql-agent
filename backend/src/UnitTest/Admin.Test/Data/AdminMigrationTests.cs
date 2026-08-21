@@ -1,5 +1,6 @@
 using Admin.Service.Data;
 using Auth.Service.Data;
+using HsSqlAgent.SqliteMigrations;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -15,8 +16,12 @@ public class AdminMigrationTests
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync(TestContext.Current.CancellationToken);
-        var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
-        var authOptions = new DbContextOptionsBuilder<AuthContext>().UseSqlite(connection).Options;
+        var options = new DbContextOptionsBuilder<AdminContext>()
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName))
+            .Options;
+        var authOptions = new DbContextOptionsBuilder<AuthContext>()
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName))
+            .Options;
         await using (var authContext = new AuthContext(authOptions))
         {
             await authContext.Database.MigrateAsync(TestContext.Current.CancellationToken);
@@ -44,7 +49,9 @@ public class AdminMigrationTests
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync(TestContext.Current.CancellationToken);
-        var options = new DbContextOptionsBuilder<AuthContext>().UseSqlite(connection).Options;
+        var options = new DbContextOptionsBuilder<AuthContext>()
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName))
+            .Options;
         await using var context = new AuthContext(options);
         var migrator = context.GetService<IMigrator>();
         await migrator.MigrateAsync("20260804121039_AddEnterpriseIdentity", TestContext.Current.CancellationToken);
@@ -69,10 +76,10 @@ public class AdminMigrationTests
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         var options = new DbContextOptionsBuilder<AdminContext>()
-            .UseSqlite(connection)
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName))
             .Options;
         var authOptions = new DbContextOptionsBuilder<AuthContext>()
-            .UseSqlite(connection)
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName))
             .Options;
         await using (var authContext = new AuthContext(authOptions))
         {

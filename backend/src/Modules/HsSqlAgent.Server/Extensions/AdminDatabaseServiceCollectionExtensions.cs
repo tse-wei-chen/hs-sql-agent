@@ -1,6 +1,7 @@
 using Admin.Service.Data;
 using Auth.Service.Data;
 using HsSqlAgent.PostgresMigrations;
+using HsSqlAgent.SqliteMigrations;
 using Microsoft.EntityFrameworkCore;
 
 namespace HsSqlAgent.Server.Extensions;
@@ -34,7 +35,10 @@ internal static class AdminDatabaseServiceCollectionExtensions
     {
         if (IsSqlite(provider))
         {
-            options.UseSqlite(connectionString);
+            options.UseSqlite(connectionString, sqlite =>
+            {
+                sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName);
+            });
             return;
         }
 
@@ -58,7 +62,10 @@ internal static class AdminDatabaseServiceCollectionExtensions
     {
         if (IsSqlite(provider))
         {
-            options.UseSqlite(connectionString);
+            options.UseSqlite(connectionString, sqlite =>
+            {
+                sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName);
+            });
             return;
         }
 

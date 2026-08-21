@@ -504,4 +504,3 @@ data/*
 .nitro
 .cache
 dist
-.vscode/settings.json

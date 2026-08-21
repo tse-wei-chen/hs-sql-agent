@@ -21,6 +21,8 @@ COPY backend/src/Modules/SqlKata.Service/QueryBuilder/QueryBuilder.csproj ./back
 COPY backend/src/Modules/SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj ./backend/src/Modules/SqlKata.Service/SqlKata.Execution/
 COPY backend/src/Infrastructure/Infrastructure.csproj ./backend/src/Infrastructure/
 COPY backend/src/Modules/Auth.Service/Auth.Service.csproj ./backend/src/Modules/Auth.Service/
+COPY backend/src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj ./backend/src/Modules/HsSqlAgent.PostgresMigrations/
+COPY backend/src/Modules/HsSqlAgent.SqliteMigrations/HsSqlAgent.SqliteMigrations.csproj ./backend/src/Modules/HsSqlAgent.SqliteMigrations/
 COPY backend/src/Modules/HsSqlAgent.Server/HsSqlAgent.Server.csproj ./backend/src/Modules/HsSqlAgent.Server/
 COPY backend/src/ToolBox/ToolBox.csproj ./backend/src/ToolBox/
 RUN dotnet restore ./backend/src/ToolBox/ToolBox.csproj

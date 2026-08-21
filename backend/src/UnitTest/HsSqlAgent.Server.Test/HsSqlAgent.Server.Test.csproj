@@ -23,6 +23,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +34,7 @@
     <ProjectReference Include="..\..\Modules\Admin.Service\Admin.Service.csproj" />
     <ProjectReference Include="..\..\Modules\Auth.Service\Auth.Service.csproj" />
     <ProjectReference Include="..\..\Modules\HsSqlAgent.Server\HsSqlAgent.Server.csproj" />
+    <ProjectReference Include="..\..\Modules\HsSqlAgent.SqliteMigrations\HsSqlAgent.SqliteMigrations.csproj" />
   </ItemGroup>
 
 </Project>
