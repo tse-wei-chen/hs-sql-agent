@@ -70,3 +70,19 @@ public sealed record DeleteStatement(
     NamedTableSource Target,
     SqlExpr? Predicate,
     SourceSpan Span) : SqlStatement(Span);
+
+public abstract record InsertSource(SourceSpan Span) : SqlNode(Span);
+
+public sealed record InsertValuesSource(
+    ImmutableArray<ImmutableArray<SqlExpr>> Rows,
+    SourceSpan Span) : InsertSource(Span);
+
+public sealed record InsertQuerySource(
+    SqlStatement Query,
+    SourceSpan Span) : InsertSource(Span);
+
+public sealed record InsertStatement(
+    NamedTableSource Target,
+    ImmutableArray<SqlIdentifier> Columns,
+    InsertSource Source,
+    SourceSpan Span) : SqlStatement(Span);

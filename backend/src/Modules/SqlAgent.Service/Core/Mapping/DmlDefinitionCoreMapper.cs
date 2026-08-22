@@ -7,7 +7,7 @@ namespace SqlAgent.Service.Core.Mapping;
 
 /// <summary>
 /// Maps structured DML contracts into the same independent Core AST used by query compilation.
-/// INSERT remains fail-closed until bulk and INSERT..SELECT semantics have canonical nodes.
+/// Invalid or ambiguous DML shapes fail closed before binding/lowering.
 /// </summary>
 public static class DmlDefinitionCoreMapper
 {
@@ -19,21 +19,108 @@ public static class DmlDefinitionCoreMapper
         ArgumentException.ThrowIfNullOrWhiteSpace(definition.TableName);
 
         var target = new NamedTableSource(Identifier(definition.TableName), null, Unknown);
-        var predicate = MapPredicate(definition);
-
         return definition.Operation switch
         {
             DmlOperation.Update => new UpdateStatement(
                 target,
                 MapAssignments(definition.Values),
-                predicate,
+                MapPredicate(definition),
                 Unknown),
-            DmlOperation.Delete => new DeleteStatement(target, predicate, Unknown),
-            DmlOperation.Insert => throw new InvalidOperationException(
-                "INSERT is not yet represented by the Core DML AST; compilation was rejected."),
+            DmlOperation.Delete => new DeleteStatement(
+                target,
+                MapPredicate(definition),
+                Unknown),
+            DmlOperation.Insert => MapInsert(definition, target),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(definition.Operation), definition.Operation, "Unknown DML operation.")
         };
+    }
+
+    private static InsertStatement MapInsert(
+        DmlDefinition definition,
+        NamedTableSource target)
+    {
+        if (definition.WhereConditions is { Count: > 0 })
+            throw new InvalidOperationException("INSERT cannot contain WHERE conditions on the target definition.");
+
+        var hasValues = definition.Values is { Count: > 0 };
+        var hasMultiValues = definition.MultiValues is { Count: > 0 };
+        var hasQuery = definition.FromQuery is not null;
+        var sourceCount = (hasValues ? 1 : 0) + (hasMultiValues ? 1 : 0) + (hasQuery ? 1 : 0);
+        if (sourceCount != 1)
+        {
+            throw new InvalidOperationException(
+                "INSERT requires exactly one source: Values, MultiValues, or FromQuery.");
+        }
+
+        if (hasValues)
+        {
+            if (definition.Columns is { Count: > 0 })
+                throw new InvalidOperationException("Single-row INSERT Values must not also specify Columns; column order comes from the named values.");
+
+            var values = definition.Values!;
+            var columns = ValidateColumns(values.Select(pair => pair.FieldName));
+            var row = values
+                .Select(pair => (SqlExpr)new LiteralExpr(pair.Value, Unknown))
+                .ToImmutableArray();
+            return new InsertStatement(
+                target,
+                columns,
+                new InsertValuesSource([row], Unknown),
+                Unknown);
+        }
+
+        var declaredColumns = ValidateColumns(definition.Columns);
+        if (hasMultiValues)
+        {
+            var rows = definition.MultiValues!
+                .Select((row, index) =>
+                {
+                    if (row.Count != declaredColumns.Length)
+                    {
+                        throw new InvalidOperationException(
+                            $"INSERT row {index + 1} has {row.Count} values but {declaredColumns.Length} columns were declared.");
+                    }
+
+                    return row.Select(value => (SqlExpr)new LiteralExpr(value, Unknown)).ToImmutableArray();
+                })
+                .ToImmutableArray();
+            return new InsertStatement(
+                target,
+                declaredColumns,
+                new InsertValuesSource(rows, Unknown),
+                Unknown);
+        }
+
+        return new InsertStatement(
+            target,
+            declaredColumns,
+            new InsertQuerySource(QueryDefinitionCoreMapper.Map(definition.FromQuery!), Unknown),
+            Unknown);
+    }
+
+    private static ImmutableArray<SqlIdentifier> ValidateColumns(IEnumerable<string>? columns)
+    {
+        if (columns is null)
+            throw new InvalidOperationException("INSERT requires an explicit ordered column list.");
+
+        var values = columns.ToArray();
+        if (values.Length == 0)
+            throw new InvalidOperationException("INSERT requires at least one target column.");
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = ImmutableArray.CreateBuilder<SqlIdentifier>(values.Length);
+        foreach (var column in values)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(column);
+            var identifier = Identifier(column);
+            if (identifier.Parts.Length != 1)
+                throw new InvalidOperationException($"INSERT target column '{column}' must be unqualified.");
+            if (!seen.Add(column))
+                throw new InvalidOperationException($"INSERT target column '{column}' is declared more than once.");
+            result.Add(identifier);
+        }
+        return result.ToImmutable();
     }
 
     private static ImmutableArray<Assignment> MapAssignments(IReadOnlyList<NameValuePair>? values)

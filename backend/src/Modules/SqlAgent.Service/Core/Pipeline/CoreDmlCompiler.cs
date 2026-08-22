@@ -17,9 +17,8 @@ public sealed record DmlCompilationPolicy(
     bool AllowFullTableDelete = false);
 
 /// <summary>
-/// Typed UPDATE/DELETE compiler. Mapping, binding, normalization, authorization and capability
-/// validation all run before SqlKata lowering. INSERT remains fail-closed until its complete
-/// structured semantics are represented in the Core AST.
+/// Typed INSERT/UPDATE/DELETE compiler. Mapping, binding, normalization, authorization and
+/// capability validation all run before SqlKata lowering.
 /// </summary>
 public sealed class CoreDmlCompiler(
     ISqlBinder binder,
@@ -31,9 +30,9 @@ public sealed class CoreDmlCompiler(
     private readonly ISqlPlanValidator _validator = validator;
 
     public static CoreDmlCompiler CreateDefault() => new(
-        new SqlAstBinder(),
-        CoreSqlNormalizer.CreateDefault(),
-        new CoreSqlPlanValidator());
+        new CoreDmlBinder(),
+        new CoreDmlNormalizer(),
+        new CoreDmlPlanValidator());
 
     public CompiledSqlCommand Compile(
         DmlDefinition definition,
@@ -61,9 +60,12 @@ public sealed class CoreDmlCompiler(
             validated.TargetProvider,
             validated.PolicyVersion);
 
-        var command = new SqlKataDmlLowerer(targetProvider).Lower(executable);
+        var command = validated.Statement is InsertStatement insert
+            ? new SqlKataInsertLowerer(targetProvider).Lower(executable, insert)
+            : new SqlKataDmlLowerer(targetProvider).Lower(executable);
         var expectedKind = definition.Operation switch
         {
+            DmlOperation.Insert => SqlStatementKind.Insert,
             DmlOperation.Update => SqlStatementKind.Update,
             DmlOperation.Delete => SqlStatementKind.Delete,
             _ => throw new SqlCompilationException(
@@ -90,12 +92,10 @@ public sealed class CoreDmlCompiler(
                 && (policy.RequireWhereForDelete || !policy.AllowFullTableDelete):
                 throw new UnauthorizedAccessException(
                     "Security policy denies DELETE without WHERE.");
+            case DmlOperation.Insert:
             case DmlOperation.Update:
             case DmlOperation.Delete:
                 return;
-            case DmlOperation.Insert:
-                throw new SqlCompilationException(
-                    "INSERT is not yet supported by the Core DML compiler.");
             default:
                 throw new SqlCompilationException(
                     $"Unsupported DML operation '{definition.Operation}'.");

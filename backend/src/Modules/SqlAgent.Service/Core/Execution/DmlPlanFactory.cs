@@ -8,8 +8,8 @@ namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
 /// Builds the immutable DML plan consumed by <see cref="DmlCoordinator"/>. Mutation and match
-/// commands are both derived from the same typed DML definition, preventing approval of one target
-/// or predicate from being paired with a different externally supplied mutation command.
+/// commands are both derived from the same typed DML definition and resolved physical target,
+/// preventing approval of one target or predicate from being paired with a different mutation.
 /// </summary>
 public sealed class DmlPlanFactory(
     IProviderMetadataReader metadataReader,
@@ -45,19 +45,21 @@ public sealed class DmlPlanFactory(
                 "Row-set approval planning currently supports UPDATE and DELETE only.");
         }
 
+        var identity = await _rowIdentityResolver.ResolveTargetAsync(
+            connectionString,
+            definition.TableName,
+            assurance,
+            cancellationToken);
+        var resolvedDefinition = WithResolvedTarget(definition, identity.QualifiedTableName);
+
         var mutationCommand = _dmlCompiler.Compile(
-            definition,
+            resolvedDefinition,
             sourceDialect,
             targetProvider,
             validationContext,
             compilationPolicy);
 
-        var identityColumns = await _rowIdentityResolver.ResolveAsync(
-            connectionString,
-            definition.TableName,
-            assurance,
-            cancellationToken);
-
+        var identityColumns = identity.Columns;
         var selectColumns = identityColumns.IsDefaultOrEmpty
             ? new List<SelectCondition>
             {
@@ -69,9 +71,9 @@ public sealed class DmlPlanFactory(
 
         var matchDefinition = new QueryDefinition
         {
-            TableName = definition.TableName,
+            TableName = identity.QualifiedTableName,
             SelectColumns = selectColumns,
-            WhereColumnsAndValues = definition.WhereConditions,
+            WhereColumnsAndValues = resolvedDefinition.WhereConditions,
             // We only need enough identities to either prove the complete approved set (<= max)
             // or prove that policy is exceeded. This prevents an unbounded PK materialization just
             // to discover afterward that the mutation should have been rejected.
@@ -92,8 +94,8 @@ public sealed class DmlPlanFactory(
             validationContext.PolicyVersion);
 
         return new ValidatedDmlPlan(
-            definition.Operation,
-            definition.TableName,
+            resolvedDefinition.Operation,
+            identity.QualifiedTableName,
             mutationCommand,
             matchCommand,
             identityColumns,
@@ -103,4 +105,18 @@ public sealed class DmlPlanFactory(
             approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
             maxAffectedRows);
     }
+
+    private static DmlDefinition WithResolvedTarget(
+        DmlDefinition definition,
+        string qualifiedTableName) => new()
+    {
+        Operation = definition.Operation,
+        TableName = qualifiedTableName,
+        WhereConditions = definition.WhereConditions,
+        Values = definition.Values,
+        Columns = definition.Columns,
+        MultiValues = definition.MultiValues,
+        FromQuery = definition.FromQuery,
+        ConfirmToken = null
+    };
 }
