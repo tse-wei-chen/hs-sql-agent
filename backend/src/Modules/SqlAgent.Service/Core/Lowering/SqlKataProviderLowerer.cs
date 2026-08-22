@@ -111,14 +111,14 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             if (item.Expression is SubqueryExpr subquery)
             {
-                var rendered = RenderSubquery(subquery.Query, compiler);
-                var expression = rendered.Sql;
+                var renderedSubquery = RenderSubquery(subquery.Query, compiler);
+                var expression = renderedSubquery.Sql;
                 if (!string.IsNullOrWhiteSpace(item.Alias))
                     expression += $" AS {RenderAlias(item.Alias, compiler)}";
                 query.Select(new RawColumn
                 {
                     Expression = expression,
-                    Bindings = rendered.Bindings.ToArray()
+                    Bindings = renderedSubquery.Bindings.ToArray()
                 });
                 continue;
             }
