@@ -1,34 +1,29 @@
 using System.Data.Common;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Lowering;
-using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
+using SqlAgent.Service.Strategies;
 
 namespace SqlAgent.Service.Strategies.Adapters;
 
 /// <summary>
-/// Transitional adapter that reuses provider connection/metadata implementation while compilation
-/// and execution move out of BaseSqlStrategy. It can be deleted after native provider components
-/// replace the strategy subclasses.
+/// Transitional bridge that exposes the remaining strategy connection/metadata implementation as
+/// Core provider collaborators. The returned provider itself is Core-owned; this adapter carries no
+/// provider runtime state and can disappear once connection/metadata move to native components.
 /// </summary>
-public sealed class LegacySqlProviderAdapter : ISqlProvider
+internal static class LegacySqlProviderAdapter
 {
-    public LegacySqlProviderAdapter(ISqlStrategy strategy)
+    public static ISqlProvider Adapt(ISqlStrategy strategy)
     {
         ArgumentNullException.ThrowIfNull(strategy);
-        Type = strategy.DbType;
-        Connections = new StrategyConnectionFactory(strategy);
-        Lowerer = new SqlKataProviderLowerer(strategy.DbType);
-        Metadata = new StrategyMetadataReader(strategy);
-        Errors = new ProviderExecutionErrorMapper(strategy.DbType);
-    }
 
-    public SqlAgentToolType Type { get; }
-    public IDbConnectionFactory Connections { get; }
-    public IProviderLowerer Lowerer { get; }
-    public IProviderMetadataReader Metadata { get; }
-    public IProviderErrorMapper Errors { get; }
+        return new SqlProvider(
+            strategy.DbType,
+            new StrategyConnectionFactory(strategy),
+            new SqlKataProviderLowerer(strategy.DbType),
+            new StrategyMetadataReader(strategy),
+            new ProviderExecutionErrorMapper(strategy.DbType));
+    }
 
     private sealed class StrategyConnectionFactory(ISqlStrategy strategy) : IDbConnectionFactory
     {
