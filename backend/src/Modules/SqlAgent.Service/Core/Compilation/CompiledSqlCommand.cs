@@ -6,6 +6,9 @@ namespace SqlAgent.Service.Core.Compilation;
 public enum SqlStatementKind
 {
     Query,
+    // SELECT is the SQL statement spelling; keep Query as the original API name while the
+    // compiler pipeline migrates callers. Both names intentionally represent the same kind.
+    Select = Query,
     Insert,
     Update,
     Delete

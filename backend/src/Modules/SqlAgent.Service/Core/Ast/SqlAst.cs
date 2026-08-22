@@ -45,6 +45,15 @@ public sealed record FunctionCallExpr(
 
 public sealed record CastExpr(SqlExpr Expression, string TypeName, SourceSpan Span) : SqlExpr(Span);
 
+public sealed record IntervalExpr(string Literal, SourceSpan Span) : SqlExpr(Span);
+
+public sealed record CaseBranch(SqlExpr Condition, SqlExpr Value);
+
+public sealed record CaseExpr(
+    ImmutableArray<CaseBranch> Branches,
+    SqlExpr? ElseExpression,
+    SourceSpan Span) : SqlExpr(Span);
+
 public sealed record InExpr(
     SqlExpr Value,
     ImmutableArray<SqlExpr> Items,
