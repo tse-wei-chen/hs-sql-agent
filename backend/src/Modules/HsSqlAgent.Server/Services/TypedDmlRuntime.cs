@@ -39,7 +39,7 @@ public sealed class TypedDmlRuntime(
         if (definition.Operation is not (DmlOperation.Update or DmlOperation.Delete))
         {
             throw new NotSupportedException(
-                "The typed DML runtime currently supports UPDATE and DELETE only. INSERT remains fail-closed until its canonical semantics are complete.");
+                "The typed DML runtime currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
         }
 
         var provider = new LegacySqlProviderAdapter(strategy);
@@ -74,14 +74,6 @@ public sealed class TypedDmlRuntime(
 
         return new TypedDmlApprovalSession(plan, preview);
     }
-
-    [Obsolete("Pass the current policy and table authorization so commit can revalidate security context.")]
-    public Task<DmlCommitResult> CommitAsync(
-        ISqlStrategy strategy,
-        string connectionString,
-        TypedDmlApprovalSession session,
-        CancellationToken cancellationToken = default) =>
-        CommitCoreAsync(strategy, connectionString, session, cancellationToken);
 
     public async Task<DmlCommitResult> CommitAsync(
         ISqlStrategy strategy,
