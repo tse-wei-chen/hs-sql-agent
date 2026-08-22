@@ -6,7 +6,7 @@ namespace SqlAgent.Service.Models;
 
 [JsonPolymorphic(
     TypeDiscriminatorPropertyName = "type",
-    UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FallBackToBaseType
+    UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization
 )]
 [JsonDerivedType(typeof(FieldSelectCondition), "field")]
 [JsonDerivedType(typeof(OperationSelectCondition), "operation")]
@@ -18,6 +18,8 @@ namespace SqlAgent.Service.Models;
 [JsonDerivedType(typeof(IntervalSelectCondition), "interval")]
 public abstract class SelectCondition
 {
+    private protected SelectCondition() { }
+
     [Description("Alias for the selected field (Optional). e.g., 'total_amount'")]
     public string? Alias { get; set; }
 }
