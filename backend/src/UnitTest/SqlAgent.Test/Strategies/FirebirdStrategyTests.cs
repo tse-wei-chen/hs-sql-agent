@@ -1,12 +1,8 @@
 using System.Text.Json;
 using DotNet.Testcontainers.Builders;
 using FirebirdSql.Data.FirebirdClient;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Strategies.Adapters;
 using Testcontainers.FirebirdSql;
@@ -31,7 +27,7 @@ public class FirebirdFixture : IDbFixture
     {
         await Container.StartAsync();
         FbConnection.CreateDatabase(ConnectionString);
-        var strategy = new FirebirdStrategy(new QueryValueParserService(), new Mock<IConfiguration>().Object);
+        var strategy = new FirebirdStrategy();
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
         using var cmd = conn.CreateCommand();
@@ -98,8 +94,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
 {
     protected override bool SupportsPortableDateFormatting => false;
     protected override bool SupportsFormattedDateParsing => false;
-    protected override FirebirdStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override FirebirdStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "USERS";
     protected override string TestOrdersTableName => "ORDERS";
