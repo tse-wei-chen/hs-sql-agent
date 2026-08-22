@@ -3,10 +3,15 @@ using System.Text.Json.Serialization;
 
 namespace SqlAgent.Service.Models;
 
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonPolymorphic(
+    TypeDiscriminatorPropertyName = "type",
+    UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
 [JsonDerivedType(typeof(FieldGroupByCondition), "field")]
 [JsonDerivedType(typeof(FunctionGroupByCondition), "function")]
-public abstract class GroupByCondition { }
+public abstract class GroupByCondition
+{
+    private protected GroupByCondition() { }
+}
 
 public class FieldGroupByCondition : GroupByCondition
 {
