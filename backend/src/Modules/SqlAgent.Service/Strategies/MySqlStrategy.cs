@@ -1,6 +1,4 @@
 using System.Data.Common;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using MySql.Data.MySqlClient;
@@ -10,7 +8,7 @@ using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
 
@@ -26,6 +24,7 @@ public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfig
         };
         return builder.ConnectionString;
     }
+
     public override DbConnection CreateConnection(string? connectionString) => new MySqlConnection(connectionString);
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
@@ -112,29 +111,4 @@ public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfig
 			");
         }
     }
-
-    protected override string BuildExecutionErrorMessage(Exception ex, string type)
-    {
-        var code = ex is MySqlException mysqlEx2 ? mysqlEx2.Number.ToString() : TryExtractMySqlCode(ex.Message);
-
-        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
-    }
-
-    private static string? TryExtractMySqlCode(string message)
-    {
-        if (string.IsNullOrWhiteSpace(message)) return null;
-
-        var sqlState = SqlStateRegex().Match(message);
-        if (sqlState.Success) return sqlState.Groups["code"].Value.ToUpperInvariant();
-
-        var mysqlCode = SqlCodeRegex().Match(message);
-        if (mysqlCode.Success) return mysqlCode.Groups["code"].Value;
-
-        return null;
-    }
-
-    [GeneratedRegex(@"SQLSTATE\[(?<code>[0-9A-Z]{5})\]", RegexOptions.IgnoreCase, "zh-TW")]
-    private static partial Regex SqlStateRegex();
-    [GeneratedRegex(@"\b(?<code>\d{4})\b")]
-    private static partial Regex SqlCodeRegex();
 }

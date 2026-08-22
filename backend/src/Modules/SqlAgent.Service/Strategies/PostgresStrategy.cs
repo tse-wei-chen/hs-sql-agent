@@ -1,12 +1,10 @@
 using Dapper;
+using Microsoft.Extensions.Configuration;
 using Npgsql;
-using System.Data.Common;
-using System.Text.Json;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using Microsoft.Extensions.Configuration;
-using System.Text.RegularExpressions;
+using System.Data.Common;
 
 namespace SqlAgent.Service.Strategies;
 
@@ -26,6 +24,7 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         };
         return builder.ConnectionString;
     }
+
     public override DbConnection CreateConnection(string? connectionString) => new NpgsqlConnection(connectionString);
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
@@ -109,34 +108,5 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
 				please try again !!
 			");
         }
-    }
-
-    protected override string BuildExecutionErrorMessage(Exception ex, string type)
-    {
-        var pgEx = FindPostgresException(ex);
-        var code = pgEx?.SqlState ?? TryExtractSqlStateCode(ex.ToString());
-        var message = pgEx?.MessageText ?? ex.GetBaseException().Message;
-
-        return $"Error executing query | code={code ?? "unknown"} | message={message}";
-    }
-
-    private static string? TryExtractSqlStateCode(string message)
-    {
-        var match = Regex.Match(message ?? string.Empty, @"\b(?<code>[0-9A-Z]{5})\b");
-        if (!match.Success) return null;
-
-        var code = match.Groups["code"].Value;
-        return code.Any(char.IsDigit) ? code : null;
-    }
-
-    private static PostgresException? FindPostgresException(Exception ex)
-    {
-        for (var current = ex; current != null; current = current.InnerException)
-        {
-            if (current is PostgresException pgEx)
-                return pgEx;
-        }
-
-        return null;
     }
 }

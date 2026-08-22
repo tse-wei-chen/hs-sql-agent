@@ -12,19 +12,20 @@ namespace SqlAgent.Service.Strategies;
 /// execution belong to the Core/typed runtime pipeline. Strategy subclasses retain only provider
 /// connection/metadata responsibilities while callers migrate to native ISqlProvider components.
 /// </summary>
-public abstract class BaseSqlStrategy(
-    IQueryValueParserService valueParser,
-    IConfiguration configuration) : ISqlStrategy
+public abstract class BaseSqlStrategy : ISqlStrategy
 {
     static BaseSqlStrategy()
     {
         DapperTemporalTypeHandlerRegistry.EnsureRegistered();
     }
 
-    // Kept in the constructor contract until provider registrations stop constructing strategies
-    // directly. Translation/execution no longer consume either dependency from this base class.
-    private readonly IQueryValueParserService _valueParser = valueParser;
-    protected readonly IConfiguration _configuration = configuration;
+    protected BaseSqlStrategy(
+        IQueryValueParserService valueParser,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(valueParser);
+        ArgumentNullException.ThrowIfNull(configuration);
+    }
 
     public abstract SqlAgentToolType DbType { get; }
     public abstract string BuildConnectionString(BuildDbConnectionModelBase model);
@@ -44,8 +45,4 @@ public abstract class BaseSqlStrategy(
         string schemaName,
         string tableName,
         CancellationToken cancellationToken = default);
-
-    // Removed from the public strategy contract and retained only until provider-specific formatter
-    // implementations are deleted after the adapter-owned IProviderErrorMapper is proven in CI.
-    protected abstract string BuildExecutionErrorMessage(Exception ex, string type);
 }

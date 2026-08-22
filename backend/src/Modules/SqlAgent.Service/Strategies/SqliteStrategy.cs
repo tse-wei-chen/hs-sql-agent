@@ -1,11 +1,9 @@
-using System.Data;
+using System.Data.Common;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using System.Data.Common;
-using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
@@ -23,6 +21,7 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         };
         return builder.ConnectionString;
     }
+
     public override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
@@ -77,12 +76,5 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
                 please try again !!
             ");
         }
-    }
-
-    protected override string BuildExecutionErrorMessage(Exception ex, string type)
-    {
-        var code = ex is SqliteException sqliteEx ? $"SQLITE_{sqliteEx.SqliteErrorCode}" : null;
-
-        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
     }
 }

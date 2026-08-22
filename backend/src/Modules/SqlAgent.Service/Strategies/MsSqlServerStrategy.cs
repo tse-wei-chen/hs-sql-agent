@@ -1,5 +1,4 @@
 using System.Data.Common;
-using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
@@ -9,7 +8,7 @@ using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public partial class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class MsSqlServerStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
@@ -115,19 +114,4 @@ public partial class MsSqlServerStrategy(IQueryValueParserService valueParser, I
 			");
         }
     }
-
-    protected override string BuildExecutionErrorMessage(Exception ex, string type)
-    {
-        var code = ex is SqlException sqlEx ? sqlEx.Number.ToString() : TryExtractSqlCode(ex.Message);
-        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
-    }
-
-    private static string? TryExtractSqlCode(string message)
-    {
-        var errorMatch = SqlCodeRegex().Match(message);
-        return errorMatch.Success ? errorMatch.Groups["code"].Value : null;
-    }
-
-    [GeneratedRegex(@"Error Number:\s*(?<code>\d+)")]
-    private static partial Regex SqlCodeRegex();
 }

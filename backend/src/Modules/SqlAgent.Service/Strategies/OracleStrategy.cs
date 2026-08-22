@@ -1,6 +1,4 @@
 using System.Data.Common;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Oracle.ManagedDataAccess.Client;
@@ -10,7 +8,7 @@ using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public partial class OracleStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class OracleStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
 
@@ -24,6 +22,7 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
         };
         return builder.ConnectionString;
     }
+
     public override DbConnection CreateConnection(string? connectionString) => new OracleConnection(connectionString);
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
@@ -109,19 +108,4 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
 			");
         }
     }
-
-    protected override string BuildExecutionErrorMessage(Exception ex, string type)
-    {
-        var code = TryExtractOracleCode(ex.Message);
-        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
-    }
-
-    private static string? TryExtractOracleCode(string message)
-    {
-        var errorMatch = SqlCodeRegex().Match(message);
-        return errorMatch.Success ? errorMatch.Groups[1].Value : null;
-    }
-
-    [GeneratedRegex(@"(ORA-\d+)")]
-    private static partial Regex SqlCodeRegex();
 }

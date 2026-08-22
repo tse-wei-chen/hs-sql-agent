@@ -1,6 +1,4 @@
 using System.Data.Common;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using Dapper;
 using FirebirdSql.Data.FirebirdClient;
 using Microsoft.Extensions.Configuration;
@@ -10,7 +8,7 @@ using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public partial class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
 
@@ -105,26 +103,4 @@ public partial class FirebirdStrategy(IQueryValueParserService valueParser, ICon
 			");
         }
     }
-
-    protected override string BuildExecutionErrorMessage(Exception ex, string type)
-    {
-        var iscCode = ex is FbException fbEx ? fbEx.ErrorCode.ToString() : null;
-        var code = TryExtractFbSqlCode(ex.Message) ?? iscCode;
-        return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
-    }
-
-    private static string? TryExtractFbSqlCode(string message)
-    {
-        if (string.IsNullOrWhiteSpace(message)) return null;
-        var sqlCodeMatch = SqlCodeRegex().Match(message);
-        if (sqlCodeMatch.Success) return "FB_SQL_" + sqlCodeMatch.Groups["code"].Value;
-        var gdsCodeMatch = GdsCodeRegex().Match(message);
-        if (gdsCodeMatch.Success) return "FB_GDS_" + gdsCodeMatch.Groups["code"].Value;
-        return null;
-    }
-
-    [GeneratedRegex(@".*gds\s+code\s*=\s*(?<code>\d+)", RegexOptions.IgnoreCase, "zh-TW")]
-    private static partial Regex GdsCodeRegex();
-    [GeneratedRegex(@"SQL\s+(?:error\s+)?[Cc]ode\s*=\s*(?<code>-?\d+)", RegexOptions.IgnoreCase, "zh-TW")]
-    private static partial Regex SqlCodeRegex();
 }
