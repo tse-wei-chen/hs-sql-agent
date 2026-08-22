@@ -1,3 +1,4 @@
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.SqlParsing;
 using Xunit;
 
@@ -6,12 +7,15 @@ namespace SqlAgent.Test.Services;
 public class SqlSyntaxGuardTests
 {
     [Fact]
-    public void Parse_CommaSeparatedFromSource_IsRejectedFailClosed()
+    public void Parse_CommaSeparatedFromSource_NormalizesToCrossJoin()
     {
-        var ex = Assert.Throws<SqlParseException>(
-            () => SqlDefinitionParser.ParseQuery("SELECT * FROM a, b"));
+        var definition = SqlDefinitionParser.ParseQuery("SELECT * FROM a, b");
 
-        Assert.Contains("explicit CROSS JOIN", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("a", definition.TableName);
+        var join = Assert.Single(definition.Joins!);
+        Assert.Equal(JoinType.Cross, join.Type);
+        Assert.Equal("b", join.Table);
+        Assert.Empty(join.OnConditions);
     }
 
     [Fact]
