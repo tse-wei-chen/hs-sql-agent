@@ -74,11 +74,18 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             allowedTables);
         var provider = new LegacySqlProviderAdapter(strategy);
         var executor = new CompiledSqlCommandExecutor(provider.Connections);
-        return await executor.ExecuteQueryAsync(
-            command,
-            connectionString,
-            policy.QueryTimeoutSeconds,
-            cancellationToken);
+        try
+        {
+            return await executor.ExecuteQueryAsync(
+                command,
+                connectionString,
+                policy.QueryTimeoutSeconds,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw provider.Errors.Map(ex, "query");
+        }
     }
 
     internal static string ComputePolicyVersion(

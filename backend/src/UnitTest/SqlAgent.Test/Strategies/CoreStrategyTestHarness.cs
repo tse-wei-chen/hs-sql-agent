@@ -1,5 +1,4 @@
 using System.Data.Common;
-using System.Reflection;
 using System.Text.Json;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
@@ -7,26 +6,28 @@ using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
+using SqlAgent.Service.Strategies.Adapters;
 
 namespace SqlAgent.Test.Strategies;
 
 /// <summary>
 /// Provider integration harness that exercises the canonical Core query pipeline while retaining
 /// the strategy only as the temporary provider connection/metadata adapter. Runtime DB exceptions
-/// are formatted through the legacy provider formatter solely so the existing provider-error
-/// integration assertions remain stable until IProviderErrorMapper owns that contract.
+/// are mapped through the provider contract instead of reflection or legacy strategy execution.
 /// </summary>
 public sealed class CoreStrategyTestHarness<TStrategy>
     where TStrategy : ISqlStrategy
 {
     private readonly TStrategy _strategy;
+    private readonly LegacySqlProviderAdapter _provider;
     private readonly CoreSqlCompiler _compiler = CoreSqlCompiler.CreateDefault();
     private readonly CompiledSqlCommandExecutor _executor;
 
     public CoreStrategyTestHarness(TStrategy strategy)
     {
         _strategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
-        _executor = new CompiledSqlCommandExecutor(new StrategyConnectionFactory(strategy));
+        _provider = new LegacySqlProviderAdapter(strategy);
+        _executor = new CompiledSqlCommandExecutor(_provider.Connections);
     }
 
     public SqlAgentToolType DbType => _strategy.DbType;
@@ -95,25 +96,7 @@ public sealed class CoreStrategyTestHarness<TStrategy>
         }
         catch (Exception ex)
         {
-            throw FormatLegacyProviderError(ex);
+            throw _provider.Errors.Map(ex, "query");
         }
-    }
-
-    private Exception FormatLegacyProviderError(Exception exception)
-    {
-        // Provider integration tests still assert the historical provider error code/message shape.
-        // Do not route query execution back through the obsolete strategy API just for formatting.
-        var formatter = _strategy.GetType().GetMethod(
-            "BuildExecutionErrorMessage",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-        if (formatter?.Invoke(_strategy, [exception, "Query"]) is string message)
-            return new Exception(message, exception);
-        return exception;
-    }
-
-    private sealed class StrategyConnectionFactory(TStrategy strategy) : IDbConnectionFactory
-    {
-        public DbConnection Create(string connectionString) =>
-            strategy.CreateConnection(connectionString);
     }
 }

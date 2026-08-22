@@ -21,7 +21,7 @@ public sealed class LegacySqlProviderAdapter : ISqlProvider
         Connections = new StrategyConnectionFactory(strategy);
         Lowerer = new SqlKataProviderLowerer(strategy.DbType);
         Metadata = new StrategyMetadataReader(strategy);
-        Errors = new PassThroughProviderErrorMapper();
+        Errors = new ProviderExecutionErrorMapper(strategy.DbType);
     }
 
     public SqlAgentToolType Type { get; }
@@ -69,10 +69,5 @@ public sealed class LegacySqlProviderAdapter : ISqlProvider
                     column.PrimaryKeyOrdinal))
                 .ToArray();
         }
-    }
-
-    private sealed class PassThroughProviderErrorMapper : IProviderErrorMapper
-    {
-        public Exception Map(Exception exception, string operation) => exception;
     }
 }

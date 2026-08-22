@@ -1,9 +1,4 @@
 using System.Reflection;
-using Microsoft.Extensions.Configuration;
-using Moq;
-using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using Xunit;
 
@@ -25,21 +20,17 @@ public class LegacyStrategyRetirementTests
     }
 
     [Fact]
-    public async Task LegacyDmlExecution_IsFailClosedInsteadOfIssuingStringChallenge()
+    public void BaseStrategy_HasNoLegacyCompilationOrExecutionSurface()
     {
-        var strategy = CreateStrategy();
+        var methods = typeof(BaseSqlStrategy)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Select(method => method.Name)
+            .ToArray();
 
-#pragma warning disable CS0618
-        var error = await Assert.ThrowsAsync<NotSupportedException>(() =>
-            strategy.ExecuteDmlAsync(
-                "unused",
-                new DmlDefinition(),
-                CancellationToken.None));
-#pragma warning restore CS0618
-
-        Assert.Contains("TypedDmlRuntime", error.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("TokenRequired=", error.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("ConfirmToken", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("CompileQuerySql", methods);
+        Assert.DoesNotContain("CompileQueryTranslation", methods);
+        Assert.DoesNotContain("ExecuteQueryAsync", methods);
+        Assert.DoesNotContain("ExecuteDmlAsync", methods);
     }
 
     [Fact]
@@ -65,11 +56,4 @@ public class LegacyStrategyRetirementTests
 
     private static bool IsAsyncLocal(Type type) =>
         type.IsGenericType && type.GetGenericTypeDefinition() == typeof(AsyncLocal<>);
-
-    private static BaseSqlStrategy CreateStrategy()
-    {
-        var parser = new QueryValueParserService();
-        var configuration = new Mock<IConfiguration>().Object;
-        return new SqliteStrategy(parser, configuration);
-    }
 }
