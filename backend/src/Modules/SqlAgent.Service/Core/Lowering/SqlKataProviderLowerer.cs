@@ -62,21 +62,29 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static Query LowerQuery(QueryStatement statement, Compiler compiler)
     {
-        var query = LowerSelect(statement.Head, compiler, includeTail: false);
+        var setQuery = LowerSelect(statement.Head, compiler, includeTail: false);
         foreach (var operation in statement.SetOperations)
         {
             var branch = BuildQuery(operation.Query, compiler);
-            query = operation.Kind switch
+            setQuery = operation.Kind switch
             {
-                SetOperationKind.Union => query.Union(branch),
-                SetOperationKind.UnionAll => query.UnionAll(branch),
-                SetOperationKind.Intersect => query.Intersect(branch),
-                SetOperationKind.Except => query.Except(branch),
+                SetOperationKind.Union => setQuery.Union(branch),
+                SetOperationKind.UnionAll => setQuery.UnionAll(branch),
+                SetOperationKind.Intersect => setQuery.Intersect(branch),
+                SetOperationKind.Except => setQuery.Except(branch),
                 _ => throw new SqlCompilationException(
                     $"Unsupported set operation '{operation.Kind}'.")
             };
         }
 
+        if (statement.OrderBy.IsDefaultOrEmpty
+            && statement.Limit is not > 0
+            && statement.Offset is not > 0)
+            return setQuery;
+
+        var query = new Query()
+            .From(setQuery, "_set")
+            .Select("*");
         ApplyOrderBy(query, statement.OrderBy, compiler);
         if (statement.Limit is > 0) query.Limit(statement.Limit.Value);
         if (statement.Offset is > 0) query.Offset(statement.Offset.Value);

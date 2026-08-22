@@ -138,10 +138,15 @@ internal static class SqlSyntaxGuard
                 if (!expectingValue)
                     throw UnsupportedInValue(token);
 
-                // The legacy ParseLiteralValue implementation does not bind unary signs to
-                // numeric literals, so accepting them here would silently change semantics.
                 if (token.Type == TokenType.Operator && token.Value is "+" or "-")
-                    throw UnsupportedInValue(token);
+                {
+                    if (j + 1 >= tokens.Length || tokens[j + 1].Type != TokenType.Number)
+                        throw UnsupportedInValue(token);
+                    j++;
+                    expectingValue = false;
+                    valueCount++;
+                    continue;
+                }
 
                 if (token.Type is TokenType.Number or TokenType.String
                     || IsWord(token, "NULL") || IsWord(token, "TRUE") || IsWord(token, "FALSE"))
