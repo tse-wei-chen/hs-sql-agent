@@ -1,4 +1,5 @@
 using System.Reflection;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Strategies.Adapters;
@@ -22,9 +23,10 @@ public class LegacyStrategyRetirementTests
     }
 
     [Fact]
-    public void BaseStrategy_HasNoLegacyCompilationOrExecutionSurface()
+    public void BaseStrategy_HasNoLegacyCompilationExecutionOrInitializationSurface()
     {
-        var methods = typeof(BaseSqlStrategy)
+        var type = typeof(BaseSqlStrategy);
+        var methods = type
             .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
             .Select(method => method.Name)
             .ToArray();
@@ -34,10 +36,11 @@ public class LegacyStrategyRetirementTests
         Assert.DoesNotContain("ExecuteQueryAsync", methods);
         Assert.DoesNotContain("ExecuteDmlAsync", methods);
         Assert.DoesNotContain("BuildExecutionErrorMessage", methods);
+        Assert.Null(type.TypeInitializer);
     }
 
     [Fact]
-    public void ProviderStrategies_DoNotOwnSqlKataOrErrorFormattingHooks()
+    public void ProviderStrategies_AreParameterlessAndDoNotOwnSqlKataOrErrorFormattingHooks()
     {
         var providerTypes = new[]
         {
@@ -51,6 +54,9 @@ public class LegacyStrategyRetirementTests
 
         foreach (var providerType in providerTypes)
         {
+            var constructors = providerType.GetConstructors(BindingFlags.Instance | BindingFlags.Public);
+            var constructor = Assert.Single(constructors);
+            Assert.Empty(constructor.GetParameters());
             Assert.Null(providerType.GetMethod(
                 "CreateCompiler",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly));
@@ -58,6 +64,17 @@ public class LegacyStrategyRetirementTests
                 "BuildExecutionErrorMessage",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly));
         }
+    }
+
+    [Fact]
+    public void LegacyProviderAdapter_ReturnsCoreOwnedProviderComposition()
+    {
+        Assert.False(typeof(ISqlProvider).IsAssignableFrom(typeof(LegacySqlProviderAdapter)));
+
+        var provider = LegacySqlProviderAdapter.Adapt(new PostgresStrategy());
+
+        Assert.IsType<SqlProvider>(provider);
+        Assert.Equal(SqlAgentToolType.Postgres, provider.Type);
     }
 
     [Fact]
