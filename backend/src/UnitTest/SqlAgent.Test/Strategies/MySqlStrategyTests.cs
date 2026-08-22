@@ -1,12 +1,8 @@
 using System.Text.Json;
 using DotNet.Testcontainers.Builders;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using MySql.Data.MySqlClient;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Strategies.Adapters;
 using Testcontainers.MySql;
@@ -32,8 +28,7 @@ public class MySqlFixture : IDbFixture
     {
         await Container.StartAsync();
 
-        var parser = new QueryValueParserService();
-        var strategy = new MySqlStrategy(parser, new Mock<IConfiguration>().Object);
+        var strategy = new MySqlStrategy();
 
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
@@ -83,8 +78,7 @@ public class MySqlFixture : IDbFixture
 public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlStrategy, MySqlFixture>(fixture)
 {
     protected override bool SupportsOffsetTimestamp => false;
-    protected override MySqlStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override MySqlStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "users";
     protected override string TestOrdersTableName => "orders";
