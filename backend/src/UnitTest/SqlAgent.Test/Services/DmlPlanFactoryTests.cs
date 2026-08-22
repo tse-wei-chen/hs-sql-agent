@@ -1,3 +1,4 @@
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
