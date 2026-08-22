@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
@@ -45,7 +44,6 @@ public partial class MsSqlServerStrategy(IQueryValueParserService valueParser, I
     }
 
     public override DbConnection CreateConnection(string? connectionString) => new SqlConnection(connectionString);
-    protected override Compiler CreateCompiler() => new SqlServerCompiler { UseLegacyPagination = true };
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {
