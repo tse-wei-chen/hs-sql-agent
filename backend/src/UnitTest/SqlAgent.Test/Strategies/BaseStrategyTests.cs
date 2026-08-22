@@ -9,6 +9,7 @@ using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
+using SqlAgent.Service.Strategies.Adapters;
 using SqlAgent.Service.Validation;
 using Xunit;
 
@@ -117,11 +118,13 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     {
         var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };
         ValidateQuery(definition);
-        var error = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var error = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={TableNotFoundErrorCode}", error.Message);
+        Assert.Equal(Strategy.DbType, error.ProviderType);
+        Assert.Equal("query", error.Operation);
+        Assert.Equal(TableNotFoundErrorCode, error.Code);
     }
 
     [Fact]
@@ -133,11 +136,13 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             SelectColumns = [new FieldSelectCondition { FieldName = $"{TestTableName}.NON_EXISTENT_COL_HS" }]
         };
         ValidateQuery(definition);
-        var error = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var error = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={ColumnNotFoundErrorCode}", error.Message);
+        Assert.Equal(Strategy.DbType, error.ProviderType);
+        Assert.Equal("query", error.Operation);
+        Assert.Equal(ColumnNotFoundErrorCode, error.Code);
     }
 
     [Fact]
