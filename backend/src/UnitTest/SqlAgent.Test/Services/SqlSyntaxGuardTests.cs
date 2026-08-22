@@ -36,13 +36,21 @@ public class SqlSyntaxGuardTests
     [InlineData("SELECT * FROM users WHERE id IN (1, 2, 3)")]
     [InlineData("SELECT * FROM users WHERE id IN ('a', 'b')")]
     [InlineData("SELECT * FROM users WHERE id IN (NULL, TRUE, FALSE)")]
-    [InlineData("SELECT * FROM users WHERE id IN (-1, +2)")]
     public void Parse_InScalarLiteralList_RemainsSupported(string sql)
     {
         var definition = SqlDefinitionParser.ParseQuery(sql);
 
         Assert.NotNull(definition.WhereColumnsAndValues);
         Assert.NotEmpty(definition.WhereColumnsAndValues);
+    }
+
+    [Theory]
+    [InlineData("SELECT * FROM users WHERE id IN (-1, +2)")]
+    [InlineData("SELECT * FROM users WHERE id IN ()")]
+    [InlineData("SELECT * FROM users WHERE id IN (1,)")]
+    public void Parse_InFormsLegacyParserCannotPreserve_AreRejected(string sql)
+    {
+        Assert.Throws<SqlParseException>(() => SqlDefinitionParser.ParseQuery(sql));
     }
 
     [Fact]
