@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Binding;
 
@@ -51,7 +52,7 @@ public sealed class CoreDmlBinder : ISqlBinder
     }
 
     private BoundStatement BindInsertQuery(
-        Enums.SqlAgentToolType sourceDialect,
+        SqlAgentToolType sourceDialect,
         InsertStatement insert,
         InsertQuerySource querySource,
         string targetName)
