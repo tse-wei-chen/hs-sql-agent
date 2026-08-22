@@ -1,14 +1,12 @@
 using System.Data.Common;
 using Dapper;
 using FirebirdSql.Data.FirebirdClient;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public class FirebirdStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class FirebirdStrategy : BaseSqlStrategy
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
 
