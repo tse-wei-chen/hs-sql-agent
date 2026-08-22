@@ -20,6 +20,10 @@ public sealed record CanonicalStatement(
     SqlAgentToolType SourceDialect,
     SqlAgentToolType TargetProvider);
 
+public sealed record SqlPlanValidationContext(
+    string PolicyVersion,
+    IReadOnlySet<string>? AllowedTables = null);
+
 public sealed record ValidatedSqlPlan(
     SqlStatement Statement,
     QueryFacts Facts,
@@ -39,7 +43,9 @@ public interface ISqlNormalizer
 
 public interface ISqlPlanValidator
 {
-    ValidatedSqlPlan Validate(CanonicalStatement statement, string policyVersion);
+    ValidatedSqlPlan Validate(
+        CanonicalStatement statement,
+        SqlPlanValidationContext context);
 }
 
 public interface IProviderLowerer
