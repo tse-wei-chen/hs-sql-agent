@@ -12,7 +12,7 @@ public enum SetOperationKind
 
 public sealed record SetOperation(
     SetOperationKind Kind,
-    SelectStatement Query,
+    SqlStatement Query,
     SourceSpan Span) : SqlNode(Span);
 
 public sealed record QueryStatement(
