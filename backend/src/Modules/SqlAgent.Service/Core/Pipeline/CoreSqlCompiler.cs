@@ -68,12 +68,6 @@ public sealed class CoreSqlCompiler(
                 return;
 
             case QueryStatement query:
-                if (!query.OrderBy.IsDefaultOrEmpty || query.Limit is > 0 || query.Offset is > 0)
-                {
-                    throw new SqlCompilationException(
-                        "Query-level ORDER BY/LIMIT/OFFSET after a set operation is not supported " +
-                        "by the current SqlKata backend; the plan was rejected to preserve semantics.");
-                }
                 ValidateSqlKataBackendCompatibility(query.Head);
                 foreach (var operation in query.SetOperations)
                     ValidateSqlKataBackendCompatibility(operation.Query);
