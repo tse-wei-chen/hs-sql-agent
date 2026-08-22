@@ -27,7 +27,8 @@ public class CustomToolProxy(
     IAuditService auditService,
     IQueryValueParserService queryValueParserService,
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
-    ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter)
+    ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
+    ITypedQueryRuntime? typedQueryRuntime = null)
 {
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
@@ -37,6 +38,7 @@ public class CustomToolProxy(
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
+    private readonly ITypedQueryRuntime _typedQueryRuntime = typedQueryRuntime ?? new TypedQueryRuntime();
 
     public async Task<string> Execute(
         JsonElement arguments,
@@ -60,6 +62,7 @@ public class CustomToolProxy(
     {
         var stopwatch = Stopwatch.StartNew();
         long approvalWaitDurationMs = 0;
+        int? queryReturnedRows = null;
         int? dmlAffectedRows = null;
         var parameters = new Dictionary<string, object?>();
         if (arguments.ValueKind == JsonValueKind.Object)
@@ -119,7 +122,6 @@ public class CustomToolProxy(
             {
                 var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(renderedSql), dbType);
                 auditQuery = queryDef;
-                ValidateAllTableAccess(queryDef);
 
                 var qErrors = DefinitionValidator.Validate(queryDef);
                 if (qErrors.Count > 0)
@@ -133,11 +135,16 @@ public class CustomToolProxy(
                 {
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                    result = await strategy.ExecuteQueryAsync(
-                        queryDef,
+                    var execution = await _typedQueryRuntime.ExecuteAsync(
+                        strategy,
                         sqlConfig.ConnectionString,
-                        ResolveExecutionPolicy(),
+                        queryDef,
+                        dbType,
+                        _securityPolicyRuntimeState.GetCurrent(),
+                        ResolveTableWhitelist(),
                         cancellationToken);
+                    queryReturnedRows = execution.RowCount;
+                    result = JsonSerializer.Serialize(execution.Rows);
                 }
             }
             else if (isDml)
@@ -216,7 +223,7 @@ public class CustomToolProxy(
                     DurationMs = isDml
                         ? ProcessingDuration(stopwatch, approvalWaitDurationMs)
                         : stopwatch.ElapsedMilliseconds,
-                    ReturnedRows = isQuery ? CountJsonRows(result) : null,
+                    ReturnedRows = isQuery ? queryReturnedRows : null,
                     AffectedRows = isDml ? dmlAffectedRows : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
                     Definition = isQuery && auditQuery != null
@@ -240,6 +247,7 @@ public class CustomToolProxy(
                     DurationMs = auditDml == null
                         ? stopwatch.ElapsedMilliseconds
                         : ProcessingDuration(stopwatch, approvalWaitDurationMs),
+                    ReturnedRows = queryReturnedRows,
                     AffectedRows = dmlAffectedRows,
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQuery != null
@@ -256,36 +264,6 @@ public class CustomToolProxy(
 
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
         => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
-
-    private SqlExecutionPolicy ResolveExecutionPolicy()
-    {
-        var policy = _securityPolicyRuntimeState.GetCurrent();
-        return new SqlExecutionPolicy
-        {
-            QueryMaxRows = policy.QueryMaxRows,
-            QueryTimeoutSeconds = policy.QueryTimeoutSeconds,
-            RequireWhereForUpdate = policy.RequireWhereForUpdate,
-            RequireWhereForDelete = policy.RequireWhereForDelete,
-            AllowFullTableUpdate = policy.AllowFullTableUpdate,
-            AllowFullTableDelete = policy.AllowFullTableDelete,
-            DmlMaxAffectedRows = policy.DmlMaxAffectedRows
-        };
-    }
-
-    private static int? CountJsonRows(string json)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(json);
-            return document.RootElement.ValueKind == JsonValueKind.Array
-                ? document.RootElement.GetArrayLength()
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
 
     private static string DescribeQuery(QueryDefinition definition)
         => JsonSerializer.Serialize(new
@@ -349,21 +327,6 @@ public class CustomToolProxy(
             .Any(x => string.Equals(x, _name, StringComparison.OrdinalIgnoreCase));
         if (!allowed)
             throw new UnauthorizedAccessException($"API key does not have permission to use tool: {_name}");
-    }
-
-    private void ValidateAllTableAccess(QueryDefinition queryDef)
-    {
-        var whitelist = ResolveTableWhitelist();
-        if (whitelist is null or { Count: 0 }) return;
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        SqlAgentTool.CollectReferencesAndAliases(queryDef.TableName, queryDef.Joins, queryDef.CombineConditions, queryDef.CteConditions, queryDef.FromQuery, queryDef.SelectColumns, queryDef.WhereColumnsAndValues, referenced, aliases);
-        SqlAgentTool.CollectFromHavingConditions(queryDef.HavingConditions, referenced, aliases);
-        SqlAgentTool.CollectFromOrderByConditions(queryDef.OrderByColumns, referenced, aliases);
-        SqlAgentTool.CollectFromGroupByConditions(queryDef.GroupByConditions, referenced, aliases);
-        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
-        if (violations.Count > 0)
-            throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
     }
 }
 
