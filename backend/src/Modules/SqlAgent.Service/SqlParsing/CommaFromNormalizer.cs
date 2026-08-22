@@ -64,6 +64,6 @@ internal static class CommaFromNormalizer
         || IsWord(token, "UNION") || IsWord(token, "INTERSECT") || IsWord(token, "EXCEPT");
 
     private static bool IsWord(Token token, string value) =>
-        token.Type is TokenType.Keyword or TokenType.Identifier
+        (token.Type is TokenType.Keyword or TokenType.Identifier)
         && token.Value.Equals(value, StringComparison.OrdinalIgnoreCase);
 }
