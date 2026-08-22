@@ -3,7 +3,6 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Configuration;
 using Moq;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
@@ -12,40 +11,12 @@ using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
 using HsSqlAgent.Server.Tools;
 using HsSqlAgent.Server.Services;
-using ModelContextProtocol.Protocol;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
 
 public class CustomToolProxyTests
 {
-    private sealed class AcceptingApprovalClient : IDmlApprovalClient
-    {
-        private readonly TimeSpan _delay;
-        public AcceptingApprovalClient(TimeSpan? delay = null) => _delay = delay ?? TimeSpan.Zero;
-        public bool SupportsElicitation => true;
-        public ElicitRequestParams? LastRequest { get; private set; }
-        public int RequestCount { get; private set; }
-
-        public async ValueTask<ElicitResult> ElicitAsync(
-            ElicitRequestParams request,
-            CancellationToken cancellationToken)
-        {
-            LastRequest = request;
-            RequestCount++;
-            if (_delay > TimeSpan.Zero)
-                await Task.Delay(_delay, cancellationToken);
-            return new ElicitResult
-            {
-                Action = "accept",
-                Content = new Dictionary<string, JsonElement>
-                {
-                    ["approve"] = JsonSerializer.SerializeToElement(true)
-                }
-            };
-        }
-    }
-
     private readonly Mock<ICustomSqlToolService> _toolServiceMock;
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
     private readonly Mock<ISqlStrategyFactory> _strategyFactoryMock;
@@ -179,7 +150,7 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_ShouldRequireElicitationForDmlTool()
+    public async Task Execute_ShouldRequireElicitationForDmlTool_WithoutLegacyExecution()
     {
         var tool = new CustomSqlTool
         {
@@ -193,59 +164,6 @@ public class CustomToolProxyTests
         var strategyMock = new Mock<ISqlStrategy>();
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
-
-        var dmlProxy = new CustomToolProxy("delete_user",
-            _toolServiceMock.Object,
-            _httpContextAccessorMock.Object,
-            _strategyFactoryMock.Object,
-            _auditServiceMock.Object,
-            _queryValueParserMock.Object,
-            _securityPolicyRuntimeStateMock.Object,
-            _sqlConcurrencyLimiterMock.Object);
-
-        var args = JsonSerializer.SerializeToElement(new { });
-        var result = await dmlProxy.Execute(
-            args,
-            server: null,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        Assert.Contains("does not support", result, StringComparison.OrdinalIgnoreCase);
-        strategyMock.Verify(s => s.ExecuteDmlAsync(
-            It.IsAny<string>(),
-            It.IsAny<DmlDefinition>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task Execute_ShouldIgnoreCallerToken_AndCommitOnlyAfterApproval()
-    {
-        var tool = new CustomSqlTool
-        {
-            Name = "delete_user",
-            Type = "DML",
-            SqlTemplate = "DELETE FROM users"
-        };
-        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("delete_user", 42, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(tool);
-
-        var observedTokens = new List<string?>();
-        var strategyMock = new Mock<ISqlStrategy>();
-        strategyMock
-            .Setup(s => s.ExecuteDmlAsync(
-                It.IsAny<string>(),
-                It.IsAny<DmlDefinition>(),
-                It.IsAny<SqlExecutionPolicy>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<string?, DmlDefinition?, SqlExecutionPolicy?, CancellationToken>((_, dml, _, _) =>
-                observedTokens.Add(dml?.ConfirmToken))
-            .ReturnsAsync(() => observedTokens.Count == 1
-                ? "Dry Run Result | affectedRows=1 | TokenRequired=server-token | Security Note: not committed."
-                : "Success | affectedRows=1 | Operation Committed.");
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
-            .Returns(strategyMock.Object);
-
-        var approvalClient = new AcceptingApprovalClient(TimeSpan.FromMilliseconds(80));
 
         var dmlProxy = new CustomToolProxy("delete_user",
             _toolServiceMock.Object,
@@ -258,22 +176,62 @@ public class CustomToolProxyTests
 
         var result = await dmlProxy.Execute(
             JsonSerializer.SerializeToElement(new { }),
-            approvalClient,
+            server: null,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("does not support", result, StringComparison.OrdinalIgnoreCase);
+        strategyMock.Verify(s => s.ExecuteDmlAsync(
+            It.IsAny<string>(),
+            It.IsAny<DmlDefinition>(),
+            It.IsAny<SqlExecutionPolicy>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        strategyMock.Verify(s => s.ExecuteDmlAsync(
+            It.IsAny<string>(),
+            It.IsAny<DmlDefinition>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_InsertCustomTool_RemainsFailClosedWithoutLegacyFallback()
+    {
+        var tool = new CustomSqlTool
+        {
+            Name = "insert_user",
+            Type = "DML",
+            SqlTemplate = "INSERT INTO users (name) VALUES ('Alice')"
+        };
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("insert_user", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tool);
+
+        var strategyMock = new Mock<ISqlStrategy>();
+        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
+            .Returns(strategyMock.Object);
+
+        var dmlProxy = new CustomToolProxy("insert_user",
+            _toolServiceMock.Object,
+            _httpContextAccessorMock.Object,
+            _strategyFactoryMock.Object,
+            _auditServiceMock.Object,
+            _queryValueParserMock.Object,
+            _securityPolicyRuntimeStateMock.Object,
+            _sqlConcurrencyLimiterMock.Object);
+
+        var result = await dmlProxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            approvalClient: null,
             TestContext.Current.CancellationToken);
 
-        Assert.StartsWith("Success", result);
-        Assert.Equal([null, "server-token"], observedTokens);
-        Assert.Equal(1, approvalClient.RequestCount);
-        Assert.NotNull(approvalClient.LastRequest);
-        Assert.Contains("delete_user", approvalClient.LastRequest.Message);
-        Assert.Contains("1 row", approvalClient.LastRequest.Message);
-        _auditServiceMock.Verify(a => a.WriteEventAsync(
-            "mcp.delete_user.executed",
-            "delete_user",
-            "success",
-            It.Is<AuditEventContext>(c => c.DurationMs < 60),
+        Assert.Contains("INSERT", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", result, StringComparison.OrdinalIgnoreCase);
+        strategyMock.Verify(s => s.ExecuteDmlAsync(
             It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<DmlDefinition>(),
+            It.IsAny<SqlExecutionPolicy>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        strategyMock.Verify(s => s.ExecuteDmlAsync(
+            It.IsAny<string>(),
+            It.IsAny<DmlDefinition>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -302,7 +260,7 @@ public class CustomToolProxyTests
             .Returns(strategyMock.Object);
 
         var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
+        _ = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
         _auditServiceMock.Verify(a => a.WriteEventAsync(
             "mcp.test_tool.executed",
@@ -325,7 +283,7 @@ public class CustomToolProxyTests
             .ReturnsAsync((CustomSqlTool?)null);
 
         var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
+        _ = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
         _auditServiceMock.Verify(a => a.WriteLogAsync(
             "mcp.test_tool.executed",
