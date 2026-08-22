@@ -41,8 +41,8 @@ public class QueryFactsBinderTests
         Assert.DoesNotContain("recent", facts.ReferencedTables);
         Assert.True(facts.ContainsCte);
         Assert.True(facts.ContainsSubquery);
-        Assert.Equal("crm.customers", facts.Aliases["c"]);
-        Assert.Equal("<subquery>", facts.Aliases["x"]);
+        Assert.Contains(facts.Aliases, a => a.Alias == "c" && a.Target == "crm.customers");
+        Assert.Contains(facts.Aliases, a => a.Alias == "x" && a.Target == "<subquery>");
     }
 
     [Fact]
@@ -69,7 +69,7 @@ public class QueryFactsBinderTests
     }
 
     [Fact]
-    public void Bind_DuplicateAlias_FailsClosed()
+    public void Bind_DuplicateAliasInSameScope_FailsClosed()
     {
         var definition = new QueryDefinition
         {
@@ -81,5 +81,28 @@ public class QueryFactsBinderTests
         var ex = Assert.Throws<InvalidOperationException>(() => QueryFactsBinder.Bind(definition));
 
         Assert.Contains("Duplicate table alias", ex.Message);
+    }
+
+    [Fact]
+    public void Bind_SameAliasInNestedScope_IsAllowed()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = "users",
+            Alias = "x",
+            WhereColumnsAndValues =
+            [
+                new SubQueryWhereCondition
+                {
+                    Operator = "EXISTS",
+                    SubQuery = new QueryDefinition { TableName = "orders", Alias = "x" }
+                }
+            ]
+        };
+
+        var facts = QueryFactsBinder.Bind(definition);
+
+        Assert.Equal(2, facts.Aliases.Count(a => a.Alias == "x"));
+        Assert.Equal(2, facts.Aliases.Where(a => a.Alias == "x").Select(a => a.ScopeId).Distinct().Count());
     }
 }
