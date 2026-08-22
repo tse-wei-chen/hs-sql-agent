@@ -1,14 +1,12 @@
 using System.Data.Common;
 using Dapper;
-using Microsoft.Extensions.Configuration;
 using Oracle.ManagedDataAccess.Client;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public class OracleStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class OracleStrategy : BaseSqlStrategy
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
 
