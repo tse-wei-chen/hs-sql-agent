@@ -166,6 +166,21 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 foreach (var argument in function.Arguments)
                     ValidateExpression(argument, provider, ExpressionContext.FunctionArgument);
                 return;
+            case FilterExpr filter:
+                if (provider is not (SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird))
+                    throw CapabilityError(provider, "expression.filter");
+                ValidateExpression(filter.Expression, provider, context);
+                ValidateExpression(filter.Predicate, provider, ExpressionContext.Predicate);
+                return;
+            case WindowedExpr windowed:
+                ValidateExpression(windowed.Expression, provider, context);
+                foreach (var partition in windowed.Window.PartitionBy)
+                    ValidateExpression(partition, provider, ExpressionContext.GroupBy);
+                ValidateOrdering(windowed.Window.OrderBy, provider);
+                foreach (var item in windowed.Window.OrderBy)
+                    ValidateExpression(item.Expression, provider, ExpressionContext.OrderBy);
+                ValidateWindowFrame(windowed.Window.Frame);
+                return;
             case CastExpr cast:
                 ValidateExpression(cast.Expression, provider, context);
                 return;
@@ -201,6 +216,22 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 throw new SqlCompilationException(
                     $"Unsupported expression during capability validation: {expression.GetType().Name}");
         }
+    }
+
+    private static void ValidateWindowFrame(WindowFrame? frame)
+    {
+        if (frame is null) return;
+        ValidateWindowBound(frame.Start);
+        if (frame.End is not null) ValidateWindowBound(frame.End);
+    }
+
+    private static void ValidateWindowBound(WindowFrameBoundCore bound)
+    {
+        var requiresOffset = bound.Kind is WindowFrameBoundKindCore.Preceding or WindowFrameBoundKindCore.Following;
+        if (requiresOffset && bound.Offset is null or < 0)
+            throw new SqlCompilationException($"Window frame bound '{bound.Kind}' requires a non-negative offset.");
+        if (!requiresOffset && bound.Offset is not null)
+            throw new SqlCompilationException($"Window frame bound '{bound.Kind}' must not carry an offset.");
     }
 
     private static void ValidateJoinKind(string kind)
