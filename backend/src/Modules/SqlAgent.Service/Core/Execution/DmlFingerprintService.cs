@@ -47,6 +47,30 @@ public static class DmlFingerprintService
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
+    public static string ComputeUnorderedRowSetFingerprint(
+        IEnumerable<IReadOnlyList<object?>> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        var rowDigests = keys.Select(ComputeRowDigest)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var rowDigest in rowDigests)
+            Append(hash, rowDigest);
+        Append(hash, $"count:{rowDigests.Length.ToString(CultureInfo.InvariantCulture)}");
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static string ComputeRowDigest(IReadOnlyList<object?> key)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        Append(hash, "row");
+        foreach (var value in key)
+            Append(hash, CanonicalValue(value));
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
     private static void Append(IncrementalHash hash, string value)
     {
         var bytes = Encoding.UTF8.GetBytes(value);
@@ -69,8 +93,8 @@ public static class DmlFingerprintService
                 => "number:" + Convert.ToString(value, CultureInfo.InvariantCulture),
             DateTime dateTime => "datetime:" + dateTime.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
             DateTimeOffset offset => "datetimeoffset:" + offset.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
-            DateOnly date => "date:" + date.ToString("O", CultureInfo.InvariantCulture),
-            TimeOnly time => "time:" + time.ToString("O", CultureInfo.InvariantCulture),
+            DateOnly date => "date:" + date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            TimeOnly time => "time:" + time.ToString("HH:mm:ss.fffffff", CultureInfo.InvariantCulture),
             Guid guid => "guid:" + guid.ToString("D"),
             byte[] bytes => "bytes:" + Convert.ToHexString(bytes),
             _ => value.GetType().FullName + ":" + JsonSerializer.Serialize(value, value.GetType())
