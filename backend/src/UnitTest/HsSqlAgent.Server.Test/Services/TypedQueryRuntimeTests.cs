@@ -1,6 +1,7 @@
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using Moq;
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
