@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
@@ -62,8 +63,8 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected abstract string TableNotFoundErrorCode { get; }
     protected abstract string ColumnNotFoundErrorCode { get; }
 
-    // Retained only so existing provider subclasses do not need an unrelated constructor/test-hook
-    // churn in this strangler step. No shared test invokes the legacy DML compatibility surface.
+    // Retained only so existing provider subclasses do not need unrelated test-hook churn in this
+    // strangler step. No shared test invokes the legacy DML compatibility surface.
     protected abstract DmlDefinition CreateInsertDml();
 
     [Fact]
@@ -101,13 +102,10 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     {
         var definition = new QueryDefinition { TableName = TestTableName, Limit = 1 };
         ValidateQuery(definition);
-
-        var json = await Strategy.ExecuteQueryAsync(
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(await Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+            cancellationToken: TestContext.Current.CancellationToken));
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
     }
@@ -117,7 +115,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     {
         var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };
         ValidateQuery(definition);
-
         var error = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
@@ -134,7 +131,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             SelectColumns = [new FieldSelectCondition { FieldName = $"{TestTableName}.NON_EXISTENT_COL_HS" }]
         };
         ValidateQuery(definition);
-
         var error = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
@@ -168,7 +164,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             Assert.Contains("no standalone TIME data type", error.Message);
             return;
         }
-
         Assert.NotEqual("[]", await execution());
     }
 
@@ -191,7 +186,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
         Assert.NotNull(value);
@@ -218,7 +212,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         Assert.NotEqual("[]", json);
     }
 
@@ -249,7 +242,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             Assert.Contains("no native timestamp type that preserves a UTC offset", error.Message);
             return;
         }
-
         Assert.NotEqual("[]", await execution());
     }
 
@@ -259,12 +251,10 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var definition = SqlDefinitionParser.ParseQuery(
             $"SELECT DATEDIFF(DAY, DATE '2026-08-20', DATE '2026-08-22') AS day_count FROM {TestTableName}");
         definition.Limit = 1;
-
         var json = await Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         using var document = JsonDocument.Parse(json);
         Assert.Equal(2m, document.RootElement[0].EnumerateObject().Single().Value.GetDecimal());
     }
@@ -275,12 +265,10 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var definition = SqlDefinitionParser.ParseQuery(
             $"SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM {TestTableName}");
         definition.Limit = 1;
-
         var json = await Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
         Assert.NotNull(value);
@@ -294,18 +282,15 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             $"SELECT DATE_FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') AS formatted FROM {TestTableName}");
         definition.SourceDialect = SqlAgentToolType.MsSqlServer;
         definition.Limit = 1;
-
         if (!SupportsPortableDateFormatting)
         {
-            var error = await Assert.ThrowsAsync<SqlCompilationException>(() =>
-                Strategy.ExecuteQueryAsync(
-                    definition,
-                    Fixture.ConnectionString,
-                    cancellationToken: TestContext.Current.CancellationToken));
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
+                definition,
+                Fixture.ConnectionString,
+                cancellationToken: TestContext.Current.CancellationToken));
             Assert.Contains("portable date formatting", error.Message);
             return;
         }
-
         var json = await Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
@@ -321,18 +306,15 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             $"SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') AS parsed_date FROM {TestTableName}");
         definition.SourceDialect = SqlAgentToolType.MsSqlServer;
         definition.Limit = 1;
-
         if (!SupportsFormattedDateParsing)
         {
-            var error = await Assert.ThrowsAsync<SqlCompilationException>(() =>
-                Strategy.ExecuteQueryAsync(
-                    definition,
-                    Fixture.ConnectionString,
-                    cancellationToken: TestContext.Current.CancellationToken));
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
+                definition,
+                Fixture.ConnectionString,
+                cancellationToken: TestContext.Current.CancellationToken));
             Assert.Contains("formatted date parsing", error.Message);
             return;
         }
-
         var json = await Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
@@ -349,12 +331,10 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var definition = SqlDefinitionParser.ParseQuery(
             $"SELECT YEAR(DATE '2026-08-22') AS y, MONTH(DATE '2026-08-22') AS m, DAY(DATE '2026-08-22') AS d FROM {TestTableName}");
         definition.Limit = 1;
-
         var json = await Strategy.ExecuteQueryAsync(
             definition,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         using var document = JsonDocument.Parse(json);
         var values = document.RootElement[0].EnumerateObject().Select(x => x.Value.GetDecimal()).ToArray();
         Assert.Equal([2026m, 8m, 22m], values);
@@ -385,7 +365,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
@@ -429,7 +408,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
@@ -484,13 +462,22 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.Single(rows);
         Assert.True(TryGetPropertyIgnoreCase(rows[0], alias, out var totalSales));
         Assert.InRange(totalSales.GetDecimal(), 37.65m, 37.66m);
     }
+
+    // Provider-specific files still own these integration shapes when identifier casing or provider
+    // syntax needs a specialized fixture. Keep virtual hooks without base Facts to avoid duplicate
+    // executions while preserving their override contracts.
+    public virtual Task ExecuteQueryAsync_ShouldSupportOffsetWithoutLimit() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportSubQueryWhereCondition() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportExistsSubQueryWhereCondition() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportBetweenInHaving() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportWhereNotIsOrIsNot() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportGroupHavingCondition() => Task.CompletedTask;
 
     protected static void ValidateQuery(QueryDefinition definition)
     {
@@ -514,7 +501,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                 return true;
             }
         }
-
         value = default;
         return false;
     }
