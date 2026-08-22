@@ -11,7 +11,7 @@ namespace SqlAgent.Service.Strategies.Adapters;
 /// Core provider collaborators. The returned provider itself is Core-owned; this adapter carries no
 /// provider runtime state and can disappear once connection/metadata move to native components.
 /// </summary>
-internal static class LegacySqlProviderAdapter
+public static class LegacySqlProviderAdapter
 {
     public static ISqlProvider Adapt(ISqlStrategy strategy)
     {
