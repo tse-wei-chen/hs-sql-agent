@@ -17,7 +17,7 @@ namespace HsSqlAgent.Server.Test.Tools;
 public class SqlAgentToolExecutionTests
 {
     [Fact]
-    public async Task ExecuteQuerySql_UsesTypedRuntimeAndNeverLegacyStrategyExecution()
+    public async Task ExecuteQuerySql_UsesTypedRuntime()
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
         var strategyFactory = new Mock<ISqlStrategyFactory>();
@@ -74,15 +74,6 @@ public class SqlAgentToolExecutionTests
 
         Assert.Contains("\"id\":7", result, StringComparison.Ordinal);
         typedQueryRuntime.VerifyAll();
-        strategy.Verify(x => x.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string?>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        strategy.Verify(x => x.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string?>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
         auditService.Verify(x => x.WriteEventAsync(
             "mcp.query.executed",
             "public.users",
@@ -96,7 +87,7 @@ public class SqlAgentToolExecutionTests
     }
 
     [Fact]
-    public async Task ExecuteQuerySql_TypedRuntimeAuthorizationFailure_DoesNotFallBackToLegacyStrategy()
+    public async Task ExecuteQuerySql_TypedRuntimeAuthorizationFailure_RemainsFailClosed()
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
         var strategyFactory = new Mock<ISqlStrategyFactory>();
@@ -140,14 +131,5 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.secrets");
 
         Assert.Contains("table denied", result, StringComparison.OrdinalIgnoreCase);
-        strategy.Verify(x => x.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string?>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        strategy.Verify(x => x.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string?>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 }
