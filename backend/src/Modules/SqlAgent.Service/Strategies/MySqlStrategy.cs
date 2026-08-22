@@ -78,14 +78,33 @@ public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfig
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
             const string sql = @"
-                SELECT COLUMN_NAME, DATA_TYPE
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = @schemaName AND TABLE_NAME = @tableName
-                ORDER BY ORDINAL_POSITION";
+                SELECT
+                    c.COLUMN_NAME,
+                    c.DATA_TYPE,
+                    CASE WHEN kcu.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS IS_PRIMARY_KEY,
+                    kcu.ORDINAL_POSITION AS PRIMARY_KEY_ORDINAL
+                FROM INFORMATION_SCHEMA.COLUMNS c
+                LEFT JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                  ON tc.CONSTRAINT_SCHEMA = c.TABLE_SCHEMA
+                 AND tc.TABLE_SCHEMA = c.TABLE_SCHEMA
+                 AND tc.TABLE_NAME = c.TABLE_NAME
+                 AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                  ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+                 AND kcu.TABLE_SCHEMA = tc.TABLE_SCHEMA
+                 AND kcu.TABLE_NAME = tc.TABLE_NAME
+                 AND kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+                 AND kcu.COLUMN_NAME = c.COLUMN_NAME
+                WHERE c.TABLE_SCHEMA = @schemaName AND c.TABLE_NAME = @tableName
+                ORDER BY c.ORDINAL_POSITION";
 
             var rows = await connection.QueryAsync(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
 
-            return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
+            return [.. rows.Select(r => new ColumnInfo(
+                (string)r.COLUMN_NAME,
+                (string)r.DATA_TYPE,
+                Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
+                r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
         }
         catch (Exception ex)
         {
