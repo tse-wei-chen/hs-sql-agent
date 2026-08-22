@@ -351,6 +351,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
+                SourceDialect = SqlAgentToolType.MySQL,
                 TableName = "orders",
                 SelectColumns =
                 [
@@ -496,6 +497,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
+                SourceDialect = SqlAgentToolType.MsSqlServer,
                 TableName = "orders",
                 SelectColumns =
                 [
