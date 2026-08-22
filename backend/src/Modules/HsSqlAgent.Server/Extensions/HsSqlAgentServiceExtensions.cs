@@ -195,6 +195,7 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<ISqlStrategy, FirebirdStrategy>();
         services.AddScoped<ISqlStrategyFactory, SqlStrategyFactory>();
         services.AddScoped<IDbSetterService, DbSetterService>();
+        services.AddScoped<ITypedQueryRuntime, TypedQueryRuntime>();
 
         // --- Options ---
         services.Configure<JwtSettings>(jwt =>

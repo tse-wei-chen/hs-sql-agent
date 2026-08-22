@@ -46,47 +46,8 @@ public class TypedDmlRuntimeTests
             RequireWhereForUpdate = true,
             DmlMaxAffectedRows = 25
         };
-        var policyVersion = TypedDmlRuntime.ComputePolicyVersion(previewPolicy, null);
-        var command = new CompiledSqlCommand(
-            "UPDATE public.users SET status = @p0 WHERE id = @p1",
-            ImmutableArray<SqlParameterValue>.Empty,
-            SqlStatementKind.Update,
-            "command-fingerprint",
-            SqlAgentToolType.Postgres);
-        var match = new CompiledSqlCommand(
-            "SELECT id FROM public.users WHERE id = @p0",
-            ImmutableArray<SqlParameterValue>.Empty,
-            SqlStatementKind.Select,
-            "match-fingerprint",
-            SqlAgentToolType.Postgres);
-        var plan = new ValidatedDmlPlan(
-            DmlOperation.Update,
-            "public.users",
-            command,
-            match,
-            ImmutableArray.Create("id"),
-            DmlRowIdentityAssurance.Strict,
-            "plan-fingerprint",
-            policyVersion,
-            TimeSpan.FromMinutes(5),
-            25);
-        var now = DateTimeOffset.UtcNow;
-        var challenge = new DmlApprovalChallenge(
-            "plan-fingerprint",
-            "rowset-fingerprint",
-            1,
-            policyVersion,
-            now,
-            now.AddMinutes(5),
-            "nonce");
-        var session = new TypedDmlApprovalSession(
-            plan,
-            new DmlPreview(
-                DmlOperation.Update,
-                "public.users",
-                1,
-                ImmutableArray<IReadOnlyDictionary<string, object?>>.Empty,
-                challenge));
+        var session = BuildSession(
+            TypedDmlRuntime.ComputePolicyVersion(previewPolicy, null));
         var changedPolicy = previewPolicy.Clone();
         changedPolicy.DmlMaxAffectedRows = 10;
         var strategy = new Mock<ISqlStrategy>(MockBehavior.Strict);
@@ -103,6 +64,51 @@ public class TypedDmlRuntimeTests
         Assert.Contains("security policy", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("new preview", error.Message, StringComparison.OrdinalIgnoreCase);
         strategy.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CommitAsync_RejectsWhitelistChangeBeforeProviderAccess()
+    {
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 25 };
+        IReadOnlySet<string> previewTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "public.users"
+        };
+        var session = BuildSession(
+            TypedDmlRuntime.ComputePolicyVersion(policy, previewTables));
+        IReadOnlySet<string> changedTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "public.users",
+            "public.orders"
+        };
+        var strategy = new Mock<ISqlStrategy>(MockBehavior.Strict);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TypedDmlRuntime().CommitAsync(
+                strategy.Object,
+                "connection",
+                session,
+                policy,
+                changedTables,
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("table authorization", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("new preview", error.Message, StringComparison.OrdinalIgnoreCase);
+        strategy.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void CommitApi_DoesNotExposeSecurityContextFreeOverload()
+    {
+        var overloads = typeof(TypedDmlRuntime)
+            .GetMethods()
+            .Where(method => method.Name == nameof(TypedDmlRuntime.CommitAsync))
+            .ToArray();
+
+        var commit = Assert.Single(overloads);
+        var parameters = commit.GetParameters();
+        Assert.Contains(parameters, parameter => parameter.ParameterType == typeof(SecurityPolicyModel));
+        Assert.Contains(parameters, parameter => parameter.Name == "currentAllowedTables");
     }
 
     [Fact]
@@ -171,5 +177,50 @@ public class TypedDmlRuntimeTests
             });
 
         Assert.NotEqual(before, after);
+    }
+
+    private static TypedDmlApprovalSession BuildSession(string policyVersion)
+    {
+        var command = new CompiledSqlCommand(
+            "UPDATE public.users SET status = @p0 WHERE id = @p1",
+            ImmutableArray<SqlParameterValue>.Empty,
+            SqlStatementKind.Update,
+            "command-fingerprint",
+            SqlAgentToolType.Postgres);
+        var match = new CompiledSqlCommand(
+            "SELECT id FROM public.users WHERE id = @p0",
+            ImmutableArray<SqlParameterValue>.Empty,
+            SqlStatementKind.Select,
+            "match-fingerprint",
+            SqlAgentToolType.Postgres);
+        var plan = new ValidatedDmlPlan(
+            DmlOperation.Update,
+            "public.users",
+            command,
+            match,
+            ImmutableArray.Create("id"),
+            DmlRowIdentityAssurance.Strict,
+            "plan-fingerprint",
+            policyVersion,
+            TimeSpan.FromMinutes(5),
+            25);
+        var now = DateTimeOffset.UtcNow;
+        var challenge = new DmlApprovalChallenge(
+            "plan-fingerprint",
+            "rowset-fingerprint",
+            1,
+            policyVersion,
+            now,
+            now.AddMinutes(5),
+            "nonce");
+
+        return new TypedDmlApprovalSession(
+            plan,
+            new DmlPreview(
+                DmlOperation.Update,
+                "public.users",
+                1,
+                ImmutableArray<IReadOnlyDictionary<string, object?>>.Empty,
+                challenge));
     }
 }

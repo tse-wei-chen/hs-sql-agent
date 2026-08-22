@@ -6,9 +6,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
-using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using static ModelContextProtocol.Protocol.ElicitRequestParams;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -24,7 +22,8 @@ public partial class SqlAgentTool(
     IAuditService auditService,
     IDbSemanticService semanticService,
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
-    ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter)
+    ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
+    ITypedQueryRuntime? typedQueryRuntime = null)
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
@@ -32,16 +31,17 @@ public partial class SqlAgentTool(
     private readonly IDbSemanticService _semanticService = semanticService;
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
+    private readonly ITypedQueryRuntime _typedQueryRuntime = typedQueryRuntime ?? new TypedQueryRuntime();
 
     [McpServerTool, Description(@"
-        Execute one SELECT SQL statement. The server parses SQL into a QueryDefinition, validates it,
-        applies table whitelist checks, then executes it through the configured SQL strategy.
+        Execute one SELECT SQL statement. The server parses SQL into a QueryDefinition, binds and validates it,
+        applies the current table authorization and query policy, compiles an immutable command, then executes it.
 
         Use get_schemas/get_tables/get_columns first when you need database structure. Only send a single SELECT statement.
         Supported SQL includes JOINs, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs, subqueries, and UNION/INTERSECT/EXCEPT.
     ")]
     public async Task<string> ExecuteQuerySql(
-        [Description("A single SELECT SQL statement to parse, validate, and execute.")]
+        [Description("A single SELECT SQL statement to parse, validate, compile, and execute.")]
         string sql)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -61,23 +61,27 @@ public partial class SqlAgentTool(
             sql = NormalizeSql(sql);
             definition = SqlDefinitionParser.ParseQuery(sql, dbType);
 
-            ValidateAllTableAccess(definition);
-
             var validationErrors = DefinitionValidator.Validate(definition);
             if (validationErrors.Count > 0)
                 return "Validation failed:\n" + string.Join("\n", validationErrors);
 
-            string result;
+            var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
+            var allowedTables = ResolveTableWhitelist();
+            SqlAgent.Service.Core.Pipeline.QueryExecutionResult execution;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                result = await strategy.ExecuteQueryAsync(
-                    definition,
+                execution = await _typedQueryRuntime.ExecuteAsync(
+                    strategy,
                     sqlConfig.ConnectionString,
-                    ResolveExecutionPolicy());
+                    definition,
+                    dbType,
+                    securityPolicy,
+                    allowedTables);
             }
 
+            var result = JsonSerializer.Serialize(execution.Rows);
             await _auditService.WriteEventAsync(
                 "mcp.query.executed",
                 definition.TableName ?? "unknown",
@@ -87,7 +91,7 @@ public partial class SqlAgentTool(
                     ToolName = "execute_query_sql",
                     Operation = "select",
                     DurationMs = stopwatch.ElapsedMilliseconds,
-                    ReturnedRows = CountJsonRows(result),
+                    ReturnedRows = execution.RowCount,
                     Definition = DescribeQuery(definition)
                 },
                 $"Provider: {dbType}");
@@ -117,9 +121,9 @@ public partial class SqlAgentTool(
         The server parses and validates the statement, compiles an immutable mutation command,
         previews the exact primary-key row set, and presents it for interactive approval.
 
-        Commit revalidates the row identities inside the same transaction before executing the
-        already-approved compiled command. INSERT remains unavailable until its canonical DML
-        semantics are complete.
+        Commit revalidates the current security policy, table authorization and row identities inside
+        the same transaction before executing the already-approved compiled command. INSERT remains
+        unavailable until its production approval semantics are defined.
     ")]
     public async Task<string> ExecuteDmlSql(
         [Description("A single UPDATE or DELETE SQL statement to parse, validate, preview, and approve.")]
@@ -137,9 +141,6 @@ public partial class SqlAgentTool(
             if (string.IsNullOrWhiteSpace(sql))
                 return "Error: SQL is missing.";
 
-            if (server.ClientCapabilities?.Elicitation == null)
-                return "Error: This MCP client does not support the interactive confirmation required for DML execution.";
-
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
@@ -152,103 +153,38 @@ public partial class SqlAgentTool(
             if (dml.Operation is not (DmlOperation.Update or DmlOperation.Delete))
             {
                 throw new NotSupportedException(
-                    "The production typed DML path currently supports UPDATE and DELETE only. INSERT remains fail-closed until its canonical semantics are complete.");
+                    "The production typed DML path currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
             }
 
             var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-            var runtime = new TypedDmlRuntime();
-            var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
-            var allowedTables = ResolveTableWhitelist();
+            var flow = new TypedDmlApprovalFlow(
+                new TypedDmlRuntime(),
+                _securityPolicyRuntimeState,
+                _sqlConcurrencyLimiter,
+                ResolveTableWhitelist);
+            var execution = await flow.ExecuteAsync(
+                strategy,
+                sqlConfig.ConnectionString,
+                dml,
+                new McpDmlApprovalClient(server),
+                $"{dml.Operation} on `{dml.TableName}`",
+                cancellationToken);
 
-            TypedDmlApprovalSession session;
-            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
+            approvalWaitDurationMs = execution.ApprovalWaitDurationMs;
+            affectedRowCount = execution.AffectedRows;
+            if (!execution.Committed)
             {
-                if (lease is null)
-                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                session = await runtime.PreviewAsync(
-                    strategy,
-                    sqlConfig.ConnectionString,
-                    dml,
-                    securityPolicy,
-                    allowedTables,
-                    cancellationToken);
-            }
-
-            affectedRowCount = session.Preview.AffectedRows;
-            var affectedRows = session.Preview.AffectedRows.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var preview = JsonSerializer.Serialize(session.Preview.Rows);
-
-            var elicitSchema = new RequestSchema
-            {
-                Properties =
-                {
-                    ["approve"] = new BooleanSchema
-                    {
-                        Title = "Approve execution",
-                        Description =
-                            $"This will **{dml.Operation.ToString().ToUpperInvariant()} {affectedRows} row(s)** " +
-                            $"in `{dml.TableName}`."
-                    }
-                }
-            };
-
-            ElicitResult elicitResult;
-            var approvalStopwatch = Stopwatch.StartNew();
-            try
-            {
-                elicitResult = await server.ElicitAsync(new ElicitRequestParams
-                {
-                    Message = $"## {dml.Operation} on `{dml.TableName}`\n\n" +
-                              $"**{affectedRows} row(s) affected**\n\n" +
-                              $"### Impact preview\n\n{preview}\n\n" +
-                              $"### SQL\n\n```sql\n{sql}\n```",
-                    RequestedSchema = elicitSchema
-                }, cancellationToken);
-            }
-            finally
-            {
-                approvalWaitDurationMs += approvalStopwatch.ElapsedMilliseconds;
-            }
-
-            if (elicitResult.Action != "accept" || elicitResult.Content?.TryGetValue("approve", out var approveEl) != true || approveEl.ValueKind != JsonValueKind.True)
-            {
+                var cancelled = execution.Result.Contains("cancelled", StringComparison.OrdinalIgnoreCase);
                 await WriteDmlAuditAsync(
                     dml,
-                    "cancelled",
-                    "declined",
+                    cancelled ? "cancelled" : "failed",
+                    cancelled ? "declined" : "not-completed",
                     stopwatch,
                     approvalWaitDurationMs,
                     affectedRowCount,
-                    $"Operation: {dml.Operation} (cancelled through MCP interaction)",
+                    execution.Result,
                     cancellationToken);
-                return "DML execution cancelled by user.";
-            }
-
-            DmlCommitResult commitResult;
-            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
-            {
-                if (lease is null)
-                    throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                commitResult = await runtime.CommitAsync(
-                    strategy,
-                    sqlConfig.ConnectionString,
-                    session,
-                    cancellationToken);
-            }
-
-            affectedRowCount = commitResult.AffectedRows;
-            if (!commitResult.Committed)
-            {
-                await WriteDmlAuditAsync(
-                    dml,
-                    "failed",
-                    "interactive-accepted",
-                    stopwatch,
-                    approvalWaitDurationMs,
-                    affectedRowCount,
-                    commitResult.Message,
-                    cancellationToken);
-                return commitResult.Message;
+                return execution.Result;
             }
 
             await WriteDmlAuditAsync(
@@ -258,9 +194,9 @@ public partial class SqlAgentTool(
                 stopwatch,
                 approvalWaitDurationMs,
                 affectedRowCount,
-                $"Operation: {dml.Operation} (committed after typed row-set revalidation)",
+                $"Operation: {dml.Operation} (committed after typed policy and row-set revalidation)",
                 cancellationToken);
-            return $"Success | affectedRows={commitResult.AffectedRows} | {commitResult.Message}";
+            return execution.Result;
         }
         catch (Exception ex)
         {
@@ -524,21 +460,6 @@ public partial class SqlAgentTool(
         return new SqlRuntimeConfig();
     }
 
-    private SqlExecutionPolicy ResolveExecutionPolicy()
-    {
-        var policy = _securityPolicyRuntimeState.GetCurrent();
-        return new SqlExecutionPolicy
-        {
-            QueryMaxRows = policy.QueryMaxRows,
-            QueryTimeoutSeconds = policy.QueryTimeoutSeconds,
-            RequireWhereForUpdate = policy.RequireWhereForUpdate,
-            RequireWhereForDelete = policy.RequireWhereForDelete,
-            AllowFullTableUpdate = policy.AllowFullTableUpdate,
-            AllowFullTableDelete = policy.AllowFullTableDelete,
-            DmlMaxAffectedRows = policy.DmlMaxAffectedRows
-        };
-    }
-
     private async Task WriteDmlAuditAsync(
         DmlDefinition dml,
         string result,
@@ -595,21 +516,6 @@ public partial class SqlAgentTool(
 
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
         => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
-
-    private static int? CountJsonRows(string json)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(json);
-            return document.RootElement.ValueKind == JsonValueKind.Array
-                ? document.RootElement.GetArrayLength()
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
 
     private static string DescribeQuery(QueryDefinition definition)
         => JsonSerializer.Serialize(new
@@ -675,18 +581,6 @@ public partial class SqlAgentTool(
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         CollectReferencesAndAliases(tableName, joins, combineConditions, cteConditions, fromQuery, selectColumns, whereConditions, referenced, aliases);
-        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
-        if (violations.Count > 0)
-            throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
-    }
-
-    private void ValidateAllTableAccess(QueryDefinition queryDef)
-    {
-        var whitelist = ResolveTableWhitelist();
-        if (whitelist is null or { Count: 0 }) return;
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        CollectFromQueryDefinition(queryDef, referenced, aliases);
         var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
