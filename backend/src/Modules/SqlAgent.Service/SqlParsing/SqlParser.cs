@@ -1594,8 +1594,8 @@ public class SqlParser(Token[] tokens)
             if (sign.Value == "+") return value;
             return value switch
             {
-                int integer => -integer,
-                decimal decimalValue => -decimalValue,
+                int integer => (object)-integer,
+                decimal decimalValue => (object)-decimalValue,
                 _ => throw new SqlParseException($"Unsupported signed numeric literal at position {sign.Pos}.")
             };
         }
