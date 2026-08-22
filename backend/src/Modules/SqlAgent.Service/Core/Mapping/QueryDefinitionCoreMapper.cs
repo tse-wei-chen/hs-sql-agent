@@ -143,25 +143,70 @@ public static class QueryDefinitionCoreMapper
         };
     }
 
-    private static FunctionCallExpr MapFunction(
+    private static SqlExpr MapFunction(
         string name,
         IEnumerable<SelectCondition>? arguments,
         bool distinct,
         IReadOnlyCollection<WhereCondition>? filter,
         WindowDefinition? window)
     {
-        if (filter is { Count: > 0 })
-            throw new InvalidOperationException(
-                $"Function FILTER is not yet represented in the Core AST for '{name}'.");
-        if (window is not null)
-            throw new InvalidOperationException(
-                $"Window specification is not yet represented in the Core AST for '{name}'.");
-
-        return new FunctionCallExpr(
+        SqlExpr result = new FunctionCallExpr(
             Identifier(name),
             arguments?.Select(MapExpr).ToImmutableArray() ?? ImmutableArray<SqlExpr>.Empty,
             distinct,
             Unknown);
+
+        if (filter is { Count: > 0 })
+        {
+            var predicate = MapWhereList(filter.ToList())
+                ?? throw new InvalidOperationException($"Function FILTER for '{name}' cannot be empty.");
+            result = new FilterExpr(result, predicate, Unknown);
+        }
+
+        if (window is not null)
+            result = new WindowedExpr(result, MapWindow(window), Unknown);
+
+        return result;
+    }
+
+    private static WindowSpec MapWindow(WindowDefinition window) =>
+        new(
+            window.PartitionBy?.Select(MapGroupBy).ToImmutableArray()
+                ?? ImmutableArray<SqlExpr>.Empty,
+            MapOrderBy(window.OrderBy),
+            window.Frame is null ? null : MapWindowFrame(window.Frame),
+            Unknown);
+
+    private static WindowFrame MapWindowFrame(WindowFrameDefinition frame) =>
+        new(
+            frame.Unit switch
+            {
+                WindowFrameUnit.Rows => WindowFrameUnitKind.Rows,
+                WindowFrameUnit.Range => WindowFrameUnitKind.Range,
+                _ => throw new ArgumentOutOfRangeException(nameof(frame.Unit))
+            },
+            MapWindowBound(frame.Start),
+            frame.End is null ? null : MapWindowBound(frame.End),
+            Unknown);
+
+    private static WindowFrameBoundCore MapWindowBound(WindowFrameBound bound)
+    {
+        var kind = bound.Kind switch
+        {
+            WindowFrameBoundKind.UnboundedPreceding => WindowFrameBoundKindCore.UnboundedPreceding,
+            WindowFrameBoundKind.Preceding => WindowFrameBoundKindCore.Preceding,
+            WindowFrameBoundKind.CurrentRow => WindowFrameBoundKindCore.CurrentRow,
+            WindowFrameBoundKind.Following => WindowFrameBoundKindCore.Following,
+            WindowFrameBoundKind.UnboundedFollowing => WindowFrameBoundKindCore.UnboundedFollowing,
+            _ => throw new ArgumentOutOfRangeException(nameof(bound.Kind))
+        };
+        if (kind is WindowFrameBoundKindCore.Preceding or WindowFrameBoundKindCore.Following
+            && bound.Offset is null or < 0)
+            throw new InvalidOperationException($"Window frame bound '{bound.Kind}' requires a non-negative offset.");
+        if (kind is not (WindowFrameBoundKindCore.Preceding or WindowFrameBoundKindCore.Following)
+            && bound.Offset is not null)
+            throw new InvalidOperationException($"Window frame bound '{bound.Kind}' must not carry an offset.");
+        return new WindowFrameBoundCore(kind, bound.Offset, Unknown);
     }
 
     private static SqlExpr? MapWhereList(IReadOnlyList<WhereCondition>? conditions)

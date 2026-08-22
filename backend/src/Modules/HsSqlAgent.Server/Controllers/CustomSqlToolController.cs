@@ -101,11 +101,16 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
     public async Task<IActionResult> Publish(
         int id,
         [FromServices] ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+        [FromServices] IDbManagementService dbManagementService,
         CancellationToken cancellationToken)
     {
         var tool = await toolService.GetToolByIdAsync(id);
         if (tool == null) return NotFound();
-        var validationError = ValidateDefinition(tool, securityPolicyRuntimeState.GetCurrent());
+        var validationError = await ValidateDefinitionAsync(
+            tool,
+            securityPolicyRuntimeState.GetCurrent(),
+            dbManagementService,
+            cancellationToken);
         if (validationError != null) return BadRequest(validationError);
 
         try
@@ -141,20 +146,24 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         int id,
         int revisionId,
         [FromServices] ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+        [FromServices] IDbManagementService dbManagementService,
         CancellationToken cancellationToken)
     {
         try
         {
+            var current = await toolService.GetToolByIdAsync(id);
+            if (current == null) return NotFound();
             var target = (await toolService.GetRevisionsAsync(id, cancellationToken))
                 .FirstOrDefault(x => x.Id == revisionId);
             if (target == null) return NotFound(new { error = "The requested revision does not belong to this tool." });
-            var validationError = ValidateDefinition(new CustomSqlTool
+            var validationError = await ValidateDefinitionAsync(new CustomSqlTool
             {
                 Name = target.Name,
                 SqlTemplate = target.SqlTemplate,
                 Type = target.Type,
-                ParametersJson = target.ParametersJson
-            }, securityPolicyRuntimeState.GetCurrent());
+                ParametersJson = target.ParametersJson,
+                DbManagementId = current.DbManagementId
+            }, securityPolicyRuntimeState.GetCurrent(), dbManagementService, cancellationToken);
             if (validationError != null) return BadRequest(validationError);
 
             var rolledBack = await toolService.RollbackAsync(id, revisionId, CurrentActor(), cancellationToken);
@@ -177,16 +186,29 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         }
     }
 
-    private static object? ValidateDefinition(CustomSqlTool tool, SecurityPolicyModel? policy = null)
+    private static async Task<object?> ValidateDefinitionAsync(
+        CustomSqlTool tool,
+        SecurityPolicyModel? policy,
+        IDbManagementService dbManagementService,
+        CancellationToken cancellationToken)
     {
         var draftError = ValidateDraft(tool);
         if (draftError != null) return draftError;
+        if (tool.DbManagementId is null)
+            return new { error = "A target database is required for SQL validation." };
+
+        var db = await dbManagementService.GetDbByIdAsync(tool.DbManagementId.Value, false, cancellationToken);
+        if (db == null)
+            return new { error = $"Database with ID {tool.DbManagementId} not found." };
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
+            return new { error = $"Invalid SQL provider '{db.SqlProvider}'." };
+
         try
         {
             var sql = CustomToolSqlTemplate.RenderForValidation(tool.SqlTemplate, tool.ParametersJson);
             var errors = IsDml(tool)
-                ? ValidateDmlDefinition(SqlDefinitionParser.ParseDml(sql), policy)
-                : DefinitionValidator.Validate(SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql)));
+                ? ValidateDmlDefinition(SqlDefinitionParser.ParseDml(sql, dbType), policy)
+                : DefinitionValidator.Validate(SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql), dbType));
 
             return errors.Count == 0
                 ? null
@@ -252,8 +274,6 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         var tool = await toolService.GetToolByIdAsync(request.ToolId);
         if (tool == null) return NotFound(new { error = $"Custom tool {request.ToolId} was not found." });
         if (tool.DbManagementId is null) return BadRequest(new { error = "The custom tool is not bound to a database." });
-        var definitionError = ValidateDefinition(tool, securityPolicyRuntimeState.GetCurrent());
-        if (definitionError != null) return BadRequest(definitionError);
 
         var isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);
         var isDml = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
@@ -267,6 +287,13 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
 
         if (!Enum.TryParse<SqlAgentToolType>(dbPwd.SqlProvider, true, out var dbType))
             return BadRequest(new { error = $"Invalid SQL provider '{dbPwd.SqlProvider}'." });
+
+        var definitionError = await ValidateDefinitionAsync(
+            tool,
+            securityPolicyRuntimeState.GetCurrent(),
+            dbManagementService,
+            cancellationToken);
+        if (definitionError != null) return BadRequest(definitionError);
 
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(dbPwd.PasswordHash, hmacSecret);

@@ -40,16 +40,54 @@ public class CustomSqlToolControllerTests
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        var dbService = new Mock<IDbManagementService>();
+        dbService.Setup(x => x.GetDbByIdAsync(1, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DbManagementVM { Id = 1, SqlProvider = "Postgres" });
 
         var result = await controller.Publish(
             tool.Id,
             policy.Object,
+            dbService.Object,
             TestContext.Current.CancellationToken);
 
         Assert.IsType<BadRequestObjectResult>(result);
         _toolServiceMock.Verify(
             s => s.PublishAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Publish_ShouldUseBoundDatabaseDialect()
+    {
+        var controller = CreateController();
+        var tool = new CustomSqlTool
+        {
+            Id = 11,
+            Name = "provider_query",
+            Description = "Provider aware",
+            Type = "Query",
+            SqlTemplate = "SELECT TOP 1 id FROM users",
+            DbManagementId = 2
+        };
+        _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
+        _toolServiceMock.Setup(s => s.PublishAsync(tool.Id, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tool);
+        var policy = new Mock<ISecurityPolicyRuntimeState>();
+        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        var dbService = new Mock<IDbManagementService>();
+        dbService.Setup(x => x.GetDbByIdAsync(2, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DbManagementVM { Id = 2, SqlProvider = "MsSqlServer" });
+
+        var result = await controller.Publish(
+            tool.Id,
+            policy.Object,
+            dbService.Object,
+            TestContext.Current.CancellationToken);
+
+        Assert.IsType<OkObjectResult>(result);
+        _toolServiceMock.Verify(
+            s => s.PublishAsync(tool.Id, It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -68,6 +106,8 @@ public class CustomSqlToolControllerTests
         };
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
         var dbService = new Mock<IDbManagementService>();
+        dbService.Setup(x => x.GetDbByIdAsync(3, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DbManagementVM { Id = 3, SqlProvider = "Postgres" });
         dbService.Setup(x => x.GetDbByIdAsync(3, true, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DbManagementPwdVM
             {

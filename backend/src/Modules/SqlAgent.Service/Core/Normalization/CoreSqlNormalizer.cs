@@ -101,6 +101,15 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             })
             .ToImmutableArray();
 
+    private WindowSpec NormalizeWindow(WindowSpec window, NormalizationContext context) =>
+        window with
+        {
+            PartitionBy = window.PartitionBy
+                .Select(expression => NormalizeExpr(expression, context))
+                .ToImmutableArray(),
+            OrderBy = NormalizeOrderBy(window.OrderBy, context)
+        };
+
     private SqlExpr NormalizeExpr(SqlExpr expression, NormalizationContext context)
     {
         return expression switch
@@ -121,6 +130,16 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
                 Right = NormalizeExpr(binary.Right, context)
             },
             FunctionCallExpr function => NormalizeFunction(function, context),
+            FilterExpr filter => filter with
+            {
+                Expression = NormalizeExpr(filter.Expression, context),
+                Predicate = NormalizeExpr(filter.Predicate, context)
+            },
+            WindowedExpr windowed => windowed with
+            {
+                Expression = NormalizeExpr(windowed.Expression, context),
+                Window = NormalizeWindow(windowed.Window, context)
+            },
             CastExpr cast => cast with
             {
                 Expression = NormalizeExpr(cast.Expression, context),
