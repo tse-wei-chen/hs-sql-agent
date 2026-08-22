@@ -6,6 +6,7 @@ using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 using SqlKata;
 using SqlKata.Compilers;
 
@@ -108,6 +109,16 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
         foreach (var item in statement.Select)
         {
+            if (item.Expression is SubqueryExpr subquery)
+            {
+                query.Select(new QueryColumn
+                {
+                    Query = BuildQuery(subquery.Query, compiler),
+                    Alias = item.Alias
+                });
+                continue;
+            }
+
             var rendered = RenderExpression(item.Expression, compiler);
             query.Select(new RawColumn
             {
@@ -274,9 +285,8 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             BoundColumnExpr column => RenderIdentifier(column.Name, compiler),
             ColumnExpr column => RenderIdentifier(column.Name, compiler),
-            LiteralExpr literal => new RenderedExpression("?", [NormalizeBindingValue(literal.Value)]),
-            IntervalExpr => throw new SqlCompilationException(
-                "INTERVAL lowering is not yet implemented in the Core SqlKata backend."),
+            LiteralExpr literal => RenderLiteral(literal, compiler),
+            IntervalExpr interval => RenderInterval(interval, compiler),
             UnaryExpr unary => RenderUnary(unary, compiler),
             BinaryExpr binary => RenderBinary(binary, compiler),
             FunctionCallExpr function => RenderFunction(function, compiler),
@@ -292,6 +302,33 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             _ => throw new SqlCompilationException(
                 $"Unsupported expression during SqlKata lowering: {expression.GetType().Name}")
         };
+    }
+
+    private static RenderedExpression RenderLiteral(LiteralExpr literal, Compiler compiler)
+    {
+        var value = NormalizeBindingValue(literal.Value);
+        if (compiler is FirebirdCompiler)
+        {
+            return value switch
+            {
+                SqlDateValue => new RenderedExpression("CAST(? AS DATE)", [value]),
+                SqlTimeValue => new RenderedExpression("CAST(? AS TIME)", [value]),
+                SqlLocalDateTimeValue or DateTime => new RenderedExpression("CAST(? AS TIMESTAMP)", [value]),
+                SqlOffsetDateTimeValue => new RenderedExpression("CAST(? AS TIMESTAMP WITH TIME ZONE)", [value]),
+                decimal => new RenderedExpression("CAST(? AS DECIMAL(38,10))", [value]),
+                double or float => new RenderedExpression("CAST(? AS DOUBLE PRECISION)", [value]),
+                _ => new RenderedExpression("?", [value])
+            };
+        }
+        return new RenderedExpression("?", [value]);
+    }
+
+    private static RenderedExpression RenderInterval(IntervalExpr interval, Compiler compiler)
+    {
+        if (compiler is not PostgresCompiler)
+            throw new SqlCompilationException("INTERVAL expressions are supported only by PostgreSQL in the Core backend.");
+        var literal = interval.Literal.Replace("'", "''", StringComparison.Ordinal);
+        return new RenderedExpression($"INTERVAL '{literal}'", ImmutableArray<object?>.Empty);
     }
 
     private static RenderedExpression RenderUnary(UnaryExpr unary, Compiler compiler)
@@ -338,6 +375,8 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             "CORE_JSON_EXTRACT" => RenderJsonExtract(function, compiler),
             "CORE_JSON_SET" => RenderJsonSet(function, compiler),
             "CORE_REGEX_MATCH" => RenderRegexMatch(function, compiler),
+            "CORE_CURRENT_DATE" => RenderCurrentDate(function, compiler),
+            "CORE_CURRENT_TIME" => RenderCurrentTime(function, compiler),
             "CORE_CURRENT_TIMESTAMP" => RenderCurrentTimestamp(function),
             "CORE_STRING_AGG" => RenderStringAggregate(function, compiler),
             _ => RenderOrdinaryFunction(function, compiler)
@@ -351,7 +390,15 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             throw new SqlCompilationException($"Unsafe function identifier '{name}'.");
 
         var args = function.Arguments.Select(arg => RenderExpression(arg, compiler)).ToArray();
-        var sql = string.Join(", ", args.Select(arg => arg.Sql));
+        var renderedArgs = args.Select(arg => arg.Sql).ToArray();
+        if (compiler is PostgresCompiler
+            && name.Equals("ROUND", StringComparison.OrdinalIgnoreCase)
+            && args.Length == 2)
+        {
+            renderedArgs[0] = $"CAST({renderedArgs[0]} AS numeric)";
+        }
+
+        var sql = string.Join(", ", renderedArgs);
         if (function.IsDistinct) sql = "DISTINCT " + sql;
         return new RenderedExpression(
             $"{name}({sql})",
@@ -390,7 +437,11 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             SqlServerCompiler => Combine($"DATEDIFF({unit}, {start.Sql}, {end.Sql})", start, end),
             MySqlCompiler => Combine($"TIMESTAMPDIFF({unit}, {start.Sql}, {end.Sql})", start, end),
-            PostgresCompiler or OracleCompiler => Combine($"({end.Sql} - {start.Sql})", end, start),
+            PostgresCompiler => Combine(
+                $"(CAST({end.Sql} AS date) - CAST({start.Sql} AS date))",
+                end,
+                start),
+            OracleCompiler => Combine($"({end.Sql} - {start.Sql})", end, start),
             SqliteCompiler => Combine($"(JULIANDAY({end.Sql}) - JULIANDAY({start.Sql}))", end, start),
             FirebirdCompiler => Combine($"DATEDIFF({unit} FROM {start.Sql} TO {end.Sql})", start, end),
             _ => throw new SqlCompilationException("Unsupported DATEDIFF provider.")
@@ -405,7 +456,8 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         var sql = compiler switch
         {
             SqlServerCompiler or MySqlCompiler => $"{part}({value.Sql})",
-            PostgresCompiler or OracleCompiler or FirebirdCompiler => $"EXTRACT({part} FROM {value.Sql})",
+            PostgresCompiler or OracleCompiler => $"EXTRACT({part} FROM {value.Sql})",
+            FirebirdCompiler => $"EXTRACT({part} FROM CAST({value.Sql} AS DATE))",
             SqliteCompiler => part switch
             {
                 "YEAR" => $"CAST(STRFTIME('%Y', {value.Sql}) AS INTEGER)",
@@ -518,7 +570,29 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             throw new SqlCompilationException("REGEXP_LIKE is not supported by this provider.");
         var value = RenderExpression(function.Arguments[0], compiler);
         var pattern = RenderExpression(function.Arguments[1], compiler);
-        return Combine($"REGEXP_LIKE({value.Sql}, {pattern.Sql})", value, pattern);
+        return compiler switch
+        {
+            PostgresCompiler => Combine($"({value.Sql} ~ {pattern.Sql})", value, pattern),
+            _ => Combine($"REGEXP_LIKE({value.Sql}, {pattern.Sql})", value, pattern)
+        };
+    }
+
+    private static RenderedExpression RenderCurrentDate(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 0);
+        return new RenderedExpression(
+            compiler is SqlServerCompiler ? "CAST(CURRENT_TIMESTAMP AS date)" : "CURRENT_DATE",
+            ImmutableArray<object?>.Empty);
+    }
+
+    private static RenderedExpression RenderCurrentTime(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 0);
+        if (compiler is OracleCompiler)
+            throw new SqlCompilationException("CURRENT_TIME is not supported by Oracle.");
+        return new RenderedExpression(
+            compiler is SqlServerCompiler ? "CAST(CURRENT_TIMESTAMP AS time)" : "CURRENT_TIME",
+            ImmutableArray<object?>.Empty);
     }
 
     private static RenderedExpression RenderCurrentTimestamp(FunctionCallExpr function)
@@ -761,19 +835,28 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static object? NormalizeBindingValue(object? value)
     {
-        if (value is not JsonElement element) return value;
-        return element.ValueKind switch
+        if (value is JsonElement element)
         {
-            JsonValueKind.Null or JsonValueKind.Undefined => null,
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.String => element.GetString(),
-            JsonValueKind.Number when element.TryGetInt32(out var i32) => i32,
-            JsonValueKind.Number when element.TryGetInt64(out var i64) => i64,
-            JsonValueKind.Number when element.TryGetDecimal(out var dec) => dec,
-            JsonValueKind.Number => element.GetDouble(),
-            _ => throw new SqlCompilationException(
-                $"JSON value kind {element.ValueKind} cannot be bound as a scalar SQL parameter.")
+            return element.ValueKind switch
+            {
+                JsonValueKind.Null or JsonValueKind.Undefined => null,
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.String => element.GetString(),
+                JsonValueKind.Number when element.TryGetInt32(out var i32) => i32,
+                JsonValueKind.Number when element.TryGetInt64(out var i64) => i64,
+                JsonValueKind.Number when element.TryGetDecimal(out var dec) => dec,
+                JsonValueKind.Number => element.GetDouble(),
+                _ => throw new SqlCompilationException(
+                    $"JSON value kind {element.ValueKind} cannot be bound as a scalar SQL parameter.")
+            };
+        }
+
+        return value switch
+        {
+            DateTime dateTime when dateTime.Kind != DateTimeKind.Unspecified =>
+                DateTime.SpecifyKind(dateTime, DateTimeKind.Unspecified),
+            _ => value
         };
     }
 
