@@ -52,11 +52,11 @@ public sealed class SqlAstBinder : ISqlBinder
         ImmutableHashSet<string> inheritedCtes,
         BindingState state)
     {
+        var head = BindSelect(query.Head, parentScope, inheritedCtes, state);
         var visibleCtes = inheritedCtes;
         foreach (var cte in query.Head.Ctes)
             visibleCtes = visibleCtes.Add(Name(cte.Name));
 
-        var head = BindSelect(query.Head, parentScope, inheritedCtes, state);
         var operations = query.SetOperations
             .Select(operation => operation with
             {
@@ -78,19 +78,22 @@ public sealed class SqlAstBinder : ISqlBinder
         BindingState state)
     {
         var localCtes = inheritedCtes;
+        var boundCtesBuilder = ImmutableArray.CreateBuilder<CteDefinition>(select.Ctes.Length);
         if (!select.Ctes.IsDefaultOrEmpty)
         {
             state.ContainsCte = true;
             foreach (var cte in select.Ctes)
-                localCtes = localCtes.Add(Name(cte.Name));
-        }
-
-        var boundCtes = select.Ctes
-            .Select(cte => cte with
             {
-                Query = BindStatement(cte.Query, null, localCtes, state)
-            })
-            .ToImmutableArray();
+                // SQL CTEs are visible to definitions that follow them and to the main query.
+                // The legacy DTO does not retain WITH RECURSIVE, so self-recursive references
+                // are deliberately not assumed here: treating them as physical references can
+                // over-restrict authorization, but can never under-count a physical table.
+                var boundQuery = BindStatement(cte.Query, null, localCtes, state);
+                boundCtesBuilder.Add(cte with { Query = boundQuery });
+                localCtes = localCtes.Add(Name(cte.Name));
+            }
+        }
+        var boundCtes = boundCtesBuilder.ToImmutable();
 
         var scope = new BindingScope(state.NextScopeId++, parentScope);
         var boundFrom = select.From is null
