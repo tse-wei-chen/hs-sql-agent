@@ -42,7 +42,7 @@ public sealed class TypedDmlRuntime(
                 "The typed DML runtime currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
         }
 
-        var provider = new LegacySqlProviderAdapter(strategy);
+        var provider = LegacySqlProviderAdapter.Adapt(strategy);
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
@@ -111,7 +111,7 @@ public sealed class TypedDmlRuntime(
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        var provider = new LegacySqlProviderAdapter(strategy);
+        var provider = LegacySqlProviderAdapter.Adapt(strategy);
         if (provider.Type != session.Plan.MutationCommand.TargetProvider)
         {
             throw new InvalidOperationException(
