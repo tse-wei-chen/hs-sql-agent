@@ -20,7 +20,9 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
     private static readonly HashSet<string> PortableFunctions = new(StringComparer.OrdinalIgnoreCase)
     {
         "ABS", "AVG", "COUNT", "MAX", "MIN", "ROUND", "SUM",
-        "LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM", "COALESCE", "NULLIF"
+        "LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM", "NULLIF",
+        "ROW_NUMBER", "RANK", "DENSE_RANK", "LAG", "LEAD",
+        "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE", "NTILE", "PERCENT_RANK", "CUME_DIST"
     };
 
     private readonly IFunctionRegistry _functionRegistry = functionRegistry;
@@ -235,6 +237,12 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             "JSON_EXTRACT" => CanonicalFunction(original, "CORE_JSON_EXTRACT", arguments),
             "JSON_SET" => CanonicalFunction(original, "CORE_JSON_SET", arguments),
             "REGEXP_LIKE" => CanonicalFunction(original, "CORE_REGEX_MATCH", arguments),
+            "CURRENT_DATE" => arguments.Length == 0
+                ? CanonicalFunction(original, "CORE_CURRENT_DATE", arguments)
+                : throw new SqlCompilationException("CURRENT_DATE does not accept arguments."),
+            "CURRENT_TIME" => arguments.Length == 0
+                ? CanonicalFunction(original, "CORE_CURRENT_TIME", arguments)
+                : throw new SqlCompilationException("CURRENT_TIME does not accept arguments."),
             "GETDATE" or "NOW" or "SYSDATE" or "CURRENT_TIMESTAMP" =>
                 arguments.Length == 0
                     ? CanonicalFunction(original, "CORE_CURRENT_TIMESTAMP", arguments)
