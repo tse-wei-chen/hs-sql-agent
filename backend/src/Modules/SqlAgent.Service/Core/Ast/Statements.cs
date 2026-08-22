@@ -54,3 +54,19 @@ public sealed record SelectStatement(
     int? Limit,
     int? Offset,
     SourceSpan Span) : SqlStatement(Span);
+
+public sealed record Assignment(
+    SqlIdentifier Column,
+    SqlExpr Value,
+    SourceSpan Span) : SqlNode(Span);
+
+public sealed record UpdateStatement(
+    NamedTableSource Target,
+    ImmutableArray<Assignment> Assignments,
+    SqlExpr? Predicate,
+    SourceSpan Span) : SqlStatement(Span);
+
+public sealed record DeleteStatement(
+    NamedTableSource Target,
+    SqlExpr? Predicate,
+    SourceSpan Span) : SqlStatement(Span);
