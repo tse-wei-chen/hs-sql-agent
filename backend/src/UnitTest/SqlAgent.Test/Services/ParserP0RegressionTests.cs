@@ -47,7 +47,8 @@ public class ParserP0RegressionTests
     [InlineData("SELECT id FROM users WHERE id IN (other_id)")]
     [InlineData("SELECT id FROM users WHERE id NOT IN (other_id)")]
     [InlineData("SELECT id FROM users WHERE id IN (1, other_id)")]
-    [InlineData("SELECT id FROM users WHERE id IN (-1)")]
+    [InlineData("SELECT id FROM users WHERE id IN (-other_id)")]
+    [InlineData("SELECT id FROM users WHERE id IN (+ABS(1))")]
     public void ParseQuery_InListRejectsAnythingParserCannotRepresentAsScalarLiteral(string sql)
     {
         var error = Assert.Throws<SqlParseException>(() => SqlDefinitionParser.ParseQuery(sql));

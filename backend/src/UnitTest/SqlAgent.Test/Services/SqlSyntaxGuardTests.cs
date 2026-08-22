@@ -38,6 +38,7 @@ public class SqlSyntaxGuardTests
 
     [Theory]
     [InlineData("SELECT * FROM users WHERE id IN (1, 2, 3)")]
+    [InlineData("SELECT * FROM users WHERE id IN (-1, +2, -3.5)")]
     [InlineData("SELECT * FROM users WHERE id IN ('a', 'b')")]
     [InlineData("SELECT * FROM users WHERE id IN (NULL, TRUE, FALSE)")]
     public void Parse_InScalarLiteralList_RemainsSupported(string sql)
@@ -49,7 +50,8 @@ public class SqlSyntaxGuardTests
     }
 
     [Theory]
-    [InlineData("SELECT * FROM users WHERE id IN (-1, +2)")]
+    [InlineData("SELECT * FROM users WHERE id IN (-other_id)")]
+    [InlineData("SELECT * FROM users WHERE id IN (+ABS(1))")]
     [InlineData("SELECT * FROM users WHERE id IN ()")]
     [InlineData("SELECT * FROM users WHERE id IN (1,)")]
     public void Parse_InFormsLegacyParserCannotPreserve_AreRejected(string sql)
