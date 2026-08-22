@@ -1,12 +1,8 @@
 using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using Xunit;
@@ -56,8 +52,7 @@ public class SqliteFixture : IDbFixture
 public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<SqliteStrategy, SqliteFixture>(fixture)
 {
     protected override bool SupportsFormattedDateParsing => false;
-    protected override SqliteStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override SqliteStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "Users";
     protected override string TestOrdersTableName => "Orders";
@@ -151,7 +146,6 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
         Assert.Equal("INTEGER", columns.First(c => c.Column == "Id").Type, ignoreCase: true);
         Assert.Equal("TEXT", columns.First(c => c.Column == "Name").Type, ignoreCase: true);
     }
-
 
     protected override DmlDefinition CreateInsertDml() => new()
     {
@@ -378,8 +372,6 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                     new FieldOrderByCondition { FieldName = "UserId", Direction = SortDirection.Asc }
                 ]
             },
-
-
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -546,7 +538,6 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
 
         Assert.NotNull(rows);
         Assert.Single(rows);
-        // All orders: 150.0 + 200.0 + 50.0 = 400.0. 400.0 * 1.05 = 420.0
         Assert.Equal(420m, rows[0].GetProperty("TotalWithTax").GetDecimal());
     }
 }
