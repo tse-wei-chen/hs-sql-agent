@@ -8,6 +8,7 @@ using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Moq;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -104,56 +105,43 @@ public class CustomSqlToolControllerTests
     }
 
     [Fact]
-    public async Task TestExecute_Dml_ShouldOnlyPerformRollbackDryRun()
+    public async Task TestExecute_Query_UsesTypedRuntimeWithoutLegacyExecution()
     {
         var controller = CreateController();
         var tool = new CustomSqlTool
         {
             Id = 10,
-            Name = "delete_user",
-            Description = "Delete one user",
-            Type = "DML",
-            SqlTemplate = "DELETE FROM users WHERE id = {{id}}",
+            Name = "find_user",
+            Description = "Find one user",
+            Type = "Query",
+            SqlTemplate = "SELECT id FROM users WHERE id = {{id}}",
             ParametersJson = """[{"name":"id","type":"number"}]""",
             DbManagementId = 3
         };
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
-        var dbService = new Mock<IDbManagementService>();
-        dbService.Setup(x => x.GetDbByIdAsync(3, false, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DbManagementVM { Id = 3, SqlProvider = "Postgres" });
-        dbService.Setup(x => x.GetDbByIdAsync(3, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DbManagementPwdVM
-            {
-                Id = 3,
-                SqlProvider = "Postgres",
-                Host = "localhost",
-                Database = "test",
-                Username = "user",
-                PasswordHash = "encrypted"
-            });
-        var crypto = new Mock<ICryptoService>();
-        crypto.Setup(x => x.DecryptText("encrypted", It.IsAny<byte[]>())).Returns("password");
-        var strategy = new Mock<ISqlStrategy>();
-        strategy.Setup(x => x.BuildConnectionString(It.IsAny<BuildDbConnectionModelBase>())).Returns("connection");
-        var observedTokens = new List<string?>();
-        strategy.Setup(x => x.ExecuteDmlAsync(
-                "connection",
-                It.IsAny<DmlDefinition>(),
-                It.IsAny<SqlExecutionPolicy>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<string?, DmlDefinition?, SqlExecutionPolicy?, CancellationToken>((_, dml, _, _) => observedTokens.Add(dml?.ConfirmToken))
-            .ReturnsAsync("Dry Run Result | affectedRows=1 | TokenRequired=secret | Security Note: not committed.");
+        var dbService = CreateDbService(3);
+        var crypto = CreateCrypto();
+        var strategy = CreateStrategy();
         var strategyFactory = new Mock<ISqlStrategyFactory>();
         strategyFactory.Setup(x => x.GetStrategy(SqlAgentToolType.Postgres)).Returns(strategy.Object);
+        var runtimePolicy = new SecurityPolicyModel { QueryMaxRows = 50, QueryTimeoutSeconds = 15 };
         var policy = new Mock<ISecurityPolicyRuntimeState>();
-        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel
-        {
-            AllowFullTableDelete = false,
-            RequireWhereForDelete = true,
-            DmlMaxAffectedRows = 100
-        });
-        var limiter = new Mock<ISqlExecutionConcurrencyLimiter>();
-        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Mock.Of<IAsyncDisposable>());
+        policy.Setup(x => x.GetCurrent()).Returns(runtimePolicy);
+        var limiter = CreateLimiter();
+        var typedQueryRuntime = new Mock<ITypedQueryRuntime>();
+        typedQueryRuntime.Setup(x => x.ExecuteAsync(
+                strategy.Object,
+                "connection",
+                It.Is<QueryDefinition>(q => q.TableName == "users"),
+                SqlAgentToolType.Postgres,
+                runtimePolicy,
+                null,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QueryExecutionResult(
+                [new Dictionary<string, object?> { ["id"] = 1 }],
+                1,
+                TimeSpan.Zero,
+                []));
 
         var result = await controller.TestExecute(
             new CustomToolTestExecuteRequest(tool.Id, new Dictionary<string, object?> { ["id"] = 1 }),
@@ -163,15 +151,67 @@ public class CustomSqlToolControllerTests
             Options.Create(new McpKeySettings { HmacSecretKey = new string('x', 32) }),
             policy.Object,
             limiter.Object,
+            typedQueryRuntime.Object,
             TestContext.Current.CancellationToken);
 
         Assert.IsType<OkObjectResult>(result);
-        Assert.Equal([null], observedTokens);
-        strategy.Verify(x => x.ExecuteDmlAsync(
-            It.IsAny<string>(),
-            It.IsAny<DmlDefinition>(),
+        typedQueryRuntime.VerifyAll();
+        strategy.Verify(x => x.ExecuteQueryAsync(
+            It.IsAny<QueryDefinition>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        strategy.Verify(x => x.ExecuteQueryAsync(
+            It.IsAny<QueryDefinition>(),
+            It.IsAny<string?>(),
             It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TestExecute_InsertDml_FailsClosedWithoutLegacyExecution()
+    {
+        var controller = CreateController();
+        var tool = new CustomSqlTool
+        {
+            Id = 12,
+            Name = "insert_user",
+            Description = "Insert one user",
+            Type = "DML",
+            SqlTemplate = "INSERT INTO users (id) VALUES ({{id}})",
+            ParametersJson = """[{"name":"id","type":"number"}]""",
+            DbManagementId = 3
+        };
+        _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
+        var dbService = CreateDbService(3);
+        var crypto = CreateCrypto();
+        var strategy = CreateStrategy();
+        var strategyFactory = new Mock<ISqlStrategyFactory>();
+        strategyFactory.Setup(x => x.GetStrategy(SqlAgentToolType.Postgres)).Returns(strategy.Object);
+        var policy = new Mock<ISecurityPolicyRuntimeState>();
+        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        var limiter = CreateLimiter();
+
+        var result = await controller.TestExecute(
+            new CustomToolTestExecuteRequest(tool.Id, new Dictionary<string, object?> { ["id"] = 1 }),
+            strategyFactory.Object,
+            dbService.Object,
+            crypto.Object,
+            Options.Create(new McpKeySettings { HmacSecretKey = new string('x', 32) }),
+            policy.Object,
+            limiter.Object,
+            Mock.Of<ITypedQueryRuntime>(),
+            TestContext.Current.CancellationToken);
+
+        Assert.IsType<OkObjectResult>(result);
+        strategy.Verify(x => x.ExecuteDmlAsync(
+            It.IsAny<string?>(),
+            It.IsAny<DmlDefinition?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        strategy.Verify(x => x.ExecuteDmlAsync(
+            It.IsAny<string?>(),
+            It.IsAny<DmlDefinition?>(),
+            It.IsAny<SqlExecutionPolicy>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -236,5 +276,46 @@ public class CustomSqlToolControllerTests
 
         Assert.IsType<CreatedAtActionResult>(result);
         _toolServiceMock.Verify(s => s.CreateToolAsync(tool), Times.Once);
+    }
+
+    private static Mock<IDbManagementService> CreateDbService(int id)
+    {
+        var dbService = new Mock<IDbManagementService>();
+        dbService.Setup(x => x.GetDbByIdAsync(id, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DbManagementVM { Id = id, SqlProvider = "Postgres" });
+        dbService.Setup(x => x.GetDbByIdAsync(id, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DbManagementPwdVM
+            {
+                Id = id,
+                SqlProvider = "Postgres",
+                Host = "localhost",
+                Database = "test",
+                Username = "user",
+                PasswordHash = "encrypted"
+            });
+        return dbService;
+    }
+
+    private static Mock<ICryptoService> CreateCrypto()
+    {
+        var crypto = new Mock<ICryptoService>();
+        crypto.Setup(x => x.DecryptText("encrypted", It.IsAny<byte[]>())).Returns("password");
+        return crypto;
+    }
+
+    private static Mock<ISqlStrategy> CreateStrategy()
+    {
+        var strategy = new Mock<ISqlStrategy>();
+        strategy.SetupGet(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+        strategy.Setup(x => x.BuildConnectionString(It.IsAny<BuildDbConnectionModelBase>())).Returns("connection");
+        return strategy;
+    }
+
+    private static Mock<ISqlExecutionConcurrencyLimiter> CreateLimiter()
+    {
+        var limiter = new Mock<ISqlExecutionConcurrencyLimiter>();
+        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<IAsyncDisposable>());
+        return limiter;
     }
 }
