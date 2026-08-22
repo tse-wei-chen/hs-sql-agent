@@ -6,17 +6,21 @@ using SqlAgent.Service.Core.Compilation;
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
-/// Typed DML approval coordinator. Preview is read-only. Commit opens a transaction, re-queries
-/// the matched row identity set, compares the approved challenge, then executes exactly the
-/// compiled mutation command. A count match alone is insufficient in Strict mode.
+/// Typed DML approval coordinator. Preview is read-only. Commit consumes a one-time approval,
+/// opens a transaction, re-queries the matched row identity set, compares the approved challenge,
+/// then executes exactly the compiled mutation command. Count equality alone is insufficient in
+/// Strict mode.
 /// </summary>
 public sealed class DmlCoordinator(
     IDbConnectionFactory connectionFactory,
-    TimeProvider? timeProvider = null) : IDmlCoordinator
+    TimeProvider? timeProvider = null,
+    IDmlApprovalChallengeStore? challengeStore = null) : IDmlCoordinator
 {
     private const int PreviewRowLimit = 20;
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly IDmlApprovalChallengeStore _challengeStore =
+        challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
 
     public async Task<DmlPreview> PreviewAsync(
         string connectionString,
@@ -52,6 +56,8 @@ public sealed class DmlCoordinator(
             now.Add(ttl),
             Guid.NewGuid().ToString("N"));
 
+        _challengeStore.Register(challenge);
+
         return new DmlPreview(
             plan.Operation,
             plan.TableName,
@@ -69,6 +75,12 @@ public sealed class DmlCoordinator(
         ValidatePlan(plan);
         ValidateChallenge(plan, approvedChallenge);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        if (!_challengeStore.TryConsume(approvedChallenge))
+        {
+            throw new InvalidOperationException(
+                "DML approval challenge is unknown, modified, expired, or has already been consumed.");
+        }
 
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
