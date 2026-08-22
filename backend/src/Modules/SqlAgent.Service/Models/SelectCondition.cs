@@ -123,8 +123,12 @@ public class SubQuerySelectCondition : SelectCondition
     public string TableName { get; set; } = string.Empty;
     [Description("The subquery to select from (Optional). If set, its results will be treated as the source table.")]
     public QueryDefinition? FromQuery { get; set; }
-    [Description("Alias for the source table or subquery (Optional). CRITICAL: If you declare an alias here (e.g., 'p'), you MUST use exactly this alias prefix in all SelectColumns, Joins, and WhereConditions. Do not mix aliases! Example: set TableName='products' and Alias='p'.")]
-    public new string? Alias { get; set; }
+    [Description("Alias for the source table/subquery and the scalar projection (Optional). CRITICAL: If you declare an alias here (e.g., 'p'), you MUST use exactly this alias prefix in all SelectColumns, Joins, and WhereConditions. Do not mix aliases!")]
+    public new string? Alias
+    {
+        get => base.Alias;
+        set => base.Alias = value;
+    }
     [Description("When true, only returns unique rows.")]
     public bool Distinct { get; set; }
     [Description("List of columns to select.")]

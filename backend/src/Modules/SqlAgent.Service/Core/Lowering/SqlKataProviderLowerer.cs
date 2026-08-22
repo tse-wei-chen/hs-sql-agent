@@ -111,10 +111,14 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             if (item.Expression is SubqueryExpr subquery)
             {
-                query.Select(new QueryColumn
+                var rendered = RenderSubquery(subquery.Query, compiler);
+                var expression = rendered.Sql;
+                if (!string.IsNullOrWhiteSpace(item.Alias))
+                    expression += $" AS {RenderAlias(item.Alias, compiler)}";
+                query.Select(new RawColumn
                 {
-                    Query = BuildQuery(subquery.Query, compiler),
-                    Alias = item.Alias
+                    Expression = expression,
+                    Bindings = rendered.Bindings.ToArray()
                 });
                 continue;
             }
@@ -309,15 +313,26 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         var value = NormalizeBindingValue(literal.Value);
         if (compiler is FirebirdCompiler)
         {
-            return value switch
+            return literal.Value switch
             {
                 SqlDateValue => new RenderedExpression("CAST(? AS DATE)", [value]),
                 SqlTimeValue => new RenderedExpression("CAST(? AS TIME)", [value]),
-                SqlLocalDateTimeValue or DateTime => new RenderedExpression("CAST(? AS TIMESTAMP)", [value]),
+                SqlLocalDateTimeValue => new RenderedExpression("CAST(? AS TIMESTAMP)", [value]),
                 SqlOffsetDateTimeValue => new RenderedExpression("CAST(? AS TIMESTAMP WITH TIME ZONE)", [value]),
-                decimal => new RenderedExpression("CAST(? AS DECIMAL(38,10))", [value]),
-                double or float => new RenderedExpression("CAST(? AS DOUBLE PRECISION)", [value]),
-                _ => new RenderedExpression("?", [value])
+                _ => value switch
+                {
+                    DateOnly => new RenderedExpression("CAST(? AS DATE)", [value]),
+                    TimeOnly or TimeSpan => new RenderedExpression("CAST(? AS TIME)", [value]),
+                    DateTime => new RenderedExpression("CAST(? AS TIMESTAMP)", [value]),
+                    DateTimeOffset => new RenderedExpression("CAST(? AS TIMESTAMP WITH TIME ZONE)", [value]),
+                    string => new RenderedExpression("CAST(? AS VARCHAR(32765))", [value]),
+                    bool => new RenderedExpression("CAST(? AS BOOLEAN)", [value]),
+                    byte or sbyte or short or ushort or int => new RenderedExpression("CAST(? AS INTEGER)", [value]),
+                    uint or long => new RenderedExpression("CAST(? AS BIGINT)", [value]),
+                    decimal => new RenderedExpression("CAST(? AS DECIMAL(38,10))", [value]),
+                    double or float => new RenderedExpression("CAST(? AS DOUBLE PRECISION)", [value]),
+                    _ => new RenderedExpression("?", [value])
+                }
             };
         }
         return new RenderedExpression("?", [value]);
@@ -789,9 +804,26 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 throw new SqlCompilationException($"Unsafe SQL identifier part '{part.Value}'.");
             }
         }
+
+        var parts = identifier.Parts.Select(part =>
+            part.Value == "*"
+                ? part.Value
+                : compiler is PostgresCompiler && !part.WasQuoted
+                    ? part.Value.ToLowerInvariant()
+                    : part.Value);
         return new RenderedExpression(
-            compiler.Wrap(IdentifierText(identifier)),
+            compiler.Wrap(string.Join('.', parts)),
             ImmutableArray<object?>.Empty);
+    }
+
+    private static string RenderAlias(string alias, Compiler compiler)
+    {
+        var trimmed = alias.Trim();
+        if (!Regex.IsMatch(trimmed, @"^[A-Za-z_][A-Za-z0-9_$]*$", RegexOptions.CultureInvariant))
+            throw new SqlCompilationException($"Unsafe projection alias '{alias}'.");
+        if (compiler is PostgresCompiler)
+            trimmed = trimmed.ToLowerInvariant();
+        return compiler.Wrap(trimmed);
     }
 
     private static void RequireArguments(FunctionCallExpr function, int count)
@@ -854,6 +886,10 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
         return value switch
         {
+            SqlDateValue date => date.Value.ToDateTime(TimeOnly.MinValue),
+            SqlTimeValue time => time.Value.ToTimeSpan(),
+            SqlLocalDateTimeValue local => DateTime.SpecifyKind(local.Value, DateTimeKind.Unspecified),
+            SqlOffsetDateTimeValue offset => offset.Value,
             DateTime dateTime when dateTime.Kind != DateTimeKind.Unspecified =>
                 DateTime.SpecifyKind(dateTime, DateTimeKind.Unspecified),
             _ => value
