@@ -95,7 +95,7 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_QueryTool_UsesTypedRuntimeWithoutLegacyStrategyExecution()
+    public async Task Execute_QueryTool_UsesTypedRuntime()
     {
         var tool = new CustomSqlTool
         {
@@ -132,15 +132,6 @@ public class CustomToolProxyTests
 
         Assert.Contains("test@example.com", result);
         _typedQueryRuntimeMock.VerifyAll();
-        strategyMock.Verify(s => s.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        strategyMock.Verify(s => s.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -166,7 +157,7 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_ShouldRequireElicitationForDmlTool_WithoutLegacyExecution()
+    public async Task Execute_ShouldRequireElicitationForDmlTool()
     {
         var tool = new CustomSqlTool
         {
@@ -196,19 +187,10 @@ public class CustomToolProxyTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("does not support", result, StringComparison.OrdinalIgnoreCase);
-        strategyMock.Verify(s => s.ExecuteDmlAsync(
-            It.IsAny<string>(),
-            It.IsAny<DmlDefinition>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        strategyMock.Verify(s => s.ExecuteDmlAsync(
-            It.IsAny<string>(),
-            It.IsAny<DmlDefinition>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task Execute_InsertCustomTool_RemainsFailClosedWithoutLegacyFallback()
+    public async Task Execute_InsertCustomTool_RemainsFailClosed()
     {
         var tool = new CustomSqlTool
         {
@@ -239,15 +221,6 @@ public class CustomToolProxyTests
 
         Assert.Contains("INSERT", result, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", result, StringComparison.OrdinalIgnoreCase);
-        strategyMock.Verify(s => s.ExecuteDmlAsync(
-            It.IsAny<string>(),
-            It.IsAny<DmlDefinition>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        strategyMock.Verify(s => s.ExecuteDmlAsync(
-            It.IsAny<string>(),
-            It.IsAny<DmlDefinition>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

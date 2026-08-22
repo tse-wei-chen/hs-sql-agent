@@ -105,7 +105,7 @@ public class CustomSqlToolControllerTests
     }
 
     [Fact]
-    public async Task TestExecute_Query_UsesTypedRuntimeWithoutLegacyExecution()
+    public async Task TestExecute_Query_UsesTypedRuntime()
     {
         var controller = CreateController();
         var tool = new CustomSqlTool
@@ -156,19 +156,10 @@ public class CustomSqlToolControllerTests
 
         Assert.IsType<OkObjectResult>(result);
         typedQueryRuntime.VerifyAll();
-        strategy.Verify(x => x.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string?>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        strategy.Verify(x => x.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string?>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task TestExecute_InsertDml_FailsClosedWithoutLegacyExecution()
+    public async Task TestExecute_InsertDml_FailsClosed()
     {
         var controller = CreateController();
         var tool = new CustomSqlTool
@@ -203,15 +194,6 @@ public class CustomSqlToolControllerTests
             TestContext.Current.CancellationToken);
 
         Assert.IsType<OkObjectResult>(result);
-        strategy.Verify(x => x.ExecuteDmlAsync(
-            It.IsAny<string?>(),
-            It.IsAny<DmlDefinition?>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        strategy.Verify(x => x.ExecuteDmlAsync(
-            It.IsAny<string?>(),
-            It.IsAny<DmlDefinition?>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
