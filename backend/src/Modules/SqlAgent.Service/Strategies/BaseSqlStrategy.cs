@@ -3,7 +3,7 @@ using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies.Adapters;
+using SqlAgent.Service.Services;
 
 namespace SqlAgent.Service.Strategies;
 
