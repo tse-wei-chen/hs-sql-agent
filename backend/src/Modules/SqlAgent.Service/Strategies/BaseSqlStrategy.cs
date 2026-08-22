@@ -113,11 +113,12 @@ public abstract class BaseSqlStrategy(
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        var command = CompileCore(definition, policy);
+        var provider = new LegacySqlProviderAdapter(this);
+        var executor = new CompiledSqlCommandExecutor(provider.Connections);
+
         try
         {
-            var command = CompileCore(definition, policy);
-            var provider = new LegacySqlProviderAdapter(this);
-            var executor = new CompiledSqlCommandExecutor(provider.Connections);
             var execution = await executor.ExecuteQueryAsync(
                 command,
                 connectionString,
