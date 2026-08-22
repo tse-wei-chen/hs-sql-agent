@@ -20,9 +20,16 @@ public sealed class CompiledSqlCommandExecutor(IDbConnectionFactory connectionFa
 {
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
 
+    public Task<QueryExecutionResult> ExecuteQueryAsync(
+        CompiledSqlCommand command,
+        string connectionString,
+        CancellationToken cancellationToken = default) =>
+        ExecuteQueryAsync(command, connectionString, 30, cancellationToken);
+
     public async Task<QueryExecutionResult> ExecuteQueryAsync(
         CompiledSqlCommand command,
         string connectionString,
+        int commandTimeoutSeconds,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -44,6 +51,7 @@ public sealed class CompiledSqlCommandExecutor(IDbConnectionFactory connectionFa
             new CommandDefinition(
                 command.Sql,
                 parameters,
+                commandTimeout: NormalizeTimeout(commandTimeoutSeconds),
                 cancellationToken: cancellationToken));
         stopwatch.Stop();
 
@@ -57,6 +65,9 @@ public sealed class CompiledSqlCommandExecutor(IDbConnectionFactory connectionFa
             stopwatch.Elapsed,
             []);
     }
+
+    private static int NormalizeTimeout(int timeoutSeconds) =>
+        timeoutSeconds > 0 ? timeoutSeconds : 30;
 
     private static IReadOnlyDictionary<string, object?> ToReadOnlyRow(dynamic row)
     {
