@@ -188,13 +188,10 @@ public static class QueryDefinitionCoreMapper
                 NormalizeComparisonOperator(compare.Operator),
                 new ColumnExpr(Identifier(compare.RightFieldName), Unknown),
                 Unknown),
-            ExpressionWhereCondition expression => new BinaryExpr(
-                MapExpr(expression.LeftExpression),
-                NormalizeComparisonOperator(expression.Operator),
-                expression.RightExpression is null
-                    ? new LiteralExpr(null, Unknown)
-                    : MapExpr(expression.RightExpression),
-                Unknown),
+            ExpressionWhereCondition expression => MapExpressionPredicate(
+                expression.LeftExpression,
+                expression.Operator,
+                expression.RightExpression),
             GroupWhereCondition group => MapWhereList(group.Groups)
                 ?? throw new InvalidOperationException("Empty WHERE groups are not valid Core predicates."),
             SubQueryWhereCondition subquery => MapSubQueryWhere(subquery),
@@ -203,6 +200,23 @@ public static class QueryDefinitionCoreMapper
         };
 
         return condition.IsNot ? new UnaryExpr("NOT", result, Unknown) : result;
+    }
+
+    private static SqlExpr MapExpressionPredicate(
+        SelectCondition left,
+        string opText,
+        SelectCondition? right)
+    {
+        var op = NormalizeComparisonOperator(opText);
+        var leftExpr = MapExpr(left);
+        if (right is null)
+        {
+            if (op is "IS" or "IS NOT")
+                return new IsNullExpr(leftExpr, op == "IS NOT", Unknown);
+            throw new InvalidOperationException(
+                $"Predicate operator '{op}' requires a right-hand expression.");
+        }
+        return new BinaryExpr(leftExpr, op, MapExpr(right), Unknown);
     }
 
     private static SqlExpr MapBasicWhere(BasicWhereCondition basic)
@@ -239,8 +253,11 @@ public static class QueryDefinitionCoreMapper
                 Unknown);
         }
 
-        if (op is "IS" or "IS NOT" && basic.Value is null)
+        if ((op is "IS" or "IS NOT") && basic.Value is null)
             return new IsNullExpr(field, op == "IS NOT", Unknown);
+
+        if (op is "IS" or "IS NOT")
+            throw new InvalidOperationException($"{op} currently supports NULL only in the Core AST.");
 
         return new BinaryExpr(field, op, new LiteralExpr(basic.Value, Unknown), Unknown);
     }
@@ -295,31 +312,12 @@ public static class QueryDefinitionCoreMapper
     {
         SqlExpr result = condition switch
         {
-            BasicHavingCondition basic => new BinaryExpr(
-                new ColumnExpr(Identifier(basic.FieldName), Unknown),
-                NormalizeComparisonOperator(basic.Operator),
-                new LiteralExpr(basic.Value, Unknown),
-                Unknown),
-            FunctionHavingCondition function => new BinaryExpr(
-                MapFunction(
-                    function.LeftFunction.FunctionName,
-                    function.LeftFunction.Arguments,
-                    function.LeftFunction.IsDistinct,
-                    function.LeftFunction.FilterWhereConditions,
-                    function.LeftFunction.Window),
-                NormalizeComparisonOperator(function.Operator),
-                new LiteralExpr(function.Value, Unknown),
-                Unknown),
-            ExpressionHavingCondition expression => expression.RightExpression is null
-                ? new IsNullExpr(
-                    MapExpr(expression.LeftExpression),
-                    NormalizeComparisonOperator(expression.Operator) is "IS NOT",
-                    Unknown)
-                : new BinaryExpr(
-                    MapExpr(expression.LeftExpression),
-                    NormalizeComparisonOperator(expression.Operator),
-                    MapExpr(expression.RightExpression),
-                    Unknown),
+            BasicHavingCondition basic => MapHavingBasic(basic),
+            FunctionHavingCondition function => MapHavingFunction(function),
+            ExpressionHavingCondition expression => MapExpressionPredicate(
+                expression.LeftExpression,
+                expression.Operator,
+                expression.RightExpression),
             GroupHavingCondition group => MapHavingList(group.Groups)
                 ?? throw new InvalidOperationException("Empty HAVING groups are not valid Core predicates."),
             _ => throw new InvalidOperationException(
@@ -327,6 +325,33 @@ public static class QueryDefinitionCoreMapper
         };
 
         return condition.IsNot ? new UnaryExpr("NOT", result, Unknown) : result;
+    }
+
+    private static SqlExpr MapHavingBasic(BasicHavingCondition basic)
+    {
+        var left = new ColumnExpr(Identifier(basic.FieldName), Unknown);
+        var op = NormalizeComparisonOperator(basic.Operator);
+        if ((op is "IS" or "IS NOT") && basic.Value is null)
+            return new IsNullExpr(left, op == "IS NOT", Unknown);
+        if (op is "IS" or "IS NOT")
+            throw new InvalidOperationException($"{op} currently supports NULL only in the Core AST.");
+        return new BinaryExpr(left, op, new LiteralExpr(basic.Value, Unknown), Unknown);
+    }
+
+    private static SqlExpr MapHavingFunction(FunctionHavingCondition function)
+    {
+        var left = MapFunction(
+            function.LeftFunction.FunctionName,
+            function.LeftFunction.Arguments,
+            function.LeftFunction.IsDistinct,
+            function.LeftFunction.FilterWhereConditions,
+            function.LeftFunction.Window);
+        var op = NormalizeComparisonOperator(function.Operator);
+        if ((op is "IS" or "IS NOT") && function.Value is null)
+            return new IsNullExpr(left, op == "IS NOT", Unknown);
+        if (op is "IS" or "IS NOT")
+            throw new InvalidOperationException($"{op} currently supports NULL only in the Core AST.");
+        return new BinaryExpr(left, op, new LiteralExpr(function.Value, Unknown), Unknown);
     }
 
     private static ImmutableArray<OrderByItem> MapOrderBy(IEnumerable<OrderByCondition>? conditions) =>
@@ -411,12 +436,17 @@ public static class QueryDefinitionCoreMapper
 
     private static string NormalizeComparisonOperator(string? op)
     {
-        var normalized = (op ?? "=").Trim().ToUpperInvariant();
-        return normalized.Replace("  ", " ", StringComparison.Ordinal) switch
+        var normalized = string.Join(' ', (op ?? "=")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToUpperInvariant();
+        return normalized switch
         {
             "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or
             "LIKE" or "ILIKE" or "IN" or "NOT IN" or "BETWEEN" or "NOT BETWEEN" or
             "IS" or "IS NOT" or "EXISTS" or "NOT EXISTS" => normalized,
+            "NOTIN" => "NOT IN",
+            "NOTBETWEEN" => "NOT BETWEEN",
+            "NOTEXISTS" => "NOT EXISTS",
             _ => throw new InvalidOperationException($"Unsupported comparison operator '{op}'.")
         };
     }
