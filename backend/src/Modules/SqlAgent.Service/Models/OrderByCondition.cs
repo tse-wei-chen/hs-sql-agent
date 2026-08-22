@@ -4,11 +4,15 @@ using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Models;
 
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonPolymorphic(
+    TypeDiscriminatorPropertyName = "type",
+    UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
 [JsonDerivedType(typeof(FieldOrderByCondition), "field")]
 [JsonDerivedType(typeof(FunctionOrderByCondition), "function")]
 public abstract class OrderByCondition
 {
+    private protected OrderByCondition() { }
+
     [Description("'asc' or 'desc'")]
     public SortDirection Direction { get; set; } = SortDirection.Asc;
 
