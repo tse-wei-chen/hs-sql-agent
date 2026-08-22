@@ -53,6 +53,7 @@ public class DmlPlanFactoryTests
         Assert.Contains("id", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("7", plan.MatchQueryCommand.Sql, StringComparison.Ordinal);
         Assert.Contains(plan.MatchQueryCommand.Parameters, parameter => Equals(parameter.Value, 7));
+        Assert.Contains(plan.MatchQueryCommand.Parameters, parameter => Equals(parameter.Value, 26));
         Assert.Equal("policy-v2", plan.PolicyVersion);
         Assert.Equal(TimeSpan.FromMinutes(2), plan.ApprovalTtl);
         Assert.Equal(25, plan.MaxAffectedRows);
