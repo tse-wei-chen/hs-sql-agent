@@ -271,6 +271,8 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             UnaryExpr unary => RenderUnary(unary, compiler),
             BinaryExpr binary => RenderBinary(binary, compiler),
             FunctionCallExpr function => RenderFunction(function, compiler),
+            FilterExpr filter => RenderFilter(filter, compiler),
+            WindowedExpr windowed => RenderWindowed(windowed, compiler),
             CastExpr cast => RenderCast(cast, compiler),
             CaseExpr @case => RenderCase(@case, compiler),
             InExpr @in => RenderIn(@in, compiler),
@@ -326,6 +328,87 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             $"{name}({sql})",
             args.SelectMany(arg => arg.Bindings).ToImmutableArray());
     }
+
+    private static RenderedExpression RenderFilter(FilterExpr filter, Compiler compiler)
+    {
+        if (compiler is not (PostgresCompiler or SqliteCompiler or FirebirdCompiler))
+            throw new SqlCompilationException(
+                $"FILTER lowering is not supported by {compiler.GetType().Name}.");
+        var expression = RenderExpression(filter.Expression, compiler);
+        var predicate = RenderExpression(filter.Predicate, compiler);
+        return new RenderedExpression(
+            $"{expression.Sql} FILTER (WHERE {predicate.Sql})",
+            expression.Bindings.Concat(predicate.Bindings).ToImmutableArray());
+    }
+
+    private static RenderedExpression RenderWindowed(WindowedExpr windowed, Compiler compiler)
+    {
+        var expression = RenderExpression(windowed.Expression, compiler);
+        var parts = new List<string>();
+        var bindings = ImmutableArray.CreateBuilder<object?>();
+        bindings.AddRange(expression.Bindings);
+
+        if (!windowed.Window.PartitionBy.IsDefaultOrEmpty)
+        {
+            var partition = windowed.Window.PartitionBy
+                .Select(item => RenderExpression(item, compiler))
+                .ToArray();
+            parts.Add("PARTITION BY " + string.Join(", ", partition.Select(item => item.Sql)));
+            foreach (var item in partition) bindings.AddRange(item.Bindings);
+        }
+
+        if (!windowed.Window.OrderBy.IsDefaultOrEmpty)
+        {
+            var orderParts = new List<string>();
+            foreach (var item in windowed.Window.OrderBy)
+            {
+                var rendered = RenderExpression(item.Expression, compiler);
+                var sql = rendered.Sql + (item.Descending ? " DESC" : " ASC");
+                sql += item.NullOrdering switch
+                {
+                    NullOrderingKind.Default => string.Empty,
+                    NullOrderingKind.First => " NULLS FIRST",
+                    NullOrderingKind.Last => " NULLS LAST",
+                    _ => throw new SqlCompilationException(
+                        $"Unsupported NULL ordering '{item.NullOrdering}' in window.")
+                };
+                orderParts.Add(sql);
+                bindings.AddRange(rendered.Bindings);
+            }
+            parts.Add("ORDER BY " + string.Join(", ", orderParts));
+        }
+
+        if (windowed.Window.Frame is not null)
+            parts.Add(RenderWindowFrame(windowed.Window.Frame));
+
+        return new RenderedExpression(
+            $"{expression.Sql} OVER ({string.Join(" ", parts)})",
+            bindings.ToImmutable());
+    }
+
+    private static string RenderWindowFrame(WindowFrame frame)
+    {
+        var unit = frame.Unit switch
+        {
+            WindowFrameUnitKind.Rows => "ROWS",
+            WindowFrameUnitKind.Range => "RANGE",
+            _ => throw new SqlCompilationException($"Unsupported window frame unit '{frame.Unit}'.")
+        };
+        var start = RenderWindowBound(frame.Start);
+        return frame.End is null
+            ? $"{unit} {start}"
+            : $"{unit} BETWEEN {start} AND {RenderWindowBound(frame.End)}";
+    }
+
+    private static string RenderWindowBound(WindowFrameBoundCore bound) => bound.Kind switch
+    {
+        WindowFrameBoundKindCore.UnboundedPreceding => "UNBOUNDED PRECEDING",
+        WindowFrameBoundKindCore.Preceding when bound.Offset is >= 0 => $"{bound.Offset.Value} PRECEDING",
+        WindowFrameBoundKindCore.CurrentRow => "CURRENT ROW",
+        WindowFrameBoundKindCore.Following when bound.Offset is >= 0 => $"{bound.Offset.Value} FOLLOWING",
+        WindowFrameBoundKindCore.UnboundedFollowing => "UNBOUNDED FOLLOWING",
+        _ => throw new SqlCompilationException($"Invalid window frame bound '{bound.Kind}'.")
+    };
 
     private static RenderedExpression RenderCast(CastExpr cast, Compiler compiler)
     {
