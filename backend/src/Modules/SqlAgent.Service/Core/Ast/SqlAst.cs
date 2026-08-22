@@ -43,6 +43,52 @@ public sealed record FunctionCallExpr(
     bool IsDistinct,
     SourceSpan Span) : SqlExpr(Span);
 
+/// <summary>
+/// SQL aggregate FILTER modifier. Kept as a wrapper instead of a FunctionCallExpr field so the
+/// canonical expression model can represent/validate modifier ordering explicitly.
+/// </summary>
+public sealed record FilterExpr(
+    SqlExpr Expression,
+    SqlExpr Predicate,
+    SourceSpan Span) : SqlExpr(Span);
+
+public sealed record WindowedExpr(
+    SqlExpr Expression,
+    WindowSpec Window,
+    SourceSpan Span) : SqlExpr(Span);
+
+public sealed record WindowSpec(
+    ImmutableArray<SqlExpr> PartitionBy,
+    ImmutableArray<OrderByItem> OrderBy,
+    WindowFrame? Frame,
+    SourceSpan Span) : SqlNode(Span);
+
+public enum WindowFrameUnitKind
+{
+    Rows,
+    Range
+}
+
+public enum WindowFrameBoundKindCore
+{
+    UnboundedPreceding,
+    Preceding,
+    CurrentRow,
+    Following,
+    UnboundedFollowing
+}
+
+public sealed record WindowFrameBoundCore(
+    WindowFrameBoundKindCore Kind,
+    int? Offset,
+    SourceSpan Span) : SqlNode(Span);
+
+public sealed record WindowFrame(
+    WindowFrameUnitKind Unit,
+    WindowFrameBoundCore Start,
+    WindowFrameBoundCore? End,
+    SourceSpan Span) : SqlNode(Span);
+
 public sealed record CastExpr(SqlExpr Expression, string TypeName, SourceSpan Span) : SqlExpr(Span);
 
 public sealed record IntervalExpr(string Literal, SourceSpan Span) : SqlExpr(Span);
