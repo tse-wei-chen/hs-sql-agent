@@ -84,10 +84,6 @@ public sealed class SqlAstBinder : ISqlBinder
             state.ContainsCte = true;
             foreach (var cte in select.Ctes)
             {
-                // SQL CTEs are visible to definitions that follow them and to the main query.
-                // The legacy DTO does not retain WITH RECURSIVE, so self-recursive references
-                // are deliberately not assumed here: treating them as physical references can
-                // over-restrict authorization, but can never under-count a physical table.
                 var boundQuery = BindStatement(cte.Query, null, localCtes, state);
                 boundCtesBuilder.Add(cte with { Query = boundQuery });
                 localCtes = localCtes.Add(Name(cte.Name));
@@ -204,6 +200,16 @@ public sealed class SqlAstBinder : ISqlBinder
                     .Select(argument => BindExpr(argument, scope, visibleCtes, state))
                     .ToImmutableArray()
             },
+            FilterExpr filter => filter with
+            {
+                Expression = BindExpr(filter.Expression, scope, visibleCtes, state),
+                Predicate = BindExpr(filter.Predicate, scope, visibleCtes, state)
+            },
+            WindowedExpr windowed => windowed with
+            {
+                Expression = BindExpr(windowed.Expression, scope, visibleCtes, state),
+                Window = BindWindow(windowed.Window, scope, visibleCtes, state)
+            },
             CastExpr cast => cast with
             {
                 Expression = BindExpr(cast.Expression, scope, visibleCtes, state)
@@ -242,6 +248,24 @@ public sealed class SqlAstBinder : ISqlBinder
                 $"Unsupported SQL expression while binding: {expression.GetType().Name}")
         };
     }
+
+    private static WindowSpec BindWindow(
+        WindowSpec window,
+        BindingScope? scope,
+        ImmutableHashSet<string> visibleCtes,
+        BindingState state) =>
+        window with
+        {
+            PartitionBy = window.PartitionBy
+                .Select(expression => BindExpr(expression, scope, visibleCtes, state))
+                .ToImmutableArray(),
+            OrderBy = window.OrderBy
+                .Select(item => item with
+                {
+                    Expression = BindExpr(item.Expression, scope, visibleCtes, state)
+                })
+                .ToImmutableArray()
+        };
 
     private static BoundColumnExpr BindColumn(ColumnExpr column, BindingScope? scope)
     {
