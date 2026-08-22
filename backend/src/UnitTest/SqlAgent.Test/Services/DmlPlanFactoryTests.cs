@@ -64,6 +64,47 @@ public class DmlPlanFactoryTests
     }
 
     [Fact]
+    public async Task CreateAsync_UnqualifiedTarget_UsesResolvedQualifiedTableForBothCommands()
+    {
+        var metadata = new StubMetadataReader(
+        [
+            new DatabaseColumnMetadata("public", "users", "id", "integer", true, 1),
+            new DatabaseColumnMetadata("public", "users", "status", "text", false)
+        ],
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["audit"] = ["events"],
+            ["public"] = ["users"]
+        });
+        var definition = new DmlDefinition
+        {
+            Operation = DmlOperation.Update,
+            TableName = "users",
+            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }],
+            WhereConditions =
+            [
+                new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 7 }
+            ]
+        };
+
+        var plan = await new DmlPlanFactory(metadata).CreateAsync(
+            "connection",
+            definition,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext(
+                "policy-v3",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal("public.users", plan.TableName);
+        Assert.Contains("public", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("users", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("public", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("users", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CreateAsync_Strict_RejectsMissingPrimaryKey()
     {
         var definition = new DmlDefinition
@@ -92,19 +133,27 @@ public class DmlPlanFactoryTests
         Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private sealed class StubMetadataReader(IReadOnlyList<DatabaseColumnMetadata> columns)
+    private sealed class StubMetadataReader(
+        IReadOnlyList<DatabaseColumnMetadata> columns,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? tablesBySchema = null)
         : IProviderMetadataReader
     {
+        private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _tablesBySchema =
+            tablesBySchema ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
         public Task<IReadOnlyList<string>> GetSchemasAsync(
             string connectionString,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<string>>([]);
+            Task.FromResult<IReadOnlyList<string>>(_tablesBySchema.Keys.ToArray());
 
         public Task<IReadOnlyList<string>> GetTablesAsync(
             string connectionString,
             string schema,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<string>>([]);
+            Task.FromResult(
+                _tablesBySchema.TryGetValue(schema, out var tables)
+                    ? tables
+                    : (IReadOnlyList<string>)[]);
 
         public Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
             string connectionString,
