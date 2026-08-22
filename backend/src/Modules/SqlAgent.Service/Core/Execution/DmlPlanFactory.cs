@@ -71,7 +71,13 @@ public sealed class DmlPlanFactory(
         {
             TableName = definition.TableName,
             SelectColumns = selectColumns,
-            WhereColumnsAndValues = definition.WhereConditions
+            WhereColumnsAndValues = definition.WhereConditions,
+            // We only need enough identities to either prove the complete approved set (<= max)
+            // or prove that policy is exceeded. This prevents an unbounded PK materialization just
+            // to discover afterward that the mutation should have been rejected.
+            Limit = maxAffectedRows > 0
+                ? maxAffectedRows == int.MaxValue ? int.MaxValue : maxAffectedRows + 1
+                : null
         };
 
         var matchCommand = _queryCompiler.Compile(
