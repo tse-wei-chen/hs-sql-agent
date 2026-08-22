@@ -113,15 +113,16 @@ public partial class SqlAgentTool(
     }
 
     [McpServerTool, Description(@"
-        Execute one DML SQL statement (INSERT, UPDATE, DELETE). The server parses SQL,
-        validates it, applies table whitelist checks, then builds a read-only preview
-        and presents the result to you for approval via an interactive prompt.
+        Execute one UPDATE or DELETE SQL statement through the typed DML approval pipeline.
+        The server parses and validates the statement, compiles an immutable mutation command,
+        previews the exact primary-key row set, and presents it for interactive approval.
 
-        You will see how many rows and a sample of which rows would be affected before
-        deciding to commit or cancel. The mutation runs only after approval.
+        Commit revalidates the row identities inside the same transaction before executing the
+        already-approved compiled command. INSERT remains unavailable until its canonical DML
+        semantics are complete.
     ")]
     public async Task<string> ExecuteDmlSql(
-        [Description("A single INSERT, UPDATE, or DELETE SQL statement to parse and validate.")]
+        [Description("A single UPDATE or DELETE SQL statement to parse, validate, preview, and approve.")]
         string sql,
         McpServer server,
         CancellationToken cancellationToken)
@@ -144,49 +145,38 @@ public partial class SqlAgentTool(
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 
             dml = SqlDefinitionParser.ParseDml(sql, dbType);
-            ValidateAllTableAccess(dml.TableName, null, null, null, dml.FromQuery, null, dml.WhereConditions);
-
-            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
-
             var dmlErrors = DefinitionValidator.Validate(dml);
             if (dmlErrors.Count > 0)
                 return "Validation failed:\n" + string.Join("\n", dmlErrors);
 
-            // ── Dry-run ──────────────────────────────────────────────────────
+            if (dml.Operation is not (DmlOperation.Update or DmlOperation.Delete))
+            {
+                throw new NotSupportedException(
+                    "The production typed DML path currently supports UPDATE and DELETE only. INSERT remains fail-closed until its canonical semantics are complete.");
+            }
 
-            dml.ConfirmToken = null;
-            var executionPolicy = ResolveExecutionPolicy();
-            string dryRunResult;
+            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+            var runtime = new TypedDmlRuntime();
+            var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
+            var allowedTables = ResolveTableWhitelist();
+
+            TypedDmlApprovalSession session;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                dryRunResult = await strategy.ExecuteDmlAsync(
+                session = await runtime.PreviewAsync(
+                    strategy,
                     sqlConfig.ConnectionString,
                     dml,
-                    executionPolicy,
+                    securityPolicy,
+                    allowedTables,
                     cancellationToken);
             }
 
-            if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
-            {
-                await WriteDmlAuditAsync(dml, "failed", "not-requested", stopwatch,
-                    approvalWaitDurationMs, null, dryRunResult, cancellationToken);
-                return dryRunResult;
-            }
-
-            var affectedMatch = AffectedMatchRegex().Match(dryRunResult);
-            var tokenMatch = TokenMatchRegex().Match(dryRunResult);
-            if (!affectedMatch.Success || !tokenMatch.Success)
-                return dryRunResult;
-
-            var affectedRows = affectedMatch.Groups[1].Value;
-            affectedRowCount = int.TryParse(affectedRows, out var parsedRows) ? parsedRows : null;
-            var detToken = tokenMatch.Groups[1].Value;
-            var previewMatch = PreviewMatchRegex().Match(dryRunResult);
-            var preview = previewMatch.Success ? previewMatch.Groups[1].Value : "[]";
-
-            // ── Present to user for approval via Elicitation ─────────────────
+            affectedRowCount = session.Preview.AffectedRows;
+            var affectedRows = session.Preview.AffectedRows.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var preview = JsonSerializer.Serialize(session.Preview.Rows);
 
             var elicitSchema = new RequestSchema
             {
@@ -234,22 +224,20 @@ public partial class SqlAgentTool(
                 return "DML execution cancelled by user.";
             }
 
-            // ── Execute for real ──────────────────────────────────────────────
-
-            dml.ConfirmToken = detToken;
-            string finalResult;
+            DmlCommitResult commitResult;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                finalResult = await strategy.ExecuteDmlAsync(
+                commitResult = await runtime.CommitAsync(
+                    strategy,
                     sqlConfig.ConnectionString,
-                    dml,
-                    executionPolicy,
+                    session,
                     cancellationToken);
             }
 
-            if (!finalResult.StartsWith("Success", StringComparison.Ordinal))
+            affectedRowCount = commitResult.AffectedRows;
+            if (!commitResult.Committed)
             {
                 await WriteDmlAuditAsync(
                     dml,
@@ -258,9 +246,9 @@ public partial class SqlAgentTool(
                     stopwatch,
                     approvalWaitDurationMs,
                     affectedRowCount,
-                    finalResult,
+                    commitResult.Message,
                     cancellationToken);
-                return finalResult;
+                return commitResult.Message;
             }
 
             await WriteDmlAuditAsync(
@@ -270,9 +258,9 @@ public partial class SqlAgentTool(
                 stopwatch,
                 approvalWaitDurationMs,
                 affectedRowCount,
-                $"Operation: {dml.Operation} (committed after MCP interactive approval)",
+                $"Operation: {dml.Operation} (committed after typed row-set revalidation)",
                 cancellationToken);
-            return finalResult;
+            return $"Success | affectedRows={commitResult.AffectedRows} | {commitResult.Message}";
         }
         catch (Exception ex)
         {
@@ -707,9 +695,6 @@ public partial class SqlAgentTool(
     internal static void CollectFromQueryDefinition(QueryDefinition? qd, HashSet<string> referenced, HashSet<string> aliases)
     {
         if (qd == null) return;
-        // CTE names are scoped to one query definition. Do not leak a nested CTE
-        // alias into siblings or parents where it could hide a physical table with
-        // the same name from whitelist validation.
         var scopedAliases = new HashSet<string>(aliases, StringComparer.OrdinalIgnoreCase);
         CollectReferencesAndAliases(qd.TableName, qd.Joins, qd.CombineConditions, qd.CteConditions, qd.FromQuery, qd.SelectColumns, qd.WhereColumnsAndValues, referenced, scopedAliases);
         if (qd.HavingConditions != null) CollectFromHavingConditions(qd.HavingConditions, referenced, scopedAliases);
@@ -906,11 +891,4 @@ public partial class SqlAgentTool(
         CollectFromExpressions(func.Arguments, referenced, aliases);
         if (func.Window != null) CollectFromWindowDefinition(func.Window, referenced, aliases);
     }
-
-    [GeneratedRegex(@"TokenRequired=(\S+)")]
-    private static partial Regex TokenMatchRegex();
-    [GeneratedRegex(@"affectedRows=(\d+)")]
-    private static partial Regex AffectedMatchRegex();
-    [GeneratedRegex(@"Preview=(.*) \| Security Note:", RegexOptions.Singleline)]
-    private static partial Regex PreviewMatchRegex();
 }
