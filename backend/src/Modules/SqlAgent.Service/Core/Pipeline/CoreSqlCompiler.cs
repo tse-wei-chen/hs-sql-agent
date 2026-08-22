@@ -43,9 +43,7 @@ public sealed class CoreSqlCompiler(
         ArgumentNullException.ThrowIfNull(validationContext);
         ArgumentNullException.ThrowIfNull(executionPolicy);
 
-        var parsed = new ParsedStatement(
-            QueryDefinitionCoreMapper.Map(definition),
-            sourceDialect);
+        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), sourceDialect);
         var bound = _binder.Bind(parsed);
         var canonical = _normalizer.Normalize(bound, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
@@ -70,9 +68,6 @@ public sealed class CoreSqlCompiler(
                 return;
 
             case QueryStatement query:
-                // This SqlKata fork compiles ORDER/LIMIT before UNION/INTERSECT/EXCEPT. Applying
-                // a query-level tail here would therefore change semantics. Reject until the
-                // backend exposes a compound-query wrapper that can preserve the AST shape.
                 if (!query.OrderBy.IsDefaultOrEmpty || query.Limit is > 0 || query.Offset is > 0)
                 {
                     throw new SqlCompilationException(
@@ -92,8 +87,7 @@ public sealed class CoreSqlCompiler(
 
     private static void ValidateSubqueryExpressions(SelectStatement select)
     {
-        foreach (var item in select.Select)
-            VisitExpression(item.Expression);
+        foreach (var item in select.Select) VisitExpression(item.Expression);
         if (select.Where is not null) VisitExpression(select.Where);
         foreach (var expression in select.GroupBy) VisitExpression(expression);
         if (select.Having is not null) VisitExpression(select.Having);
@@ -121,6 +115,15 @@ public sealed class CoreSqlCompiler(
                 return;
             case FunctionCallExpr function:
                 foreach (var argument in function.Arguments) VisitExpression(argument);
+                return;
+            case FilterExpr filter:
+                VisitExpression(filter.Expression);
+                VisitExpression(filter.Predicate);
+                return;
+            case WindowedExpr windowed:
+                VisitExpression(windowed.Expression);
+                foreach (var partition in windowed.Window.PartitionBy) VisitExpression(partition);
+                foreach (var item in windowed.Window.OrderBy) VisitExpression(item.Expression);
                 return;
             case CastExpr cast:
                 VisitExpression(cast.Expression);
