@@ -19,7 +19,8 @@ public sealed record ValidatedDmlPlan(
     DmlRowIdentityAssurance RowIdentityAssurance,
     string PlanFingerprint,
     string PolicyVersion,
-    TimeSpan ApprovalTtl);
+    TimeSpan ApprovalTtl,
+    int MaxAffectedRows = 0);
 
 public sealed record DmlPreview(
     DmlOperation Operation,
