@@ -54,11 +54,13 @@ Frontend is pre-built and served as static files from `ToolBox.dll`'s `wwwroot/`
 
 `execute_dml_sql` uses **MCP Elicitation** (`McpServer.ElicitAsync`) to enforce human approval:
 
-1. Server dry-runs the DML (executes inside transaction, then rolls back)
-2. Server calls `ElicitAsync()` — MCP Client shows an interactive prompt to the human user
-3. User sees affected rows and decides Accept / Decline
-4. Server commits or cancels accordingly
+1. Server builds a **read-only impact preview** (affected-row count plus sample rows); it does not execute the mutation during preview.
+2. Server calls `ElicitAsync()` — MCP Client shows an interactive prompt to the human user.
+3. User sees affected rows and decides Accept / Decline.
+4. On acceptance, the server re-enters the DML execution path, revalidates the affected-row count, and commits only if it still matches the approved preview.
 
-**Critical constraint**: The AI agent CANNOT bypass this flow. The tool handler blocks on `ElicitAsync()` and only resumes after the user responds through the client UI. There is no token-based two-call workaround.
+**Critical constraint**: The AI agent CANNOT bypass this flow. The tool handler blocks on `ElicitAsync()` and only resumes after the user responds through the client UI. There is no token-based caller-visible two-call workaround.
 
 If the MCP client does not support Elicitation, the tool returns an error and refuses to execute any DML.
+
+> Current limitation: approval revalidation compares affected-row count, not row identity. The compiler-pipeline refactor is expected to replace this with a typed approval challenge carrying plan and row-set fingerprints.
