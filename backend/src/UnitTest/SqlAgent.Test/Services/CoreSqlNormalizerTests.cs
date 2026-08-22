@@ -3,7 +3,6 @@ using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using Xunit;
@@ -40,7 +39,7 @@ public class CoreSqlNormalizerTests
     }
 
     [Fact]
-    public void Normalize_TemplateTranslation_FailsClosedUntilCoreTranslatorExists()
+    public void Normalize_CurrentTimestampTemplate_BecomesCanonicalSemanticFunction()
     {
         var dto = new QueryDefinition
         {
@@ -57,9 +56,33 @@ public class CoreSqlNormalizerTests
         var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.Postgres);
         var bound = new SqlAstBinder().Bind(parsed);
 
-        var ex = Assert.Throws<SqlCompilationException>(
-            () => CoreSqlNormalizer.CreateDefault().Normalize(bound, SqlAgentToolType.MsSqlServer));
+        var normalized = CoreSqlNormalizer.CreateDefault().Normalize(bound, SqlAgentToolType.MsSqlServer);
 
-        Assert.Contains("Template", ex.Message, StringComparison.OrdinalIgnoreCase);
+        var select = Assert.IsType<SelectStatement>(normalized.Statement);
+        var function = Assert.IsType<FunctionCallExpr>(select.Select[0].Expression);
+        Assert.Equal("CORE_CURRENT_TIMESTAMP", function.Name.Parts[0].Value);
+        Assert.Empty(function.Arguments);
+    }
+
+    [Theory]
+    [InlineData("CURRENT_DATE", "CORE_CURRENT_DATE")]
+    [InlineData("CURRENT_TIME", "CORE_CURRENT_TIME")]
+    public void Normalize_CurrentTemporalKeywords_BecomeCanonicalSemanticFunctions(
+        string sourceName,
+        string canonicalName)
+    {
+        var dto = new QueryDefinition
+        {
+            TableName = "users",
+            SelectColumns = [new FunctionSelectCondition { FunctionName = sourceName, Arguments = [] }]
+        };
+        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.Sqlite);
+        var bound = new SqlAstBinder().Bind(parsed);
+
+        var normalized = CoreSqlNormalizer.CreateDefault().Normalize(bound, SqlAgentToolType.MsSqlServer);
+
+        var select = Assert.IsType<SelectStatement>(normalized.Statement);
+        var function = Assert.IsType<FunctionCallExpr>(select.Select[0].Expression);
+        Assert.Equal(canonicalName, function.Name.Parts[0].Value);
     }
 }
