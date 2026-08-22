@@ -107,14 +107,14 @@ public sealed class CoreSqlCompiler(
 
     private static string NormalizePredicateAlias(string value)
     {
-        var normalized = string.Join(' ', (value ?? string.Empty)
+        var normalized = string.Join(' ', value
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .ToUpperInvariant();
         return normalized switch
         {
             "ISNULL" => "IS",
             "ISNOTNULL" => "IS NOT",
-            _ => value
+            _ => normalized
         };
     }
 
