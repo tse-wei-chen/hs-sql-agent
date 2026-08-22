@@ -111,14 +111,14 @@ public sealed class TypedDmlRuntime(
         var tables = allowedTables is null
             ? string.Empty
             : string.Join(',', allowedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-        var material = string.Join('|',
-            policy.RequireWhereForUpdate,
-            policy.RequireWhereForDelete,
-            policy.AllowFullTableUpdate,
-            policy.AllowFullTableDelete,
-            policy.DmlMaxAffectedRows,
-            policy.UpdatedAt?.ToUniversalTime().Ticks ?? 0L,
-            tables);
+        var material =
+            $"requireUpdateWhere={policy.RequireWhereForUpdate};" +
+            $"requireDeleteWhere={policy.RequireWhereForDelete};" +
+            $"allowFullUpdate={policy.AllowFullTableUpdate};" +
+            $"allowFullDelete={policy.AllowFullTableDelete};" +
+            $"maxAffected={policy.DmlMaxAffectedRows};" +
+            $"updatedTicks={policy.UpdatedAt?.ToUniversalTime().Ticks ?? 0L};" +
+            $"tables={tables}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 }
