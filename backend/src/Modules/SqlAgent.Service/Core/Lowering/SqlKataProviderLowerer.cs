@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
@@ -13,8 +14,8 @@ namespace SqlAgent.Service.Core.Lowering;
 /// <summary>
 /// Lowers the provider-neutral Core AST into the existing SqlKata backend. Statement structure is
 /// represented by SqlKata Query nodes. Expression raw fragments are generated only from closed
-/// Core node/operator types; identifiers are quoted by the target compiler and values are bindings.
-/// Raw user SQL never crosses this boundary.
+/// Core node/operator/function semantics; identifiers are quoted by the target compiler and user
+/// values remain bindings.
 /// </summary>
 public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProviderLowerer
 {
@@ -36,7 +37,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         var result = compiler.Compile(query);
         var parameters = result.NamedBindings
             .OrderBy(pair => ParameterOrdinal(pair.Key))
-            .Select(pair => new SqlParameterValue(pair.Key, pair.Value))
+            .Select(pair => new SqlParameterValue(pair.Key, NormalizeBindingValue(pair.Value)))
             .ToImmutableArray();
 
         return new CompiledSqlCommand(
@@ -47,11 +48,6 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             Provider);
     }
 
-    /// <summary>
-    /// Builds the structured SqlKata query IR for a canonical query statement without compiling it.
-    /// DML lowerers reuse this entry point for INSERT..SELECT so query structure and expression
-    /// rendering have one backend implementation.
-    /// </summary>
     internal static Query BuildQuery(SqlStatement statement, Compiler compiler) => statement switch
     {
         SelectStatement select => LowerSelect(select, compiler),
@@ -278,7 +274,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             BoundColumnExpr column => RenderIdentifier(column.Name, compiler),
             ColumnExpr column => RenderIdentifier(column.Name, compiler),
-            LiteralExpr literal => new RenderedExpression("?", [literal.Value]),
+            LiteralExpr literal => new RenderedExpression("?", [NormalizeBindingValue(literal.Value)]),
             IntervalExpr => throw new SqlCompilationException(
                 "INTERVAL lowering is not yet implemented in the Core SqlKata backend."),
             UnaryExpr unary => RenderUnary(unary, compiler),
@@ -330,6 +326,26 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static RenderedExpression RenderFunction(FunctionCallExpr function, Compiler compiler)
     {
+        var name = IdentifierText(function.Name).ToUpperInvariant();
+        return name switch
+        {
+            "CORE_DATE_ADD" => RenderDateAdd(function, compiler),
+            "CORE_DATE_DIFF" => RenderDateDiff(function, compiler),
+            "CORE_DATE_PART" => RenderDatePart(function, compiler),
+            "CORE_DATE_FORMAT" => RenderDateFormat(function, compiler),
+            "CORE_DATE_PARSE" => RenderDateParse(function, compiler),
+            "CORE_POSITION" => RenderPosition(function, compiler),
+            "CORE_JSON_EXTRACT" => RenderJsonExtract(function, compiler),
+            "CORE_JSON_SET" => RenderJsonSet(function, compiler),
+            "CORE_REGEX_MATCH" => RenderRegexMatch(function, compiler),
+            "CORE_CURRENT_TIMESTAMP" => RenderCurrentTimestamp(function),
+            "CORE_STRING_AGG" => RenderStringAggregate(function, compiler),
+            _ => RenderOrdinaryFunction(function, compiler)
+        };
+    }
+
+    private static RenderedExpression RenderOrdinaryFunction(FunctionCallExpr function, Compiler compiler)
+    {
         var name = IdentifierText(function.Name);
         if (!Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant))
             throw new SqlCompilationException($"Unsafe function identifier '{name}'.");
@@ -340,6 +356,191 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         return new RenderedExpression(
             $"{name}({sql})",
             args.SelectMany(arg => arg.Bindings).ToImmutableArray());
+    }
+
+    private static RenderedExpression RenderDateAdd(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 3);
+        var unit = LiteralKeyword(function.Arguments[0], "DATEADD unit");
+        if (unit != "DAY" && compiler is PostgresCompiler or OracleCompiler or SqliteCompiler)
+            throw new SqlCompilationException($"DATEADD unit {unit} is not supported by {compiler.GetType().Name}.");
+        var amount = RenderExpression(function.Arguments[1], compiler);
+        var value = RenderExpression(function.Arguments[2], compiler);
+        return compiler switch
+        {
+            SqlServerCompiler => Combine($"DATEADD({unit}, {amount.Sql}, {value.Sql})", amount, value),
+            MySqlCompiler => Combine($"TIMESTAMPADD({unit}, {amount.Sql}, {value.Sql})", amount, value),
+            PostgresCompiler => Combine($"({value.Sql} + ({amount.Sql} * INTERVAL '1 day'))", value, amount),
+            OracleCompiler => Combine($"({value.Sql} + {amount.Sql})", value, amount),
+            SqliteCompiler => Combine($"DATETIME({value.Sql}, PRINTF('%+d day', {amount.Sql}))", value, amount),
+            FirebirdCompiler => Combine($"DATEADD({unit}, {amount.Sql}, {value.Sql})", amount, value),
+            _ => throw new SqlCompilationException("Unsupported DATEADD provider.")
+        };
+    }
+
+    private static RenderedExpression RenderDateDiff(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 3);
+        var unit = LiteralKeyword(function.Arguments[0], "DATEDIFF unit");
+        if (unit != "DAY" && compiler is PostgresCompiler or OracleCompiler or SqliteCompiler)
+            throw new SqlCompilationException($"DATEDIFF unit {unit} is not supported by {compiler.GetType().Name}.");
+        var start = RenderExpression(function.Arguments[1], compiler);
+        var end = RenderExpression(function.Arguments[2], compiler);
+        return compiler switch
+        {
+            SqlServerCompiler => Combine($"DATEDIFF({unit}, {start.Sql}, {end.Sql})", start, end),
+            MySqlCompiler => Combine($"TIMESTAMPDIFF({unit}, {start.Sql}, {end.Sql})", start, end),
+            PostgresCompiler or OracleCompiler => Combine($"({end.Sql} - {start.Sql})", end, start),
+            SqliteCompiler => Combine($"(JULIANDAY({end.Sql}) - JULIANDAY({start.Sql}))", end, start),
+            FirebirdCompiler => Combine($"DATEDIFF({unit} FROM {start.Sql} TO {end.Sql})", start, end),
+            _ => throw new SqlCompilationException("Unsupported DATEDIFF provider.")
+        };
+    }
+
+    private static RenderedExpression RenderDatePart(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 2);
+        var part = LiteralKeyword(function.Arguments[0], "date part");
+        var value = RenderExpression(function.Arguments[1], compiler);
+        var sql = compiler switch
+        {
+            SqlServerCompiler or MySqlCompiler => $"{part}({value.Sql})",
+            PostgresCompiler or OracleCompiler or FirebirdCompiler => $"EXTRACT({part} FROM {value.Sql})",
+            SqliteCompiler => part switch
+            {
+                "YEAR" => $"CAST(STRFTIME('%Y', {value.Sql}) AS INTEGER)",
+                "MONTH" => $"CAST(STRFTIME('%m', {value.Sql}) AS INTEGER)",
+                "DAY" => $"CAST(STRFTIME('%d', {value.Sql}) AS INTEGER)",
+                _ => throw new SqlCompilationException($"SQLite does not support date part {part}.")
+            },
+            _ => throw new SqlCompilationException("Unsupported date-part provider.")
+        };
+        return value with { Sql = sql };
+    }
+
+    private static RenderedExpression RenderDateFormat(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 2);
+        var value = RenderExpression(function.Arguments[0], compiler);
+        var format = SqlStringLiteral(function.Arguments[1], "date format");
+        var sql = compiler switch
+        {
+            SqlServerCompiler => $"FORMAT({value.Sql}, {format})",
+            PostgresCompiler or OracleCompiler => $"TO_CHAR({value.Sql}, {format})",
+            MySqlCompiler => $"DATE_FORMAT({value.Sql}, {format})",
+            SqliteCompiler => $"STRFTIME({format}, {value.Sql})",
+            FirebirdCompiler => throw new SqlCompilationException("portable date formatting is not supported by Firebird."),
+            _ => throw new SqlCompilationException("Unsupported date-format provider.")
+        };
+        return value with { Sql = sql };
+    }
+
+    private static RenderedExpression RenderDateParse(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 2);
+        var value = RenderExpression(function.Arguments[0], compiler);
+        var format = SqlStringLiteral(function.Arguments[1], "date parse format");
+        var sql = compiler switch
+        {
+            MySqlCompiler => $"DATE(STR_TO_DATE({value.Sql}, {format}))",
+            PostgresCompiler or OracleCompiler => $"TO_DATE({value.Sql}, {format})",
+            _ => throw new SqlCompilationException("formatted date parsing is not supported by this provider.")
+        };
+        return value with { Sql = sql };
+    }
+
+    private static RenderedExpression RenderPosition(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 2);
+        var haystack = RenderExpression(function.Arguments[0], compiler);
+        var needle = RenderExpression(function.Arguments[1], compiler);
+        return compiler switch
+        {
+            SqlServerCompiler => Combine($"CHARINDEX({needle.Sql}, {haystack.Sql})", needle, haystack),
+            PostgresCompiler => Combine($"STRPOS({haystack.Sql}, {needle.Sql})", haystack, needle),
+            MySqlCompiler => Combine($"LOCATE({needle.Sql}, {haystack.Sql})", needle, haystack),
+            SqliteCompiler or OracleCompiler => Combine($"INSTR({haystack.Sql}, {needle.Sql})", haystack, needle),
+            FirebirdCompiler => Combine($"POSITION({needle.Sql}, {haystack.Sql})", needle, haystack),
+            _ => throw new SqlCompilationException("Unsupported position provider.")
+        };
+    }
+
+    private static RenderedExpression RenderJsonExtract(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 2);
+        var value = RenderExpression(function.Arguments[0], compiler);
+        var path = RenderExpression(function.Arguments[1], compiler);
+        if (compiler is MySqlCompiler or SqliteCompiler)
+            return Combine($"JSON_EXTRACT({value.Sql}, {path.Sql})", value, path);
+        if (compiler is not PostgresCompiler)
+            throw new SqlCompilationException("JSON_EXTRACT is not supported losslessly by this provider.");
+
+        var segments = JsonPathSegments(function.Arguments[1]);
+        var bindings = value.Bindings.ToBuilder();
+        var placeholders = new List<string>();
+        foreach (var segment in segments)
+        {
+            placeholders.Add("?");
+            bindings.Add(segment);
+        }
+        return new RenderedExpression(
+            $"JSONB_EXTRACT_PATH(CAST({value.Sql} AS jsonb), {string.Join(", ", placeholders)})",
+            bindings.ToImmutable());
+    }
+
+    private static RenderedExpression RenderJsonSet(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 3);
+        var value = RenderExpression(function.Arguments[0], compiler);
+        var path = RenderExpression(function.Arguments[1], compiler);
+        var newValue = RenderExpression(function.Arguments[2], compiler);
+        if (compiler is MySqlCompiler or SqliteCompiler)
+            return new RenderedExpression(
+                $"JSON_SET({value.Sql}, {path.Sql}, {newValue.Sql})",
+                value.Bindings.Concat(path.Bindings).Concat(newValue.Bindings).ToImmutableArray());
+        if (compiler is SqlServerCompiler)
+            return new RenderedExpression(
+                $"JSON_MODIFY({value.Sql}, {path.Sql}, {newValue.Sql})",
+                value.Bindings.Concat(path.Bindings).Concat(newValue.Bindings).ToImmutableArray());
+        if (compiler is not PostgresCompiler)
+            throw new SqlCompilationException("JSON_SET is not supported by this provider.");
+
+        var pgPath = "{" + string.Join(',', JsonPathSegments(function.Arguments[1])) + "}";
+        return new RenderedExpression(
+            $"JSONB_SET(CAST({value.Sql} AS jsonb), CAST(? AS text[]), TO_JSONB({newValue.Sql}))",
+            value.Bindings.Concat([pgPath]).Concat(newValue.Bindings).ToImmutableArray());
+    }
+
+    private static RenderedExpression RenderRegexMatch(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 2);
+        if (compiler is SqlServerCompiler or SqliteCompiler or FirebirdCompiler)
+            throw new SqlCompilationException("REGEXP_LIKE is not supported by this provider.");
+        var value = RenderExpression(function.Arguments[0], compiler);
+        var pattern = RenderExpression(function.Arguments[1], compiler);
+        return Combine($"REGEXP_LIKE({value.Sql}, {pattern.Sql})", value, pattern);
+    }
+
+    private static RenderedExpression RenderCurrentTimestamp(FunctionCallExpr function)
+    {
+        RequireArguments(function, 0);
+        return new RenderedExpression("CURRENT_TIMESTAMP", ImmutableArray<object?>.Empty);
+    }
+
+    private static RenderedExpression RenderStringAggregate(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireArguments(function, 2);
+        var value = RenderExpression(function.Arguments[0], compiler);
+        var separator = SqlStringLiteral(function.Arguments[1], "string aggregate separator");
+        var sql = compiler switch
+        {
+            SqlServerCompiler or PostgresCompiler => $"STRING_AGG({value.Sql}, {separator})",
+            MySqlCompiler or SqliteCompiler => $"GROUP_CONCAT({value.Sql}, {separator})",
+            OracleCompiler => $"LISTAGG({value.Sql}, {separator})",
+            FirebirdCompiler => $"LIST({value.Sql}, {separator})",
+            _ => throw new SqlCompilationException("Unsupported string aggregate provider.")
+        };
+        return value with { Sql = sql };
     }
 
     private static RenderedExpression RenderFilter(FilterExpr filter, Compiler compiler)
@@ -519,6 +720,63 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             ImmutableArray<object?>.Empty);
     }
 
+    private static void RequireArguments(FunctionCallExpr function, int count)
+    {
+        if (function.Arguments.Length != count)
+            throw new SqlCompilationException(
+                $"Canonical function '{IdentifierText(function.Name)}' requires {count} argument(s).");
+    }
+
+    private static string LiteralKeyword(SqlExpr expression, string label)
+    {
+        if (expression is not LiteralExpr { Value: string value })
+            throw new SqlCompilationException($"{label} must be a canonical literal keyword.");
+        var normalized = value.Trim().ToUpperInvariant();
+        if (!Regex.IsMatch(normalized, "^[A-Z_]+$", RegexOptions.CultureInvariant))
+            throw new SqlCompilationException($"Unsafe {label} '{value}'.");
+        return normalized;
+    }
+
+    private static string SqlStringLiteral(SqlExpr expression, string label)
+    {
+        if (expression is not LiteralExpr { Value: string value })
+            throw new SqlCompilationException($"{label} must be a string literal.");
+        return "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+    }
+
+    private static IReadOnlyList<string> JsonPathSegments(SqlExpr expression)
+    {
+        if (expression is not LiteralExpr { Value: string path })
+            throw new SqlCompilationException("JSON path must be a string literal for structured PostgreSQL lowering.");
+        var trimmed = path.Trim();
+        if (!trimmed.StartsWith('$'))
+            throw new SqlCompilationException($"Unsupported JSON path '{path}'.");
+        var remainder = trimmed[1..].TrimStart('.');
+        if (string.IsNullOrEmpty(remainder)) return [];
+        var segments = remainder.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Any(segment => !Regex.IsMatch(segment, "^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)))
+            throw new SqlCompilationException($"Unsupported structured JSON path '{path}'.");
+        return segments;
+    }
+
+    private static object? NormalizeBindingValue(object? value)
+    {
+        if (value is not JsonElement element) return value;
+        return element.ValueKind switch
+        {
+            JsonValueKind.Null or JsonValueKind.Undefined => null,
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number when element.TryGetInt32(out var i32) => i32,
+            JsonValueKind.Number when element.TryGetInt64(out var i64) => i64,
+            JsonValueKind.Number when element.TryGetDecimal(out var dec) => dec,
+            JsonValueKind.Number => element.GetDouble(),
+            _ => throw new SqlCompilationException(
+                $"JSON value kind {element.ValueKind} cannot be bound as a scalar SQL parameter.")
+        };
+    }
+
     private static RenderedExpression Combine(
         string sql,
         RenderedExpression left,
@@ -530,7 +788,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         SqlAgentToolType.Sqlite => new SqliteCompiler(),
         SqlAgentToolType.Postgres => new PostgresCompiler(),
         SqlAgentToolType.MySQL => new MySqlCompiler(),
-        SqlAgentToolType.MsSqlServer => new SqlServerCompiler(),
+        SqlAgentToolType.MsSqlServer => new SqlServerCompiler { UseLegacyPagination = true },
         SqlAgentToolType.Oracle => new OracleCompiler(),
         SqlAgentToolType.Firebird => new FirebirdCompiler(),
         _ => throw new SqlCompilationException($"Unsupported target provider '{provider}'.")
@@ -544,7 +802,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static ImmutableArray<object?> OrderedValues(IReadOnlyDictionary<string, object> bindings) =>
         bindings.OrderBy(pair => ParameterOrdinal(pair.Key))
-            .Select(pair => (object?)pair.Value)
+            .Select(pair => NormalizeBindingValue(pair.Value))
             .ToImmutableArray();
 
     private static string ToPositionalSql(

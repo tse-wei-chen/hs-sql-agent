@@ -27,4 +27,10 @@ public sealed record CompiledSqlCommand(
     string PlanFingerprint,
     SqlAgentToolType TargetProvider);
 
-public sealed class SqlCompilationException(string message) : InvalidOperationException(message);
+public sealed class SqlCompilationException : InvalidOperationException
+{
+    public SqlCompilationException(string message) : base(message) { }
+
+    public SqlCompilationException(string message, Exception innerException)
+        : base(message, innerException) { }
+}
