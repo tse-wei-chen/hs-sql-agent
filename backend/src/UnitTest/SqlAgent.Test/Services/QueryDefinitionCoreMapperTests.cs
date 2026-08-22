@@ -1,5 +1,6 @@
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Mapping;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using Xunit;
 
@@ -89,7 +90,7 @@ public class QueryDefinitionCoreMapperTests
     }
 
     [Fact]
-    public void Map_FunctionFilter_FailsClosedUntilCanonicalNodeExists()
+    public void Map_FunctionFilter_ProducesCanonicalFilterExpression()
     {
         var definition = new QueryDefinition
         {
@@ -99,7 +100,7 @@ public class QueryDefinitionCoreMapperTests
                 new FunctionSelectCondition
                 {
                     FunctionName = "COUNT",
-                    Arguments = [new FieldSelectCondition { FieldName = "*" }],
+                    Arguments = [new FieldSelectCondition { FieldName = "id" }],
                     FilterWhereConditions =
                     [
                         new BasicWhereCondition { FieldName = "status", Operator = "=", Value = "open" }
@@ -108,8 +109,53 @@ public class QueryDefinitionCoreMapperTests
             ]
         };
 
-        var ex = Assert.Throws<InvalidOperationException>(() => QueryDefinitionCoreMapper.Map(definition));
+        var statement = Assert.IsType<SelectStatement>(QueryDefinitionCoreMapper.Map(definition));
+        var filter = Assert.IsType<FilterExpr>(statement.Select[0].Expression);
 
-        Assert.Contains("FILTER", ex.Message);
+        Assert.IsType<FunctionCallExpr>(filter.Expression);
+        Assert.IsType<BinaryExpr>(filter.Predicate);
+    }
+
+    [Fact]
+    public void Map_Window_PreservesPartitionOrderAndFrame()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = "orders",
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "SUM",
+                    Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                    Window = new WindowDefinition
+                    {
+                        PartitionBy = [new FieldGroupByCondition { FieldName = "customer_id" }],
+                        OrderBy = [new FieldOrderByCondition { FieldName = "created_at", Direction = SortDirection.Asc }],
+                        Frame = new WindowFrameDefinition
+                        {
+                            Unit = WindowFrameUnit.Rows,
+                            Start = new WindowFrameBound
+                            {
+                                Kind = WindowFrameBoundKind.Preceding,
+                                Offset = 1
+                            },
+                            End = new WindowFrameBound { Kind = WindowFrameBoundKind.CurrentRow }
+                        }
+                    }
+                }
+            ]
+        };
+
+        var statement = Assert.IsType<SelectStatement>(QueryDefinitionCoreMapper.Map(definition));
+        var windowed = Assert.IsType<WindowedExpr>(statement.Select[0].Expression);
+
+        Assert.Single(windowed.Window.PartitionBy);
+        Assert.Single(windowed.Window.OrderBy);
+        Assert.NotNull(windowed.Window.Frame);
+        Assert.Equal(WindowFrameUnitKind.Rows, windowed.Window.Frame!.Unit);
+        Assert.Equal(WindowFrameBoundKindCore.Preceding, windowed.Window.Frame.Start.Kind);
+        Assert.Equal(1, windowed.Window.Frame.Start.Offset);
+        Assert.Equal(WindowFrameBoundKindCore.CurrentRow, windowed.Window.Frame.End!.Kind);
     }
 }
