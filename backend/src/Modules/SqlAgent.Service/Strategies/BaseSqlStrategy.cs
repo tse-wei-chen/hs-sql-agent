@@ -1,9 +1,6 @@
 using System.Data.Common;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 
 namespace SqlAgent.Service.Strategies;
 
@@ -14,19 +11,6 @@ namespace SqlAgent.Service.Strategies;
 /// </summary>
 public abstract class BaseSqlStrategy : ISqlStrategy
 {
-    static BaseSqlStrategy()
-    {
-        DapperTemporalTypeHandlerRegistry.EnsureRegistered();
-    }
-
-    protected BaseSqlStrategy(
-        IQueryValueParserService valueParser,
-        IConfiguration configuration)
-    {
-        ArgumentNullException.ThrowIfNull(valueParser);
-        ArgumentNullException.ThrowIfNull(configuration);
-    }
-
     public abstract SqlAgentToolType DbType { get; }
     public abstract string BuildConnectionString(BuildDbConnectionModelBase model);
     public abstract DbConnection CreateConnection(string? connectionString);
