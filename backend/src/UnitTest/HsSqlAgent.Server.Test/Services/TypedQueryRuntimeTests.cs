@@ -12,6 +12,15 @@ namespace HsSqlAgent.Server.Test.Services;
 public class TypedQueryRuntimeTests
 {
     [Fact]
+    public void SqlStrategyContract_DoesNotExposeExecutionMethods()
+    {
+        var methodNames = typeof(ISqlStrategy).GetMethods().Select(method => method.Name).ToArray();
+
+        Assert.DoesNotContain("ExecuteQueryAsync", methodNames);
+        Assert.DoesNotContain("ExecuteDmlAsync", methodNames);
+    }
+
+    [Fact]
     public void Compile_AppliesCoreMaxRowsAndKeepsValuesParameterized()
     {
         var runtime = new TypedQueryRuntime();
@@ -44,11 +53,6 @@ public class TypedQueryRuntimeTests
         Assert.DoesNotContain("active", command.Sql, StringComparison.Ordinal);
         Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "active"));
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
-        strategy.Verify(s => s.ExecuteQueryAsync(
-            It.IsAny<QueryDefinition>(),
-            It.IsAny<string>(),
-            It.IsAny<SqlExecutionPolicy>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
