@@ -4,13 +4,22 @@ using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Execution;
 
+public enum DmlRowIdentityAssurance
+{
+    Strict,
+    CountOnly
+}
+
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
     string TableName,
     CompiledSqlCommand MutationCommand,
     CompiledSqlCommand MatchQueryCommand,
+    ImmutableArray<string> RowIdentityColumns,
+    DmlRowIdentityAssurance RowIdentityAssurance,
     string PlanFingerprint,
-    string PolicyVersion);
+    string PolicyVersion,
+    TimeSpan ApprovalTtl);
 
 public sealed record DmlPreview(
     DmlOperation Operation,
