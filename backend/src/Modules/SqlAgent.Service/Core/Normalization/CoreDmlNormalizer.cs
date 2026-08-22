@@ -21,7 +21,7 @@ public sealed class CoreDmlNormalizer : ISqlNormalizer
         if (statement.Statement is not InsertStatement insert)
             return _queryNormalizer.Normalize(statement, targetProvider);
 
-        var normalizedSource = insert.Source switch
+        InsertSource normalizedSource = insert.Source switch
         {
             InsertValuesSource values => values with
             {
