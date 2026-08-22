@@ -1,12 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Strategies.Adapters;
@@ -37,13 +33,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected BaseStrategyTests(TFixture fixture)
     {
         Fixture = fixture;
-        var configMock = new Mock<IConfiguration>();
-        configMock.Setup(c => c["McpKeySettings:HmacSecretKey"]).Returns("TestSecretKey12345678901234567890");
-        ProviderStrategy = CreateStrategy(new QueryValueParserService(), configMock.Object);
+        ProviderStrategy = CreateStrategy();
         Strategy = new CoreStrategyTestHarness<TStrategy>(ProviderStrategy);
     }
 
-    protected abstract TStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration);
+    protected abstract TStrategy CreateStrategy();
 
     protected abstract string TestTableName { get; }
     protected abstract string TestOrdersTableName { get; }
