@@ -10,7 +10,7 @@ public sealed record NamedTableSource(
     SourceSpan Span) : TableSource(Span);
 
 public sealed record DerivedTableSource(
-    SelectStatement Query,
+    SqlStatement Query,
     string Alias,
     SourceSpan Span) : TableSource(Span);
 
@@ -38,7 +38,7 @@ public sealed record JoinSource(
 public sealed record CteDefinition(
     SqlIdentifier Name,
     ImmutableArray<SqlIdentifier> ColumnAliases,
-    SelectStatement Query,
+    SqlStatement Query,
     SourceSpan Span) : SqlNode(Span);
 
 public sealed record SelectStatement(
