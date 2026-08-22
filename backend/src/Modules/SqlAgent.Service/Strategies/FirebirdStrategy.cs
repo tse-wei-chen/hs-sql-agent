@@ -32,10 +32,7 @@ public partial class FirebirdStrategy(IQueryValueParserService valueParser, ICon
     protected override Compiler CreateCompiler() => new FirebirdCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
-    {
-        // Firebird does not have identical concept of schemas inside a database file for structure
-        return await Task.FromResult(new List<string> { "Default" });
-    }
+        => await Task.FromResult(new List<string> { "Default" });
 
     public override async Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default)
     {
@@ -43,9 +40,8 @@ public partial class FirebirdStrategy(IQueryValueParserService valueParser, ICon
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var sql = "SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 AND RDB$VIEW_BLR IS NULL;";
-            var tables = await connection.QueryAsync<string>(sql);
-            return [.. tables];
+            const string sql = "SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 AND RDB$VIEW_BLR IS NULL;";
+            return [.. await connection.QueryAsync<string>(sql)];
         }
         catch (Exception ex)
         {
@@ -79,15 +75,29 @@ public partial class FirebirdStrategy(IQueryValueParserService valueParser, ICon
                        WHEN 'SQL_TIME'   THEN 'TIME'
                        WHEN 'BOOLEAN'    THEN 'BOOLEAN'
                        ELSE TRIM(t.RDB$TYPE_NAME)
-                   END AS DATA_TYPE
+                   END AS DATA_TYPE,
+                   CASE WHEN pk.RDB$FIELD_NAME IS NULL THEN 0 ELSE 1 END AS IS_PRIMARY_KEY,
+                   CASE WHEN pk.RDB$FIELD_POSITION IS NULL THEN NULL ELSE pk.RDB$FIELD_POSITION + 1 END AS PRIMARY_KEY_ORDINAL
             FROM RDB$RELATION_FIELDS f
             JOIN RDB$FIELDS fs ON fs.RDB$FIELD_NAME = f.RDB$FIELD_SOURCE
-            JOIN RDB$TYPES t   ON t.RDB$TYPE = fs.RDB$FIELD_TYPE AND t.RDB$FIELD_NAME = 'RDB$FIELD_TYPE'
+            JOIN RDB$TYPES t ON t.RDB$TYPE = fs.RDB$FIELD_TYPE AND t.RDB$FIELD_NAME = 'RDB$FIELD_TYPE'
+            LEFT JOIN (
+                SELECT rc.RDB$RELATION_NAME, seg.RDB$FIELD_NAME, seg.RDB$FIELD_POSITION
+                FROM RDB$RELATION_CONSTRAINTS rc
+                JOIN RDB$INDEX_SEGMENTS seg ON seg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME
+                WHERE rc.RDB$CONSTRAINT_TYPE = 'PRIMARY KEY'
+            ) pk
+              ON pk.RDB$RELATION_NAME = f.RDB$RELATION_NAME
+             AND pk.RDB$FIELD_NAME = f.RDB$FIELD_NAME
             WHERE f.RDB$RELATION_NAME = UPPER(@tableName)
             ORDER BY f.RDB$FIELD_POSITION;";
 
             var rows = await connection.QueryAsync(sql, new { tableName });
-            return [.. rows.Select(r => new ColumnInfo(((string)r.COLUMN_NAME).TrimEnd(), ((string)r.DATA_TYPE).TrimEnd()))];
+            return [.. rows.Select(r => new ColumnInfo(
+                ((string)r.COLUMN_NAME).TrimEnd(),
+                ((string)r.DATA_TYPE).TrimEnd(),
+                Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
+                r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
         }
         catch (Exception ex)
         {
@@ -102,29 +112,16 @@ public partial class FirebirdStrategy(IQueryValueParserService valueParser, ICon
     {
         var iscCode = ex is FbException fbEx ? fbEx.ErrorCode.ToString() : null;
         var code = TryExtractFbSqlCode(ex.Message) ?? iscCode;
-
         return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
     }
 
     private static string? TryExtractFbSqlCode(string message)
     {
         if (string.IsNullOrWhiteSpace(message)) return null;
-
-        // Extract SQL code pattern: "SQL error code = -204" or "SQL Code = -204"
         var sqlCodeMatch = SqlCodeRegex().Match(message);
-        if (sqlCodeMatch.Success)
-        {
-            var rawCode = sqlCodeMatch.Groups["code"].Value;
-            return "FB_SQL_" + rawCode;
-        }
-
-        // Extract gds code pattern: "gds code = 335544569"
+        if (sqlCodeMatch.Success) return "FB_SQL_" + sqlCodeMatch.Groups["code"].Value;
         var gdsCodeMatch = GdsCodeRegex().Match(message);
-        if (gdsCodeMatch.Success)
-        {
-            return "FB_GDS_" + gdsCodeMatch.Groups["code"].Value;
-        }
-
+        if (gdsCodeMatch.Success) return "FB_GDS_" + gdsCodeMatch.Groups["code"].Value;
         return null;
     }
 
