@@ -150,7 +150,7 @@ public abstract class BaseSqlStrategy(
         SqlExecutionPolicy policy,
         CancellationToken cancellationToken = default) =>
         Task.FromException<string>(new NotSupportedException(
-            "Legacy DML dry-run/ConfirmToken execution has been removed. " +
+            "Legacy string-token DML execution has been removed. " +
             "Use TypedDmlRuntime with typed preview/challenge/commit and revalidation."));
 
     protected abstract string BuildExecutionErrorMessage(Exception ex, string type);
