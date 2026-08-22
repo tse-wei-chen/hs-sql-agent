@@ -7,7 +7,6 @@ using MySql.Data.MySqlClient;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
@@ -28,7 +27,6 @@ public partial class MySqlStrategy(IQueryValueParserService valueParser, IConfig
         return builder.ConnectionString;
     }
     public override DbConnection CreateConnection(string? connectionString) => new MySqlConnection(connectionString);
-    protected override Compiler CreateCompiler() => new MySqlCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {

@@ -1,7 +1,6 @@
 using System.Data;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Enums;
@@ -25,7 +24,6 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         return builder.ConnectionString;
     }
     public override DbConnection CreateConnection(string? connectionString) => new SqliteConnection(connectionString);
-    protected override Compiler CreateCompiler() => new SqliteCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {
