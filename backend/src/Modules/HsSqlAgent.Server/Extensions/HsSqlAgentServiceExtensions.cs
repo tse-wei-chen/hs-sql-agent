@@ -230,7 +230,7 @@ public static class HsSqlAgentServiceExtensions
             operability.AuditRetentionDays = source.AuditRetentionDays;
             operability.AuditRetentionMode = source.AuditRetentionMode;
             operability.AuditArchivePath = source.AuditArchivePath;
-            operability.AuditFallbackPath = source.Operability.AuditFallbackPath;
+            operability.AuditFallbackPath = source.AuditFallbackPath;
             operability.AuditRetentionRunHourUtc = source.AuditRetentionRunHourUtc;
         });
         services.Configure<TelemetryOptions>(telemetry =>
