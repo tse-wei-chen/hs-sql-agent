@@ -11,12 +11,24 @@ using SqlAgent.Service.Strategies.Adapters;
 
 namespace HsSqlAgent.Server.Services;
 
+public interface ITypedQueryRuntime
+{
+    Task<QueryExecutionResult> ExecuteAsync(
+        ISqlStrategy strategy,
+        string connectionString,
+        QueryDefinition definition,
+        SqlAgentToolType sourceDialect,
+        SecurityPolicyModel policy,
+        IReadOnlySet<string>? allowedTables,
+        CancellationToken cancellationToken = default);
+}
+
 /// <summary>
 /// Server-side strangler boundary for SELECT execution. Callers provide an explicit source
 /// dialect plus the current security policy and table authorization. The runtime compiles through
 /// the Core pipeline and executes only the resulting immutable command.
 /// </summary>
-public sealed class TypedQueryRuntime
+public sealed class TypedQueryRuntime : ITypedQueryRuntime
 {
     public CompiledSqlCommand Compile(
         ISqlStrategy strategy,
