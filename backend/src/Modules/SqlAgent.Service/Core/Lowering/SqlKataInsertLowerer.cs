@@ -11,9 +11,8 @@ using SqlKata.Compilers;
 namespace SqlAgent.Service.Core.Lowering;
 
 /// <summary>
-/// Structured SqlKata backend for canonical INSERT. Literal VALUES and multi-row VALUES are
-/// supported without raw SQL. INSERT..SELECT remains fail-closed until the query-to-SqlKata
-/// builder is shared with <see cref="SqlKataProviderLowerer"/>.
+/// Structured SqlKata backend for canonical INSERT. VALUES, multi-row VALUES, and INSERT..SELECT
+/// all stay in SqlKata's structured query IR; raw user SQL never crosses this boundary.
 /// </summary>
 public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
 {
@@ -33,16 +32,15 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
         if (columns.Any(column => column.Contains('.', StringComparison.Ordinal)))
             throw new SqlCompilationException("INSERT target columns must be unqualified.");
 
-        var query = insert.Source switch
+        var compiler = SqlKataProviderLowerer.CreateCompiler(provider);
+        Query query = insert.Source switch
         {
             InsertValuesSource values => LowerValues(insert, columns, values),
-            InsertQuerySource => throw new SqlCompilationException(
-                "INSERT..SELECT is represented in the Core AST but its shared SqlKata query builder is not wired into the INSERT backend yet; compilation was rejected."),
+            InsertQuerySource querySource => LowerQuerySource(insert, columns, querySource, compiler),
             _ => throw new SqlCompilationException(
                 $"Unsupported INSERT source during lowering: {insert.Source.GetType().Name}")
         };
 
-        var compiler = CreateCompiler(provider);
         var result = compiler.Compile(query);
         var parameters = result.NamedBindings
             .OrderBy(pair => ParameterOrdinal(pair.Key))
@@ -87,6 +85,16 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
         return new Query(IdentifierText(insert.Target.Name)).AsInsert(columns, rows);
     }
 
+    private static Query LowerQuerySource(
+        InsertStatement insert,
+        string[] columns,
+        InsertQuerySource source,
+        Compiler compiler)
+    {
+        var sourceQuery = SqlKataProviderLowerer.BuildQuery(source.Query, compiler);
+        return new Query(IdentifierText(insert.Target.Name)).AsInsert(columns, sourceQuery);
+    }
+
     private static object? NormalizeLiteral(object? value)
     {
         if (value is not JsonElement json) return value;
@@ -112,15 +120,4 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
         var digits = new string(name.Reverse().TakeWhile(char.IsDigit).Reverse().ToArray());
         return int.TryParse(digits, out var ordinal) ? ordinal : int.MaxValue;
     }
-
-    private static Compiler CreateCompiler(SqlAgentToolType type) => type switch
-    {
-        SqlAgentToolType.MsSqlServer => new SqlServerCompiler(),
-        SqlAgentToolType.MySQL => new MySqlCompiler(),
-        SqlAgentToolType.Postgres => new PostgresCompiler(),
-        SqlAgentToolType.Oracle => new OracleCompiler(),
-        SqlAgentToolType.Firebird => new FirebirdCompiler(),
-        SqlAgentToolType.Sqlite => new SqliteCompiler(),
-        _ => throw new SqlCompilationException($"Unsupported provider: {type}")
-    };
 }

@@ -32,7 +32,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 $"Plan targets {plan.TargetProvider}, but this lowerer targets {Provider}.");
 
         var compiler = CreateCompiler(Provider);
-        var query = LowerStatement(plan.Statement, compiler);
+        var query = BuildQuery(plan.Statement, compiler);
         var result = compiler.Compile(query);
         var parameters = result.NamedBindings
             .OrderBy(pair => ParameterOrdinal(pair.Key))
@@ -47,12 +47,17 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             Provider);
     }
 
-    private static Query LowerStatement(SqlStatement statement, Compiler compiler) => statement switch
+    /// <summary>
+    /// Builds the structured SqlKata query IR for a canonical query statement without compiling it.
+    /// DML lowerers reuse this entry point for INSERT..SELECT so query structure and expression
+    /// rendering have one backend implementation.
+    /// </summary>
+    internal static Query BuildQuery(SqlStatement statement, Compiler compiler) => statement switch
     {
         SelectStatement select => LowerSelect(select, compiler),
         QueryStatement query => LowerQuery(query, compiler),
         _ => throw new SqlCompilationException(
-            $"Unsupported statement during SqlKata lowering: {statement.GetType().Name}")
+            $"Unsupported statement during SqlKata query building: {statement.GetType().Name}")
     };
 
     private static Query LowerQuery(QueryStatement statement, Compiler compiler)
@@ -60,7 +65,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         var query = LowerSelect(statement.Head, compiler, includeTail: false);
         foreach (var operation in statement.SetOperations)
         {
-            var branch = LowerStatement(operation.Query, compiler);
+            var branch = BuildQuery(operation.Query, compiler);
             query = operation.Kind switch
             {
                 SetOperationKind.Union => query.Union(branch),
@@ -89,7 +94,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             if (!cte.ColumnAliases.IsDefaultOrEmpty)
                 throw new SqlCompilationException("CTE column aliases are not yet supported by the Core SqlKata lowerer.");
-            query.With(IdentifierText(cte.Name), LowerStatement(cte.Query, compiler));
+            query.With(IdentifierText(cte.Name), BuildQuery(cte.Query, compiler));
         }
 
         if (statement.From is not null)
@@ -160,7 +165,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 return;
             }
             case DerivedTableSource derived:
-                query.From(LowerStatement(derived.Query, compiler), derived.Alias);
+                query.From(BuildQuery(derived.Query, compiler), derived.Alias);
                 return;
             default:
                 throw new SqlCompilationException(
@@ -193,7 +198,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                     return;
                 case DerivedTableSource derived:
                     query.Join(
-                        LowerStatement(derived.Query, compiler).As(derived.Alias),
+                        BuildQuery(derived.Query, compiler).As(derived.Alias),
                         j => j,
                         type);
                     return;
@@ -222,7 +227,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             }
             case DerivedTableSource derived:
                 query.Join(
-                    LowerStatement(derived.Query, compiler).As(derived.Alias),
+                    BuildQuery(derived.Query, compiler).As(derived.Alias),
                     j => j.WhereRaw(predicate.Sql, predicate.Bindings.ToArray()),
                     type);
                 return;
@@ -472,7 +477,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static RenderedExpression RenderSubquery(SqlStatement statement, Compiler compiler)
     {
-        var result = compiler.Compile(LowerStatement(statement, compiler));
+        var result = compiler.Compile(BuildQuery(statement, compiler));
         return new RenderedExpression(
             $"({ToPositionalSql(result.Sql, result.NamedBindings)})",
             OrderedValues(result.NamedBindings));
@@ -512,7 +517,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         RenderedExpression right) =>
         new(sql, left.Bindings.Concat(right.Bindings).ToImmutableArray());
 
-    private static Compiler CreateCompiler(SqlAgentToolType provider) => provider switch
+    internal static Compiler CreateCompiler(SqlAgentToolType provider) => provider switch
     {
         SqlAgentToolType.Sqlite => new SqliteCompiler(),
         SqlAgentToolType.Postgres => new PostgresCompiler(),
