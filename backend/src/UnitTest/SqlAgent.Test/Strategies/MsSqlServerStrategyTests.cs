@@ -7,6 +7,7 @@ using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
+using SqlAgent.Service.Strategies.Adapters;
 using Testcontainers.MsSql;
 using Xunit;
 
@@ -137,7 +138,7 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
     [Fact]
     public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenConversionIsInvalid()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -146,8 +147,9 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=245", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("conversion", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.MsSqlServer, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal("245", ex.Code);
+        Assert.Contains("conversion", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 }
