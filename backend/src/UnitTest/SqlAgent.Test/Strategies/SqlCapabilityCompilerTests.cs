@@ -1,36 +1,28 @@
-using Microsoft.Extensions.Configuration;
-using Moq;
+using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.SqlTranslation.Diagnostics;
-using SqlAgent.Service.SqlTranslation.Functions;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;
 
+/// <summary>
+/// Provider capability regressions belong to the canonical compiler. The strategy compatibility
+/// compiler is intentionally obsolete and no longer owns translation diagnostics or passthrough
+/// policy, so this suite asserts Core commands and fail-closed Core exceptions directly.
+/// </summary>
 public class SqlCapabilityCompilerTests
 {
-    private readonly IReadOnlyList<BaseSqlStrategy> _strategies;
-
-    public SqlCapabilityCompilerTests()
-    {
-        var config = new Mock<IConfiguration>();
-        config.Setup(x => x["McpKeySettings:HmacSecretKey"])
-            .Returns("TestSecretKey12345678901234567890");
-        var parser = new QueryValueParserService();
-        _strategies =
-        [
-            new SqliteStrategy(parser, config.Object),
-            new PostgresStrategy(parser, config.Object),
-            new MySqlStrategy(parser, config.Object),
-            new MsSqlServerStrategy(parser, config.Object),
-            new OracleStrategy(parser, config.Object),
-            new FirebirdStrategy(parser, config.Object)
-        ];
-    }
+    private static readonly SqlAgentToolType[] Providers =
+    [
+        SqlAgentToolType.Sqlite,
+        SqlAgentToolType.Postgres,
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MsSqlServer,
+        SqlAgentToolType.Oracle,
+        SqlAgentToolType.Firebird
+    ];
 
     [Fact]
     public void Cast_CompilesForAllProvidersWithoutDroppingType()
@@ -38,97 +30,91 @@ public class SqlCapabilityCompilerTests
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT CAST(amount AS DECIMAL(12,2)) AS normalized_amount FROM orders");
 
-        foreach (var strategy in _strategies)
+        foreach (var provider in Providers)
         {
-            var sql = strategy.CompileQuerySql(definition);
-            Assert.Contains("CAST(", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("DECIMAL(12,2)", sql, StringComparison.OrdinalIgnoreCase);
+            var command = Compile(definition, provider, provider);
+            Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("DECIMAL(12,2)", command.Sql, StringComparison.OrdinalIgnoreCase);
         }
     }
 
     [Fact]
-    public void WindowFrame_CompilesForAllProvidersWithoutDroppingBounds()
+    public void WindowFrame_AndLag_CompileWithoutLegacyFunctionRegistryDependency()
     {
         var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT SUM(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders");
+            "SELECT LAG(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders");
 
-        foreach (var strategy in _strategies)
+        foreach (var provider in Providers)
         {
-            var sql = strategy.CompileQuerySql(definition);
-            Assert.Contains("ROWS BETWEEN 2 PRECEDING AND CURRENT ROW", sql, StringComparison.OrdinalIgnoreCase);
+            var command = Compile(definition, provider, provider);
+            Assert.Contains("LAG(", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ROWS BETWEEN 2 PRECEDING AND CURRENT ROW", command.Sql, StringComparison.OrdinalIgnoreCase);
         }
     }
 
     [Fact]
-    public void NullOrdering_CompilesOnlyForDeclaredProviders()
+    public void NullOrdering_FailsClosedOnlyForProvidersWithoutCapability()
     {
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT amount FROM orders ORDER BY amount DESC NULLS LAST");
 
-        foreach (var strategy in _strategies)
+        foreach (var provider in Providers)
         {
-            if (strategy.DbType is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
+            if (provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
             {
-                var error = Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(definition));
-                Assert.Contains("NULLS FIRST/LAST", error.Message);
+                var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
+                Assert.Contains("ordering.nulls", error.Message, StringComparison.OrdinalIgnoreCase);
             }
             else
             {
-                var sql = strategy.CompileQuerySql(definition);
-                Assert.Contains("DESC NULLS LAST", sql, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("NULLS LAST", Compile(definition, provider, provider).Sql, StringComparison.OrdinalIgnoreCase);
             }
         }
     }
 
     [Fact]
-    public void Interval_CompilesOnlyForPostgres()
+    public void Interval_IsStructuredAndPostgresOnly()
     {
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT created_at + INTERVAL '1 day' FROM events");
 
-        foreach (var strategy in _strategies)
+        var postgres = Compile(definition, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
+        Assert.Contains("INTERVAL '1 day'", postgres.Sql, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var provider in Providers.Where(item => item != SqlAgentToolType.Postgres))
         {
-            if (strategy.DbType == SqlAgentToolType.Postgres)
-            {
-                var sql = strategy.CompileQuerySql(definition);
-                Assert.Contains("INTERVAL '1 day'", sql, StringComparison.OrdinalIgnoreCase);
-            }
-            else
-            {
-                var error = Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(definition));
-                Assert.Contains("INTERVAL expressions", error.Message);
-            }
+            var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
+            Assert.Contains("expression.interval", error.Message, StringComparison.OrdinalIgnoreCase);
         }
     }
 
     [Fact]
-    public void CurrentTemporalKeywords_CompileWithDeclaredProviderSemantics()
+    public void CurrentTemporalKeywords_UseDeclaredProviderSemantics()
     {
         var currentDate = SqlDefinitionParser.ParseQuery("SELECT CURRENT_DATE AS value FROM orders");
         var currentTime = SqlDefinitionParser.ParseQuery("SELECT CURRENT_TIME AS value FROM orders");
         var currentTimestamp = SqlDefinitionParser.ParseQuery("SELECT CURRENT_TIMESTAMP AS value FROM orders");
 
-        foreach (var strategy in _strategies)
+        foreach (var provider in Providers)
         {
-            var timestampSql = strategy.CompileQuerySql(currentTimestamp);
-            Assert.Contains("CURRENT_TIMESTAMP", timestampSql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("CURRENT_TIMESTAMP", Compile(currentTimestamp, provider, provider).Sql, StringComparison.OrdinalIgnoreCase);
 
-            var dateSql = strategy.CompileQuerySql(currentDate);
+            var dateSql = Compile(currentDate, provider, provider).Sql;
             Assert.Contains(
-                strategy.DbType == SqlAgentToolType.MsSqlServer ? "CAST(CURRENT_TIMESTAMP AS date)" : "CURRENT_DATE",
+                provider == SqlAgentToolType.MsSqlServer ? "CAST(CURRENT_TIMESTAMP AS date)" : "CURRENT_DATE",
                 dateSql,
                 StringComparison.OrdinalIgnoreCase);
 
-            if (strategy.DbType == SqlAgentToolType.Oracle)
+            if (provider == SqlAgentToolType.Oracle)
             {
-                var error = Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(currentTime));
-                Assert.Contains("CURRENT_TIME", error.Message);
+                var error = Assert.Throws<SqlCompilationException>(() => Compile(currentTime, provider, provider));
+                Assert.Contains("CURRENT_TIME", error.Message, StringComparison.OrdinalIgnoreCase);
             }
             else
             {
-                var timeSql = strategy.CompileQuerySql(currentTime);
+                var timeSql = Compile(currentTime, provider, provider).Sql;
                 Assert.Contains(
-                    strategy.DbType == SqlAgentToolType.MsSqlServer ? "CAST(CURRENT_TIMESTAMP AS time)" : "CURRENT_TIME",
+                    provider == SqlAgentToolType.MsSqlServer ? "CAST(CURRENT_TIMESTAMP AS time)" : "CURRENT_TIME",
                     timeSql,
                     StringComparison.OrdinalIgnoreCase);
             }
@@ -136,600 +122,223 @@ public class SqlCapabilityCompilerTests
     }
 
     [Fact]
-    public void DateDiff_Day_CompilesWithStartToEndSemanticsForAllProviders()
+    public void DateDiff_Day_PreservesStartToEndSemanticsInSqlAndOrderedBindings()
     {
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT DATEDIFF(DAY, 20, 22) AS days FROM orders");
 
-        foreach (var strategy in _strategies)
+        foreach (var provider in Providers)
         {
-            var sql = strategy.CompileQueryTranslation(definition, SqlAgentToolType.MsSqlServer).Sql;
-            Assert.DoesNotContain("DATEDIFF(\"DAY\"", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("DATEDIFF([DAY]", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("DATEDIFF(`DAY`", sql, StringComparison.OrdinalIgnoreCase);
+            var command = Compile(definition, SqlAgentToolType.MsSqlServer, provider);
+            Assert.DoesNotContain("DATEDIFF(\"DAY\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("DATEDIFF([DAY]", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("DATEDIFF(`DAY`", command.Sql, StringComparison.OrdinalIgnoreCase);
 
-            if (strategy.DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite)
+            if (provider is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite)
             {
-                var endIndex = sql.IndexOf("22", StringComparison.OrdinalIgnoreCase);
-                var startIndex = sql.IndexOf("20", StringComparison.OrdinalIgnoreCase);
-                Assert.True(endIndex >= 0 && startIndex > endIndex, sql);
+                Assert.Equal(2, command.Parameters.Length);
+                Assert.Equal(22, Convert.ToInt32(command.Parameters[0].Value));
+                Assert.Equal(20, Convert.ToInt32(command.Parameters[1].Value));
             }
         }
     }
 
     [Fact]
-    public void DateDiff_UnsupportedOrUnsafeUnit_FailsClosed()
+    public void DateDiff_AndDateAdd_UnsupportedUnitsFailClosed()
     {
-        var monthDefinition = SqlDefinitionParser.ParseQuery(
+        var diff = SqlDefinitionParser.ParseQuery(
             "SELECT DATEDIFF(MONTH, DATE '2026-01-01', DATE '2026-08-01') FROM orders");
-        var unsafeDefinition = SqlDefinitionParser.ParseQuery(
-            "SELECT DATEDIFF(customer_id, DATE '2026-01-01', DATE '2026-08-01') FROM orders");
-
-        foreach (var strategy in _strategies.Where(x =>
-                     x.DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite))
-        {
-            var unitError = Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(monthDefinition));
-            Assert.Contains("DATEDIFF unit MONTH", unitError.Message);
-        }
-
-        foreach (var strategy in _strategies)
-        {
-            var unsafeError = Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(unsafeDefinition));
-            Assert.Contains("Unsupported DATEADD/DATEDIFF date-part unit", unsafeError.Message);
-        }
-    }
-
-    [Fact]
-    public void DateAdd_Day_CompilesForAllProvidersWithoutQuotingUnit()
-    {
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM orders");
-
-        foreach (var strategy in _strategies)
-        {
-            var sql = strategy.CompileQueryTranslation(definition, SqlAgentToolType.MsSqlServer).Sql;
-            Assert.DoesNotContain("\"DAY\"", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("[DAY]", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("`DAY`", sql, StringComparison.OrdinalIgnoreCase);
-
-            if (strategy.DbType == SqlAgentToolType.MySQL)
-                Assert.Contains("TIMESTAMPADD(DAY", sql, StringComparison.OrdinalIgnoreCase);
-            if (strategy.DbType == SqlAgentToolType.Postgres)
-                Assert.Contains("INTERVAL '1 day'", sql, StringComparison.OrdinalIgnoreCase);
-            if (strategy.DbType == SqlAgentToolType.Sqlite)
-                Assert.Contains("PRINTF('%+d day'", sql, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Fact]
-    public void DateAdd_UnimplementedProviderUnit_FailsClosed()
-    {
-        var definition = SqlDefinitionParser.ParseQuery(
+        var add = SqlDefinitionParser.ParseQuery(
             "SELECT DATEADD(MONTH, 2, DATE '2026-08-20') FROM orders");
 
-        foreach (var strategy in _strategies.Where(x =>
-                     x.DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite))
+        foreach (var provider in new[] { SqlAgentToolType.Postgres, SqlAgentToolType.Oracle, SqlAgentToolType.Sqlite })
         {
-            var error = Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(definition));
-            Assert.Contains("DATEADD unit MONTH", error.Message);
+            Assert.Contains("DATEDIFF unit MONTH", Assert.Throws<SqlCompilationException>(() =>
+                Compile(diff, SqlAgentToolType.MsSqlServer, provider)).Message);
+            Assert.Contains("DATEADD unit MONTH", Assert.Throws<SqlCompilationException>(() =>
+                Compile(add, SqlAgentToolType.MsSqlServer, provider)).Message);
         }
     }
 
     [Fact]
-    public void DateFormat_UsesDifferentMinuteTokensForSqliteAndMySql()
+    public void DateFormat_UsesExplicitSourceDialectAndNeverGuesses()
     {
-        var namedFormat = SqlDefinitionParser.ParseQuery(
-            "SELECT DATE_FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') FROM orders");
-        var mysqlFormat = SqlDefinitionParser.ParseQuery(
-            "SELECT DATE_FORMAT(TIMESTAMP '2026-08-22 13:45:09', '%Y-%m-%d %H:%i:%S') FROM orders");
-
-        var sqlite = _strategies.Single(x => x.DbType == SqlAgentToolType.Sqlite);
-        var mysql = _strategies.Single(x => x.DbType == SqlAgentToolType.MySQL);
-
-        Assert.Contains("%Y-%m-%d %H:%M:%S", sqlite.CompileQueryTranslation(namedFormat, SqlAgentToolType.MsSqlServer).Sql);
-        Assert.Contains("%Y-%m-%d %H:%M:%S", sqlite.CompileQueryTranslation(mysqlFormat, SqlAgentToolType.MySQL).Sql);
-        Assert.Contains("%Y-%m-%d %H:%i:%S", mysql.CompileQueryTranslation(namedFormat, SqlAgentToolType.MsSqlServer).Sql);
-        Assert.Contains("%Y-%m-%d %H:%i:%S", mysql.CompileQueryTranslation(mysqlFormat, SqlAgentToolType.MySQL).Sql);
-    }
-
-    [Fact]
-    public void DateFormat_FirebirdFailsClosedBeforeExecution()
-    {
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyy-MM-dd') FROM orders");
-        var firebird = _strategies.Single(x => x.DbType == SqlAgentToolType.Firebird);
-
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            firebird.CompileQueryTranslation(definition, SqlAgentToolType.MsSqlServer));
-        Assert.Contains("portable date formatting", error.Message);
-    }
-
-    [Fact]
-    public void ToDate_CompilesOnlyForProvidersWithADeclaredTranslation()
-    {
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') FROM orders");
-
-        foreach (var strategy in _strategies)
-        {
-            if (strategy.DbType is SqlAgentToolType.Sqlite or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Firebird)
-            {
-                var error = Assert.Throws<InvalidOperationException>(() =>
-                    strategy.CompileQueryTranslation(definition, SqlAgentToolType.MsSqlServer));
-                Assert.Contains("formatted date parsing", error.Message);
-            }
-            else
-            {
-                var sql = strategy.CompileQueryTranslation(definition, SqlAgentToolType.MsSqlServer).Sql;
-                Assert.Contains(
-                    strategy.DbType == SqlAgentToolType.MySQL ? "%Y/%m/%d" : "YYYY/MM/DD",
-                    sql,
-                    StringComparison.Ordinal);
-            }
-        }
-    }
-
-    [Fact]
-    public void EveryMetadataFunctionTemplate_IsAcceptedByTemplateGrammar()
-    {
-        foreach (var definition in FunctionDefinitionLoader.LoadEmbedded()
-                     .Where(item => item.TranslationKind == FunctionTranslationKind.Template))
-        {
-            Assert.False(string.IsNullOrWhiteSpace(definition.Template));
-            Assert.NotNull(new FunctionTemplateEngine(definition.Template!).Parse());
-        }
-    }
-
-    [Fact]
-    public void DatePartExtraction_UsesNumericExpressionsAcrossProviders()
-    {
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT YEAR(DATE '2026-08-22'), MONTH(DATE '2026-08-22'), DAY(DATE '2026-08-22') FROM orders");
-
-        foreach (var strategy in _strategies)
-        {
-            var sql = strategy.CompileQuerySql(definition);
-            if (strategy.DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
-                Assert.Contains("EXTRACT(YEAR FROM", sql, StringComparison.OrdinalIgnoreCase);
-            if (strategy.DbType == SqlAgentToolType.Firebird)
-                Assert.Contains("CAST(? AS DATE)", sql, StringComparison.OrdinalIgnoreCase);
-            if (strategy.DbType == SqlAgentToolType.Sqlite)
-                Assert.Contains("CAST(STRFTIME('%Y'", sql, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Theory]
-    [InlineData("LEN")]
-    [InlineData("LENGTH")]
-    [InlineData("CHAR_LENGTH")]
-    public void StringLength_UsesProductionSemanticRegistry(string sourceName)
-    {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {sourceName}(customer_id) FROM orders");
-
-        foreach (var strategy in _strategies)
-        {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(sourceName)).Sql;
-            var expected = strategy.DbType switch
-            {
-                SqlAgentToolType.MsSqlServer => "LEN(",
-                SqlAgentToolType.MySQL or SqlAgentToolType.Firebird => "CHAR_LENGTH(",
-                _ => "LENGTH("
-            };
-            Assert.Contains(expected, sql, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Theory]
-    [InlineData("CEIL")]
-    [InlineData("CEILING")]
-    public void Ceiling_UsesProductionSemanticRegistry(string sourceName)
-    {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {sourceName}(1.2) FROM orders");
-
-        foreach (var strategy in _strategies)
-        {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(sourceName)).Sql;
-            Assert.Contains(
-                strategy.DbType == SqlAgentToolType.MsSqlServer ? "CEILING(" : "CEIL(",
-                sql,
-                StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Fact]
-    public void CompileQueryTranslation_UnknownFunctionReturnsPassthroughDiagnostic()
-    {
-        var definition = SqlDefinitionParser.ParseQuery("SELECT MY_COMPANY_RISK_SCORE(customer_id) FROM orders");
-        var strategy = Assert.IsAssignableFrom<BaseSqlStrategy>(
-            _strategies.Single(item => item.DbType == SqlAgentToolType.Postgres));
-
-        var result = strategy.CompileQueryTranslation(
-            definition,
-            SqlAgentToolType.MsSqlServer,
-            UnknownFunctionPolicy.WarnAndPassthrough);
-
-        Assert.Contains("MY_COMPANY_RISK_SCORE", result.Sql);
-        var diagnostic = Assert.Single(result.Diagnostics);
-        Assert.Equal("SQLFUNC001", diagnostic.Code);
-        Assert.Equal(DiagnosticSeverity.Warning, diagnostic.Severity);
-        Assert.Equal(FunctionPortability.Unknown, diagnostic.Portability);
-    }
-
-    [Fact]
-    public void CompileQueryTranslation_DefaultPolicyRejectsUnknownFunction()
-    {
-        var definition = SqlDefinitionParser.ParseQuery("SELECT MY_UDF(customer_id) FROM orders");
-        var strategy = Assert.IsAssignableFrom<BaseSqlStrategy>(_strategies[0]);
-
-        Assert.Throws<InvalidOperationException>(() => strategy.CompileQueryTranslation(
-            definition, SqlAgentToolType.MsSqlServer));
-    }
-
-    [Fact]
-    public void CompileQuerySql_AgentPathRejectsUnknownFunctionButAllowsPortableAggregate()
-    {
-        var strategy = Assert.IsAssignableFrom<BaseSqlStrategy>(
-            _strategies.Single(item => item.DbType == SqlAgentToolType.Postgres));
-        var unknown = SqlDefinitionParser.ParseQuery("SELECT MY_UDF(customer_id) FROM orders");
-        var aggregate = SqlDefinitionParser.ParseQuery("SELECT COUNT(customer_id) FROM orders");
-
-        Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(unknown));
-        Assert.Contains("COUNT(", strategy.CompileQuerySql(aggregate), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void CompileQuerySql_UsesExplicitSourceDialectFromQueryContract()
-    {
-        var strategy = Assert.IsAssignableFrom<BaseSqlStrategy>(
-            _strategies.Single(item => item.DbType == SqlAgentToolType.Postgres));
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') FROM orders");
-        definition.SourceDialect = SqlAgentToolType.MySQL;
+        var postgres = Compile(definition, SqlAgentToolType.MySQL, SqlAgentToolType.Postgres);
+        Assert.Contains("YYYY-MM-DD HH24:MI", postgres.Sql, StringComparison.Ordinal);
 
-        Assert.Contains("YYYY-MM-DD HH24:MI", strategy.CompileQuerySql(definition), StringComparison.Ordinal);
+        var wrongSource = Assert.Throws<SqlCompilationException>(() =>
+            Compile(definition, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
+        Assert.Contains("Postgres date-format token", wrongSource.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void CompileQuerySql_OmittedSourceDialectMeansTargetDialectAndDoesNotGuess()
+    public void DateFormat_AndDateParse_FailClosedForUnsupportedProviders()
     {
-        var strategy = Assert.IsAssignableFrom<BaseSqlStrategy>(
-            _strategies.Single(item => item.DbType == SqlAgentToolType.Postgres));
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT DATE_FORMAT(created_at, '%Y-%m-%d') FROM orders");
+        var format = SqlDefinitionParser.ParseQuery(
+            "SELECT DATE_FORMAT(CURRENT_TIMESTAMP, 'yyyy-MM-dd') FROM orders");
+        var parse = SqlDefinitionParser.ParseQuery(
+            "SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') FROM orders");
 
-        var error = Assert.Throws<FormatException>(() => strategy.CompileQuerySql(definition));
-        Assert.Contains("Postgres date-format token", error.Message, StringComparison.Ordinal);
+        Assert.Contains("portable date formatting", Assert.Throws<SqlCompilationException>(() =>
+            Compile(format, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message);
+
+        foreach (var provider in new[] { SqlAgentToolType.Sqlite, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird })
+        {
+            Assert.Contains("formatted date parsing", Assert.Throws<SqlCompilationException>(() =>
+                Compile(parse, SqlAgentToolType.MsSqlServer, provider)).Message);
+        }
     }
 
     [Fact]
-    public void CompileQueryTranslation_ThrowPolicyRejectsUnknownFunction()
+    public void CoalesceFamily_UsesTargetSemanticRegistry()
+    {
+        var coalesce = SqlDefinitionParser.ParseQuery("SELECT COALESCE(customer_id, 0) FROM orders");
+        Assert.Contains("IFNULL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.MySQL).Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ISNULL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.MsSqlServer).Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("NVL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.Oracle).Sql, StringComparison.OrdinalIgnoreCase);
+
+        var isNull = SqlDefinitionParser.ParseQuery("SELECT ISNULL(customer_id, 0) FROM orders");
+        Assert.Contains("COALESCE(", Compile(isNull, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres).Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void UnknownFunction_IsAlwaysFailClosed()
     {
         var definition = SqlDefinitionParser.ParseQuery("SELECT MY_UDF(customer_id) FROM orders");
-        var strategy = Assert.IsAssignableFrom<BaseSqlStrategy>(_strategies[0]);
-
-        var error = Assert.Throws<InvalidOperationException>(() => strategy.CompileQueryTranslation(
-            definition,
-            SqlAgentToolType.MsSqlServer,
-            UnknownFunctionPolicy.Throw));
-
-        Assert.Contains("MY_UDF", error.Message);
-    }
-
-    [Theory]
-    [InlineData("IFNULL")]
-    [InlineData("NVL")]
-    [InlineData("ISNULL")]
-    [InlineData("COALESCE")]
-    public void CoalesceFamily_UsesSemanticRegistry(string sourceName)
-    {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {sourceName}(customer_id, 0) FROM orders");
-        foreach (var strategy in _strategies)
+        foreach (var provider in Providers)
         {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(sourceName)).Sql;
-            var expected = strategy.DbType switch
-            {
-                SqlAgentToolType.MsSqlServer => "ISNULL(",
-                SqlAgentToolType.MySQL => "IFNULL(",
-                SqlAgentToolType.Oracle => "NVL(",
-                _ => "COALESCE("
-            };
-            Assert.Contains(expected, sql, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Theory]
-    [InlineData("RAND")]
-    [InlineData("RANDOM")]
-    public void RandomFamily_UsesSemanticRegistry(string sourceName)
-    {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {sourceName}() FROM orders");
-        foreach (var strategy in _strategies)
-        {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(sourceName)).Sql;
-            Assert.Contains(
-                strategy.DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite ? "RANDOM(" : "RAND(",
-                sql,
-                StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Theory]
-    [InlineData("REPEAT")]
-    [InlineData("REPLICATE")]
-    public void RepeatFamily_UsesSemanticRegistryForSupportedTargets(string sourceName)
-    {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {sourceName}('x', 3) FROM orders");
-        foreach (var strategy in _strategies.Where(item =>
-                     item.DbType is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL))
-        {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(sourceName)).Sql;
-            Assert.Contains(
-                strategy.DbType == SqlAgentToolType.MsSqlServer ? "REPLICATE(" : "REPEAT(",
-                sql,
-                StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Theory]
-    [InlineData("NOW")]
-    [InlineData("GETDATE")]
-    [InlineData("SYSDATE")]
-    public void CurrentTimestampFamily_RendersAsControlledKeyword(string sourceName)
-    {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {sourceName}() FROM orders");
-        foreach (var strategy in _strategies)
-        {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(sourceName)).Sql;
-            Assert.Contains("CURRENT_TIMESTAMP", sql, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("CURRENT_TIMESTAMP()", sql, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Theory]
-    [InlineData("GROUP_CONCAT")]
-    [InlineData("STRING_AGG")]
-    [InlineData("LISTAGG")]
-    [InlineData("LIST")]
-    public void StringAggregateFamily_UsesSemanticRegistryAndDefaultSeparator(string sourceName)
-    {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {sourceName}(customer_id) FROM orders");
-        foreach (var strategy in _strategies)
-        {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(sourceName)).Sql;
-            var expected = strategy.DbType switch
-            {
-                SqlAgentToolType.MsSqlServer or SqlAgentToolType.Postgres => "STRING_AGG(",
-                SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite => "GROUP_CONCAT(",
-                SqlAgentToolType.Oracle => "LISTAGG(",
-                _ => "LIST("
-            };
-            Assert.Contains(expected, sql, StringComparison.OrdinalIgnoreCase);
-            if (strategy.DbType is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Postgres
-                or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
-                Assert.Contains("','", sql, StringComparison.Ordinal);
+            var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
+            Assert.Contains("MY_UDF", error.Message, StringComparison.OrdinalIgnoreCase);
         }
     }
 
     [Fact]
-    public void Strategies_DoNotDeclareLegacyFunctionMappingsOrTemplates()
+    public void JsonFunctions_UseStructuredProviderLowering()
     {
-        foreach (var strategy in _strategies)
-        {
-            var declared = strategy.GetType().GetProperty(
-                "FunctionNameMappings",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
-                | System.Reflection.BindingFlags.DeclaredOnly);
-            Assert.Null(declared);
-            var templates = strategy.GetType().GetProperty(
-                "FunctionTemplates",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
-                | System.Reflection.BindingFlags.DeclaredOnly);
-            Assert.Null(templates);
-        }
+        var extract = SqlDefinitionParser.ParseQuery("SELECT JSON_EXTRACT(payload, '$.customer.name') FROM orders");
+        Assert.Contains("JSONB_EXTRACT_PATH(", Compile(extract, SqlAgentToolType.MySQL, SqlAgentToolType.Postgres).Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("JSON_EXTRACT(", Compile(extract, SqlAgentToolType.MySQL, SqlAgentToolType.Sqlite).Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Throws<SqlCompilationException>(() => Compile(extract, SqlAgentToolType.MySQL, SqlAgentToolType.Firebird));
+
+        var set = SqlDefinitionParser.ParseQuery("SELECT JSON_SET(payload, '$.customer.name', 'Ada') FROM orders");
+        Assert.Contains("JSON_MODIFY(", Compile(set, SqlAgentToolType.MySQL, SqlAgentToolType.MsSqlServer).Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("JSONB_SET(", Compile(set, SqlAgentToolType.MySQL, SqlAgentToolType.Postgres).Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Throws<SqlCompilationException>(() => Compile(set, SqlAgentToolType.MySQL, SqlAgentToolType.Oracle));
     }
 
     [Fact]
-    public void CoreExpressionProperties_AreInitOnly()
-    {
-        var properties = new[]
-        {
-            typeof(FieldSelectCondition).GetProperty(nameof(FieldSelectCondition.FieldName))!,
-            typeof(OperationSelectCondition).GetProperty(nameof(OperationSelectCondition.Left))!,
-            typeof(OperationSelectCondition).GetProperty(nameof(OperationSelectCondition.Operator))!,
-            typeof(OperationSelectCondition).GetProperty(nameof(OperationSelectCondition.Right))!,
-            typeof(ConstantSelectCondition).GetProperty(nameof(ConstantSelectCondition.Constant))!,
-            typeof(CastSelectCondition).GetProperty(nameof(CastSelectCondition.Expression))!,
-            typeof(CastSelectCondition).GetProperty(nameof(CastSelectCondition.TypeName))!,
-            typeof(IntervalSelectCondition).GetProperty(nameof(IntervalSelectCondition.Literal))!,
-            typeof(FunctionSelectCondition).GetProperty(nameof(FunctionSelectCondition.FunctionName))!,
-            typeof(FunctionSelectCondition).GetProperty(nameof(FunctionSelectCondition.Arguments))!,
-            typeof(FunctionSelectCondition).GetProperty(nameof(FunctionSelectCondition.IsDistinct))!,
-            typeof(FunctionSelectCondition).GetProperty(nameof(FunctionSelectCondition.FilterWhereConditions))!,
-            typeof(FunctionSelectCondition).GetProperty(nameof(FunctionSelectCondition.Window))!,
-            typeof(CaseWhenSelectCondition).GetProperty(nameof(CaseWhenSelectCondition.CaseWhen))!,
-            typeof(CaseWhenSelectCondition).GetProperty(nameof(CaseWhenSelectCondition.ElseValue))!
-        };
-
-        foreach (var property in properties)
-        {
-            Assert.Contains(
-                typeof(System.Runtime.CompilerServices.IsExternalInit),
-                property.SetMethod!.ReturnParameter.GetRequiredCustomModifiers());
-        }
-    }
-
-    [Fact]
-    public void JsonExtract_UsesSpecializedDialectRenderers()
-    {
-        var definition = SqlDefinitionParser.ParseQuery("SELECT JSON_EXTRACT(payload, '$.customer.name') FROM orders");
-        foreach (var strategy in _strategies)
-        {
-            if (strategy.DbType is SqlAgentToolType.Firebird or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle)
-            {
-                Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(definition));
-                continue;
-            }
-            var sql = strategy.CompileQuerySql(definition);
-            var expected = strategy.DbType switch
-            {
-                SqlAgentToolType.Postgres => "JSONB_EXTRACT_PATH(",
-                _ => "JSON_EXTRACT("
-            };
-            Assert.Contains(expected, sql, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Fact]
-    public void JsonSet_UsesSpecializedDialectRenderersAndFailsClosedWhenUnsupported()
-    {
-        var definition = SqlDefinitionParser.ParseQuery("SELECT JSON_SET(payload, '$.customer.name', 'Ada') FROM orders");
-        foreach (var strategy in _strategies)
-        {
-            if (strategy.DbType is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
-            {
-                Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(definition));
-                continue;
-            }
-            var sql = strategy.CompileQuerySql(definition);
-            var expected = strategy.DbType switch
-            {
-                SqlAgentToolType.MsSqlServer => "JSON_MODIFY(",
-                SqlAgentToolType.Postgres => "JSONB_SET(",
-                _ => "JSON_SET("
-            };
-            Assert.Contains(expected, sql, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    [Fact]
-    public void RegexMatch_UsesSupportedDialectFunctionAndFailsClosedOtherwise()
+    public void RegexMatch_UsesRealPostgresOperatorAndFailsClosedWhereUnsupported()
     {
         var definition = SqlDefinitionParser.ParseQuery("SELECT REGEXP_LIKE(customer_name, '^A') FROM orders");
-        foreach (var strategy in _strategies)
-        {
-            if (strategy.DbType is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird)
-            {
-                Assert.Throws<InvalidOperationException>(() => strategy.CompileQuerySql(definition));
-                continue;
-            }
-            Assert.Contains("REGEXP_LIKE(", strategy.CompileQuerySql(definition), StringComparison.OrdinalIgnoreCase);
-        }
+        var postgres = Compile(definition, SqlAgentToolType.Oracle, SqlAgentToolType.Postgres);
+        Assert.Contains(" ~ ", postgres.Sql, StringComparison.Ordinal);
+
+        foreach (var provider in new[] { SqlAgentToolType.MsSqlServer, SqlAgentToolType.Sqlite, SqlAgentToolType.Firebird })
+            Assert.Throws<SqlCompilationException>(() => Compile(definition, SqlAgentToolType.Oracle, provider));
     }
 
-    [Theory]
-    [InlineData("STRPOS", "customer_name, 'A'")]
-    [InlineData("INSTR", "customer_name, 'A'")]
-    [InlineData("LOCATE", "'A', customer_name")]
-    [InlineData("CHARINDEX", "'A', customer_name")]
-    public void PositionFamily_NormalizesArgumentOrder(string functionName, string arguments)
+    [Fact]
+    public void PostgresRound_WithScale_CastsInputToNumeric()
     {
-        var definition = SqlDefinitionParser.ParseQuery($"SELECT {functionName}({arguments}) FROM orders");
-        foreach (var strategy in _strategies)
+        var definition = SqlDefinitionParser.ParseQuery("SELECT ROUND(AVG(amount), 2) FROM orders");
+        var command = Compile(definition, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
+        Assert.Contains("ROUND(CAST(AVG(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS numeric)", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ScalarSubqueryProjection_PreservesAliasStructurally()
+    {
+        var definition = new QueryDefinition
         {
-            var sql = strategy.CompileQueryTranslation(definition, SourceDialectFor(functionName)).Sql;
-            var expected = strategy.DbType switch
-            {
-                SqlAgentToolType.MsSqlServer => "CHARINDEX(",
-                SqlAgentToolType.Postgres => "STRPOS(",
-                SqlAgentToolType.MySQL => "LOCATE(",
-                SqlAgentToolType.Firebird => "POSITION(",
-                _ => "INSTR("
-            };
-            Assert.Contains(expected, sql, StringComparison.OrdinalIgnoreCase);
+            TableName = "users",
+            Alias = "u",
+            SelectColumns =
+            [
+                new SubQuerySelectCondition
+                {
+                    TableName = "orders",
+                    SelectColumns =
+                    [
+                        new FunctionSelectCondition
+                        {
+                            FunctionName = "COUNT",
+                            Arguments = [new FieldSelectCondition { FieldName = "id" }]
+                        }
+                    ],
+                    WhereColumnsAndValues =
+                    [
+                        new ColumnCompareWhereCondition
+                        {
+                            LeftFieldName = "user_id",
+                            Operator = "=",
+                            RightFieldName = "u.id"
+                        }
+                    ],
+                    Alias = "order_count"
+                }
+            ]
+        };
+
+        foreach (var provider in Providers)
+        {
+            var command = Compile(definition, provider, provider);
+            Assert.Contains("order_count", command.Sql, StringComparison.OrdinalIgnoreCase);
         }
     }
 
     [Fact]
-    public void HavingFunction_UsesSameSemanticPipelineAsSelect()
+    public void FirebirdTemporalAndNumericLiterals_AreExplicitlyTyped()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT customer_id FROM orders GROUP BY customer_id HAVING LEN(customer_id) > 2");
-        foreach (var strategy in _strategies)
+        var definition = new QueryDefinition
         {
-            var sql = strategy.CompileQueryTranslation(definition, SqlAgentToolType.MsSqlServer).Sql;
-            var expected = strategy.DbType switch
-            {
-                SqlAgentToolType.MsSqlServer => "LEN(",
-                SqlAgentToolType.MySQL or SqlAgentToolType.Firebird => "CHAR_LENGTH(",
-                _ => "LENGTH("
-            };
-            Assert.Contains(expected, sql, StringComparison.OrdinalIgnoreCase);
-        }
+            TableName = "users",
+            SelectColumns =
+            [
+                new ConstantSelectCondition
+                {
+                    Constant = new SqlLocalDateTimeValue(new DateTime(2026, 8, 22, 13, 45, 9)),
+                    Alias = "ts"
+                },
+                new ConstantSelectCondition { Constant = 1.25m, Alias = "amount" }
+            ]
+        };
+
+        var command = Compile(definition, SqlAgentToolType.Firebird, SqlAgentToolType.Firebird);
+        Assert.Contains("CAST(@p0 AS TIMESTAMP)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CAST(@p1 AS DECIMAL", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void TranslationDiagnostics_ReportEquivalentAndEmulatedFunctions()
+    public void CapabilityMatrix_MatchesCompilerBoundaries()
     {
-        var strategy = Assert.IsAssignableFrom<BaseSqlStrategy>(
-            _strategies.Single(item => item.DbType == SqlAgentToolType.Postgres));
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT LEN(customer_id), DATEADD(DAY, 2, created_at) FROM orders");
-
-        var result = strategy.CompileQueryTranslation(definition, SqlAgentToolType.MsSqlServer);
-
-        Assert.Contains(result.Diagnostics, item =>
-            item.Code == "SQLFUNC002" && item.Portability == FunctionPortability.Equivalent);
-        Assert.Contains(result.Diagnostics, item =>
-            item.Code == "SQLFUNC002" && item.Portability == FunctionPortability.Emulated);
-    }
-
-    [Fact]
-    public void CapabilityMatrix_MatchesProviderSpecificCompilerBoundaries()
-    {
-        foreach (var strategy in _strategies)
+        foreach (var provider in Providers)
         {
-            var matrix = SqlCapabilityMatrix.ForProvider(strategy.DbType);
+            var matrix = SqlCapabilityMatrix.ForProvider(provider);
             Assert.Equal(SqlCapabilityMatrix.Version, matrix.MatrixVersion);
             Assert.Equal(matrix.Capabilities.Count, matrix.Capabilities.Select(x => x.Id).Distinct().Count());
 
-            var interval = Assert.Single(matrix.Capabilities, x => x.Id == "expression.interval");
             Assert.Equal(
-                strategy.DbType == SqlAgentToolType.Postgres ? SqlCapabilityStatus.Supported : SqlCapabilityStatus.Rejected,
-                interval.Status);
-
-            var nulls = Assert.Single(matrix.Capabilities, x => x.Id == "ordering.nulls");
+                provider == SqlAgentToolType.Postgres ? SqlCapabilityStatus.Supported : SqlCapabilityStatus.Rejected,
+                Assert.Single(matrix.Capabilities, x => x.Id == "expression.interval").Status);
             Assert.Equal(
-                strategy.DbType is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
+                provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
                     ? SqlCapabilityStatus.Rejected
                     : SqlCapabilityStatus.Supported,
-                nulls.Status);
-
-            var standaloneTime = Assert.Single(matrix.Capabilities, x => x.Id == "temporal.standalone_time");
-            Assert.Equal(
-                strategy.DbType == SqlAgentToolType.Oracle
-                    ? SqlCapabilityStatus.Rejected
-                    : SqlCapabilityStatus.Translated,
-                standaloneTime.Status);
-
-            var offsetTimestamp = Assert.Single(matrix.Capabilities, x => x.Id == "temporal.offset_timestamp");
-            Assert.Equal(
-                strategy.DbType == SqlAgentToolType.MySQL
-                    ? SqlCapabilityStatus.Rejected
-                    : SqlCapabilityStatus.Translated,
-                offsetTimestamp.Status);
-
-            var formattedParse = Assert.Single(matrix.Capabilities, x => x.Id == "temporal.formatted_parse");
-            Assert.Equal(
-                strategy.DbType is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                formattedParse.Status);
-
-            var jsonExtract = Assert.Single(matrix.Capabilities, x => x.Id == "json.extract");
-            Assert.Equal(
-                strategy.DbType is SqlAgentToolType.Firebird or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle
-                    ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
-                jsonExtract.Status);
+                Assert.Single(matrix.Capabilities, x => x.Id == "ordering.nulls").Status);
         }
     }
 
-    private static SqlAgentToolType SourceDialectFor(string functionName) =>
-        functionName.ToUpperInvariant() switch
-        {
-            "LEN" or "CEILING" or "ISNULL" or "REPLICATE" or "GETDATE" or "CHARINDEX" => SqlAgentToolType.MsSqlServer,
-            "IFNULL" or "RAND" or "GROUP_CONCAT" or "LOCATE" => SqlAgentToolType.MySQL,
-            "NVL" or "SYSDATE" or "LISTAGG" or "INSTR" => SqlAgentToolType.Oracle,
-            "CHAR_LENGTH" or "LIST" => SqlAgentToolType.Firebird,
-            _ => SqlAgentToolType.Postgres
-        };
+    private static CompiledSqlCommand Compile(
+        QueryDefinition definition,
+        SqlAgentToolType source,
+        SqlAgentToolType target) =>
+        CoreSqlCompiler.CreateDefault().Compile(
+            definition,
+            source,
+            target,
+            new SqlPlanValidationContext("capability-test"),
+            new SqlExecutionPlanPolicy());
 }
