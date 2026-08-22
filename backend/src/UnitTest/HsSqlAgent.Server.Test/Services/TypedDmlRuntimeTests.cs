@@ -83,4 +83,23 @@ public class TypedDmlRuntimeTests
 
         Assert.NotEqual(before, after);
     }
+
+    [Fact]
+    public void ComputePolicyVersion_ChangesWhenWhitelistChanges()
+    {
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 25 };
+
+        var before = TypedDmlRuntime.ComputePolicyVersion(
+            policy,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
+        var after = TypedDmlRuntime.ComputePolicyVersion(
+            policy,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "public.users",
+                "public.orders"
+            });
+
+        Assert.NotEqual(before, after);
+    }
 }
