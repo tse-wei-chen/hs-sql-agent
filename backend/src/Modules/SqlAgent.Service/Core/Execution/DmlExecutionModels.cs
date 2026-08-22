@@ -1,7 +1,16 @@
 using System.Collections.Immutable;
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Execution;
+
+public sealed record ValidatedDmlPlan(
+    DmlOperation Operation,
+    string TableName,
+    CompiledSqlCommand MutationCommand,
+    CompiledSqlCommand MatchQueryCommand,
+    string PlanFingerprint,
+    string PolicyVersion);
 
 public sealed record DmlPreview(
     DmlOperation Operation,
@@ -28,12 +37,12 @@ public interface IDmlCoordinator
 {
     Task<DmlPreview> PreviewAsync(
         string connectionString,
-        object validatedPlan,
+        ValidatedDmlPlan plan,
         CancellationToken cancellationToken = default);
 
     Task<DmlCommitResult> CommitAsync(
         string connectionString,
-        object validatedPlan,
+        ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
         CancellationToken cancellationToken = default);
 }
