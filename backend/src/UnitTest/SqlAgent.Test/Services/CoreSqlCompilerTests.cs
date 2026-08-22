@@ -148,8 +148,11 @@ public class CoreSqlCompilerTests
         Assert.Contains("expression.filter", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_SetOperationWithOuterLimit_FailsClosedForCurrentBackend()
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_SetOperationWithOuterTail_LowersAtQueryLevel(SqlAgentToolType provider)
     {
         var definition = new QueryDefinition
         {
@@ -166,19 +169,32 @@ public class CoreSqlCompilerTests
                     }
                 }
             ],
-            Limit = 10
+            OrderByColumns =
+            [
+                new FieldOrderByCondition { FieldName = "id", Direction = SortDirection.Desc }
+            ],
+            Limit = 10,
+            Offset = 5
         };
 
-        var ex = Assert.Throws<SqlCompilationException>(() =>
-            CoreSqlCompiler.CreateDefault().Compile(
-                definition,
-                SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("policy-v1"),
-                new SqlExecutionPlanPolicy()));
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            definition,
+            provider,
+            provider,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
 
-        Assert.Contains("set operation", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("preserve semantics", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OFFSET", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            command.Sql.LastIndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase) >
+            command.Sql.LastIndexOf("UNION", StringComparison.OrdinalIgnoreCase));
+        Assert.True(
+            command.Sql.LastIndexOf("LIMIT", StringComparison.OrdinalIgnoreCase) >
+            command.Sql.LastIndexOf("UNION", StringComparison.OrdinalIgnoreCase));
+        Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
     }
 
     [Fact]
