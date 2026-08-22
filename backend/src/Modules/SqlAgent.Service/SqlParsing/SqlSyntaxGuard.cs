@@ -23,7 +23,7 @@ internal static class SqlSyntaxGuard
         if (IsWord(tokens, i, "RECURSIVE"))
             i++;
 
-        // A CTE starts with: name AS (...).  A '(' immediately after the CTE name is
+        // A CTE starts with: name AS (...). A '(' immediately after the CTE name is
         // the optional column-alias list, which the legacy parser currently discards.
         // Reject it rather than accepting SQL with different semantics.
         while (i < tokens.Length && tokens[i].Type != TokenType.EOF)
@@ -108,20 +108,25 @@ internal static class SqlSyntaxGuard
             if (IsWord(tokens, start, "SELECT") || IsWord(tokens, start, "WITH"))
                 continue;
 
-            var depth = 1;
             var expectingValue = true;
-            for (var j = start; j < tokens.Length && depth > 0; j++)
+            var valueCount = 0;
+            for (var j = start; j < tokens.Length; j++)
             {
                 var token = tokens[j];
-                if (token.Type == TokenType.LParen)
-                {
-                    throw UnsupportedInValue(token);
-                }
                 if (token.Type == TokenType.RParen)
                 {
-                    depth--;
+                    if (expectingValue)
+                    {
+                        var reason = valueCount == 0 ? "empty IN lists" : "a trailing comma in an IN list";
+                        throw new SqlParseException(
+                            $"Unsupported {reason} at position {token.Pos}; the statement was rejected to preserve semantics.");
+                    }
                     break;
                 }
+
+                if (token.Type == TokenType.LParen)
+                    throw UnsupportedInValue(token);
+
                 if (token.Type == TokenType.Comma)
                 {
                     if (expectingValue)
@@ -133,19 +138,16 @@ internal static class SqlSyntaxGuard
                 if (!expectingValue)
                     throw UnsupportedInValue(token);
 
+                // The legacy ParseLiteralValue implementation does not bind unary signs to
+                // numeric literals, so accepting them here would silently change semantics.
                 if (token.Type == TokenType.Operator && token.Value is "+" or "-")
-                {
-                    if (j + 1 >= tokens.Length || tokens[j + 1].Type != TokenType.Number)
-                        throw UnsupportedInValue(token);
-                    j++;
-                    expectingValue = false;
-                    continue;
-                }
+                    throw UnsupportedInValue(token);
 
                 if (token.Type is TokenType.Number or TokenType.String
                     || IsWord(token, "NULL") || IsWord(token, "TRUE") || IsWord(token, "FALSE"))
                 {
                     expectingValue = false;
+                    valueCount++;
                     continue;
                 }
 
