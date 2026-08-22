@@ -1,14 +1,12 @@
 using System.Data.Common;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class SqliteStrategy : BaseSqlStrategy
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
