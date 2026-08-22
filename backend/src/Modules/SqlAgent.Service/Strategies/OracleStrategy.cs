@@ -51,8 +51,8 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var sql = "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = :schemaName ORDER BY TABLE_NAME";
-            var tables = await connection.QueryAsync<string>(sql, new { schemaName = schemaName.ToUpper() });
+            const string sql = "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = :schemaName ORDER BY TABLE_NAME";
+            var tables = await connection.QueryAsync<string>(sql, new { schemaName = schemaName.ToUpperInvariant() });
             return [.. tables];
         }
         catch (Exception ex)
@@ -71,13 +71,37 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
 
-            var sql = "SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS WHERE OWNER = :schemaName AND TABLE_NAME = :tableName ORDER BY COLUMN_ID";
+            const string sql = @"
+                SELECT
+                    c.COLUMN_NAME,
+                    c.DATA_TYPE,
+                    CASE WHEN pk.POSITION IS NULL THEN 0 ELSE 1 END AS IS_PRIMARY_KEY,
+                    pk.POSITION AS PRIMARY_KEY_ORDINAL
+                FROM ALL_TAB_COLUMNS c
+                LEFT JOIN (
+                    SELECT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME, acc.POSITION
+                    FROM ALL_CONSTRAINTS ac
+                    JOIN ALL_CONS_COLUMNS acc
+                      ON acc.OWNER = ac.OWNER
+                     AND acc.CONSTRAINT_NAME = ac.CONSTRAINT_NAME
+                     AND acc.TABLE_NAME = ac.TABLE_NAME
+                    WHERE ac.CONSTRAINT_TYPE = 'P'
+                ) pk
+                  ON pk.OWNER = c.OWNER
+                 AND pk.TABLE_NAME = c.TABLE_NAME
+                 AND pk.COLUMN_NAME = c.COLUMN_NAME
+                WHERE c.OWNER = :schemaName AND c.TABLE_NAME = :tableName
+                ORDER BY c.COLUMN_ID";
             var rows = await connection.QueryAsync(sql, new
             {
-                schemaName = schemaName.ToUpper(),
-                tableName = tableName.ToUpper()
+                schemaName = schemaName.ToUpperInvariant(),
+                tableName = tableName.ToUpperInvariant()
             });
-            return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
+            return [.. rows.Select(r => new ColumnInfo(
+                (string)r.COLUMN_NAME,
+                (string)r.DATA_TYPE,
+                Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
+                r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
         }
         catch (Exception ex)
         {
@@ -91,15 +115,13 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
     protected override string BuildExecutionErrorMessage(Exception ex, string type)
     {
         var code = TryExtractOracleCode(ex.Message);
-
         return $"Error executing query | code={code ?? "unknown"} | message={ex.GetBaseException().Message}";
     }
 
     private static string? TryExtractOracleCode(string message)
     {
         var errorMatch = SqlCodeRegex().Match(message);
-        if (errorMatch.Success) return errorMatch.Groups[1].Value;
-        return null;
+        return errorMatch.Success ? errorMatch.Groups[1].Value : null;
     }
 
     [GeneratedRegex(@"(ORA-\d+)")]
