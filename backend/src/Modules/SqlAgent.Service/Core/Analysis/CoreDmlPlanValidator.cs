@@ -66,17 +66,17 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
     {
         var first = values.Rows[0];
         return new SelectStatement(
-            ImmutableArray<CteDefinition>.Empty,
+            Ctes: ImmutableArray<CteDefinition>.Empty,
             Distinct: false,
-            first.Select((value, index) => new SelectItem(value, $"v{index}", value.Span)).ToImmutableArray(),
+            Select: first.Select((value, index) => new SelectItem(value, $"v{index}", value.Span)).ToImmutableArray(),
             From: null,
-            ImmutableArray<JoinSource>.Empty,
+            Joins: ImmutableArray<JoinSource>.Empty,
             Where: null,
-            ImmutableArray<SqlExpr>.Empty,
+            GroupBy: ImmutableArray<SqlExpr>.Empty,
             Having: null,
-            ImmutableArray<OrderByItem>.Empty,
+            OrderBy: ImmutableArray<OrderByItem>.Empty,
             Limit: null,
             Offset: null,
-            SourceSpan.Unknown);
+            Span: SourceSpan.Unknown);
     }
 }
