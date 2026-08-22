@@ -4,6 +4,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Microsoft.AspNetCore.Http;
 using Moq;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
@@ -24,6 +25,7 @@ public class CustomToolProxyTests
     private readonly Mock<IQueryValueParserService> _queryValueParserMock;
     private readonly Mock<ISecurityPolicyRuntimeState> _securityPolicyRuntimeStateMock;
     private readonly Mock<ISqlExecutionConcurrencyLimiter> _sqlConcurrencyLimiterMock;
+    private readonly Mock<ITypedQueryRuntime> _typedQueryRuntimeMock;
     private readonly CustomToolProxy _proxy;
 
     public CustomToolProxyTests()
@@ -35,6 +37,7 @@ public class CustomToolProxyTests
         _queryValueParserMock = new Mock<IQueryValueParserService>();
         _securityPolicyRuntimeStateMock = new Mock<ISecurityPolicyRuntimeState>();
         _sqlConcurrencyLimiterMock = new Mock<ISqlExecutionConcurrencyLimiter>();
+        _typedQueryRuntimeMock = new Mock<ITypedQueryRuntime>();
         _sqlConcurrencyLimiterMock
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
@@ -62,7 +65,8 @@ public class CustomToolProxyTests
             _auditServiceMock.Object,
             _queryValueParserMock.Object,
             _securityPolicyRuntimeStateMock.Object,
-            _sqlConcurrencyLimiterMock.Object);
+            _sqlConcurrencyLimiterMock.Object,
+            _typedQueryRuntimeMock.Object);
     }
 
     [Fact]
@@ -91,7 +95,7 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_ShouldReplaceParameters_ForQueryTool()
+    public async Task Execute_QueryTool_UsesTypedRuntimeWithoutLegacyStrategyExecution()
     {
         var tool = new CustomSqlTool
         {
@@ -102,29 +106,41 @@ public class CustomToolProxyTests
         };
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
-
         _queryValueParserMock.Setup(q => q.UnwrapJsonElement(It.IsAny<JsonElement>()))
             .Returns("email");
 
         var strategyMock = new Mock<ISqlStrategy>();
-        strategyMock.Setup(s => s.ExecuteQueryAsync(
-                It.IsAny<QueryDefinition>(),
-                It.IsAny<string>(),
-                It.IsAny<SqlExecutionPolicy>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync("\"result\": [{ \"email\": \"test@example.com\" }]");
+        strategyMock.SetupGet(s => s.DbType).Returns(SqlAgentToolType.Postgres);
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
+        _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
+                strategyMock.Object,
+                "Host=localhost;Database=testdb",
+                It.Is<QueryDefinition>(q => q.TableName == "users"),
+                SqlAgentToolType.Postgres,
+                It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == 1000 && p.QueryTimeoutSeconds == 30),
+                It.IsAny<IReadOnlySet<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QueryExecutionResult(
+                [new Dictionary<string, object?> { ["email"] = "test@example.com" }],
+                1,
+                TimeSpan.Zero,
+                []));
 
         var args = JsonSerializer.SerializeToElement(new { email = "test@example.com" });
         var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.Contains("result", result);
+        Assert.Contains("test@example.com", result);
+        _typedQueryRuntimeMock.VerifyAll();
         strategyMock.Verify(s => s.ExecuteQueryAsync(
-            It.Is<QueryDefinition>(q => q.TableName == "users"),
+            It.IsAny<QueryDefinition>(),
             It.IsAny<string>(),
-            It.Is<SqlExecutionPolicy>(p => p.QueryMaxRows == 1000 && p.QueryTimeoutSeconds == 30),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<SqlExecutionPolicy>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        strategyMock.Verify(s => s.ExecuteQueryAsync(
+            It.IsAny<QueryDefinition>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -235,7 +251,7 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_ShouldLogAuditOnSuccess()
+    public async Task Execute_ShouldLogTypedQueryRowCountOnSuccess()
     {
         var tool = new CustomSqlTool
         {
@@ -246,18 +262,19 @@ public class CustomToolProxyTests
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
-        _queryValueParserMock.Setup(q => q.UnwrapJsonElement(It.IsAny<JsonElement>()))
-            .Returns(null!);
-
         var strategyMock = new Mock<ISqlStrategy>();
-        strategyMock.Setup(s => s.ExecuteQueryAsync(
-                It.IsAny<QueryDefinition>(),
-                It.IsAny<string>(),
-                It.IsAny<SqlExecutionPolicy>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync("[]");
+        strategyMock.SetupGet(s => s.DbType).Returns(SqlAgentToolType.Postgres);
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
+        _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
+                strategyMock.Object,
+                It.IsAny<string>(),
+                It.IsAny<QueryDefinition>(),
+                SqlAgentToolType.Postgres,
+                It.IsAny<SecurityPolicyModel>(),
+                It.IsAny<IReadOnlySet<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QueryExecutionResult([], 0, TimeSpan.Zero, []));
 
         var args = JsonSerializer.SerializeToElement(new { });
         _ = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
