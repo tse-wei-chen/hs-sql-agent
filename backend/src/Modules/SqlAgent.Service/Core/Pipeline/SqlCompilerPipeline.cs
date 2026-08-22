@@ -31,6 +31,16 @@ public sealed record ValidatedSqlPlan(
     SqlAgentToolType TargetProvider,
     string PolicyVersion);
 
+public sealed record SqlExecutionPlanPolicy(
+    int QueryMaxRows = 0);
+
+public sealed record ExecutableSqlPlan(
+    SqlStatement Statement,
+    QueryFacts Facts,
+    SqlAgentToolType SourceDialect,
+    SqlAgentToolType TargetProvider,
+    string PolicyVersion);
+
 public interface ISqlBinder
 {
     BoundStatement Bind(ParsedStatement statement);
@@ -48,10 +58,17 @@ public interface ISqlPlanValidator
         SqlPlanValidationContext context);
 }
 
+public interface ISqlExecutionPolicyRewriter
+{
+    ExecutableSqlPlan Rewrite(
+        ValidatedSqlPlan plan,
+        SqlExecutionPlanPolicy policy);
+}
+
 public interface IProviderLowerer
 {
     SqlAgentToolType Provider { get; }
-    CompiledSqlCommand Lower(ValidatedSqlPlan plan);
+    CompiledSqlCommand Lower(ExecutableSqlPlan plan);
 }
 
 public interface ISqlCommandExecutor
