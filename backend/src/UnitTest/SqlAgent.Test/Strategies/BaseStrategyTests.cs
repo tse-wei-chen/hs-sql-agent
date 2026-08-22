@@ -21,7 +21,7 @@ public interface IDbFixture : IAsyncLifetime
 
 /// <summary>
 /// Shared provider integration coverage for the remaining strategy responsibilities: provider
-/// connections/metadata plus the obsolete query compatibility path, which now delegates to Core.
+/// connections/metadata plus query execution through the canonical Core compiler/executor path.
 /// Legacy DML preview/token/commit behavior was removed from BaseSqlStrategy and is covered at the
 /// typed DML/Core boundary instead of being duplicated here.
 /// </summary>
@@ -30,14 +30,16 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     where TFixture : class, IDbFixture
 {
     protected readonly TFixture Fixture;
-    protected readonly TStrategy Strategy;
+    protected readonly TStrategy ProviderStrategy;
+    protected readonly CoreStrategyTestHarness<TStrategy> Strategy;
 
     protected BaseStrategyTests(TFixture fixture)
     {
         Fixture = fixture;
         var configMock = new Mock<IConfiguration>();
         configMock.Setup(c => c["McpKeySettings:HmacSecretKey"]).Returns("TestSecretKey12345678901234567890");
-        Strategy = CreateStrategy(new QueryValueParserService(), configMock.Object);
+        ProviderStrategy = CreateStrategy(new QueryValueParserService(), configMock.Object);
+        Strategy = new CoreStrategyTestHarness<TStrategy>(ProviderStrategy);
     }
 
     protected abstract TStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration);
