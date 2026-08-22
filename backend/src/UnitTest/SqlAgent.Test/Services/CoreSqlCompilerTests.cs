@@ -69,6 +69,86 @@ public class CoreSqlCompilerTests
     }
 
     [Fact]
+    public void Compile_FilterAndWindow_ProducesParameterizedPostgresExpression()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = "orders",
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "SUM",
+                    Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                    FilterWhereConditions =
+                    [
+                        new BasicWhereCondition { FieldName = "status", Operator = "=", Value = "open" }
+                    ],
+                    Window = new WindowDefinition
+                    {
+                        PartitionBy = [new FieldGroupByCondition { FieldName = "customer_id" }],
+                        OrderBy = [new FieldOrderByCondition { FieldName = "created_at", Direction = SortDirection.Asc }],
+                        Frame = new WindowFrameDefinition
+                        {
+                            Unit = WindowFrameUnit.Rows,
+                            Start = new WindowFrameBound
+                            {
+                                Kind = WindowFrameBoundKind.Preceding,
+                                Offset = 1
+                            },
+                            End = new WindowFrameBound { Kind = WindowFrameBoundKind.CurrentRow }
+                        }
+                    }
+                }
+            ]
+        };
+
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            definition,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OVER (PARTITION BY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ROWS BETWEEN 1 PRECEDING AND CURRENT ROW", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("open", command.Sql, StringComparison.Ordinal);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "open"));
+    }
+
+    [Fact]
+    public void Compile_FilterForUnsupportedProvider_FailsClosed()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = "orders",
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "SUM",
+                    Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                    FilterWhereConditions =
+                    [
+                        new BasicWhereCondition { FieldName = "status", Operator = "=", Value = "open" }
+                    ]
+                }
+            ]
+        };
+
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                definition,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.MySQL,
+                new SqlPlanValidationContext("policy-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("expression.filter", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_SetOperationWithOuterLimit_FailsClosedForCurrentBackend()
     {
         var definition = new QueryDefinition
