@@ -18,7 +18,6 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Controllers;
@@ -269,6 +268,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         [FromServices] ISecurityPolicyRuntimeState securityPolicyRuntimeState,
         [FromServices] ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
+        [FromServices] ITypedQueryRuntime typedQueryRuntime,
         CancellationToken cancellationToken)
     {
         var tool = await toolService.GetToolByIdAsync(request.ToolId);
@@ -309,16 +309,6 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         });
 
         var runtimePolicy = securityPolicyRuntimeState.GetCurrent();
-        var executionPolicy = new SqlExecutionPolicy
-        {
-            QueryMaxRows = runtimePolicy.QueryMaxRows,
-            QueryTimeoutSeconds = runtimePolicy.QueryTimeoutSeconds,
-            RequireWhereForUpdate = runtimePolicy.RequireWhereForUpdate,
-            RequireWhereForDelete = runtimePolicy.RequireWhereForDelete,
-            AllowFullTableUpdate = runtimePolicy.AllowFullTableUpdate,
-            AllowFullTableDelete = runtimePolicy.AllowFullTableDelete,
-            DmlMaxAffectedRows = runtimePolicy.DmlMaxAffectedRows
-        };
 
         try
         {
@@ -340,11 +330,15 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 if (errors.Count > 0)
                     return BadRequest(new { error = "Validation failed.", errors });
 
-                result = await strategy.ExecuteQueryAsync(
-                    queryDef,
+                var execution = await typedQueryRuntime.ExecuteAsync(
+                    strategy,
                     connectionString,
-                    executionPolicy,
+                    queryDef,
+                    dbType,
+                    runtimePolicy,
+                    allowedTables: null,
                     cancellationToken);
+                result = JsonSerializer.Serialize(execution.Rows);
             }
             else
             {
@@ -352,32 +346,36 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 var errors = DefinitionValidator.Validate(dmlDef);
                 if (errors.Count > 0)
                     return BadRequest(new { error = "Validation failed.", errors });
+                if (dmlDef.Operation is not (DmlOperation.Update or DmlOperation.Delete))
+                {
+                    throw new NotSupportedException(
+                        "Custom Tool test execution supports typed UPDATE/DELETE preview only. INSERT remains fail-closed until its production approval semantics are defined.");
+                }
 
-                // Test execution is always a rollback-only dry run. A token supplied in
-                // JSON or through a placeholder must never turn this endpoint into commit.
-                dmlDef.ConfirmToken = null;
-                result = await strategy.ExecuteDmlAsync(
+                var session = await new TypedDmlRuntime().PreviewAsync(
+                    strategy,
                     connectionString,
                     dmlDef,
-                    executionPolicy,
+                    runtimePolicy,
+                    allowedTables: null,
                     cancellationToken);
-                result = System.Text.RegularExpressions.Regex.Replace(
-                    result,
-                    @"TokenRequired=\S+",
-                    "TokenRequired=[redacted]",
-                    System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                result = JsonSerializer.Serialize(new
+                {
+                    operation = dmlDef.Operation.ToString(),
+                    table = session.Plan.TableName,
+                    affectedRows = session.Preview.AffectedRows,
+                    preview = session.Preview.Rows,
+                    committed = false
+                });
             }
 
-            var succeeded = isQuery || result.StartsWith("Dry Run Result", StringComparison.Ordinal);
             await auditService.WriteLogAsync(
                 "tool.custom.test-executed",
                 tool.Id.ToString(),
-                succeeded ? "success" : "failed",
+                "success",
                 $"Type: {tool.Type}; DB: {tool.DbManagementId}; Commit: never",
                 cancellationToken);
-            return succeeded
-                ? Ok(new { success = true, data = result })
-                : Ok(new { success = false, error = result });
+            return Ok(new { success = true, data = result });
         }
         catch (Exception ex)
         {
