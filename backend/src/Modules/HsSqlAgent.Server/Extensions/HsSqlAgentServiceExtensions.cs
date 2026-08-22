@@ -195,6 +195,7 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<ISqlStrategy, FirebirdStrategy>();
         services.AddScoped<ISqlStrategyFactory, SqlStrategyFactory>();
         services.AddScoped<IDbSetterService, DbSetterService>();
+        services.AddScoped<ITypedQueryRuntime, TypedQueryRuntime>();
 
         // --- Options ---
         services.Configure<JwtSettings>(jwt =>
@@ -229,7 +230,7 @@ public static class HsSqlAgentServiceExtensions
             operability.AuditRetentionDays = source.AuditRetentionDays;
             operability.AuditRetentionMode = source.AuditRetentionMode;
             operability.AuditArchivePath = source.AuditArchivePath;
-            operability.AuditFallbackPath = source.AuditFallbackPath;
+            operability.AuditFallbackPath = source.Operability.AuditFallbackPath;
             operability.AuditRetentionRunHourUtc = source.AuditRetentionRunHourUtc;
         });
         services.Configure<TelemetryOptions>(telemetry =>
