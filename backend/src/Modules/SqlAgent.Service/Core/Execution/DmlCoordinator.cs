@@ -42,6 +42,12 @@ public sealed class DmlCoordinator(
 
         await transaction.RollbackAsync(cancellationToken);
 
+        if (plan.MaxAffectedRows > 0 && rows.Count > plan.MaxAffectedRows)
+        {
+            throw new UnauthorizedAccessException(
+                $"Security policy denied DML: affectedRows={rows.Count} exceeds maximum {plan.MaxAffectedRows}.");
+        }
+
         var rowSetFingerprint = ComputeRowSetFingerprint(plan, rows);
         var now = _timeProvider.GetUtcNow();
         var ttl = plan.ApprovalTtl > TimeSpan.Zero
@@ -93,6 +99,16 @@ public sealed class DmlCoordinator(
                 transaction,
                 plan.MatchQueryCommand,
                 cancellationToken);
+
+            if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new DmlCommitResult(
+                    false,
+                    0,
+                    $"DML execution cancelled: current affected row count {currentRows.Count} exceeds maximum {plan.MaxAffectedRows}.");
+            }
+
             var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
 
             if (currentRows.Count != approvedChallenge.AffectedRows
@@ -153,6 +169,8 @@ public sealed class DmlCoordinator(
             throw new InvalidOperationException("DML policy changed after approval.");
         if (!string.Equals(plan.PlanFingerprint, challenge.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("DML plan changed after approval.");
+        if (plan.MaxAffectedRows > 0 && challenge.AffectedRows > plan.MaxAffectedRows)
+            throw new InvalidOperationException("DML approval exceeds the validated maximum affected row count.");
         if (plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict
             && string.IsNullOrWhiteSpace(challenge.RowSetFingerprint))
         {
@@ -167,6 +185,8 @@ public sealed class DmlCoordinator(
         ArgumentException.ThrowIfNullOrWhiteSpace(plan.TableName);
         ArgumentException.ThrowIfNullOrWhiteSpace(plan.PolicyVersion);
 
+        if (plan.MaxAffectedRows < 0)
+            throw new InvalidOperationException("DML maximum affected rows cannot be negative.");
         if (plan.MutationCommand.Kind is not (
             SqlStatementKind.Insert or SqlStatementKind.Update or SqlStatementKind.Delete))
         {

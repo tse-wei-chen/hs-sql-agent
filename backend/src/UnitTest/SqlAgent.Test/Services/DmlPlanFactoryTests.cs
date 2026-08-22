@@ -1,5 +1,3 @@
-using System.Collections.Immutable;
-using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
@@ -12,19 +10,13 @@ namespace SqlAgent.Test.Services;
 public class DmlPlanFactoryTests
 {
     [Fact]
-    public async Task CreateAsync_Strict_BuildsParameterizedPrimaryKeyMatchCommand()
+    public async Task CreateAsync_Strict_BuildsMutationAndPrimaryKeyMatchFromSameDefinition()
     {
         var metadata = new StubMetadataReader(
         [
             new DatabaseColumnMetadata("public", "users", "id", "integer", true, 1),
             new DatabaseColumnMetadata("public", "users", "status", "text", false)
         ]);
-        var mutation = new CompiledSqlCommand(
-            "UPDATE \"public\".\"users\" SET \"status\" = @p0 WHERE \"id\" = @p1",
-            [new SqlParameterValue("@p0", "disabled"), new SqlParameterValue("@p1", 7)],
-            SqlStatementKind.Update,
-            string.Empty,
-            SqlAgentToolType.Postgres);
         var definition = new DmlDefinition
         {
             Operation = DmlOperation.Update,
@@ -39,51 +31,64 @@ public class DmlPlanFactoryTests
         var plan = await new DmlPlanFactory(metadata).CreateAsync(
             "connection",
             definition,
-            mutation,
+            SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext(
                 "policy-v2",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }),
+            new DmlCompilationPolicy(),
             DmlRowIdentityAssurance.Strict,
-            TimeSpan.FromMinutes(2),
-            TestContext.Current.CancellationToken);
+            maxAffectedRows: 25,
+            approvalTtl: TimeSpan.FromMinutes(2),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(["id"], plan.RowIdentityColumns);
         Assert.Equal(DmlRowIdentityAssurance.Strict, plan.RowIdentityAssurance);
+        Assert.Equal(SqlStatementKind.Update, plan.MutationCommand.Kind);
         Assert.Equal(SqlStatementKind.Select, plan.MatchQueryCommand.Kind);
+        Assert.Contains("UPDATE", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("disabled", plan.MutationCommand.Sql, StringComparison.Ordinal);
+        Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, "disabled"));
+        Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, 7));
         Assert.Contains("id", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("7", plan.MatchQueryCommand.Sql, StringComparison.Ordinal);
         Assert.Contains(plan.MatchQueryCommand.Parameters, parameter => Equals(parameter.Value, 7));
+        Assert.Contains(plan.MatchQueryCommand.Parameters, parameter => Equals(parameter.Value, 26));
         Assert.Equal("policy-v2", plan.PolicyVersion);
         Assert.Equal(TimeSpan.FromMinutes(2), plan.ApprovalTtl);
+        Assert.Equal(25, plan.MaxAffectedRows);
         Assert.Equal(
-            DmlFingerprintService.ComputePlanFingerprint(mutation, "policy-v2"),
+            DmlFingerprintService.ComputePlanFingerprint(plan.MutationCommand, "policy-v2"),
             plan.PlanFingerprint);
     }
 
     [Fact]
-    public async Task CreateAsync_RejectsMutationKindMismatch()
+    public async Task CreateAsync_Strict_RejectsMissingPrimaryKey()
     {
-        var mutation = new CompiledSqlCommand(
-            "DELETE FROM users",
-            ImmutableArray<SqlParameterValue>.Empty,
-            SqlStatementKind.Delete,
-            string.Empty,
-            SqlAgentToolType.Postgres);
         var definition = new DmlDefinition
         {
-            Operation = DmlOperation.Update,
-            TableName = "public.users"
+            Operation = DmlOperation.Delete,
+            TableName = "public.events",
+            WhereConditions =
+            [
+                new BasicWhereCondition { FieldName = "status", Operator = "=", Value = "old" }
+            ]
         };
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new DmlPlanFactory(new StubMetadataReader([])).CreateAsync(
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new DmlPlanFactory(new StubMetadataReader(
+            [
+                new DatabaseColumnMetadata("public", "events", "status", "text", false)
+            ])).CreateAsync(
                 "connection",
                 definition,
-                mutation,
+                SqlAgentToolType.Postgres,
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1"),
+                assurance: DmlRowIdentityAssurance.Strict,
                 cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class StubMetadataReader(IReadOnlyList<DatabaseColumnMetadata> columns)

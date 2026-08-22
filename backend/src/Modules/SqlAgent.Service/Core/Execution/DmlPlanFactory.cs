@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -8,31 +7,37 @@ using SqlAgent.Service.Models;
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
-/// Builds the immutable DML plan consumed by <see cref="DmlCoordinator"/>. The mutation command is
-/// already compiled/validated; this factory derives the read-only match command from the same DML
-/// predicate and provider metadata so approval is bound to deterministic row identity.
+/// Builds the immutable DML plan consumed by <see cref="DmlCoordinator"/>. Mutation and match
+/// commands are both derived from the same typed DML definition, preventing approval of one target
+/// or predicate from being paired with a different externally supplied mutation command.
 /// </summary>
 public sealed class DmlPlanFactory(
     IProviderMetadataReader metadataReader,
+    CoreDmlCompiler? dmlCompiler = null,
     CoreSqlCompiler? queryCompiler = null)
 {
     private readonly DmlRowIdentityResolver _rowIdentityResolver = new(metadataReader);
+    private readonly CoreDmlCompiler _dmlCompiler = dmlCompiler ?? CoreDmlCompiler.CreateDefault();
     private readonly CoreSqlCompiler _queryCompiler = queryCompiler ?? CoreSqlCompiler.CreateDefault();
 
     public async Task<ValidatedDmlPlan> CreateAsync(
         string connectionString,
         DmlDefinition definition,
-        CompiledSqlCommand mutationCommand,
         SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider,
         SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? compilationPolicy = null,
         DmlRowIdentityAssurance assurance = DmlRowIdentityAssurance.Strict,
+        int maxAffectedRows = 0,
         TimeSpan? approvalTtl = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(definition);
-        ArgumentNullException.ThrowIfNull(mutationCommand);
         ArgumentNullException.ThrowIfNull(validationContext);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentException.ThrowIfNullOrWhiteSpace(definition.TableName);
+        if (maxAffectedRows < 0)
+            throw new ArgumentOutOfRangeException(nameof(maxAffectedRows));
 
         if (definition.Operation is not (DmlOperation.Update or DmlOperation.Delete))
         {
@@ -40,14 +45,12 @@ public sealed class DmlPlanFactory(
                 "Row-set approval planning currently supports UPDATE and DELETE only.");
         }
 
-        var expectedKind = definition.Operation == DmlOperation.Update
-            ? SqlStatementKind.Update
-            : SqlStatementKind.Delete;
-        if (mutationCommand.Kind != expectedKind)
-        {
-            throw new InvalidOperationException(
-                $"Compiled mutation kind '{mutationCommand.Kind}' does not match DML operation '{definition.Operation}'.");
-        }
+        var mutationCommand = _dmlCompiler.Compile(
+            definition,
+            sourceDialect,
+            targetProvider,
+            validationContext,
+            compilationPolicy);
 
         var identityColumns = await _rowIdentityResolver.ResolveAsync(
             connectionString,
@@ -68,13 +71,19 @@ public sealed class DmlPlanFactory(
         {
             TableName = definition.TableName,
             SelectColumns = selectColumns,
-            WhereColumnsAndValues = definition.WhereConditions
+            WhereColumnsAndValues = definition.WhereConditions,
+            // We only need enough identities to either prove the complete approved set (<= max)
+            // or prove that policy is exceeded. This prevents an unbounded PK materialization just
+            // to discover afterward that the mutation should have been rejected.
+            Limit = maxAffectedRows > 0
+                ? maxAffectedRows == int.MaxValue ? int.MaxValue : maxAffectedRows + 1
+                : null
         };
 
         var matchCommand = _queryCompiler.Compile(
             matchDefinition,
             sourceDialect,
-            mutationCommand.TargetProvider,
+            targetProvider,
             validationContext,
             new SqlExecutionPlanPolicy());
 
@@ -91,6 +100,7 @@ public sealed class DmlPlanFactory(
             assurance,
             fingerprint,
             validationContext.PolicyVersion,
-            approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)));
+            approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
+            maxAffectedRows);
     }
 }

@@ -39,13 +39,23 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             QueryStatement query => query with
             {
                 Head = NormalizeSelect(query.Head, context),
-                SetOperations = query.SetOperations
-                    .Select(operation => operation with
-                    {
-                        Query = NormalizeStatement(operation.Query, context)
-                    })
-                    .ToImmutableArray(),
+                SetOperations = query.SetOperations.Select(operation => operation with
+                {
+                    Query = NormalizeStatement(operation.Query, context)
+                }).ToImmutableArray(),
                 OrderBy = NormalizeOrderBy(query.OrderBy, context)
+            },
+            UpdateStatement update => update with
+            {
+                Assignments = update.Assignments.Select(assignment => assignment with
+                {
+                    Value = NormalizeExpr(assignment.Value, context)
+                }).ToImmutableArray(),
+                Predicate = update.Predicate is null ? null : NormalizeExpr(update.Predicate, context)
+            },
+            DeleteStatement delete => delete with
+            {
+                Predicate = delete.Predicate is null ? null : NormalizeExpr(delete.Predicate, context)
             },
             _ => throw new SqlCompilationException(
                 $"Unsupported statement during normalization: {statement.GetType().Name}")
@@ -54,28 +64,23 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
     private SelectStatement NormalizeSelect(SelectStatement select, NormalizationContext context) =>
         select with
         {
-            Ctes = select.Ctes
-                .Select(cte => cte with
-                {
-                    Query = NormalizeStatement(cte.Query, context)
-                })
-                .ToImmutableArray(),
-            Select = select.Select
-                .Select(item => item with { Expression = NormalizeExpr(item.Expression, context) })
-                .ToImmutableArray(),
+            Ctes = select.Ctes.Select(cte => cte with
+            {
+                Query = NormalizeStatement(cte.Query, context)
+            }).ToImmutableArray(),
+            Select = select.Select.Select(item => item with
+            {
+                Expression = NormalizeExpr(item.Expression, context)
+            }).ToImmutableArray(),
             From = select.From is null ? null : NormalizeSource(select.From, context),
-            Joins = select.Joins
-                .Select(join => join with
-                {
-                    Kind = join.Kind.Trim().ToUpperInvariant(),
-                    Source = NormalizeSource(join.Source, context),
-                    Predicate = join.Predicate is null ? null : NormalizeExpr(join.Predicate, context)
-                })
-                .ToImmutableArray(),
+            Joins = select.Joins.Select(join => join with
+            {
+                Kind = join.Kind.Trim().ToUpperInvariant(),
+                Source = NormalizeSource(join.Source, context),
+                Predicate = join.Predicate is null ? null : NormalizeExpr(join.Predicate, context)
+            }).ToImmutableArray(),
             Where = select.Where is null ? null : NormalizeExpr(select.Where, context),
-            GroupBy = select.GroupBy
-                .Select(expression => NormalizeExpr(expression, context))
-                .ToImmutableArray(),
+            GroupBy = select.GroupBy.Select(expression => NormalizeExpr(expression, context)).ToImmutableArray(),
             Having = select.Having is null ? null : NormalizeExpr(select.Having, context),
             OrderBy = NormalizeOrderBy(select.OrderBy, context)
         };
@@ -84,10 +89,7 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         source switch
         {
             NamedTableSource named => named,
-            DerivedTableSource derived => derived with
-            {
-                Query = NormalizeStatement(derived.Query, context)
-            },
+            DerivedTableSource derived => derived with { Query = NormalizeStatement(derived.Query, context) },
             _ => throw new SqlCompilationException(
                 $"Unsupported table source during normalization: {source.GetType().Name}")
         };
@@ -96,17 +98,14 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         ImmutableArray<OrderByItem> orderBy,
         NormalizationContext context) =>
         orderBy.Select(item => item with
-            {
-                Expression = NormalizeExpr(item.Expression, context)
-            })
-            .ToImmutableArray();
+        {
+            Expression = NormalizeExpr(item.Expression, context)
+        }).ToImmutableArray();
 
     private WindowSpec NormalizeWindow(WindowSpec window, NormalizationContext context) =>
         window with
         {
-            PartitionBy = window.PartitionBy
-                .Select(expression => NormalizeExpr(expression, context))
-                .ToImmutableArray(),
+            PartitionBy = window.PartitionBy.Select(expression => NormalizeExpr(expression, context)).ToImmutableArray(),
             OrderBy = NormalizeOrderBy(window.OrderBy, context)
         };
 
@@ -148,12 +147,9 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             CaseExpr @case => @case with
             {
                 Branches = @case.Branches.Select(branch => new CaseBranch(
-                        NormalizeExpr(branch.Condition, context),
-                        NormalizeExpr(branch.Value, context)))
-                    .ToImmutableArray(),
-                ElseExpression = @case.ElseExpression is null
-                    ? null
-                    : NormalizeExpr(@case.ElseExpression, context)
+                    NormalizeExpr(branch.Condition, context),
+                    NormalizeExpr(branch.Value, context))).ToImmutableArray(),
+                ElseExpression = @case.ElseExpression is null ? null : NormalizeExpr(@case.ElseExpression, context)
             },
             InExpr @in => @in with
             {
@@ -166,69 +162,41 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
                 Lower = NormalizeExpr(between.Lower, context),
                 Upper = NormalizeExpr(between.Upper, context)
             },
-            IsNullExpr isNull => isNull with
-            {
-                Value = NormalizeExpr(isNull.Value, context)
-            },
-            SubqueryExpr subquery => subquery with
-            {
-                Query = NormalizeStatement(subquery.Query, context)
-            },
-            ExistsExpr exists => exists with
-            {
-                Query = NormalizeStatement(exists.Query, context)
-            },
+            IsNullExpr isNull => isNull with { Value = NormalizeExpr(isNull.Value, context) },
+            SubqueryExpr subquery => subquery with { Query = NormalizeStatement(subquery.Query, context) },
+            ExistsExpr exists => exists with { Query = NormalizeStatement(exists.Query, context) },
             _ => throw new SqlCompilationException(
                 $"Unsupported expression during normalization: {expression.GetType().Name}")
         };
     }
 
-    private FunctionCallExpr NormalizeFunction(
-        FunctionCallExpr function,
-        NormalizationContext context)
+    private FunctionCallExpr NormalizeFunction(FunctionCallExpr function, NormalizationContext context)
     {
-        var arguments = function.Arguments
-            .Select(argument => NormalizeExpr(argument, context))
-            .ToImmutableArray();
+        var arguments = function.Arguments.Select(argument => NormalizeExpr(argument, context)).ToImmutableArray();
         var sourceName = IdentifierText(function.Name).Trim().ToUpperInvariant();
 
         if (context.SourceDialect == context.TargetProvider)
             return function with { Name = Identifier(sourceName), Arguments = arguments };
 
-        var sourceDefinition = _functionRegistry.Find(
-            context.SourceDialect,
-            sourceName,
-            arguments.Length);
+        var sourceDefinition = _functionRegistry.Find(context.SourceDialect, sourceName, arguments.Length);
         if (sourceDefinition is null)
         {
             throw new SqlCompilationException(
-                $"Function '{sourceName}' is not registered for source dialect {context.SourceDialect}; " +
-                "cross-dialect normalization was rejected.");
+                $"Function '{sourceName}' is not registered for source dialect {context.SourceDialect}; cross-dialect normalization was rejected.");
         }
-
         if (sourceDefinition.Semantic is null)
-        {
-            throw new SqlCompilationException(
-                $"Function '{sourceName}' has no portable semantic mapping from {context.SourceDialect}.");
-        }
+            throw new SqlCompilationException($"Function '{sourceName}' has no portable semantic mapping from {context.SourceDialect}.");
 
-        var targetDefinition = _functionRegistry.Find(
-            context.TargetProvider,
-            sourceDefinition.Semantic.Value,
-            arguments.Length);
+        var targetDefinition = _functionRegistry.Find(context.TargetProvider, sourceDefinition.Semantic.Value, arguments.Length);
         if (targetDefinition is null)
         {
             throw new SqlCompilationException(
-                $"Semantic function '{sourceDefinition.Semantic}' with {arguments.Length} argument(s) " +
-                $"is not supported by {context.TargetProvider}.");
+                $"Semantic function '{sourceDefinition.Semantic}' with {arguments.Length} argument(s) is not supported by {context.TargetProvider}.");
         }
-
-        if (targetDefinition.TranslationKind is FunctionTranslationKind.Template
-            or FunctionTranslationKind.Specialized)
+        if (targetDefinition.TranslationKind is FunctionTranslationKind.Template or FunctionTranslationKind.Specialized)
         {
             throw new SqlCompilationException(
-                $"Function '{sourceName}' requires Core {targetDefinition.TranslationKind} translation " +
-                $"for target provider {context.TargetProvider}; no lossless Core translator is registered yet.");
+                $"Function '{sourceName}' requires Core {targetDefinition.TranslationKind} translation for target provider {context.TargetProvider}; no lossless Core translator is registered yet.");
         }
 
         return function with
@@ -240,9 +208,7 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
 
     private static string NormalizeOperator(string value)
     {
-        var normalized = string.Join(' ', value
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .ToUpperInvariant();
+        var normalized = string.Join(' ', value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToUpperInvariant();
         return normalized switch
         {
             "!=" => "<>",
@@ -259,7 +225,5 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
     private static string IdentifierText(SqlIdentifier identifier) =>
         string.Join('.', identifier.Parts.Select(part => part.Value));
 
-    private sealed record NormalizationContext(
-        SqlAgentToolType SourceDialect,
-        SqlAgentToolType TargetProvider);
+    private sealed record NormalizationContext(SqlAgentToolType SourceDialect, SqlAgentToolType TargetProvider);
 }
