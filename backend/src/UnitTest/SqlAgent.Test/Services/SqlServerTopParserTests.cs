@@ -1,4 +1,5 @@
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
 using Xunit;
 
@@ -15,9 +16,9 @@ public class SqlServerTopParserTests
 
         Assert.Equal("users", definition.TableName);
         Assert.Equal(1, definition.Limit);
-        Assert.Equal("id", Assert.Single(definition.SelectColumns!).GetType() == typeof(SqlAgent.Service.Models.FieldSelectCondition)
-            ? ((SqlAgent.Service.Models.FieldSelectCondition)definition.SelectColumns![0]).FieldName
-            : null);
+        Assert.Equal(
+            "id",
+            Assert.IsType<FieldSelectCondition>(Assert.Single(definition.SelectColumns!)).FieldName);
     }
 
     [Fact]
