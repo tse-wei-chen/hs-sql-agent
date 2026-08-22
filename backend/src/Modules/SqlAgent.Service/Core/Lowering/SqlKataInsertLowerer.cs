@@ -87,32 +87,29 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
         return new Query(IdentifierText(insert.Target.Name)).AsInsert(columns, rows);
     }
 
-    private static object? NormalizeLiteral(object? value) => value switch
+    private static object? NormalizeLiteral(object? value)
     {
-        JsonElement element => element.ValueKind switch
+        if (value is not JsonElement json) return value;
+        return json.ValueKind switch
         {
             JsonValueKind.Null or JsonValueKind.Undefined => null,
+            JsonValueKind.String => json.GetString(),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
-            JsonValueKind.String => element.GetString(),
-            JsonValueKind.Number when element.TryGetInt64(out var integer) => integer,
-            JsonValueKind.Number when element.TryGetDecimal(out var number) => number,
+            JsonValueKind.Number when json.TryGetInt64(out var integer) => integer,
+            JsonValueKind.Number when json.TryGetDecimal(out var number) => number,
+            JsonValueKind.Number => json.GetDouble(),
             _ => throw new SqlCompilationException(
-                $"Unsupported JSON literal kind '{element.ValueKind}' in INSERT.")
-        },
-        SqlDateValue date => date.Value,
-        SqlTimeValue time => time.Value,
-        SqlDateTimeValue timestamp => timestamp.Value,
-        SqlOffsetDateTimeValue offset => offset.Value,
-        _ => value
-    };
+                $"INSERT literal JSON kind '{json.ValueKind}' is not a scalar SQL value.")
+        };
+    }
 
     private static string IdentifierText(SqlIdentifier identifier) =>
         string.Join('.', identifier.Parts.Select(part => part.Value));
 
     private static int ParameterOrdinal(string name)
     {
-        var digits = new string(name.Where(char.IsDigit).ToArray());
+        var digits = new string(name.Reverse().TakeWhile(char.IsDigit).Reverse().ToArray());
         return int.TryParse(digits, out var ordinal) ? ordinal : int.MaxValue;
     }
 
