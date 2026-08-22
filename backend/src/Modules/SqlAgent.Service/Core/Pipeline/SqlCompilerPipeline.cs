@@ -5,15 +5,25 @@ using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Pipeline;
 
-public sealed record ParsedStatement(SqlStatement Statement, SqlAgentToolType SourceDialect);
+public sealed record ParsedStatement(
+    SqlStatement Statement,
+    SqlAgentToolType SourceDialect);
 
-public sealed record BoundStatement(SqlStatement Statement, QueryFacts Facts);
+public sealed record BoundStatement(
+    SqlStatement Statement,
+    QueryFacts Facts,
+    SqlAgentToolType SourceDialect);
 
-public sealed record CanonicalStatement(SqlStatement Statement, QueryFacts Facts);
+public sealed record CanonicalStatement(
+    SqlStatement Statement,
+    QueryFacts Facts,
+    SqlAgentToolType SourceDialect,
+    SqlAgentToolType TargetProvider);
 
 public sealed record ValidatedSqlPlan(
     SqlStatement Statement,
     QueryFacts Facts,
+    SqlAgentToolType SourceDialect,
     SqlAgentToolType TargetProvider,
     string PolicyVersion);
 
@@ -29,10 +39,7 @@ public interface ISqlNormalizer
 
 public interface ISqlPlanValidator
 {
-    ValidatedSqlPlan Validate(
-        CanonicalStatement statement,
-        SqlAgentToolType targetProvider,
-        string policyVersion);
+    ValidatedSqlPlan Validate(CanonicalStatement statement, string policyVersion);
 }
 
 public interface IProviderLowerer
