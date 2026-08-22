@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using SqlAgent.Service.Core.Ast;
@@ -310,6 +311,18 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static RenderedExpression RenderLiteral(LiteralExpr literal, Compiler compiler)
     {
+        if (literal.Value is SqlTimeValue && compiler is OracleCompiler)
+            throw new SqlCompilationException("Oracle has no standalone TIME data type.");
+
+        if (literal.Value is SqlOffsetDateTimeValue && compiler is MySqlCompiler)
+            throw new SqlCompilationException("MySQL has no native timestamp type that preserves a UTC offset.");
+
+        if (literal.Value is SqlOffsetDateTimeValue postgresOffset && compiler is PostgresCompiler)
+            return new RenderedExpression("?", [postgresOffset.Value.ToUniversalTime()]);
+
+        if (literal.Value is DateTimeOffset postgresRawOffset && compiler is PostgresCompiler)
+            return new RenderedExpression("?", [postgresRawOffset.ToUniversalTime()]);
+
         var value = NormalizeBindingValue(literal.Value);
         if (compiler is FirebirdCompiler)
         {
@@ -318,14 +331,18 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 SqlDateValue => new RenderedExpression("CAST(? AS DATE)", [value]),
                 SqlTimeValue => new RenderedExpression("CAST(? AS TIME)", [value]),
                 SqlLocalDateTimeValue => new RenderedExpression("CAST(? AS TIMESTAMP)", [value]),
-                SqlOffsetDateTimeValue => new RenderedExpression("CAST(? AS TIMESTAMP WITH TIME ZONE)", [value]),
+                SqlOffsetDateTimeValue offset => new RenderedExpression(
+                    "CAST(? AS TIMESTAMP WITH TIME ZONE)",
+                    [FormatFirebirdOffsetTimestamp(offset.Value)]),
                 _ => value switch
                 {
                     DateOnly => new RenderedExpression("CAST(? AS DATE)", [value]),
                     TimeOnly or TimeSpan => new RenderedExpression("CAST(? AS TIME)", [value]),
                     DateTime => new RenderedExpression("CAST(? AS TIMESTAMP)", [value]),
-                    DateTimeOffset => new RenderedExpression("CAST(? AS TIMESTAMP WITH TIME ZONE)", [value]),
-                    string => new RenderedExpression("CAST(? AS VARCHAR(32765))", [value]),
+                    DateTimeOffset offset => new RenderedExpression(
+                        "CAST(? AS TIMESTAMP WITH TIME ZONE)",
+                        [FormatFirebirdOffsetTimestamp(offset)]),
+                    string text => RenderFirebirdString(text),
                     bool => new RenderedExpression("CAST(? AS BOOLEAN)", [value]),
                     byte or sbyte or short or ushort or int => new RenderedExpression("CAST(? AS INTEGER)", [value]),
                     uint or long => new RenderedExpression("CAST(? AS BIGINT)", [value]),
@@ -337,6 +354,20 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         }
         return new RenderedExpression("?", [value]);
     }
+
+    private static RenderedExpression RenderFirebirdString(string value)
+    {
+        const int maxFirebirdUtf8VarcharChars = 8191;
+        if (value.Length > maxFirebirdUtf8VarcharChars)
+            throw new SqlCompilationException(
+                $"Firebird string literal exceeds the safe UTF8 VARCHAR limit of {maxFirebirdUtf8VarcharChars} characters.");
+
+        var length = Math.Max(1, value.Length);
+        return new RenderedExpression($"CAST(? AS VARCHAR({length}))", [value]);
+    }
+
+    private static string FormatFirebirdOffsetTimestamp(DateTimeOffset value) =>
+        value.ToString("yyyy-MM-dd HH:mm:ss.fffffff zzz", CultureInfo.InvariantCulture);
 
     private static RenderedExpression RenderInterval(IntervalExpr interval, Compiler compiler)
     {
@@ -456,7 +487,10 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 $"(CAST({end.Sql} AS date) - CAST({start.Sql} AS date))",
                 end,
                 start),
-            OracleCompiler => Combine($"({end.Sql} - {start.Sql})", end, start),
+            OracleCompiler => Combine(
+                $"(CAST({end.Sql} AS DATE) - CAST({start.Sql} AS DATE))",
+                end,
+                start),
             SqliteCompiler => Combine($"(JULIANDAY({end.Sql}) - JULIANDAY({start.Sql}))", end, start),
             FirebirdCompiler => Combine($"DATEDIFF({unit} FROM {start.Sql} TO {end.Sql})", start, end),
             _ => throw new SqlCompilationException("Unsupported DATEDIFF provider.")
