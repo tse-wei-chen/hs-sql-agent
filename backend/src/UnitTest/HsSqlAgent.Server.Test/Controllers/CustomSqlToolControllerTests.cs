@@ -22,7 +22,20 @@ public class CustomSqlToolControllerTests
     private readonly Mock<IAuditService> _auditServiceMock = new();
 
     private CustomSqlToolController CreateController()
-        => new(_toolServiceMock.Object, _auditServiceMock.Object);
+    {
+        var controller = new CustomSqlToolController(_toolServiceMock.Object, _auditServiceMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+                {
+                    User = new System.Security.Claims.ClaimsPrincipal(
+                        new System.Security.Claims.ClaimsIdentity())
+                }
+            }
+        };
+        return controller;
+    }
 
     [Fact]
     public async Task Publish_ShouldRejectSqlThatRuntimeParserCannotAccept()
