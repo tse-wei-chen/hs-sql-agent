@@ -37,6 +37,7 @@ public class CustomToolProxy(
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
+
     public async Task<string> Execute(
         JsonElement arguments,
         McpServer? server = null,
@@ -59,6 +60,7 @@ public class CustomToolProxy(
     {
         var stopwatch = Stopwatch.StartNew();
         long approvalWaitDurationMs = 0;
+        int? dmlAffectedRows = null;
         var parameters = new Dictionary<string, object?>();
         if (arguments.ValueKind == JsonValueKind.Object)
         {
@@ -117,12 +119,6 @@ public class CustomToolProxy(
             {
                 var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(renderedSql), dbType);
                 auditQuery = queryDef;
-                if (queryDef == null)
-                {
-                    result = "Error: Failed to deserialize QueryDefinition.";
-                    await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", result);
-                    return result;
-                }
                 ValidateAllTableAccess(queryDef);
 
                 var qErrors = DefinitionValidator.Validate(queryDef);
@@ -148,13 +144,6 @@ public class CustomToolProxy(
             {
                 var dmlDef = SqlDefinitionParser.ParseDml(renderedSql, dbType);
                 auditDml = dmlDef;
-                if (dmlDef == null)
-                {
-                    result = "Error: Failed to deserialize DmlDefinition.";
-                    await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", result);
-                    return result;
-                }
-                ValidateAllTableAccess(dmlDef);
 
                 var dmlErrors = DefinitionValidator.Validate(dmlDef);
                 if (dmlErrors.Count > 0)
@@ -164,16 +153,29 @@ public class CustomToolProxy(
                     return result;
                 }
 
-                var dmlExecution = await ExecuteDmlWithApprovalAsync(
+                if (dmlDef.Operation is not (DmlOperation.Update or DmlOperation.Delete))
+                {
+                    throw new NotSupportedException(
+                        "Published Custom Tool DML currently supports UPDATE and DELETE through the typed approval pipeline. INSERT remains fail-closed until its production approval semantics are defined.");
+                }
+
+                var flow = new TypedDmlApprovalFlow(
+                    new TypedDmlRuntime(),
+                    _securityPolicyRuntimeState,
+                    _sqlConcurrencyLimiter,
+                    ResolveTableWhitelist);
+                var dmlExecution = await flow.ExecuteAsync(
                     strategy,
                     sqlConfig.ConnectionString,
                     dmlDef,
                     approvalClient,
+                    $"Custom tool `{_name}`",
                     cancellationToken);
                 result = dmlExecution.Result;
                 approvalWaitDurationMs += dmlExecution.ApprovalWaitDurationMs;
+                dmlAffectedRows = dmlExecution.AffectedRows;
 
-                if (!result.StartsWith("Success", StringComparison.Ordinal))
+                if (!dmlExecution.Committed)
                 {
                     var auditResult = result.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
                         ? "cancelled"
@@ -187,7 +189,7 @@ public class CustomToolProxy(
                             ToolName = _name,
                             Operation = dmlDef.Operation.ToString().ToLowerInvariant(),
                             DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
-                            AffectedRows = ParseAffectedRows(result),
+                            AffectedRows = dmlAffectedRows,
                             ApprovalStatus = auditResult == "cancelled" ? "declined" : "not-completed",
                             Definition = DescribeDml(dmlDef)
                         },
@@ -215,7 +217,7 @@ public class CustomToolProxy(
                         ? ProcessingDuration(stopwatch, approvalWaitDurationMs)
                         : stopwatch.ElapsedMilliseconds,
                     ReturnedRows = isQuery ? CountJsonRows(result) : null,
-                    AffectedRows = isDml ? ParseAffectedRows(result) : null,
+                    AffectedRows = isDml ? dmlAffectedRows : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
                     Definition = isQuery && auditQuery != null
                         ? DescribeQuery(auditQuery)
@@ -238,6 +240,7 @@ public class CustomToolProxy(
                     DurationMs = auditDml == null
                         ? stopwatch.ElapsedMilliseconds
                         : ProcessingDuration(stopwatch, approvalWaitDurationMs),
+                    AffectedRows = dmlAffectedRows,
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQuery != null
                         ? DescribeQuery(auditQuery)
@@ -250,115 +253,6 @@ public class CustomToolProxy(
             return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
         }
     }
-
-    private async Task<DmlExecutionTiming> ExecuteDmlWithApprovalAsync(
-        ISqlStrategy strategy,
-        string connectionString,
-        DmlDefinition dml,
-        IDmlApprovalClient? approvalClient,
-        CancellationToken cancellationToken)
-    {
-        if (approvalClient?.SupportsElicitation != true)
-        {
-            return new("Error: This MCP client does not support the interactive confirmation required for DML execution.", 0);
-        }
-
-        long approvalWaitDurationMs = 0;
-
-        // ConfirmToken is an internal dry-run artifact. Never trust a token
-        // supplied through a stored definition or a caller-controlled parameter.
-        dml.ConfirmToken = null;
-        var executionPolicy = ResolveExecutionPolicy();
-        string dryRunResult;
-        await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
-        {
-            if (lease is null)
-                return new("Server busy: maximum concurrent SQL operations reached.", approvalWaitDurationMs);
-            dryRunResult = await strategy.ExecuteDmlAsync(
-                connectionString,
-                dml,
-                executionPolicy,
-                cancellationToken);
-        }
-        if (!dryRunResult.StartsWith("Dry Run Result", StringComparison.Ordinal))
-        {
-            return new(dryRunResult, approvalWaitDurationMs);
-        }
-
-        var affectedMatch = System.Text.RegularExpressions.Regex.Match(
-            dryRunResult,
-            @"affectedRows=(\d+)",
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-        var tokenMatch = System.Text.RegularExpressions.Regex.Match(
-            dryRunResult,
-            @"TokenRequired=(\S+)",
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-        if (!affectedMatch.Success || !tokenMatch.Success)
-        {
-            return new("Error: Unable to verify the DML dry-run result.", approvalWaitDurationMs);
-        }
-
-        var affectedRows = affectedMatch.Groups[1].Value;
-        var previewMatch = System.Text.RegularExpressions.Regex.Match(
-            dryRunResult,
-            @"Preview=(.*) \| Security Note:",
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant |
-            System.Text.RegularExpressions.RegexOptions.Singleline);
-        var preview = previewMatch.Success ? previewMatch.Groups[1].Value : "[]";
-        ElicitResult elicitResult;
-        var approvalStopwatch = Stopwatch.StartNew();
-        try
-        {
-            elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
-            {
-                Message =
-                    $"## Custom tool `{_name}`\n\n" +
-                    $"**{dml.Operation} on `{dml.TableName}` — {affectedRows} row(s) affected**\n\n" +
-                    $"### Impact preview\n\n{preview}",
-                RequestedSchema = new RequestSchema
-                {
-                    Properties =
-                    {
-                        ["approve"] = new BooleanSchema
-                        {
-                            Title = "Approve execution",
-                            Description =
-                                $"This will **{dml.Operation.ToString().ToUpperInvariant()} " +
-                                $"{affectedRows} row(s)** in `{dml.TableName}`."
-                        }
-                    }
-                }
-            }, cancellationToken);
-        }
-        finally
-        {
-            approvalWaitDurationMs += approvalStopwatch.ElapsedMilliseconds;
-        }
-
-        if (elicitResult.Action != "accept"
-            || elicitResult.Content?.TryGetValue("approve", out var approveElement) != true
-            || approveElement.ValueKind != JsonValueKind.True)
-        {
-            return new("DML execution cancelled by user.", approvalWaitDurationMs);
-        }
-
-        dml.ConfirmToken = tokenMatch.Groups[1].Value;
-        await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
-        {
-            if (lease is null)
-                return new("Server busy: maximum concurrent SQL operations reached.", approvalWaitDurationMs);
-            var finalResult = await strategy.ExecuteDmlAsync(
-                connectionString,
-                dml,
-                executionPolicy,
-                cancellationToken);
-            return new(finalResult, approvalWaitDurationMs);
-        }
-    }
-
-    private readonly record struct DmlExecutionTiming(
-        string Result,
-        long ApprovalWaitDurationMs);
 
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
         => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
@@ -376,15 +270,6 @@ public class CustomToolProxy(
             AllowFullTableDelete = policy.AllowFullTableDelete,
             DmlMaxAffectedRows = policy.DmlMaxAffectedRows
         };
-    }
-
-    private static int? ParseAffectedRows(string result)
-    {
-        var match = System.Text.RegularExpressions.Regex.Match(
-            result,
-            @"affectedRows=(\d+)",
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-        return match.Success && int.TryParse(match.Groups[1].Value, out var rows) ? rows : null;
     }
 
     private static int? CountJsonRows(string json)
@@ -476,18 +361,6 @@ public class CustomToolProxy(
         SqlAgentTool.CollectFromHavingConditions(queryDef.HavingConditions, referenced, aliases);
         SqlAgentTool.CollectFromOrderByConditions(queryDef.OrderByColumns, referenced, aliases);
         SqlAgentTool.CollectFromGroupByConditions(queryDef.GroupByConditions, referenced, aliases);
-        var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
-        if (violations.Count > 0)
-            throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
-    }
-
-    private void ValidateAllTableAccess(DmlDefinition dmlDef)
-    {
-        var whitelist = ResolveTableWhitelist();
-        if (whitelist is null or { Count: 0 }) return;
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        SqlAgentTool.CollectReferencesAndAliases(dmlDef.TableName, null, null, null, dmlDef.FromQuery, null, dmlDef.WhereConditions, referenced, aliases);
         var violations = referenced.Where(t => !whitelist.Contains(t)).ToList();
         if (violations.Count > 0)
             throw new UnauthorizedAccessException($"API key does not have permission to access table(s): {string.Join(", ", violations)}");
