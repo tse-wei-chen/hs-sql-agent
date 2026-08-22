@@ -3,6 +3,7 @@ using System.Text.Json;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
@@ -19,14 +20,14 @@ public sealed class CoreStrategyTestHarness<TStrategy>
     where TStrategy : ISqlStrategy
 {
     private readonly TStrategy _strategy;
-    private readonly LegacySqlProviderAdapter _provider;
+    private readonly ISqlProvider _provider;
     private readonly CoreSqlCompiler _compiler = CoreSqlCompiler.CreateDefault();
     private readonly CompiledSqlCommandExecutor _executor;
 
     public CoreStrategyTestHarness(TStrategy strategy)
     {
         _strategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
-        _provider = new LegacySqlProviderAdapter(strategy);
+        _provider = LegacySqlProviderAdapter.Adapt(strategy);
         _executor = new CompiledSqlCommandExecutor(_provider.Connections);
     }
 
