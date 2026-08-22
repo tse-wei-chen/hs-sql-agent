@@ -41,8 +41,61 @@ public sealed class SqlAstBinder : ISqlBinder
         {
             SelectStatement select => BindSelect(select, parentScope, inheritedCtes, state),
             QueryStatement query => BindQuery(query, parentScope, inheritedCtes, state),
+            UpdateStatement update => BindUpdate(update, parentScope, inheritedCtes, state),
+            DeleteStatement delete => BindDelete(delete, parentScope, inheritedCtes, state),
             _ => throw new InvalidOperationException(
                 $"Unsupported SQL statement while binding: {statement.GetType().Name}")
+        };
+    }
+
+    private static UpdateStatement BindUpdate(
+        UpdateStatement update,
+        BindingScope? parentScope,
+        ImmutableHashSet<string> visibleCtes,
+        BindingState state)
+    {
+        if (update.Assignments.IsDefaultOrEmpty)
+            throw new InvalidOperationException("UPDATE requires at least one assignment.");
+
+        var scope = new BindingScope(state.NextScopeId++, parentScope);
+        var target = (NamedTableSource)BindSource(update.Target, scope, visibleCtes, state);
+        var assignments = update.Assignments.Select(assignment =>
+        {
+            if (assignment.Column.Parts.Length != 1)
+            {
+                throw new InvalidOperationException(
+                    $"UPDATE assignment column '{Name(assignment.Column)}' must be unqualified.");
+            }
+            return assignment with
+            {
+                Value = BindExpr(assignment.Value, scope, visibleCtes, state)
+            };
+        }).ToImmutableArray();
+
+        return update with
+        {
+            Target = target,
+            Assignments = assignments,
+            Predicate = update.Predicate is null
+                ? null
+                : BindExpr(update.Predicate, scope, visibleCtes, state)
+        };
+    }
+
+    private static DeleteStatement BindDelete(
+        DeleteStatement delete,
+        BindingScope? parentScope,
+        ImmutableHashSet<string> visibleCtes,
+        BindingState state)
+    {
+        var scope = new BindingScope(state.NextScopeId++, parentScope);
+        var target = (NamedTableSource)BindSource(delete.Target, scope, visibleCtes, state);
+        return delete with
+        {
+            Target = target,
+            Predicate = delete.Predicate is null
+                ? null
+                : BindExpr(delete.Predicate, scope, visibleCtes, state)
         };
     }
 
@@ -137,8 +190,7 @@ public sealed class SqlAstBinder : ISqlBinder
             {
                 var tableName = Name(named.Name);
                 var isCte = visibleCtes.Contains(tableName);
-                if (!isCte)
-                    state.PhysicalTables.Add(tableName);
+                if (!isCte) state.PhysicalTables.Add(tableName);
 
                 var symbol = new TableSymbol(
                     tableName,
@@ -185,10 +237,7 @@ public sealed class SqlAstBinder : ISqlBinder
             ColumnExpr column => BindColumn(column, scope),
             LiteralExpr literal => literal,
             IntervalExpr interval => interval,
-            UnaryExpr unary => unary with
-            {
-                Operand = BindExpr(unary.Operand, scope, visibleCtes, state)
-            },
+            UnaryExpr unary => unary with { Operand = BindExpr(unary.Operand, scope, visibleCtes, state) },
             BinaryExpr binary => binary with
             {
                 Left = BindExpr(binary.Left, scope, visibleCtes, state),
@@ -196,9 +245,7 @@ public sealed class SqlAstBinder : ISqlBinder
             },
             FunctionCallExpr function => function with
             {
-                Arguments = function.Arguments
-                    .Select(argument => BindExpr(argument, scope, visibleCtes, state))
-                    .ToImmutableArray()
+                Arguments = function.Arguments.Select(argument => BindExpr(argument, scope, visibleCtes, state)).ToImmutableArray()
             },
             FilterExpr filter => filter with
             {
@@ -210,27 +257,18 @@ public sealed class SqlAstBinder : ISqlBinder
                 Expression = BindExpr(windowed.Expression, scope, visibleCtes, state),
                 Window = BindWindow(windowed.Window, scope, visibleCtes, state)
             },
-            CastExpr cast => cast with
-            {
-                Expression = BindExpr(cast.Expression, scope, visibleCtes, state)
-            },
+            CastExpr cast => cast with { Expression = BindExpr(cast.Expression, scope, visibleCtes, state) },
             CaseExpr @case => @case with
             {
-                Branches = @case.Branches
-                    .Select(branch => new CaseBranch(
-                        BindExpr(branch.Condition, scope, visibleCtes, state),
-                        BindExpr(branch.Value, scope, visibleCtes, state)))
-                    .ToImmutableArray(),
-                ElseExpression = @case.ElseExpression is null
-                    ? null
-                    : BindExpr(@case.ElseExpression, scope, visibleCtes, state)
+                Branches = @case.Branches.Select(branch => new CaseBranch(
+                    BindExpr(branch.Condition, scope, visibleCtes, state),
+                    BindExpr(branch.Value, scope, visibleCtes, state))).ToImmutableArray(),
+                ElseExpression = @case.ElseExpression is null ? null : BindExpr(@case.ElseExpression, scope, visibleCtes, state)
             },
             InExpr @in => @in with
             {
                 Value = BindExpr(@in.Value, scope, visibleCtes, state),
-                Items = @in.Items
-                    .Select(item => BindExpr(item, scope, visibleCtes, state))
-                    .ToImmutableArray()
+                Items = @in.Items.Select(item => BindExpr(item, scope, visibleCtes, state)).ToImmutableArray()
             },
             BetweenExpr between => between with
             {
@@ -238,10 +276,7 @@ public sealed class SqlAstBinder : ISqlBinder
                 Lower = BindExpr(between.Lower, scope, visibleCtes, state),
                 Upper = BindExpr(between.Upper, scope, visibleCtes, state)
             },
-            IsNullExpr isNull => isNull with
-            {
-                Value = BindExpr(isNull.Value, scope, visibleCtes, state)
-            },
+            IsNullExpr isNull => isNull with { Value = BindExpr(isNull.Value, scope, visibleCtes, state) },
             SubqueryExpr subquery => BindSubquery(subquery, scope, visibleCtes, state),
             ExistsExpr exists => BindExists(exists, scope, visibleCtes, state),
             _ => throw new InvalidOperationException(
@@ -256,31 +291,22 @@ public sealed class SqlAstBinder : ISqlBinder
         BindingState state) =>
         window with
         {
-            PartitionBy = window.PartitionBy
-                .Select(expression => BindExpr(expression, scope, visibleCtes, state))
-                .ToImmutableArray(),
-            OrderBy = window.OrderBy
-                .Select(item => item with
-                {
-                    Expression = BindExpr(item.Expression, scope, visibleCtes, state)
-                })
-                .ToImmutableArray()
+            PartitionBy = window.PartitionBy.Select(expression => BindExpr(expression, scope, visibleCtes, state)).ToImmutableArray(),
+            OrderBy = window.OrderBy.Select(item => item with
+            {
+                Expression = BindExpr(item.Expression, scope, visibleCtes, state)
+            }).ToImmutableArray()
         };
 
     private static BoundColumnExpr BindColumn(ColumnExpr column, BindingScope? scope)
     {
-        if (scope is null)
-            return new BoundColumnExpr(column.Name, null, column.Span);
+        if (scope is null) return new BoundColumnExpr(column.Name, null, column.Span);
 
         var parts = column.Name.Parts;
-        if (parts.IsDefaultOrEmpty)
-            throw new InvalidOperationException("Column identifier has no parts.");
+        if (parts.IsDefaultOrEmpty) throw new InvalidOperationException("Column identifier has no parts.");
 
         if (parts.Length == 1)
-        {
-            var source = scope.TryResolveSingleVisibleSource();
-            return new BoundColumnExpr(column.Name, source, column.Span);
-        }
+            return new BoundColumnExpr(column.Name, scope.TryResolveSingleVisibleSource(), column.Span);
 
         var qualifier = string.Join('.', parts.Take(parts.Length - 1).Select(p => p.Value));
         var resolved = scope.ResolveQualifier(qualifier);
@@ -298,10 +324,7 @@ public sealed class SqlAstBinder : ISqlBinder
         BindingState state)
     {
         state.ContainsSubquery = true;
-        return subquery with
-        {
-            Query = BindStatement(subquery.Query, scope, visibleCtes, state)
-        };
+        return subquery with { Query = BindStatement(subquery.Query, scope, visibleCtes, state) };
     }
 
     private static ExistsExpr BindExists(
@@ -311,23 +334,17 @@ public sealed class SqlAstBinder : ISqlBinder
         BindingState state)
     {
         state.ContainsSubquery = true;
-        return exists with
-        {
-            Query = BindStatement(exists.Query, scope, visibleCtes, state)
-        };
+        return exists with { Query = BindStatement(exists.Query, scope, visibleCtes, state) };
     }
 
     private static void RegisterAliasFact(TableSymbol symbol, int scopeId, BindingState state)
     {
-        if (string.IsNullOrWhiteSpace(symbol.Alias)) return;
-        state.AliasFacts.Add(new QueryAliasFact(symbol.Alias, symbol.Name, scopeId));
+        if (!string.IsNullOrWhiteSpace(symbol.Alias))
+            state.AliasFacts.Add(new QueryAliasFact(symbol.Alias, symbol.Name, scopeId));
     }
 
-    private static string Name(SqlIdentifier identifier) =>
-        string.Join('.', identifier.Parts.Select(part => part.Value));
-
-    private static string? NormalizeAlias(string? alias) =>
-        string.IsNullOrWhiteSpace(alias) ? null : alias.Trim();
+    private static string Name(SqlIdentifier identifier) => string.Join('.', identifier.Parts.Select(part => part.Value));
+    private static string? NormalizeAlias(string? alias) => string.IsNullOrWhiteSpace(alias) ? null : alias.Trim();
 
     private sealed class BindingState
     {
@@ -341,8 +358,7 @@ public sealed class SqlAstBinder : ISqlBinder
     private sealed class BindingScope(int id, BindingScope? parent)
     {
         private readonly List<TableSymbol> _sources = [];
-        private readonly Dictionary<string, List<TableSymbol>> _qualifiers =
-            new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<TableSymbol>> _qualifiers = new(StringComparer.OrdinalIgnoreCase);
 
         public int Id { get; } = id;
         public BindingScope? Parent { get; } = parent;
@@ -351,13 +367,9 @@ public sealed class SqlAstBinder : ISqlBinder
         {
             _sources.Add(symbol);
             AddQualifier(symbol.Name, symbol);
-
             var lastDot = symbol.Name.LastIndexOf('.');
-            if (lastDot >= 0)
-                AddQualifier(symbol.Name[(lastDot + 1)..], symbol);
-
-            if (!string.IsNullOrWhiteSpace(symbol.Alias))
-                AddQualifier(symbol.Alias, symbol);
+            if (lastDot >= 0) AddQualifier(symbol.Name[(lastDot + 1)..], symbol);
+            if (!string.IsNullOrWhiteSpace(symbol.Alias)) AddQualifier(symbol.Alias, symbol);
         }
 
         public TableSymbol? ResolveQualifier(string qualifier)
@@ -365,8 +377,7 @@ public sealed class SqlAstBinder : ISqlBinder
             if (_qualifiers.TryGetValue(qualifier, out var matches))
             {
                 if (matches.Count != 1)
-                    throw new InvalidOperationException(
-                        $"Ambiguous table/alias qualifier '{qualifier}' in SQL scope {Id}.");
+                    throw new InvalidOperationException($"Ambiguous table/alias qualifier '{qualifier}' in SQL scope {Id}.");
                 return matches[0];
             }
             return Parent?.ResolveQualifier(qualifier);
