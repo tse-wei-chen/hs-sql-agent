@@ -3,11 +3,20 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using FirebirdSql.Data.Types;
 using Microsoft.Extensions.Configuration;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.Services;
 using SqlAgent.Service.SqlParsing;
+using SqlAgent.Service.SqlTranslation.Context;
+using SqlAgent.Service.SqlTranslation.Ast.Semantic;
+using SqlAgent.Service.SqlTranslation.Functions.Translators;
+using SqlAgent.Service.SqlTranslation.Functions;
+using SqlAgent.Service.SqlTranslation.Normalization;
+using SqlAgent.Service.SqlTranslation.Diagnostics;
+using SqlAgent.Service.SqlTranslation.DateFormats;
 using SqlKata;
 using SqlKata.Compilers;
 using SqlKata.Execution;
@@ -18,9 +27,23 @@ public abstract partial class BaseSqlStrategy(
     IQueryValueParserService valueParser,
     IConfiguration configuration) : ISqlStrategy
 {
+    static BaseSqlStrategy()
+    {
+        DapperTemporalTypeHandlerRegistry.EnsureRegistered();
+    }
+
     private enum TemplateSqlToken
     {
         Day,
+        Week,
+        Month,
+        Quarter,
+        Year,
+        Hour,
+        Minute,
+        Second,
+        CurrentDate,
+        CurrentTime,
         CurrentTimestamp,
         Sysdate,
     }
@@ -32,6 +55,32 @@ public abstract partial class BaseSqlStrategy(
     private static partial Regex SafeCastTypePattern();
 
     private readonly IQueryValueParserService _valueParser = valueParser;
+    private static readonly SpecializedFunctionTranslatorRegistry SpecializedFunctionTranslators = new(
+    [
+        new TemporalFunctionTranslator(),
+        new JsonFunctionTranslator(),
+        new RegexFunctionTranslator(),
+        new PortableFunctionTranslator()
+    ]);
+    private static readonly FunctionRegistry SemanticFunctionRegistry =
+        new(FunctionDefinitionLoader.LoadEmbedded());
+    private static readonly SqlSemanticNormalizer SemanticFunctionNormalizer =
+        new(SemanticFunctionRegistry);
+    private static readonly DateFormatTranslator DateFormatTranslator = new();
+    private static readonly HashSet<string> PortableIdentityFunctions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "COUNT", "SUM", "AVG", "MIN", "MAX", "ROUND", "NULLIF", "ABS", "LOWER", "UPPER",
+        "ROW_NUMBER", "RANK", "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "GROUPING"
+    };
+    // Temporary adapter around the legacy recursive SqlKata builder. It keeps one explicit
+    // session consistent across a compile without changing process-global state and restores
+    // nested scopes on dispose. New lowering code must receive TranslationContext explicitly;
+    // this ambient bridge should disappear when BuildQueryFromDefinition is extracted into a
+    // ProviderLowerer with Lower(node, context).
+    private static readonly AsyncLocal<TranslationSession?> CurrentTranslation = new();
+    private sealed record TranslationSession(
+        TranslationContext Context,
+        List<TranslationDiagnostic> Diagnostics);
 
     private static SqlFunctionCondition ToFunc(
         string name, List<SelectCondition>? args, bool distinct, List<WhereCondition>? filter, WindowDefinition? window = null) =>
@@ -49,8 +98,40 @@ public abstract partial class BaseSqlStrategy(
 
     public string CompileQuerySql(QueryDefinition definition)
     {
+        ArgumentNullException.ThrowIfNull(definition);
+        // Null is a declaration of target-native input, never a request to infer a dialect.
+        using var scope = BeginTranslation(new TranslationContext(
+            definition.SourceDialect ?? DbType, DbType, UnknownFunctionPolicy.Throw));
         var compiler = CreateCompiler();
         return compiler.Compile(BuildQueryFromDefinition(definition)).RawSql;
+    }
+
+    public SqlTranslationResult CompileQueryTranslation(
+        QueryDefinition definition,
+        SqlAgentToolType sourceDialect,
+        UnknownFunctionPolicy unknownFunctionPolicy = UnknownFunctionPolicy.Throw)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        var session = new TranslationSession(
+            new TranslationContext(sourceDialect, DbType, unknownFunctionPolicy), []);
+        using var scope = BeginTranslation(session);
+        var sql = CreateCompiler().Compile(BuildQueryFromDefinition(definition)).RawSql;
+        return new SqlTranslationResult(sql, session.Diagnostics);
+    }
+
+    private static IDisposable BeginTranslation(TranslationContext context) =>
+        BeginTranslation(new TranslationSession(context, []));
+
+    private static IDisposable BeginTranslation(TranslationSession session)
+    {
+        var previous = CurrentTranslation.Value;
+        CurrentTranslation.Value = session;
+        return new TranslationScope(previous);
+    }
+
+    private sealed class TranslationScope(TranslationSession? previous) : IDisposable
+    {
+        public void Dispose() => CurrentTranslation.Value = previous;
     }
 
     public async Task<string> ExecuteQueryAsync(
@@ -80,6 +161,8 @@ public abstract partial class BaseSqlStrategy(
 
         try
         {
+            using var translationScope = BeginTranslation(new TranslationContext(
+                definition.SourceDialect ?? DbType, DbType, UnknownFunctionPolicy.Throw));
             var query = BuildQueryFromDefinition(definition);
             var requestedLimit = definition.Limit.GetValueOrDefault();
             if (policy.QueryMaxRows > 0
@@ -521,6 +604,16 @@ public abstract partial class BaseSqlStrategy(
                 ConstantSelectCondition constCol => MapArithmetic(constCol),
                 CastSelectCondition castCol => MapArithmetic(castCol),
                 IntervalSelectCondition intervalCol => MapArithmetic(intervalCol),
+                DateAddExpression dateAdd => MapArithmetic(dateAdd),
+                DateDiffExpression dateDiff => MapArithmetic(dateDiff),
+                JsonExtractExpression jsonExtract => MapArithmetic(jsonExtract),
+                JsonSetExpression jsonSet => MapArithmetic(jsonSet),
+                RegexMatchExpression regexMatch => MapArithmetic(regexMatch),
+                DateFormatExpression dateFormat => MapArithmetic(dateFormat),
+                FormattedDateParseExpression dateParse => MapArithmetic(dateParse),
+                PositionExpression position => MapArithmetic(position),
+                DatePartExpression datePart => MapArithmetic(datePart),
+                TemplateSqlTokenSelectCondition tokenCol => MapArithmetic(tokenCol),
                 FunctionSelectCondition f => MapFunction(ToFunc(f.FunctionName, f.Arguments, f.IsDistinct, f.FilterWhereConditions, f.Window)),
                 CaseWhenSelectCondition caseWhenCol => MapCaseWhen(caseWhenCol.CaseWhen, caseWhenCol.ElseValue),
                 SubQuerySelectCondition subQueryCol => MapSubQueryColumn(subQueryCol),
@@ -657,9 +750,31 @@ public abstract partial class BaseSqlStrategy(
 
             IntervalSelectCondition interval => MapInterval(interval),
 
+            DateAddExpression dateAdd => MapDateAdd(dateAdd),
+
+            DateDiffExpression dateDiff => MapDateDiff(dateDiff),
+
+            JsonExtractExpression jsonExtract => MapJsonExtract(jsonExtract),
+
+            JsonSetExpression jsonSet => MapJsonSet(jsonSet),
+
+            RegexMatchExpression regexMatch => MapRegexMatch(regexMatch),
+
+            DateFormatExpression dateFormat => MapDateFormat(dateFormat),
+
+            FormattedDateParseExpression dateParse => MapFormattedDateParse(dateParse),
+
+            PositionExpression position => MapPosition(position),
+
+            DatePartExpression datePart => MapDatePart(datePart),
+
             ConstantSelectCondition cst => MapConstantValue(cst.Constant),
 
             TemplateSqlTokenSelectCondition token => MapTemplateSqlToken(token),
+
+            TemplateExtractSelectCondition extract => MapExtract(extract),
+
+            TemplateCaseSelectCondition caseExpression => MapTemplateCase(caseExpression),
 
             FieldSelectCondition field => new Column { Name = field.FieldName.Trim() },
 
@@ -733,7 +848,7 @@ public abstract partial class BaseSqlStrategy(
     private InvalidOperationException CapabilityError(string capability) =>
         new($"Unsupported SQL capability '{capability}' for provider {DbType}; the statement was rejected before execution.");
 
-    private NumberColumn MapConstantValue(object? rawConstant)
+    private AbstractColumn MapConstantValue(object? rawConstant)
     {
         var value = rawConstant is JsonElement je
             ? _valueParser.UnwrapJsonElement(je)
@@ -742,6 +857,40 @@ public abstract partial class BaseSqlStrategy(
         if (value is sbyte or byte or short or ushort or int or uint or long or ulong)
         {
             value = Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+        }
+
+        // Normalize legacy CLR temporal values before provider-specific handling,
+        // so they follow exactly the same binding and type-annotation path as
+        // temporal literals parsed from SQL.
+        value = value switch
+        {
+            DateOnly date => new SqlDateValue(date),
+            TimeOnly time => new SqlTimeValue(time),
+            DateTime dt => dt.Kind == DateTimeKind.Utc
+                ? new SqlOffsetDateTimeValue(new DateTimeOffset(dt))
+                : new SqlLocalDateTimeValue(dt),
+            DateTimeOffset dateTimeOffset => new SqlOffsetDateTimeValue(dateTimeOffset),
+            _ => value
+        };
+
+        // Firebird cannot infer the data type of a parameter used as a bare
+        // SELECT expression. Keep the value parameterized and add only the
+        // provider type annotation required by the SQL compiler.
+        if (DbType == SqlAgentToolType.Firebird && value is SqlTemporalValue)
+        {
+            var firebirdType = value switch
+            {
+                SqlDateValue => "DATE",
+                SqlTimeValue => "TIME",
+                SqlLocalDateTimeValue => "TIMESTAMP",
+                SqlOffsetDateTimeValue => "TIMESTAMP WITH TIME ZONE",
+                _ => throw new InvalidOperationException($"Unsupported Firebird temporal value {value.GetType().Name}.")
+            };
+            return new CastColumn
+            {
+                Expression = new NumberColumn { Value = value },
+                TypeName = firebirdType
+            };
         }
 
         return value switch
@@ -761,10 +910,7 @@ public abstract partial class BaseSqlStrategy(
                 Value = new UnsafeLiteral(b ? "true" : "false", replaceQuotes: false)
             },
 
-            DateTime dt => new NumberColumn
-            {
-                Value = new UnsafeLiteral($"'{dt:yyyy-MM-dd HH:mm:ss}'", replaceQuotes: false)
-            },
+            SqlTemporalValue temporal => new NumberColumn { Value = temporal },
 
             float or double or decimal or sbyte or byte or short or ushort
                 or int or uint or long or ulong => new NumberColumn
@@ -804,44 +950,64 @@ public abstract partial class BaseSqlStrategy(
     // SQL Functions — dialect normalization
     // =====================================================================
 
-    /// <summary>
-    /// Simple 1-to-1 function name remapping: key (UPPER) → target name.
-    /// DATE_FORMAT → TO_CHAR, etc.
-    /// </summary>
-    protected virtual IReadOnlyDictionary<string, string> FunctionNameMappings =>
-        new Dictionary<string, string>();
-
-    /// <summary>
-    /// Declarative template-based function translation.
-    /// Key (UPPER) → template string with $1..$N as positional arg refs.
-    /// Examples:
-    ///   "DATEDIFF" → "DATE_PART('day', $1 - $2)"         (PostgreSQL)
-    ///   "DATEDIFF" → "JULIANDAY($1) - JULIANDAY($2)"      (SQLite)
-    ///   "DATEADD"  → "$3 + INTERVAL '$2 $1'"              (PostgreSQL)
-    /// </summary>
-    protected virtual IReadOnlyDictionary<string, string> FunctionTemplates =>
-        new Dictionary<string, string>();
-
     protected AbstractColumn MapFunction(SqlFunctionCondition function)
     {
-        var translated = ApplyFunctionTranslation(function);
-        if (translated != null)
+        var session = CurrentTranslation.Value;
+        var context = session?.Context
+            ?? new TranslationContext(DbType, DbType, UnknownFunctionPolicy.Passthrough);
+        var expression = new FunctionSelectCondition
         {
-            // Template translations bypass ApplyWindowAndFilter below.
-            // Re-apply window/filter if the result is a FunctionColumn.
-            if (translated is FunctionColumn fc)
-                ApplyWindowAndFilter(function, fc);
-            return translated;
+            FunctionName = function.FunctionName,
+            Arguments = function.Arguments,
+            IsDistinct = function.IsDistinct,
+            FilterWhereConditions = function.FilterWhereConditions,
+            Window = function.Window
+        };
+        var specialized = SpecializedFunctionTranslators.Normalize(expression, context);
+        if (specialized != null)
+        {
+            if (context.SourceDialect != context.TargetDialect)
+            {
+                session?.Diagnostics.Add(new TranslationDiagnostic(
+                    "SQLFUNC002",
+                    DiagnosticSeverity.Info,
+                    $"Function '{function.FunctionName}' uses specialized translation from {context.SourceDialect} to {context.TargetDialect}.",
+                    function.FunctionName is "DATEADD" or "DATEDIFF"
+                        && DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite
+                        ? FunctionPortability.Emulated : FunctionPortability.Equivalent));
+            }
+            return MapArithmetic(specialized);
         }
 
-        return MapFunctionCore(function);
+        if (PortableIdentityFunctions.Contains(function.FunctionName))
+            return MapFunctionCore(function);
+
+        var normalized = SemanticFunctionNormalizer.Normalize(expression, context);
+        session?.Diagnostics.AddRange(normalized.Diagnostics);
+        if (context.SourceDialect != context.TargetDialect
+            && !ReferenceEquals(normalized.Expression, expression)
+            && normalized.Expression is FunctionSelectCondition translated
+            && !translated.FunctionName.Equals(function.FunctionName, StringComparison.OrdinalIgnoreCase))
+        {
+            session?.Diagnostics.Add(new TranslationDiagnostic(
+                "SQLFUNC002", DiagnosticSeverity.Info,
+                $"Function '{function.FunctionName}' was translated from {context.SourceDialect} to {context.TargetDialect}.",
+                FunctionPortability.Equivalent));
+        }
+        if (normalized.Expression is FunctionSelectCondition semanticFunction)
+            return MapFunctionCore(ToFunc(
+                semanticFunction.FunctionName,
+                semanticFunction.Arguments,
+                semanticFunction.IsDistinct,
+                semanticFunction.FilterWhereConditions,
+                semanticFunction.Window));
+        return MapArithmetic(normalized.Expression);
     }
 
     /// <summary>
     /// Builds a FunctionColumn directly from a SqlFunctionCondition,
-    /// WITHOUT going through template lookup (ApplyFunctionTranslation).
-    /// Used by template-expansion paths to prevent infinite recursion when
-    /// a template expands into the same function name (e.g. TO_CHAR → TO_CHAR).
+    /// WITHOUT going through semantic or specialized normalization.
+    /// Used after a registry translation has already selected its final target function.
     /// </summary>
     private FunctionColumn MapFunctionCore(SqlFunctionCondition function)
     {
@@ -881,60 +1047,11 @@ public abstract partial class BaseSqlStrategy(
         return MapArithmetic(expr);
     }
 
-    private AbstractColumn? ApplyFunctionTranslation(SqlFunctionCondition function)
+    private static string NormalizeDatePartUnit(SelectCondition argument)
     {
-        var fnName = function.FunctionName?.Trim().ToUpperInvariant();
-        if (string.IsNullOrWhiteSpace(fnName))
-            return null;
-
-        var argCount = function.Arguments?.Count ?? 0;
-
-        // 1. Try signature-pattern match: "FUNCNAME($1, $2, ...)" (disambiguates same name, different arg count)
-        if (argCount > 0)
-        {
-            var sigKey = BuildSignatureKey(fnName, argCount);
-            if (FunctionTemplates.TryGetValue(sigKey, out var sigTemplate))
-            {
-                var engine = new FunctionTemplateEngine(sigTemplate);
-                var selectResult = engine.Translate(function.Arguments);
-                if (selectResult != null)
-                    // Use MapArithmeticFromTemplate (not MapArithmetic) to prevent infinite
-                    // recursion when the template expands into the same function signature
-                    // (e.g. TO_CHAR($1,$2) → TO_CHAR($1, 'YYYY-MM-DD') on Postgres/Oracle).
-                    return MapArithmeticFromTemplate(selectResult);
-            }
-        }
-
-        // 2. Try name-only template match (original behavior)
-        if (FunctionTemplates.TryGetValue(fnName, out var template))
-        {
-            var engine = new FunctionTemplateEngine(template);
-            var selectResult = engine.Translate(function.Arguments);
-            if (selectResult != null)
-                return MapArithmeticFromTemplate(selectResult);
-        }
-
-        // 3. Try name-only remapping
-        if (FunctionNameMappings.TryGetValue(fnName, out var mappedName))
-        {
-            function.FunctionName = mappedName;
-        }
-
-        return null; // fall through to default
+        return TemporalFunctionTranslator.ParseUnit(argument).ToString().ToUpperInvariant();
     }
 
-    private static string BuildSignatureKey(string fnName, int argCount)
-    {
-        var sb = new StringBuilder(fnName);
-        sb.Append('(');
-        for (var i = 1; i <= argCount; i++)
-        {
-            if (i > 1) sb.Append(", ");
-            sb.Append('$').Append(i);
-        }
-        sb.Append(')');
-        return sb.ToString();
-    }
 
     private void ApplyWindowAndFilter(SqlFunctionCondition function, FunctionColumn result)
     {
@@ -1002,6 +1119,8 @@ public abstract partial class BaseSqlStrategy(
             FunctionSelectCondition nf => MapFunction(ToFunc(nf.FunctionName, nf.Arguments, nf.IsDistinct, nf.FilterWhereConditions, nf.Window)),
             ConstantSelectCondition constantArg => MapConstantValue(constantArg.Constant),
             TemplateSqlTokenSelectCondition tokenArg => MapTemplateSqlToken(tokenArg),
+            TemplateExtractSelectCondition extractArg => MapExtract(extractArg),
+            TemplateCaseSelectCondition caseArg => MapTemplateCase(caseArg),
             CaseWhenSelectCondition caseWhenArg => MapCaseWhen(caseWhenArg.CaseWhen, caseWhenArg.ElseValue),
             CastSelectCondition castArg => MapCast(castArg),
             IntervalSelectCondition intervalArg => MapInterval(intervalArg),
@@ -1415,7 +1534,7 @@ public abstract partial class BaseSqlStrategy(
         };
     }
 
-    private static RawColumn MapTemplateSqlToken(TemplateSqlTokenSelectCondition token)
+    private RawColumn MapTemplateSqlToken(TemplateSqlTokenSelectCondition token)
     {
         var value = token.Token.Replace("_", string.Empty).Trim();
         if (!Enum.TryParse<TemplateSqlToken>(value, ignoreCase: true, out var parsed))
@@ -1424,6 +1543,22 @@ public abstract partial class BaseSqlStrategy(
         var expression = parsed switch
         {
             TemplateSqlToken.Day => "DAY",
+            TemplateSqlToken.Week => "WEEK",
+            TemplateSqlToken.Month => "MONTH",
+            TemplateSqlToken.Quarter => "QUARTER",
+            TemplateSqlToken.Year => "YEAR",
+            TemplateSqlToken.Hour => "HOUR",
+            TemplateSqlToken.Minute => "MINUTE",
+            TemplateSqlToken.Second => "SECOND",
+            TemplateSqlToken.CurrentDate => DbType == SqlAgentToolType.MsSqlServer
+                ? "CAST(CURRENT_TIMESTAMP AS date)"
+                : "CURRENT_DATE",
+            TemplateSqlToken.CurrentTime => DbType switch
+            {
+                SqlAgentToolType.MsSqlServer => "CAST(CURRENT_TIMESTAMP AS time)",
+                SqlAgentToolType.Oracle => throw CapabilityError("CURRENT_TIME"),
+                _ => "CURRENT_TIME"
+            },
             TemplateSqlToken.CurrentTimestamp => "CURRENT_TIMESTAMP",
             TemplateSqlToken.Sysdate => "SYSDATE",
             _ => throw new InvalidOperationException($"Unsupported SQL token in function template: {token.Token}")
@@ -1431,6 +1566,262 @@ public abstract partial class BaseSqlStrategy(
 
         return new RawColumn { Expression = expression, Bindings = [] };
     }
+
+    private ExtractColumn MapExtract(TemplateExtractSelectCondition extract) => new()
+    {
+        Part = NormalizeDatePartUnit(extract.Unit),
+        Expression = MapArithmeticFromTemplate(extract.Expression)
+    };
+
+    private AbstractColumn MapDateDiff(DateDiffExpression expression)
+    {
+        var unit = expression.Unit.ToString().ToUpperInvariant();
+        if (expression.Unit != SqlDatePart.Day
+            && DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite)
+            throw CapabilityError($"DATEDIFF unit {unit}");
+
+        var start = MapArithmetic(expression.Start);
+        var end = MapArithmetic(expression.End);
+        var unitColumn = new RawColumn { Expression = unit, Bindings = [] };
+
+        return DbType switch
+        {
+            SqlAgentToolType.MsSqlServer => new FunctionColumn
+            {
+                Name = "DATEDIFF", Arguments = [unitColumn, start, end]
+            },
+            SqlAgentToolType.MySQL => new FunctionColumn
+            {
+                Name = "TIMESTAMPDIFF", Arguments = [unitColumn, start, end]
+            },
+            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle => new ArithmeticColumn
+            {
+                Left = end, Operator = "-", Right = start
+            },
+            SqlAgentToolType.Sqlite => new ArithmeticColumn
+            {
+                Left = new FunctionColumn { Name = "JULIANDAY", Arguments = [end] },
+                Operator = "-",
+                Right = new FunctionColumn { Name = "JULIANDAY", Arguments = [start] }
+            },
+            SqlAgentToolType.Firebird => new FirebirdDateDiffColumn
+            {
+                Unit = unit, Start = start, End = end
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(DbType))
+        };
+    }
+
+    private AbstractColumn MapDateAdd(DateAddExpression expression)
+    {
+        var unit = expression.Unit.ToString().ToUpperInvariant();
+        if (expression.Unit != SqlDatePart.Day
+            && DbType is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite)
+            throw CapabilityError($"DATEADD unit {unit}");
+
+        var amount = MapArithmetic(expression.Amount);
+        var value = MapArithmetic(expression.Value);
+        var unitColumn = new RawColumn { Expression = unit, Bindings = [] };
+
+        return DbType switch
+        {
+            SqlAgentToolType.MsSqlServer => new FunctionColumn
+            {
+                Name = "DATEADD", Arguments = [unitColumn, amount, value]
+            },
+            SqlAgentToolType.MySQL => new FunctionColumn
+            {
+                Name = "TIMESTAMPADD", Arguments = [unitColumn, amount, value]
+            },
+            SqlAgentToolType.Postgres => new ArithmeticColumn
+            {
+                Left = value,
+                Operator = "+",
+                Right = new ArithmeticColumn
+                {
+                    Left = amount,
+                    Operator = "*",
+                    Right = new RawColumn { Expression = "INTERVAL '1 day'", Bindings = [] }
+                }
+            },
+            SqlAgentToolType.Oracle => new ArithmeticColumn
+            {
+                Left = value, Operator = "+", Right = amount
+            },
+            SqlAgentToolType.Sqlite => new FunctionColumn
+            {
+                Name = "DATETIME",
+                Arguments =
+                [
+                    value,
+                    new FunctionColumn
+                    {
+                        Name = "PRINTF",
+                        Arguments = [new RawColumn { Expression = "'%+d day'", Bindings = [] }, amount]
+                    }
+                ]
+            },
+            SqlAgentToolType.Firebird => new FirebirdDateAddColumn
+            {
+                Unit = unit, Amount = amount, Value = value
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(DbType))
+        };
+    }
+
+    private AbstractColumn MapJsonExtract(JsonExtractExpression expression)
+    {
+        var value = MapArithmetic(expression.Value);
+        var dollarPath = MapConstantValue(expression.Path.RenderDollarPath());
+        return DbType switch
+        {
+            SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle =>
+                throw CapabilityError("ambiguous JSON_EXTRACT result type; use JSON_VALUE or JSON_QUERY"),
+            SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite =>
+                new FunctionColumn { Name = "JSON_EXTRACT", Arguments = [value, dollarPath] },
+            SqlAgentToolType.Postgres => new FunctionColumn
+            {
+                Name = "JSONB_EXTRACT_PATH",
+                Arguments =
+                [
+                    new CastColumn { Expression = value, TypeName = "jsonb" },
+                    .. expression.Path.RenderSegments().Select(segment => MapConstantValue(segment))
+                ]
+            },
+            SqlAgentToolType.Firebird => throw CapabilityError("JSON_EXTRACT"),
+            _ => throw new ArgumentOutOfRangeException(nameof(DbType))
+        };
+    }
+
+    private AbstractColumn MapJsonSet(JsonSetExpression expression)
+    {
+        var value = MapArithmetic(expression.Value);
+        var newValue = MapArithmetic(expression.NewValue);
+        var dollarPath = MapConstantValue(expression.Path.RenderDollarPath());
+        return DbType switch
+        {
+            SqlAgentToolType.MsSqlServer =>
+                new FunctionColumn { Name = "JSON_MODIFY", Arguments = [value, dollarPath, newValue] },
+            SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite =>
+                new FunctionColumn { Name = "JSON_SET", Arguments = [value, dollarPath, newValue] },
+            SqlAgentToolType.Postgres => new FunctionColumn
+            {
+                Name = "JSONB_SET",
+                Arguments =
+                [
+                    new CastColumn { Expression = value, TypeName = "jsonb" },
+                    new CastColumn
+                    {
+                        Expression = MapConstantValue(expression.Path.RenderPostgresPath()),
+                        TypeName = "text[]"
+                    },
+                    new FunctionColumn { Name = "TO_JSONB", Arguments = [newValue] }
+                ]
+            },
+            SqlAgentToolType.Oracle or SqlAgentToolType.Firebird => throw CapabilityError("JSON_SET"),
+            _ => throw new ArgumentOutOfRangeException(nameof(DbType))
+        };
+    }
+
+    private AbstractColumn MapRegexMatch(RegexMatchExpression expression)
+    {
+        if (DbType is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird)
+            throw CapabilityError("REGEXP_LIKE");
+        return new FunctionColumn
+        {
+            Name = "REGEXP_LIKE",
+            Arguments = [MapArithmetic(expression.Value), MapArithmetic(expression.Pattern)]
+        };
+    }
+
+    private AbstractColumn MapDateFormat(DateFormatExpression expression)
+    {
+        if (DbType == SqlAgentToolType.Firebird) throw CapabilityError("portable date formatting");
+        var value = MapArithmetic(expression.Value);
+        var format = MapConstantValue(DateFormatTranslator.Render(expression.Format, DbType));
+        return DbType switch
+        {
+            SqlAgentToolType.MsSqlServer => new FunctionColumn { Name = "FORMAT", Arguments = [value, format] },
+            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle =>
+                new FunctionColumn { Name = "TO_CHAR", Arguments = [value, format] },
+            SqlAgentToolType.MySQL => new FunctionColumn { Name = "DATE_FORMAT", Arguments = [value, format] },
+            SqlAgentToolType.Sqlite => new FunctionColumn { Name = "STRFTIME", Arguments = [format, value] },
+            _ => throw new ArgumentOutOfRangeException(nameof(DbType))
+        };
+    }
+
+    private AbstractColumn MapFormattedDateParse(FormattedDateParseExpression expression)
+    {
+        if (DbType is SqlAgentToolType.Sqlite or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Firebird)
+            throw CapabilityError("formatted date parsing");
+        var value = MapArithmetic(expression.Value);
+        var format = MapConstantValue(DateFormatTranslator.Render(expression.Format, DbType));
+        if (DbType == SqlAgentToolType.MySQL)
+            return new FunctionColumn
+            {
+                Name = "DATE",
+                Arguments = [new FunctionColumn { Name = "STR_TO_DATE", Arguments = [value, format] }]
+            };
+        return new FunctionColumn { Name = "TO_DATE", Arguments = [value, format] };
+    }
+
+    private AbstractColumn MapPosition(PositionExpression expression)
+    {
+        var haystack = MapArithmetic(expression.Haystack);
+        var needle = MapArithmetic(expression.Needle);
+        return DbType switch
+        {
+            SqlAgentToolType.MsSqlServer => new FunctionColumn { Name = "CHARINDEX", Arguments = [needle, haystack] },
+            SqlAgentToolType.Postgres => new FunctionColumn { Name = "STRPOS", Arguments = [haystack, needle] },
+            SqlAgentToolType.MySQL => new FunctionColumn { Name = "LOCATE", Arguments = [needle, haystack] },
+            SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle =>
+                new FunctionColumn { Name = "INSTR", Arguments = [haystack, needle] },
+            SqlAgentToolType.Firebird => new FunctionColumn { Name = "POSITION", Arguments = [needle, haystack] },
+            _ => throw new ArgumentOutOfRangeException(nameof(DbType))
+        };
+    }
+
+    private AbstractColumn MapDatePart(DatePartExpression expression)
+    {
+        var part = expression.Part.ToString().ToUpperInvariant();
+        var value = MapArithmetic(expression.Value);
+        return DbType switch
+        {
+            SqlAgentToolType.MsSqlServer or SqlAgentToolType.MySQL =>
+                new FunctionColumn { Name = part, Arguments = [value] },
+            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird =>
+                new ExtractColumn { Part = part, Expression = value },
+            SqlAgentToolType.Sqlite => new CastColumn
+            {
+                Expression = new FunctionColumn
+                {
+                    Name = "STRFTIME",
+                    Arguments =
+                    [
+                        MapConstantValue(expression.Part switch
+                        {
+                            SqlDatePart.Year => "%Y",
+                            SqlDatePart.Month => "%m",
+                            SqlDatePart.Day => "%d",
+                            _ => throw CapabilityError($"date part {part}")
+                        }),
+                        value
+                    ]
+                },
+                TypeName = "INTEGER"
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(DbType))
+        };
+    }
+
+    private ExpressionCaseColumn MapTemplateCase(TemplateCaseSelectCondition expression) => new()
+    {
+        Cases = [.. expression.Cases.Select(branch =>
+            (MapArithmeticFromTemplate(branch.Condition), MapArithmeticFromTemplate(branch.Value)))],
+        ElseExpression = expression.ElseExpression == null
+            ? null
+            : MapArithmeticFromTemplate(expression.ElseExpression)
+    };
 
     private Query ApplyGroupHaving(Query query, GroupHavingCondition g)
     {
@@ -1556,42 +1947,12 @@ public abstract partial class BaseSqlStrategy(
 
     private string BuildHavingFuncExpr(SqlFunctionCondition func, List<object> bindings)
     {
-        var fnName = func.FunctionName?.Trim().ToUpperInvariant();
-        if (!string.IsNullOrWhiteSpace(fnName))
-        {
-            var argCount = func.Arguments?.Count ?? 0;
-            var translated = TryApplyFunctionTemplate(fnName, argCount, func.Arguments, bindings);
-            if (translated != null)
-                return translated;
-        }
-
-        var argParts = func.Arguments?.Select(a => BuildHavingArgPart(a, bindings)).ToList() ?? [];
-        return $"{func.FunctionName}({string.Join(", ", argParts)})";
-    }
-
-    private string? TryApplyFunctionTemplate(string fnName, int argCount, List<SelectCondition>? arguments, List<object> bindings)
-    {
-        if (argCount > 0)
-        {
-            var sigKey = BuildSignatureKey(fnName, argCount);
-            if (FunctionTemplates.TryGetValue(sigKey, out var sigTemplate))
-            {
-                var engine = new FunctionTemplateEngine(sigTemplate);
-                var selectResult = engine.Translate(arguments);
-                if (selectResult != null)
-                    return BuildHavingArgPart(selectResult, bindings);
-            }
-        }
-
-        if (FunctionTemplates.TryGetValue(fnName, out var template))
-        {
-            var engine = new FunctionTemplateEngine(template);
-            var selectResult = engine.Translate(arguments);
-            if (selectResult != null)
-                return BuildHavingArgPart(selectResult, bindings);
-        }
-
-        return null;
+        var compiled = CreateCompiler().Compile(new Query().Select(MapFunction(func)));
+        const string selectPrefix = "SELECT ";
+        if (!compiled.RawSql.StartsWith(selectPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Unable to compile HAVING function expression.");
+        bindings.AddRange(compiled.Bindings);
+        return compiled.RawSql[selectPrefix.Length..].Trim();
     }
 
     private string BuildHavingArgPart(SelectCondition arg, List<object> bindings)
@@ -2022,6 +2383,11 @@ public abstract partial class BaseSqlStrategy(
         var text = value switch
         {
             null => "null",
+            SqlDateValue date => date.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            SqlTimeValue time => time.Value.ToString("HH:mm:ss.FFFFFFF", CultureInfo.InvariantCulture),
+            SqlLocalDateTimeValue timestamp => timestamp.Value.ToString("yyyy-MM-dd HH:mm:ss.FFFFFFF", CultureInfo.InvariantCulture),
+            SqlOffsetDateTimeValue timestamp => timestamp.Value.ToString("yyyy-MM-dd HH:mm:ss.FFFFFFFzzz", CultureInfo.InvariantCulture),
+            DateOnly dateOnly => dateOnly.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             DateTime dateTime => dateTime.ToString("O", CultureInfo.InvariantCulture),
             DateTimeOffset dateTimeOffset => dateTimeOffset.ToString("O", CultureInfo.InvariantCulture),
             byte[] bytes => Convert.ToBase64String(bytes),
@@ -2192,9 +2558,28 @@ public abstract partial class BaseSqlStrategy(
 
     protected virtual string SerializeQueryResult(IEnumerable<dynamic> result)
     {
-        var list = result.Select(r => (IDictionary<string, object>)r).ToList();
+        var list = result
+            .Select(r => ((IDictionary<string, object>)r).ToDictionary(
+                pair => pair.Key,
+                pair => NormalizeQueryResultValue(pair.Value)))
+            .ToList();
         return JsonSerializer.Serialize(list);
     }
+
+    private static object? NormalizeQueryResultValue(object? value) => value switch
+    {
+        FbZonedDateTime zoned => new DateTimeOffset(
+                DateTime.SpecifyKind(zoned.DateTime, DateTimeKind.Unspecified),
+                zoned.Offset ?? TimeSpan.Zero)
+            .ToString("O", CultureInfo.InvariantCulture),
+        FbZonedTime zoned => zoned.Offset is { } offset
+            ? $"{TimeOnly.FromTimeSpan(zoned.Time):HH:mm:ss.fffffff}{FormatUtcOffset(offset)}"
+            : $"{TimeOnly.FromTimeSpan(zoned.Time):HH:mm:ss.fffffff}",
+        _ => value
+    };
+
+    private static string FormatUtcOffset(TimeSpan offset) =>
+        $"{(offset < TimeSpan.Zero ? '-' : '+')}{offset.Duration():hh\\:mm}";
 
     protected virtual string BuildExecutionErrorMessage(Exception ex, string type)
     {

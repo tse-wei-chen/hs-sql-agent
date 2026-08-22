@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using SqlAgent.Service.Interfaces;
+using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 
 namespace SqlAgent.Service.Services;
 
@@ -31,8 +33,42 @@ public class QueryValueParserService : IQueryValueParserService
             return true;
         }
 
+        if (value is SqlDateValue date)
+        {
+            dateTime = date.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+            return true;
+        }
+
+        if (value is SqlLocalDateTimeValue localTimestamp)
+        {
+            dateTime = DateTime.SpecifyKind(localTimestamp.Value, DateTimeKind.Unspecified);
+            return true;
+        }
+
+        if (value is SqlOffsetDateTimeValue offsetTimestamp)
+        {
+            dateTime = offsetTimestamp.Value.UtcDateTime;
+            return true;
+        }
+
         var text = Convert.ToString(value, CultureInfo.InvariantCulture);
-        return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out dateTime);
+        if (text is null) return false;
+        if (SqlTemporalLiteralParser.TryParseDate(text, out date))
+        {
+            dateTime = date.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+            return true;
+        }
+        if (SqlTemporalLiteralParser.TryParseTimestamp(text, out var timestamp))
+        {
+            dateTime = timestamp switch
+            {
+                SqlLocalDateTimeValue local => DateTime.SpecifyKind(local.Value, DateTimeKind.Unspecified),
+                SqlOffsetDateTimeValue offset => offset.Value.UtcDateTime,
+                _ => default
+            };
+            return true;
+        }
+        return false;
     }
 
     public bool TryGetInValues(object? value, out IEnumerable<object> values)

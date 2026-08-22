@@ -15,55 +15,6 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
 
-    protected override IReadOnlyDictionary<string, string> FunctionNameMappings => new Dictionary<string, string>
-    {
-        ["DATE_FORMAT"] = "TO_CHAR",
-        ["FORMAT"] = "TO_CHAR",
-        ["IFNULL"] = "NVL",
-        ["ISNULL"] = "NVL",
-        ["NOW"] = "CURRENT_TIMESTAMP",
-        ["GETDATE"] = "CURRENT_TIMESTAMP",
-        ["CEILING"] = "CEIL",
-        ["LEN"] = "LENGTH",
-        ["STRING_AGG"] = "LISTAGG",
-        ["LIST"] = "LISTAGG",
-        ["RANDOM"] = "RAND",             // Oracle RAND() exists, returns 0-1
-    };
-
-    protected override IReadOnlyDictionary<string, string> FunctionTemplates => new Dictionary<string, string>
-    {
-        ["NOW"] = "@CurrentTimestamp",
-        ["GETDATE"] = "@CurrentTimestamp",
-        ["SYSDATE"] = "@Sysdate",
-
-        // Oracle date subtraction returns days
-        ["DATEDIFF($1, $2)"] = "$1 - $2",
-        ["DATEDIFF($1, $2, $3)"] = "$2 - $3",
-
-        // LOCATE(substr, str) → INSTR(str, substr) — arg order reversed
-        ["LOCATE($1, $2)"] = "INSTR($2, $1)",
-
-        // STRPOS(str, substr) → INSTR(str, substr) — same order
-        ["STRPOS($1, $2)"] = "INSTR($1, $2)",
-
-        // CHARINDEX(substr, str) → INSTR(str, substr) — reversed
-        ["CHARINDEX($1, $2)"] = "INSTR($2, $1)",
-
-        // Date part extraction — use TO_CHAR (comma-separated args, engine-safe)
-        ["YEAR($1)"] = "TO_CHAR($1, 'YYYY')",
-        ["MONTH($1)"] = "TO_CHAR($1, 'MM')",
-        ["DAY($1)"] = "TO_CHAR($1, 'DD')",
-
-        // Date formatting: always produce TO_CHAR with Oracle-native format.
-        ["DATE_FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('oracle'))",
-        ["FORMAT($1, $2)"] = "TO_CHAR($1, $2:date_format('oracle'))",
-        ["TO_CHAR($1, $2)"] = "TO_CHAR($1, $2:date_format('oracle'))",
-        ["STRFTIME($1, $2)"] = "TO_CHAR($2, $1:date_format('oracle'))",
-
-        // GROUP_CONCAT → LISTAGG
-        ["GROUP_CONCAT($1)"] = "LISTAGG($1, ',')",
-        ["GROUP_CONCAT($1, $2)"] = "LISTAGG($1, $2)",
-    };
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
     {
         var builder = new OracleConnectionStringBuilder

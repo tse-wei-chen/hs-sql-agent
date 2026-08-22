@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-10.1";
+    public const string Version = "2026-08-22.3";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -64,6 +64,59 @@ public static class SqlCapabilityMatrix
                 provider == SqlAgentToolType.Postgres
                     ? "PostgreSQL INTERVAL 'literal' is preserved."
                     : "INTERVAL is rejected until an equivalent provider translation contract is implemented."),
+            new("temporal.typed_literals", "temporal", SqlCapabilityStatus.Translated,
+                "DATE, TIME, and TIMESTAMP literals are parsed into typed values and bound as provider parameters."),
+            new("temporal.standalone_time", "temporal",
+                provider == SqlAgentToolType.Oracle ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
+                provider == SqlAgentToolType.Oracle
+                    ? "Oracle has no standalone TIME type; standalone TIME values are rejected."
+                    : "TIME values are bound using the provider's native temporal parameter type."),
+            new("temporal.offset_timestamp", "temporal",
+                provider == SqlAgentToolType.MySQL ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
+                provider == SqlAgentToolType.MySQL
+                    ? "MySQL has no native timestamp type that preserves an input UTC offset; offset values are rejected."
+                    : "Offset timestamps are bound natively; PostgreSQL and Firebird normalize the represented instant to UTC."),
+            new("temporal.current_keywords", "temporal",
+                provider == SqlAgentToolType.Oracle ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Supported,
+                provider == SqlAgentToolType.Oracle
+                    ? "CURRENT_DATE and CURRENT_TIMESTAMP are supported; CURRENT_TIME is rejected because Oracle has no standalone TIME type."
+                    : "CURRENT_DATE, CURRENT_TIME, and CURRENT_TIMESTAMP are emitted with provider-specific translation where needed."),
+            new("temporal.date_arithmetic", "temporal", SqlCapabilityStatus.Translated,
+                "DAY-based DATEADD and DATEDIFF are translated for all providers; unsupported units fail closed per provider."),
+            new("temporal.date_format", "temporal",
+                provider == SqlAgentToolType.Firebird ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
+                provider == SqlAgentToolType.Firebird
+                    ? "Portable date formatting is rejected because no complete translation is declared."
+                    : "Portable date-format tokens are translated to provider-native tokens."),
+            new("temporal.formatted_parse", "temporal",
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
+                    ? SqlCapabilityStatus.Translated
+                    : SqlCapabilityStatus.Rejected,
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
+                    ? "TO_DATE input and format tokens are translated to the provider-native function."
+                    : "Formatted date parsing is rejected because no complete provider translation is declared."),
+            new("json.extract", "json",
+                provider is SqlAgentToolType.Firebird or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle
+                    ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
+                provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle
+                    ? "Ambiguous JSON_EXTRACT is rejected because the scalar/object result type is unknown; use an explicit JSON_VALUE or JSON_QUERY contract."
+                    : provider == SqlAgentToolType.Firebird
+                        ? "Portable JSON extraction has no declared Firebird equivalent."
+                        : "Simple JSON paths containing only root, property, and array-index segments are normalized and translated."),
+            new("json.path.simple", "json", SqlCapabilityStatus.Translated,
+                "Only constant paths composed of $, .property, and [array-index] segments are accepted; recursive descent, wildcards, filters, quoted names, and dynamic paths are rejected."),
+            new("json.set", "json",
+                provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
+                    ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
+                provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
+                    ? "Portable JSON mutation has no declared equivalent for this provider."
+                    : "Portable JSON mutation is rendered with provider-native functions."),
+            new("regex.match", "regex",
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
+                    ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
+                    ? "REGEXP_LIKE is rendered using the provider's declared regex function."
+                    : "Regex matching is rejected because no reliable native equivalent is declared."),
             new("window.basic", "window", SqlCapabilityStatus.Translated,
                 "OVER with PARTITION BY and ORDER BY is represented structurally."),
             new("window.frame", "window", SqlCapabilityStatus.Translated,

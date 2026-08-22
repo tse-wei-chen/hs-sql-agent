@@ -1,10 +1,13 @@
 using System.Text.Json;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Validation;
 using Xunit;
@@ -41,6 +44,13 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected virtual string TestOrderDetailsDiscountColumn => "discount";
     protected abstract string TestSchemaName { get; }
     protected virtual string TestOrdersUserIdColumn => "user_id";
+    protected virtual string TestOrdersIdColumn => "id";
+    protected virtual string TestOrderDateColumn => "order_date";
+    protected virtual int TestFirstOrderId => 1;
+    protected virtual bool SupportsStandaloneTime => true;
+    protected virtual bool SupportsOffsetTimestamp => true;
+    protected virtual bool SupportsPortableDateFormatting => true;
+    protected virtual bool SupportsFormattedDateParsing => true;
     protected virtual string TestUserIdColumn => "id";
     protected virtual string TestUserNameColumn => "Name";
 
@@ -81,6 +91,244 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(res);
         Assert.NotEmpty(res);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_TimeValue_ShouldBindAsTypedParameter()
+    {
+        var execution = () => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new ConstantSelectCondition
+                    {
+                        Constant = new SqlTimeValue(new TimeOnly(9, 30, 15)),
+                        Alias = "typed_time"
+                    }
+                ],
+                Limit = 1
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        if (!SupportsStandaloneTime)
+        {
+            var error = await Assert.ThrowsAsync<Exception>(execution);
+            Assert.Contains("no standalone TIME data type", error.Message);
+            return;
+        }
+
+        var json = await execution();
+        Assert.NotEqual("[]", json);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_LocalTimestampValue_ShouldBindAsTypedParameter()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new ConstantSelectCondition
+                    {
+                        Constant = new SqlLocalDateTimeValue(new DateTime(2026, 8, 21, 9, 30, 15)),
+                        Alias = "typed_timestamp"
+                    }
+                ],
+                Limit = 1
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.NotNull(value);
+        Assert.DoesNotMatch(@"(?:Z|[+-]\d{2}:\d{2})$", value);
+        Assert.True(DateTime.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out var parsed));
+        Assert.Equal(new DateTime(2026, 8, 21, 9, 30, 15), parsed);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_LegacyDateTimeConstant_ShouldUseTypedParameter()
+    {
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new ConstantSelectCondition
+                    {
+                        Constant = new DateTime(2026, 8, 21, 9, 30, 15, DateTimeKind.Unspecified),
+                        Alias = "legacy_timestamp"
+                    }
+                ],
+                Limit = 1
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_OffsetTimestampValue_ShouldBindAsTypedParameter()
+    {
+        var execution = () => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new ConstantSelectCondition
+                    {
+                        Constant = new SqlOffsetDateTimeValue(
+                            new DateTimeOffset(2026, 8, 21, 9, 30, 15, TimeSpan.FromHours(8))),
+                        Alias = "typed_offset_timestamp"
+                    }
+                ],
+                Limit = 1
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        if (!SupportsOffsetTimestamp)
+        {
+            var error = await Assert.ThrowsAsync<Exception>(execution);
+            Assert.Contains("no native timestamp type that preserves a UTC offset", error.Message);
+            return;
+        }
+
+        var json = await execution();
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.NotNull(value);
+        Assert.Matches(@"(?:Z|[+-]\d{2}:\d{2})$", value);
+        Assert.True(DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out var parsed));
+        Assert.Equal(new DateTime(2026, 8, 21, 1, 30, 15, DateTimeKind.Utc), parsed.UtcDateTime);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_DateDiffDay_ShouldReturnStartToEndDifference()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT DATEDIFF(DAY, DATE '2026-08-20', DATE '2026-08-22') AS day_count FROM {TestTableName}");
+        definition.Limit = 1;
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value;
+        Assert.Equal(2m, value.GetDecimal());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_DateAddDay_ShouldReturnExpectedDate()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM {TestTableName}");
+        definition.Limit = 1;
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.NotNull(value);
+        Assert.StartsWith("2026-08-22", value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PortableDateFormat_ShouldPreserveMinutes()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT DATE_FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') AS formatted FROM {TestTableName}");
+        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
+        definition.Limit = 1;
+
+        if (!SupportsPortableDateFormatting)
+        {
+            var error = await Assert.ThrowsAsync<Exception>(() =>
+                Strategy.ExecuteQueryAsync(
+                    definition,
+                    Fixture.ConnectionString,
+                    cancellationToken: TestContext.Current.CancellationToken));
+            Assert.Contains("portable date formatting", error.Message);
+            return;
+        }
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.Equal("2026-08-22 13:45:09", value);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ToDate_ShouldTranslatePortableFormat()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') AS parsed_date FROM {TestTableName}");
+        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
+        definition.Limit = 1;
+
+        if (!SupportsFormattedDateParsing)
+        {
+            var error = await Assert.ThrowsAsync<Exception>(() =>
+                Strategy.ExecuteQueryAsync(
+                    definition,
+                    Fixture.ConnectionString,
+                    cancellationToken: TestContext.Current.CancellationToken));
+            Assert.Contains("formatted date parsing", error.Message);
+            return;
+        }
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.NotNull(value);
+        Assert.StartsWith("2026-08-22", value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_DateParts_ShouldReturnNumbers()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT YEAR(DATE '2026-08-22') AS y, MONTH(DATE '2026-08-22') AS m, DAY(DATE '2026-08-22') AS d FROM {TestTableName}");
+        definition.Limit = 1;
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var values = document.RootElement[0].EnumerateObject().Select(x => x.Value).ToList();
+        Assert.Equal([2026m, 8m, 22m], values.Select(x => x.GetDecimal()).ToArray());
     }
 
     [Fact]
@@ -240,6 +488,32 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             TestContext.Current.CancellationToken);
 
         Assert.StartsWith("Dry Run Result", result);
+    }
+
+    [Fact]
+    public async Task ExecuteDmlAsync_DateLiteral_ShouldRoundTripThroughProviderBinding()
+    {
+        var dml = SqlDefinitionParser.ParseDml(
+            $"UPDATE {TestOrdersTableName} SET {TestOrderDateColumn} = DATE '2023-01-10' " +
+            $"WHERE {TestOrdersIdColumn} = {TestFirstOrderId}",
+            Strategy.DbType);
+        var preview = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            dml,
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Dry Run Result | affectedRows=1", preview);
+        Assert.Contains("2023-01-10", preview);
+        var tokenStart = preview.IndexOf("TokenRequired=", StringComparison.Ordinal) + 14;
+        var tokenEnd = preview.IndexOf(" |", tokenStart, StringComparison.Ordinal);
+        dml.ConfirmToken = preview[tokenStart..tokenEnd];
+
+        var result = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            dml,
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Success | affectedRows=1", result);
     }
 
     private async Task CleanupInsertedDmlRecord(DmlDefinition dml)

@@ -26,4 +26,7 @@
 		<ProjectReference Include="../SqlKata.Service/QueryBuilder/QueryBuilder.csproj" />
 		<ProjectReference Include="../SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj" />
 	</ItemGroup>
+	<ItemGroup>
+		<EmbeddedResource Include="SqlTranslation/Functions/Definitions/*.json" />
+	</ItemGroup>
 </Project>

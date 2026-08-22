@@ -1,9 +1,18 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
+using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Models;
 
 public class QueryDefinition
 {
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    [Description(@"Dialect used by all input function names and format strings.
+    - Set this whenever the query uses syntax from a specific SQL dialect.
+    - If omitted, the input is declared to already use the target provider dialect.
+    - Omission does NOT enable dialect detection or best-effort guessing; syntax from another dialect is rejected.")]
+    public SqlAgentToolType? SourceDialect { get; set; }
+
     [Description("The table name for this query definition. (use schema-qualified table name)")]
     public string TableName { get; set; } = string.Empty;
     [Description("The subquery to select from (Optional). If set, its results will be treated as the source table.")]

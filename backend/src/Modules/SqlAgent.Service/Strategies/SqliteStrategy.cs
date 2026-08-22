@@ -15,42 +15,6 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
-    protected override IReadOnlyDictionary<string, string> FunctionNameMappings => new Dictionary<string, string>
-    {
-        ["IFNULL"] = "COALESCE",
-        ["NVL"] = "COALESCE",
-        ["ISNULL"] = "COALESCE",
-        ["RAND"] = "RANDOM",
-        ["LEN"] = "LENGTH",
-        ["CEILING"] = "CEIL",
-        ["STRING_AGG"] = "GROUP_CONCAT",
-        ["LISTAGG"] = "GROUP_CONCAT",
-        ["LIST"] = "GROUP_CONCAT",
-        ["STRPOS"] = "INSTR",           // STRPOS(str,substr) → INSTR(str,substr) same order
-    };
-
-    protected override IReadOnlyDictionary<string, string> FunctionTemplates => new Dictionary<string, string>
-    {
-        ["GETDATE"] = "@CurrentTimestamp",
-        ["SYSDATE"] = "@CurrentTimestamp",
-
-        ["DATEDIFF($1, $2)"] = "JULIANDAY($1) - JULIANDAY($2)",
-
-        // Date formatting: always produce STRFTIME with SQLite-native %-style format.
-        // LLM may use MySQL/Oracle/MSSQL format strings; :date_format('%Y-%m-%d') pins the target.
-        ["DATE_FORMAT($1, $2)"] = "STRFTIME($2:date_format('sqlite'), $1)",
-        ["TO_CHAR($1, $2)"] = "STRFTIME($2:date_format('sqlite'), $1)",
-        ["FORMAT($1, $2)"] = "STRFTIME($2:date_format('sqlite'), $1)",
-
-        // Date part extraction
-        ["YEAR($1)"] = "STRFTIME('%Y', $1)",
-        ["MONTH($1)"] = "STRFTIME('%m', $1)",
-        ["DAY($1)"] = "STRFTIME('%d', $1)",
-
-        // CHARINDEX(substr,str) → INSTR(str,substr) reversed
-        ["CHARINDEX($1, $2)"] = "INSTR($2, $1)",
-    };
-
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
     {
         var builder = new SqliteConnectionStringBuilder

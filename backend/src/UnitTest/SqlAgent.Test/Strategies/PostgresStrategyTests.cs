@@ -5,6 +5,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -118,6 +119,30 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
             new NameValuePair { FieldName = "active", Value = true }
         ]
     };
+
+    [Fact]
+    public async Task ExecuteDmlAsync_ShouldCommitSqlDateLiteralToDateColumn()
+    {
+        var dml = SqlDefinitionParser.ParseDml(
+            "UPDATE orders SET order_date = DATE '2023-01-10' WHERE id = 1",
+            SqlAgentToolType.Postgres);
+        var preview = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            dml,
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Dry Run Result | affectedRows=1", preview);
+        var tokenStart = preview.IndexOf("TokenRequired=", StringComparison.Ordinal) + 14;
+        var tokenEnd = preview.IndexOf(" |", tokenStart, StringComparison.Ordinal);
+        dml.ConfirmToken = preview[tokenStart..tokenEnd];
+
+        var result = await Strategy.ExecuteDmlAsync(
+            Fixture.ConnectionString,
+            dml,
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Success | affectedRows=1", result);
+    }
 
     [Fact]
     public void BuildConnectionString_ShouldGenerateValidPostgresFormat()
@@ -244,6 +269,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
+                SourceDialect = SqlAgentToolType.MySQL,
                 TableName = "orders",
                 SelectColumns =
                 [

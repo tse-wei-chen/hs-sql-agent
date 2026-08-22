@@ -95,6 +95,8 @@ public class FirebirdFixture : IDbFixture
 
 public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<FirebirdStrategy, FirebirdFixture>(fixture)
 {
+    protected override bool SupportsPortableDateFormatting => false;
+    protected override bool SupportsFormattedDateParsing => false;
     protected override FirebirdStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
         => new(parser, configuration);
 
@@ -106,6 +108,9 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     protected override string TestOrderDetailsDiscountColumn => "DISCOUNT";
     protected override string TestSchemaName => "Default";
     protected override string TestOrdersUserIdColumn => "USER_ID";
+    protected override string TestOrdersIdColumn => "ID";
+    protected override string TestOrderDateColumn => "ORDER_DATE";
+    protected override int TestFirstOrderId => 101;
     protected override string TestUserIdColumn => "ID";
     protected override string TestUserNameColumn => "NAME";
 

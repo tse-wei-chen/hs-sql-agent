@@ -76,6 +76,7 @@ public class MsSqlFixture : IDbFixture
 
 public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<MsSqlServerStrategy, MsSqlFixture>(fixture)
 {
+    protected override bool SupportsFormattedDateParsing => false;
     protected override MsSqlServerStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
         => new(parser, configuration);
 
@@ -87,6 +88,8 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
     protected override string TestOrderDetailsDiscountColumn => "Discount";
     protected override string TestSchemaName => "dbo";
     protected override string TestOrdersUserIdColumn => "UserId";
+    protected override string TestOrdersIdColumn => "Id";
+    protected override string TestOrderDateColumn => "OrderDate";
 
     protected override string TableNotFoundErrorCode => "208";
     protected override string ColumnNotFoundErrorCode => "207";

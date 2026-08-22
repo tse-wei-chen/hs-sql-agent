@@ -81,6 +81,7 @@ public class MySqlFixture : IDbFixture
 
 public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlStrategy, MySqlFixture>(fixture)
 {
+    protected override bool SupportsOffsetTimestamp => false;
     protected override MySqlStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
         => new(parser, configuration);
 

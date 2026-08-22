@@ -130,6 +130,50 @@ public static class SqlDefinitionParser
 
         private object? ParseLiteral()
         {
+            if (PeekWord("DATE") || PeekWord("TIME") || PeekWord("TIMESTAMP"))
+            {
+                var temporalType = Peek().Value.ToUpperInvariant();
+                _pos++;
+                bool? withTimeZone = null;
+                if (temporalType is "TIME" or "TIMESTAMP"
+                    && (PeekWord("WITH") || PeekWord("WITHOUT")))
+                {
+                    withTimeZone = PeekWord("WITH");
+                    _pos++;
+                    ExpectWord("TIME");
+                    ExpectWord("ZONE");
+                }
+                var literalToken = Peek();
+                if (literalToken.Type != TokenType.String)
+                    throw Error($"{temporalType} must be followed by a quoted ISO temporal literal.");
+                _pos++;
+                var literal = literalToken.Value[1..^1].Replace("''", "'", StringComparison.Ordinal);
+                if (temporalType == "DATE" && SqlTemporalLiteralParser.TryParseDate(literal, out var date))
+                    return date;
+                if (temporalType == "TIME" && SqlTemporalLiteralParser.TryParseTime(literal, out var time))
+                {
+                    if (withTimeZone == true)
+                        throw Error("TIME WITH TIME ZONE is not yet supported by the canonical temporal model.");
+                    return time;
+                }
+                if (temporalType == "TIMESTAMP" && SqlTemporalLiteralParser.TryParseTimestamp(literal, out var timestamp))
+                {
+                    if (withTimeZone == true && timestamp is not SqlOffsetDateTimeValue)
+                        throw Error("TIMESTAMP WITH TIME ZONE requires an explicit UTC offset or Z suffix.");
+                    if (withTimeZone == false && timestamp is SqlOffsetDateTimeValue)
+                        throw Error("TIMESTAMP WITHOUT TIME ZONE must not include a UTC offset.");
+                    return timestamp;
+                }
+
+                var expected = temporalType switch
+                {
+                    "DATE" => "YYYY-MM-DD",
+                    "TIME" => "HH:mm[:ss[.fffffff]] without an offset",
+                    _ => "YYYY-MM-DD[ T]HH:mm[:ss[.fffffff]][offset]"
+                };
+                throw Error($"Invalid {temporalType} literal '{literal}'. Expected {expected}.");
+            }
+
             var sign = 1;
             if (Peek().Type == TokenType.Operator && Peek().Value is "-" or "+")
             {

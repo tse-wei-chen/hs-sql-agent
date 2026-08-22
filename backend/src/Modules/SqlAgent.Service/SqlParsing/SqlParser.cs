@@ -1176,6 +1176,28 @@ public class SqlParser(Token[] tokens)
             return new FieldSelectCondition { FieldName = "*" };
         }
 
+        // Handle TIMESTAMP [WITH|WITHOUT TIME ZONE] 'literal'. An explicit
+        // offset is required for WITH TIME ZONE so parsing never depends on
+        // the server or database session time zone.
+        if (PeekKeyword("TIMESTAMP")
+            && (Peek(1).Value.Equals("WITH", StringComparison.OrdinalIgnoreCase)
+                || Peek(1).Value.Equals("WITHOUT", StringComparison.OrdinalIgnoreCase)))
+        {
+            Advance();
+            var withTimeZone = Advance().Value.Equals("WITH", StringComparison.OrdinalIgnoreCase);
+            ExpectKeyword("TIME");
+            ExpectKeyword("ZONE");
+            var literalToken = Expect(TokenType.String);
+            var raw = DecodeStringLiteral(literalToken.Value);
+            if (!SqlTemporalLiteralParser.TryParseTimestamp(raw, out var timestamp))
+                throw new SqlParseException($"Invalid TIMESTAMP literal '{raw}' at position {literalToken.Pos}.");
+            if (withTimeZone && timestamp is not SqlOffsetDateTimeValue)
+                throw new SqlParseException("TIMESTAMP WITH TIME ZONE requires an explicit UTC offset or Z suffix.");
+            if (!withTimeZone && timestamp is SqlOffsetDateTimeValue)
+                throw new SqlParseException("TIMESTAMP WITHOUT TIME ZONE must not include a UTC offset.");
+            return new ConstantSelectCondition { Constant = timestamp };
+        }
+
         // Handle DATE 'literal', TIME 'literal', TIMESTAMP 'literal' syntax
         if ((Peek().Type == TokenType.Keyword || Peek().Type == TokenType.Identifier) && Peek(1).Type == TokenType.String &&
             (Peek().Value.Equals("DATE", StringComparison.OrdinalIgnoreCase) ||
@@ -1183,11 +1205,23 @@ public class SqlParser(Token[] tokens)
              Peek().Value.Equals("TIMESTAMP", StringComparison.OrdinalIgnoreCase)))
         {
             var typeKw = Advance().Value;
-            var strVal = Advance().Value;
-            var raw = strVal[1..^1];
-            if (System.DateTime.TryParse(raw, out var dt))
-                return new ConstantSelectCondition { Constant = dt };
-            return new ConstantSelectCondition { Constant = raw };
+            var literalToken = Advance();
+            var raw = DecodeStringLiteral(literalToken.Value);
+            if (typeKw.Equals("DATE", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!SqlTemporalLiteralParser.TryParseDate(raw, out var date))
+                    throw new SqlParseException(
+                        $"Invalid DATE literal '{raw}'. Expected YYYY-MM-DD at position {literalToken.Pos}.");
+                return new ConstantSelectCondition { Constant = date };
+            }
+
+            if (typeKw.Equals("TIME", StringComparison.OrdinalIgnoreCase)
+                && SqlTemporalLiteralParser.TryParseTime(raw, out var time))
+                return new ConstantSelectCondition { Constant = time };
+            if (typeKw.Equals("TIMESTAMP", StringComparison.OrdinalIgnoreCase)
+                && SqlTemporalLiteralParser.TryParseTimestamp(raw, out var timestamp))
+                return new ConstantSelectCondition { Constant = timestamp };
+            throw new SqlParseException($"Invalid {typeKw.ToUpperInvariant()} literal '{raw}' at position {literalToken.Pos}.");
         }
 
         // Handle INTERVAL 'literal' syntax
@@ -1197,6 +1231,22 @@ public class SqlParser(Token[] tokens)
             Advance();
             var literal = DecodeStringLiteral(Advance().Value);
             return new IntervalSelectCondition { Literal = literal };
+        }
+
+        // SQL-standard current temporal values are keywords, not column
+        // references. Accept optional empty parentheses used by some dialects
+        // and normalize both forms to the same AST token.
+        if (PeekKeyword("CURRENT_DATE")
+            || PeekKeyword("CURRENT_TIME")
+            || PeekKeyword("CURRENT_TIMESTAMP"))
+        {
+            var token = Advance().Value.ToUpperInvariant();
+            if (Peek().Type == TokenType.LParen)
+            {
+                Advance();
+                Expect(TokenType.RParen);
+            }
+            return new TemplateSqlTokenSelectCondition { Token = token };
         }
 
         if ((Peek().Type == TokenType.Keyword || Peek().Type == TokenType.Identifier) && Peek(1).Type == TokenType.LParen)

@@ -55,6 +55,7 @@ public class SqliteFixture : IDbFixture
 
 public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<SqliteStrategy, SqliteFixture>(fixture)
 {
+    protected override bool SupportsFormattedDateParsing => false;
     protected override SqliteStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
         => new(parser, configuration);
 
@@ -66,6 +67,9 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     protected override string TestOrderDetailsDiscountColumn => "Discount";
     protected override string TestSchemaName => "";
     protected override string TestOrdersUserIdColumn => "UserId";
+    protected override string TestOrdersIdColumn => "Id";
+    protected override string TestOrderDateColumn => "OrderDate";
+    protected override int TestFirstOrderId => 101;
 
     protected override string TableNotFoundErrorCode => "SQLITE_1";
     protected override string ColumnNotFoundErrorCode => "SQLITE_1";

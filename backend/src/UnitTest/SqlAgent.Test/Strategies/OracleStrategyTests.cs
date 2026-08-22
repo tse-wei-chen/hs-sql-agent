@@ -106,8 +106,11 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
     protected override string TestOrderDetailsDiscountColumn => "DISCOUNT";
     protected override string TestSchemaName => new Oracle.ManagedDataAccess.Client.OracleConnectionStringBuilder(Fixture.ConnectionString).UserID.ToUpper();
     protected override string TestOrdersUserIdColumn => "USER_ID";
+    protected override string TestOrdersIdColumn => "ID";
+    protected override string TestOrderDateColumn => "ORDER_DATE";
     protected override string TestUserIdColumn => "ID";
     protected override string TestUserNameColumn => "NAME";
+    protected override bool SupportsStandaloneTime => false;
 
     protected override string TableNotFoundErrorCode => "ORA-00942";
     protected override string ColumnNotFoundErrorCode => "ORA-00904";
