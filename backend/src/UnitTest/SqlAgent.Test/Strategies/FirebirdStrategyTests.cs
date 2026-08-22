@@ -8,6 +8,7 @@ using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
+using SqlAgent.Service.Strategies.Adapters;
 using Testcontainers.FirebirdSql;
 using Xunit;
 
@@ -128,22 +129,23 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = "NON_EXISTENT"
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={TableNotFoundErrorCode}", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("table", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.Firebird, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal(TableNotFoundErrorCode, ex.Code);
+        Assert.Contains("table", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenColumnNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -151,9 +153,10 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={ColumnNotFoundErrorCode}", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("column", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.Firebird, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal(ColumnNotFoundErrorCode, ex.Code);
+        Assert.Contains("column", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
