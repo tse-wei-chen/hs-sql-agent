@@ -141,7 +141,7 @@ public class CoreDmlCompilerTests
     }
 
     [Fact]
-    public void Compile_InsertSelect_AuthorizesSourceBeforeBackendFailClosed()
+    public void Compile_InsertSelect_AuthorizesSourceAndUsesStructuredQueryLowering()
     {
         var definition = new DmlDefinition
         {
@@ -151,7 +151,11 @@ public class CoreDmlCompilerTests
             FromQuery = new QueryDefinition
             {
                 TableName = "public.users",
-                SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
+                SelectColumns = [new FieldSelectCondition { FieldName = "id" }],
+                WhereColumnsAndValues =
+                [
+                    new BasicWhereCondition { FieldName = "status", Operator = "=", Value = "active" }
+                ]
             }
         };
         var compiler = CoreDmlCompiler.CreateDefault();
@@ -164,7 +168,7 @@ public class CoreDmlCompilerTests
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.archive" })));
 
-        var backendError = Assert.Throws<SqlCompilationException>(() => compiler.Compile(
+        var command = compiler.Compile(
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -174,8 +178,15 @@ public class CoreDmlCompilerTests
                 {
                     "public.archive",
                     "public.users"
-                })));
-        Assert.Contains("INSERT..SELECT", backendError.Message, StringComparison.OrdinalIgnoreCase);
+                }));
+
+        Assert.Equal(SqlStatementKind.Insert, command.Kind);
+        Assert.Contains("INSERT INTO", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("public", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("active", command.Sql, StringComparison.Ordinal);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "active"));
+        Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
     }
 
     [Fact]
