@@ -16,7 +16,7 @@ namespace SqlAgent.Test.Strategies;
 /// are formatted through the legacy provider formatter solely so the existing provider-error
 /// integration assertions remain stable until IProviderErrorMapper owns that contract.
 /// </summary>
-internal sealed class CoreStrategyTestHarness<TStrategy>
+public sealed class CoreStrategyTestHarness<TStrategy>
     where TStrategy : ISqlStrategy
 {
     private readonly TStrategy _strategy;
