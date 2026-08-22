@@ -27,7 +27,8 @@ public sealed class SqlAstBinder : ISqlBinder
                 state.PhysicalTables.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
                 state.AliasFacts.ToImmutableArray(),
                 state.ContainsSubquery,
-                state.ContainsCte));
+                state.ContainsCte),
+            statement.SourceDialect);
     }
 
     private static SqlStatement BindStatement(
