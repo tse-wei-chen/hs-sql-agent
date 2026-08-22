@@ -79,11 +79,24 @@ public sealed class TypedDmlRuntime(
         ISqlStrategy strategy,
         string connectionString,
         TypedDmlApprovalSession session,
+        SecurityPolicyModel currentPolicy,
+        IReadOnlySet<string>? currentAllowedTables,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(strategy);
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(currentPolicy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        var currentPolicyVersion = ComputePolicyVersion(currentPolicy, currentAllowedTables);
+        if (!string.Equals(
+                currentPolicyVersion,
+                session.Plan.PolicyVersion,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "DML security policy or table authorization changed after preview; request a new preview before committing.");
+        }
 
         var provider = new LegacySqlProviderAdapter(strategy);
         if (provider.Type != session.Plan.MutationCommand.TargetProvider)
