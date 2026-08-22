@@ -1,10 +1,6 @@
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Strategies.Adapters;
@@ -32,8 +28,7 @@ public class PostgresFixture : IDbFixture
     {
         await Container.StartAsync();
 
-        var parser = new QueryValueParserService();
-        var strategy = new PostgresStrategy(parser, new Mock<IConfiguration>().Object);
+        var strategy = new PostgresStrategy();
 
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
@@ -83,8 +78,7 @@ public class PostgresFixture : IDbFixture
 
 public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<PostgresStrategy, PostgresFixture>(fixture)
 {
-    protected override PostgresStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override PostgresStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "users";
     protected override string TestOrdersTableName => "orders";
