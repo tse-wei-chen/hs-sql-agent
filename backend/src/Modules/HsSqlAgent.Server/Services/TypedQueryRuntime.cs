@@ -41,7 +41,7 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(policy);
 
-        var provider = new LegacySqlProviderAdapter(strategy);
+        var provider = LegacySqlProviderAdapter.Adapt(strategy);
         if (provider.Type != strategy.DbType)
             throw new InvalidOperationException("Query provider adapter type does not match the selected strategy.");
 
@@ -72,7 +72,7 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             sourceDialect,
             policy,
             allowedTables);
-        var provider = new LegacySqlProviderAdapter(strategy);
+        var provider = LegacySqlProviderAdapter.Adapt(strategy);
         var executor = new CompiledSqlCommandExecutor(provider.Connections);
         try
         {
