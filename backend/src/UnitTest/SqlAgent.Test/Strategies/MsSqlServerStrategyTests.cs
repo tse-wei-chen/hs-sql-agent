@@ -1,11 +1,7 @@
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Strategies.Adapters;
 using Testcontainers.MsSql;
@@ -30,7 +26,7 @@ public class MsSqlFixture : IDbFixture
     {
         await Container.StartAsync();
 
-        var strategy = new MsSqlServerStrategy(new QueryValueParserService(), new Mock<IConfiguration>().Object);
+        var strategy = new MsSqlServerStrategy();
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
         using var cmd = conn.CreateCommand();
@@ -78,8 +74,7 @@ public class MsSqlFixture : IDbFixture
 public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<MsSqlServerStrategy, MsSqlFixture>(fixture)
 {
     protected override bool SupportsFormattedDateParsing => false;
-    protected override MsSqlServerStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override MsSqlServerStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "Users";
     protected override string TestOrdersTableName => "Orders";
