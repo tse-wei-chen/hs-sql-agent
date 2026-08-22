@@ -76,7 +76,7 @@ public class CustomSqlToolControllerTests
         policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
         var dbService = new Mock<IDbManagementService>();
         dbService.Setup(x => x.GetDbByIdAsync(2, false, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DbManagementVM { Id = 2, SqlProvider = "SqlServer" });
+            .ReturnsAsync(new DbManagementVM { Id = 2, SqlProvider = "MsSqlServer" });
 
         var result = await controller.Publish(
             tool.Id,
