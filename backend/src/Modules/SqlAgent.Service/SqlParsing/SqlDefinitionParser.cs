@@ -10,6 +10,7 @@ public static class SqlDefinitionParser
     {
         var tokens = new SqlTokenizer(sql, provider).Tokenize();
         ValidateStatementTokens(tokens);
+        SqlSyntaxGuard.ValidateQuery(tokens);
         return new SqlParser(tokens).Parse();
     }
 
