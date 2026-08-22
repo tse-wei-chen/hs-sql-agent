@@ -43,31 +43,16 @@ public sealed class PortableFunctionTranslator : ISpecializedFunctionTranslator
         if (arguments[formatIndex] is not ConstantSelectCondition { Constant: string format })
             throw new InvalidOperationException($"{name} format must be a string constant.");
 
-        // The format string belongs to the syntax family of the function that introduced it,
-        // not necessarily to the strategy currently executing the translated query. For example,
-        // DATE_FORMAT(..., '%Y-%m') remains MySQL format syntax when translated to Postgres, and
-        // FORMAT(..., 'yyyy-MM') remains SQL Server format syntax.
-        var formatDialect = ResolveFormatDialect(name, context.SourceDialect);
-        var canonical = DateFormats.Parse(format, formatDialect);
+        // Format tokens are part of the declared source-dialect contract. Function spelling alone
+        // is not enough to infer the grammar: callers may intentionally submit a portable function
+        // name with SQL Server-style tokens and declare MsSqlServer as the source dialect. When the
+        // source dialect is omitted, the strategy supplies its target dialect, so invalid token
+        // families still fail closed instead of being guessed from the function name.
+        var canonical = DateFormats.Parse(format, context.SourceDialect);
         return name is "TO_DATE" or "STR_TO_DATE"
             ? new FormattedDateParseExpression { Value = arguments[valueIndex], Format = canonical }
             : new DateFormatExpression { Value = arguments[valueIndex], Format = canonical };
     }
-
-    private static SqlAgentToolType ResolveFormatDialect(
-        string functionName,
-        SqlAgentToolType sourceDialect) => functionName switch
-    {
-        "DATE_FORMAT" or "STR_TO_DATE" => SqlAgentToolType.MySQL,
-        "FORMAT" => SqlAgentToolType.MsSqlServer,
-        "STRFTIME" => SqlAgentToolType.Sqlite,
-        // TO_CHAR/TO_DATE exist in more than one named-format dialect. Their token vocabularies
-        // overlap for the portable subset, so retain the explicit source dialect when known.
-        "TO_CHAR" or "TO_DATE" when sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle
-            => sourceDialect,
-        "TO_CHAR" or "TO_DATE" => SqlAgentToolType.Postgres,
-        _ => sourceDialect
-    };
 
     private static void RequireArity(string name, IReadOnlyList<SelectCondition> arguments, int expected)
     {
