@@ -1,0 +1,85 @@
+using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Models;
+using Xunit;
+
+namespace SqlAgent.Test.Services;
+
+public class QueryFactsBinderTests
+{
+    [Fact]
+    public void Bind_CollectsPhysicalTablesAcrossCteJoinAndSubquery()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = "recent",
+            Alias = "r",
+            CteConditions =
+            [
+                new CteCondition
+                {
+                    CteAliasName = "recent",
+                    Query = new QueryDefinition { TableName = "sales.orders" }
+                }
+            ],
+            Joins =
+            [
+                new JoinCondition { Table = "crm.customers", Alias = "c" },
+                new JoinCondition
+                {
+                    Alias = "x",
+                    SubQuery = new QueryDefinition { TableName = "audit.events" }
+                }
+            ]
+        };
+
+        var facts = QueryFactsBinder.Bind(definition);
+
+        Assert.Equal(3, facts.ReferencedTables.Count);
+        Assert.Contains("sales.orders", facts.ReferencedTables);
+        Assert.Contains("crm.customers", facts.ReferencedTables);
+        Assert.Contains("audit.events", facts.ReferencedTables);
+        Assert.DoesNotContain("recent", facts.ReferencedTables);
+        Assert.True(facts.ContainsCte);
+        Assert.True(facts.ContainsSubquery);
+        Assert.Equal("crm.customers", facts.Aliases["c"]);
+        Assert.Equal("<subquery>", facts.Aliases["x"]);
+    }
+
+    [Fact]
+    public void Bind_CollectsWhereSubqueryPhysicalTable()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = "users",
+            WhereColumnsAndValues =
+            [
+                new SubQueryWhereCondition
+                {
+                    Operator = "EXISTS",
+                    SubQuery = new QueryDefinition { TableName = "permissions" }
+                }
+            ]
+        };
+
+        var facts = QueryFactsBinder.Bind(definition);
+
+        Assert.Contains("users", facts.ReferencedTables);
+        Assert.Contains("permissions", facts.ReferencedTables);
+        Assert.True(facts.ContainsSubquery);
+    }
+
+    [Fact]
+    public void Bind_DuplicateAlias_FailsClosed()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = "users",
+            Alias = "x",
+            Joins = [new JoinCondition { Table = "orders", Alias = "x" }]
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => QueryFactsBinder.Bind(definition));
+
+        Assert.Contains("Duplicate table alias", ex.Message);
+    }
+}
