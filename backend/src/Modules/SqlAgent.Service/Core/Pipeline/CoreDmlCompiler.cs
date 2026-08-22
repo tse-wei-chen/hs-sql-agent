@@ -31,8 +31,8 @@ public sealed class CoreDmlCompiler(
 
     public static CoreDmlCompiler CreateDefault() => new(
         new CoreDmlBinder(),
-        CoreSqlNormalizer.CreateDefault(),
-        new CoreSqlPlanValidator());
+        new CoreDmlNormalizer(),
+        new CoreDmlPlanValidator());
 
     public CompiledSqlCommand Compile(
         DmlDefinition definition,
@@ -60,7 +60,9 @@ public sealed class CoreDmlCompiler(
             validated.TargetProvider,
             validated.PolicyVersion);
 
-        var command = new SqlKataDmlLowerer(targetProvider).Lower(executable);
+        var command = validated.Statement is InsertStatement insert
+            ? new SqlKataInsertLowerer(targetProvider).Lower(executable, insert)
+            : new SqlKataDmlLowerer(targetProvider).Lower(executable);
         var expectedKind = definition.Operation switch
         {
             DmlOperation.Insert => SqlStatementKind.Insert,
