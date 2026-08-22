@@ -1,14 +1,12 @@
 using System.Data.Common;
 using Dapper;
-using Microsoft.Extensions.Configuration;
 using MySql.Data.MySqlClient;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
-public class MySqlStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class MySqlStrategy : BaseSqlStrategy
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
 
