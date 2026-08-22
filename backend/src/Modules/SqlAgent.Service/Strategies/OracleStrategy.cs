@@ -7,7 +7,6 @@ using Oracle.ManagedDataAccess.Client;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlKata.Compilers;
 
 namespace SqlAgent.Service.Strategies;
 
@@ -26,7 +25,6 @@ public partial class OracleStrategy(IQueryValueParserService valueParser, IConfi
         return builder.ConnectionString;
     }
     public override DbConnection CreateConnection(string? connectionString) => new OracleConnection(connectionString);
-    protected override Compiler CreateCompiler() => new OracleCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {
