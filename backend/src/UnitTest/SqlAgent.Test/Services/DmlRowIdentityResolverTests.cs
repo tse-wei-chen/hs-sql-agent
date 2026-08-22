@@ -45,7 +45,9 @@ public class DmlRowIdentityResolverTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(["id"], result);
-        Assert.Equal(("public", "users"), metadata.LastColumnsRequest);
+        Assert.NotNull(metadata.LastColumnsRequest);
+        Assert.Equal("public", metadata.LastColumnsRequest.Value.Schema);
+        Assert.Equal("users", metadata.LastColumnsRequest.Value.Table);
     }
 
     [Fact]
