@@ -1,6 +1,5 @@
 using Dapper;
 using Npgsql;
-using SqlKata.Compilers;
 using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Enums;
@@ -28,7 +27,6 @@ public class PostgresStrategy(IQueryValueParserService valueParser, IConfigurati
         return builder.ConnectionString;
     }
     public override DbConnection CreateConnection(string? connectionString) => new NpgsqlConnection(connectionString);
-    protected override Compiler CreateCompiler() => new PostgresCompiler();
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {
