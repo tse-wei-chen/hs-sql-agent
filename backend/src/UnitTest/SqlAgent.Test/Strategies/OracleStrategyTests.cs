@@ -1,11 +1,7 @@
 using System.Text.Json;
 using DotNet.Testcontainers.Builders;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using Testcontainers.Oracle;
 using Xunit;
@@ -28,7 +24,7 @@ public class OracleFixture : IDbFixture
     {
         await Container.StartAsync();
 
-        var strategy = new OracleStrategy(new QueryValueParserService(), new Mock<IConfiguration>().Object);
+        var strategy = new OracleStrategy();
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
         using var cmd = conn.CreateCommand();
@@ -95,8 +91,7 @@ public class OracleFixture : IDbFixture
 
 public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<OracleStrategy, OracleFixture>(fixture)
 {
-    protected override OracleStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override OracleStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "HS_USERS";
     protected override string TestOrdersTableName => "HS_ORDERS";
@@ -157,8 +152,6 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldSupportFullQueryDefinitionStructure()
     {
-        // Oracle's compiler wraps identifiers in double quotes, so all column refs must be UPPERCASE.
-        // We avoid FromQuery wrapping and CTEs due to Oracle's alias syntax quirks.
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
@@ -282,10 +275,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
             new QueryDefinition
             {
                 TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }
-                ],
+                SelectColumns = [new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }],
                 WhereColumnsAndValues =
                 [
                     new SubQueryWhereCondition
@@ -295,21 +285,12 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                         SubQuery = new QueryDefinition
                         {
                             TableName = TestOrdersTableName,
-                            SelectColumns =
-                            [
-                                new FieldSelectCondition { FieldName = TestOrdersUserIdColumn }
-                            ],
-                            WhereColumnsAndValues =
-                            [
-                                new BasicWhereCondition { FieldName = "AMOUNT", Operator = ">", Value = 100 }
-                            ]
+                            SelectColumns = [new FieldSelectCondition { FieldName = TestOrdersUserIdColumn }],
+                            WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "AMOUNT", Operator = ">", Value = 100 }]
                         }
                     }
                 ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }
-                ]
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
@@ -324,7 +305,6 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldSupportSubQuerySelectCondition()
     {
-        // Oracle UPPERCASE aliases for quoted identifier matching
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
@@ -336,14 +316,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                     new SubQuerySelectCondition
                     {
                         TableName = TestOrdersTableName,
-                        SelectColumns =
-                        [
-                            new FunctionSelectCondition
-                            {
-                                FunctionName = "COUNT",
-                                Arguments = [new FieldSelectCondition { FieldName = "ID" }]
-                            }
-                        ],
+                        SelectColumns = [new FunctionSelectCondition { FunctionName = "COUNT", Arguments = [new FieldSelectCondition { FieldName = "ID" }] }],
                         WhereColumnsAndValues =
                         [
                             new ColumnCompareWhereCondition
@@ -356,10 +329,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                         Alias = "order_count"
                     }
                 ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "U.NAME", Direction = SortDirection.Asc }
-                ]
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "U.NAME", Direction = SortDirection.Asc }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
@@ -377,20 +347,14 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
             new QueryDefinition
             {
                 TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }
-                ],
+                SelectColumns = [new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }],
                 WhereColumnsAndValues =
                 [
                     new BasicWhereCondition { FieldName = "NAME", Operator = "=", Value = "Alice" },
                     new BasicWhereCondition { FieldName = "NAME", Operator = "=", Value = "Bob", IsOr = true },
                     new BasicWhereCondition { FieldName = "NAME", Operator = "LIKE", Value = "C%", IsNot = true }
                 ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }
-                ]
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
@@ -410,10 +374,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
             new QueryDefinition
             {
                 TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }
-                ],
+                SelectColumns = [new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }],
                 WhereColumnsAndValues =
                 [
                     new SubQueryWhereCondition
@@ -434,10 +395,7 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                         }
                     }
                 ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }
-                ]
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
@@ -459,14 +417,8 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                     new FieldSelectCondition { FieldName = "NAME", Alias = "uname" },
                     new FieldSelectCondition { FieldName = "AGE", Alias = "age" }
                 ],
-                WhereColumnsAndValues =
-                [
-                    new BasicWhereCondition { FieldName = "AGE", Operator = "between", Value = new object[] { 25, 35 } }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }
-                ]
+                WhereColumnsAndValues = [new BasicWhereCondition { FieldName = "AGE", Operator = "between", Value = new object[] { 25, 35 } }],
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
@@ -486,17 +438,9 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                 SelectColumns =
                 [
                     new FieldSelectCondition { FieldName = TestOrdersUserIdColumn, Alias = "uid" },
-                    new FunctionSelectCondition
-                    {
-                        FunctionName = "COUNT",
-                        Arguments = [new FieldSelectCondition { FieldName = "ID" }],
-                        Alias = "cnt"
-                    }
+                    new FunctionSelectCondition { FunctionName = "COUNT", Arguments = [new FieldSelectCondition { FieldName = "ID" }], Alias = "cnt" }
                 ],
-                GroupByConditions =
-                [
-                    new FieldGroupByCondition { FieldName = TestOrdersUserIdColumn }
-                ],
+                GroupByConditions = [new FieldGroupByCondition { FieldName = TestOrdersUserIdColumn }],
                 HavingConditions =
                 [
                     new GroupHavingCondition
@@ -505,21 +449,14 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
                         [
                             new FunctionHavingCondition
                             {
-                                LeftFunction = new SqlFunctionCondition
-                                {
-                                    FunctionName = "COUNT",
-                                    Arguments = [new FieldSelectCondition { FieldName = "ID" }]
-                                },
+                                LeftFunction = new SqlFunctionCondition { FunctionName = "COUNT", Arguments = [new FieldSelectCondition { FieldName = "ID" }] },
                                 Operator = ">=",
                                 Value = 1
                             }
                         ]
                     }
                 ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "uid", Direction = SortDirection.Asc }
-                ]
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "uid", Direction = SortDirection.Asc }]
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
@@ -537,14 +474,8 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
             new QueryDefinition
             {
                 TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }
-                ],
+                SelectColumns = [new FieldSelectCondition { FieldName = "NAME", Alias = "uname" }],
+                OrderByColumns = [new FieldOrderByCondition { FieldName = "NAME", Direction = SortDirection.Asc }],
                 Offset = 1
             },
             Fixture.ConnectionString,
