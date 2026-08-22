@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Dapper;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Services;
 
 namespace SqlAgent.Service.Core.Execution;
 
@@ -18,6 +19,11 @@ public interface IDbConnectionFactory
 public sealed class CompiledSqlCommandExecutor(IDbConnectionFactory connectionFactory)
     : ISqlCommandExecutor
 {
+    static CompiledSqlCommandExecutor()
+    {
+        DapperTemporalTypeHandlerRegistry.EnsureRegistered();
+    }
+
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
 
     public Task<QueryExecutionResult> ExecuteQueryAsync(
