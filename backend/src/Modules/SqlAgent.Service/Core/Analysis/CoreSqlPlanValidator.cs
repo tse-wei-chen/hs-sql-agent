@@ -159,7 +159,6 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 ValidateExpression(unary.Operand, provider, context);
                 return;
             case BinaryExpr binary:
-                ValidateBinaryOperator(binary.Operator, provider);
                 ValidateExpression(binary.Left, provider, context);
                 ValidateExpression(binary.Right, provider, context);
                 return;
@@ -201,23 +200,6 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             default:
                 throw new SqlCompilationException(
                     $"Unsupported expression during capability validation: {expression.GetType().Name}");
-        }
-    }
-
-    private static void ValidateBinaryOperator(string op, SqlAgentToolType provider)
-    {
-        if (op == "%" && provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
-        {
-            throw new SqlCompilationException(
-                $"Provider {provider} requires modulo lowering to MOD(left, right); " +
-                "the Core lowerer must translate this operator before execution.");
-        }
-
-        if (op == "||" && provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
-        {
-            throw new SqlCompilationException(
-                $"Provider {provider} requires concatenation lowering; " +
-                "the Core lowerer must translate this operator before execution.");
         }
     }
 
