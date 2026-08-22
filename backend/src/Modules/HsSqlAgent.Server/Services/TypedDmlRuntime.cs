@@ -75,6 +75,14 @@ public sealed class TypedDmlRuntime(
         return new TypedDmlApprovalSession(plan, preview);
     }
 
+    [Obsolete("Pass the current policy and table authorization so commit can revalidate security context.")]
+    public Task<DmlCommitResult> CommitAsync(
+        ISqlStrategy strategy,
+        string connectionString,
+        TypedDmlApprovalSession session,
+        CancellationToken cancellationToken = default) =>
+        CommitCoreAsync(strategy, connectionString, session, cancellationToken);
+
     public async Task<DmlCommitResult> CommitAsync(
         ISqlStrategy strategy,
         string connectionString,
@@ -83,11 +91,7 @@ public sealed class TypedDmlRuntime(
         IReadOnlySet<string>? currentAllowedTables,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(strategy);
-        ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(currentPolicy);
-        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-
         var currentPolicyVersion = ComputePolicyVersion(currentPolicy, currentAllowedTables);
         if (!string.Equals(
                 currentPolicyVersion,
@@ -97,6 +101,23 @@ public sealed class TypedDmlRuntime(
             throw new InvalidOperationException(
                 "DML security policy or table authorization changed after preview; request a new preview before committing.");
         }
+
+        return await CommitCoreAsync(
+            strategy,
+            connectionString,
+            session,
+            cancellationToken);
+    }
+
+    private async Task<DmlCommitResult> CommitCoreAsync(
+        ISqlStrategy strategy,
+        string connectionString,
+        TypedDmlApprovalSession session,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(strategy);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         var provider = new LegacySqlProviderAdapter(strategy);
         if (provider.Type != session.Plan.MutationCommand.TargetProvider)
