@@ -1,14 +1,12 @@
 using Dapper;
-using Microsoft.Extensions.Configuration;
 using Npgsql;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using System.Data.Common;
 
 namespace SqlAgent.Service.Strategies;
 
-public class PostgresStrategy(IQueryValueParserService valueParser, IConfiguration configuration) : BaseSqlStrategy(valueParser, configuration)
+public class PostgresStrategy : BaseSqlStrategy
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 
