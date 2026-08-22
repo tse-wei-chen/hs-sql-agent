@@ -1,5 +1,6 @@
 using SqlAgent.Service.Core.Analysis;
 using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Core.Pipeline;
@@ -73,7 +74,7 @@ public class CoreSqlPlanValidatorTests
             },
             SqlAgentToolType.MsSqlServer);
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        var ex = Assert.Throws<SqlCompilationException>(() =>
             new CoreSqlPlanValidator().Validate(
                 canonical,
                 new SqlPlanValidationContext("policy-v1")));
@@ -100,7 +101,7 @@ public class CoreSqlPlanValidatorTests
             },
             SqlAgentToolType.MySQL);
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        var ex = Assert.Throws<SqlCompilationException>(() =>
             new CoreSqlPlanValidator().Validate(
                 canonical,
                 new SqlPlanValidationContext("policy-v1")));
@@ -127,7 +128,7 @@ public class CoreSqlPlanValidatorTests
             },
             SqlAgentToolType.Oracle);
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        var ex = Assert.Throws<SqlCompilationException>(() =>
             new CoreSqlPlanValidator().Validate(
                 canonical,
                 new SqlPlanValidationContext("policy-v1")));
