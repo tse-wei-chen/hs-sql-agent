@@ -10,7 +10,7 @@ public static class SqlDefinitionParser
     {
         var tokens = new SqlTokenizer(sql, provider).Tokenize();
         var topLimit = NormalizeSqlServerTop(tokens, provider, out var normalizedTokens);
-        tokens = normalizedTokens;
+        tokens = CommaFromNormalizer.Normalize(normalizedTokens);
         ValidateStatementTokens(tokens);
         SqlSyntaxGuard.ValidateQuery(tokens);
         var definition = new SqlParser(tokens).Parse();
