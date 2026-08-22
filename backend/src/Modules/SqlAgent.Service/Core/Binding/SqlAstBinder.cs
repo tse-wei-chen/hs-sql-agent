@@ -63,8 +63,6 @@ public sealed class SqlAstBinder : ISqlBinder
             })
             .ToImmutableArray();
 
-        // Query-level ORDER BY binds against the output projection, not an individual FROM scope.
-        // Keep output-column references explicitly unresolved for a later projection binder.
         var orderBy = query.OrderBy
             .Select(item => item with { Expression = BindExpr(item.Expression, null, visibleCtes, state) })
             .ToImmutableArray();
@@ -158,7 +156,6 @@ public sealed class SqlAstBinder : ISqlBinder
                 if (string.IsNullOrWhiteSpace(derived.Alias))
                     throw new InvalidOperationException("Derived table must have an alias before binding.");
 
-                // A non-LATERAL derived table does not inherit the surrounding table scope.
                 var query = BindStatement(derived.Query, null, visibleCtes, state);
                 var symbol = new TableSymbol(
                     "<subquery>",
@@ -257,7 +254,7 @@ public sealed class SqlAstBinder : ISqlBinder
             return new BoundColumnExpr(column.Name, source, column.Span);
         }
 
-        var qualifier = string.Join('.', parts[..^1].Select(p => p.Value));
+        var qualifier = string.Join('.', parts.Take(parts.Length - 1).Select(p => p.Value));
         var resolved = scope.ResolveQualifier(qualifier);
         if (resolved is null)
             throw new InvalidOperationException(
