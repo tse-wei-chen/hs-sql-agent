@@ -29,9 +29,6 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
 
     public override async Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default)
     {
-        // SQLite exposes the primary database as "main" and supports qualified
-        // references such as main.orders. Returning a real identifier keeps
-        // table-whitelist values executable and comparable with parsed SQL.
         return ["main"];
     }
 
@@ -58,17 +55,22 @@ public class SqliteStrategy(IQueryValueParserService valueParser, IConfiguration
         {
             using var connection = CreateConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var checkSql = "SELECT name FROM sqlite_master WHERE type='table' AND name = @tbl;";
+            const string checkSql = "SELECT name FROM sqlite_master WHERE type='table' AND name = @tbl;";
             var verifiedTableName = await connection.QueryFirstOrDefaultAsync<string>(checkSql, new { tbl = tableName });
 
-            if (string.IsNullOrEmpty(verifiedTableName))
-            {
-                return [];
-            }
-            var sql = $"SELECT name AS COLUMN_NAME, type AS DATA_TYPE FROM pragma_table_info('{verifiedTableName}') ORDER BY cid";
+            if (string.IsNullOrEmpty(verifiedTableName)) return [];
 
+            var sql = $"SELECT name AS COLUMN_NAME, type AS DATA_TYPE, pk AS PRIMARY_KEY_ORDINAL FROM pragma_table_info('{verifiedTableName.Replace("'", "''", StringComparison.Ordinal)}') ORDER BY cid";
             var result = await connection.QueryAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
-            return [.. result.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE))];
+            return [.. result.Select(r =>
+            {
+                var pkOrdinal = Convert.ToInt32(r.PRIMARY_KEY_ORDINAL);
+                return new ColumnInfo(
+                    (string)r.COLUMN_NAME,
+                    (string)r.DATA_TYPE,
+                    pkOrdinal > 0,
+                    pkOrdinal > 0 ? pkOrdinal : null);
+            })];
         }
         catch (Exception ex)
         {
