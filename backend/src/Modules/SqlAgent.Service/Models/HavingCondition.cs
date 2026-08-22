@@ -11,6 +11,19 @@ namespace SqlAgent.Service.Models;
 [JsonDerivedType(typeof(GroupHavingCondition), "group")]
 public abstract class HavingCondition
 {
+    private protected HavingCondition()
+    {
+        var type = GetType();
+        if (type != typeof(BasicHavingCondition)
+            && type != typeof(FunctionHavingCondition)
+            && type != typeof(ExpressionHavingCondition)
+            && type != typeof(GroupHavingCondition))
+        {
+            throw new InvalidOperationException(
+                $"Unsupported HAVING node '{type.Name}'. Register compiler support before adding a new HAVING node type.");
+        }
+    }
+
     [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
     public bool IsOr { get; set; }
     [Description("When true, negates the entire condition or group (NOT).")]
