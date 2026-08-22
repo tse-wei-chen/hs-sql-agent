@@ -65,7 +65,8 @@ public sealed class LegacySqlProviderAdapter : ISqlProvider
                     table,
                     column.Name,
                     column.Type,
-                    IsPrimaryKey: false))
+                    column.IsPrimaryKey,
+                    column.PrimaryKeyOrdinal))
                 .ToArray();
         }
     }
