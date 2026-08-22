@@ -29,7 +29,7 @@ public class DmlPlanFactoryTests
         {
             Operation = DmlOperation.Update,
             TableName = "public.users",
-            Values = [new NameValuePair { Name = "status", Value = "disabled" }],
+            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }],
             WhereConditions =
             [
                 new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 7 }
