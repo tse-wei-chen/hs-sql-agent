@@ -160,7 +160,7 @@ public class CustomSqlToolControllerTests
     }
 
     [Fact]
-    public async Task TestExecute_InsertDml_FailsClosed()
+    public async Task TestExecute_InsertDml_FailsClosedDuringDefinitionValidation()
     {
         var controller = CreateController();
         var tool = new CustomSqlTool
@@ -178,10 +178,10 @@ public class CustomSqlToolControllerTests
         var crypto = CreateCrypto();
         var providerFactory = new Mock<ISqlProviderFactory>();
         var connectionStringFactory = new Mock<ISqlConnectionStringFactory>();
-        ConfigureProviderFactories(providerFactory, connectionStringFactory);
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
         var limiter = CreateLimiter();
+        var typedQueryRuntime = new Mock<ITypedQueryRuntime>();
 
         var result = await controller.TestExecute(
             new CustomToolTestExecuteRequest(tool.Id, new Dictionary<string, object?> { ["id"] = 1 }),
@@ -192,10 +192,17 @@ public class CustomSqlToolControllerTests
             Options.Create(new McpKeySettings { HmacSecretKey = new string('x', 32) }),
             policy.Object,
             limiter.Object,
-            Mock.Of<ITypedQueryRuntime>(),
+            typedQueryRuntime.Object,
             TestContext.Current.CancellationToken);
 
-        Assert.IsType<OkObjectResult>(result);
+        Assert.IsType<BadRequestObjectResult>(result);
+        providerFactory.Verify(
+            x => x.GetProvider(It.IsAny<SqlAgentToolType>()),
+            Times.Never);
+        crypto.Verify(
+            x => x.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
+            Times.Never);
+        typedQueryRuntime.VerifyNoOtherCalls();
     }
 
     [Fact]
