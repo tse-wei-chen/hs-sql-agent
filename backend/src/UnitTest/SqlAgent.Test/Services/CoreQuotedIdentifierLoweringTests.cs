@@ -140,7 +140,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
-    public void Compile_StructuredDtoOracleNames_AreExactAndTableAliasOmitsAs()
+    public void Compile_StructuredDtoOraclePhysicalNamesFoldButOutputAliasStaysExact()
     {
         var statement = QueryDefinitionCoreMapper.Map(new QueryDefinition
         {
@@ -153,6 +153,14 @@ public sealed class CoreQuotedIdentifierLoweringTests
                     FieldName = "t.MixedColumn",
                     Alias = "result_name"
                 }
+            ],
+            OrderByColumns =
+            [
+                new FieldOrderByCondition
+                {
+                    FieldName = "RESULT_NAME",
+                    Direction = SortDirection.Asc
+                }
             ]
         });
 
@@ -162,9 +170,46 @@ public sealed class CoreQuotedIdentifierLoweringTests
             new SqlPlanValidationContext("policy-v1"),
             new SqlExecutionPlanPolicy());
 
-        Assert.Contains("FROM \"MixedTable\" \"t\"", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("\"MixedTable\" AS \"t\"", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("\"t\".\"MixedColumn\" AS \"result_name\"", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("FROM \"MIXEDTABLE\" \"T\"", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"MIXEDTABLE\" AS \"T\"", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("\"T\".\"MIXEDCOLUMN\" AS \"result_name\"", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY \"result_name\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_StructuredDtoPostgresPhysicalNamesFoldButOutputAliasStaysExact()
+    {
+        var statement = QueryDefinitionCoreMapper.Map(new QueryDefinition
+        {
+            TableName = "Users",
+            Alias = "U",
+            SelectColumns =
+            [
+                new FieldSelectCondition
+                {
+                    FieldName = "U.Name",
+                    Alias = "DisplayName"
+                }
+            ],
+            OrderByColumns =
+            [
+                new FieldOrderByCondition
+                {
+                    FieldName = "displayname",
+                    Direction = SortDirection.Asc
+                }
+            ]
+        });
+
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            new ParsedStatement(statement, SqlAgentToolType.Postgres),
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("FROM \"users\" AS \"u\"", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("\"u\".\"name\" AS \"DisplayName\"", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY \"DisplayName\"", command.Sql, StringComparison.Ordinal);
     }
 
     [Fact]
