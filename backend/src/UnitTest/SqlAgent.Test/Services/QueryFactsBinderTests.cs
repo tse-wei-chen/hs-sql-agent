@@ -1,4 +1,7 @@
 using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Core.Mapping;
+using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using Xunit;
 
@@ -23,16 +26,17 @@ public class QueryFactsBinderTests
             ],
             Joins =
             [
-                new JoinCondition { Table = "crm.customers", Alias = "c" },
+                new JoinCondition { Table = "crm.customers", Alias = "c", Type = JoinType.Cross },
                 new JoinCondition
                 {
                     Alias = "x",
+                    Type = JoinType.Cross,
                     SubQuery = new QueryDefinition { TableName = "audit.events" }
                 }
             ]
         };
 
-        var facts = QueryFactsBinder.Bind(definition);
+        var facts = BindFacts(definition);
 
         Assert.Equal(3, facts.ReferencedTables.Count);
         Assert.Contains("sales.orders", facts.ReferencedTables);
@@ -61,7 +65,7 @@ public class QueryFactsBinderTests
             ]
         };
 
-        var facts = QueryFactsBinder.Bind(definition);
+        var facts = BindFacts(definition);
 
         Assert.Contains("users", facts.ReferencedTables);
         Assert.Contains("permissions", facts.ReferencedTables);
@@ -75,10 +79,10 @@ public class QueryFactsBinderTests
         {
             TableName = "users",
             Alias = "x",
-            Joins = [new JoinCondition { Table = "orders", Alias = "x" }]
+            Joins = [new JoinCondition { Table = "orders", Alias = "x", Type = JoinType.Cross }]
         };
 
-        var ex = Assert.Throws<InvalidOperationException>(() => QueryFactsBinder.Bind(definition));
+        var ex = Assert.Throws<InvalidOperationException>(() => BindFacts(definition));
 
         Assert.Contains("Duplicate table alias", ex.Message);
     }
@@ -100,9 +104,17 @@ public class QueryFactsBinderTests
             ]
         };
 
-        var facts = QueryFactsBinder.Bind(definition);
+        var facts = BindFacts(definition);
 
         Assert.Equal(2, facts.Aliases.Count(a => a.Alias == "x"));
         Assert.Equal(2, facts.Aliases.Where(a => a.Alias == "x").Select(a => a.ScopeId).Distinct().Count());
+    }
+
+    private static QueryFacts BindFacts(QueryDefinition definition)
+    {
+        var parsed = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            SqlAgentToolType.Postgres);
+        return new SqlAstBinder().Bind(parsed).Facts;
     }
 }
