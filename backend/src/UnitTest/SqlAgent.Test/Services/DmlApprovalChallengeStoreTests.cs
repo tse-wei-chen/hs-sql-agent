@@ -6,7 +6,7 @@ namespace SqlAgent.Test.Services;
 public class DmlApprovalChallengeStoreTests
 {
     [Fact]
-    public void Challenge_CanBeConsumedExactlyOnce()
+    public async Task Challenge_CanBeConsumedExactlyOnce()
     {
         var store = new InMemoryDmlApprovalChallengeStore();
         var now = DateTimeOffset.UtcNow;
@@ -19,14 +19,14 @@ public class DmlApprovalChallengeStoreTests
             now.AddMinutes(5),
             Guid.NewGuid().ToString("N"));
 
-        store.Register(challenge);
+        await store.RegisterAsync(challenge);
 
-        Assert.True(store.TryConsume(challenge));
-        Assert.False(store.TryConsume(challenge));
+        Assert.True(await store.TryConsumeAsync(challenge));
+        Assert.False(await store.TryConsumeAsync(challenge));
     }
 
     [Fact]
-    public void ModifiedChallenge_DoesNotConsumeAsValidApproval()
+    public async Task ModifiedChallenge_DoesNotConsumeAsValidApproval()
     {
         var store = new InMemoryDmlApprovalChallengeStore();
         var now = DateTimeOffset.UtcNow;
@@ -38,9 +38,31 @@ public class DmlApprovalChallengeStoreTests
             now,
             now.AddMinutes(5),
             Guid.NewGuid().ToString("N"));
-        store.Register(challenge);
+        await store.RegisterAsync(challenge);
 
-        Assert.False(store.TryConsume(challenge with { AffectedRows = 3 }));
+        Assert.False(await store.TryConsumeAsync(challenge with { AffectedRows = 3 }));
+    }
+
+    [Fact]
+    public async Task CancelledStoreOperation_StopsBeforeMutatingState()
+    {
+        var store = new InMemoryDmlApprovalChallengeStore();
+        var now = DateTimeOffset.UtcNow;
+        var challenge = new DmlApprovalChallenge(
+            "plan",
+            "rows",
+            1,
+            "policy-v1",
+            now,
+            now.AddMinutes(5),
+            Guid.NewGuid().ToString("N"));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await store.RegisterAsync(challenge, cancellation.Token));
+
+        Assert.False(await store.TryConsumeAsync(challenge));
     }
 
     [Fact]
