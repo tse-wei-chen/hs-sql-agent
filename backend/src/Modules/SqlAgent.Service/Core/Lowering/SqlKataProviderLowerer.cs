@@ -83,7 +83,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         var query = new Query()
             .From(setQuery, "_set")
             .Select("*");
-        ApplyOrderBy(query, statement.OrderBy, compiler);
+        ApplyOrderBy(query, statement.OrderBy, compiler, statement.Head.Select);
         if (statement.Limit is >= 0) query.Limit(statement.Limit.Value);
         if (statement.Offset is > 0) query.Offset(statement.Offset.Value);
         return query;
@@ -166,7 +166,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
         if (includeTail)
         {
-            ApplyOrderBy(query, statement.OrderBy, compiler);
+            ApplyOrderBy(query, statement.OrderBy, compiler, statement.Select);
             if (statement.Limit is >= 0) query.Limit(statement.Limit.Value);
             if (statement.Offset is > 0) query.Offset(statement.Offset.Value);
         }
@@ -262,11 +262,22 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
     private static void ApplyOrderBy(
         Query query,
         IEnumerable<OrderByItem> items,
-        Compiler compiler)
+        Compiler compiler,
+        IEnumerable<SelectItem>? projection = null)
     {
+        var preservedAliases = projection?
+            .Select(item => item.Alias)
+            .Where(alias => alias is { PreserveSpelling: true })
+            .Cast<IdentifierPart>()
+            .ToArray() ?? [];
+
         foreach (var item in items)
         {
-            var rendered = RenderExpression(item.Expression, compiler);
+            var rendered = TryRenderPreservedProjectionAlias(
+                    item.Expression,
+                    preservedAliases,
+                    compiler)
+                ?? RenderExpression(item.Expression, compiler);
             var nullOrdering = item.NullOrdering switch
             {
                 NullOrderingKind.Default => string.Empty,
@@ -284,6 +295,39 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 !item.Descending,
                 nullOrdering);
         }
+    }
+
+    private static RenderedExpression? TryRenderPreservedProjectionAlias(
+        SqlExpr expression,
+        IReadOnlyCollection<IdentifierPart> aliases,
+        Compiler compiler)
+    {
+        var identifier = expression switch
+        {
+            BoundColumnExpr bound => bound.Name,
+            ColumnExpr column => column.Name,
+            _ => null
+        };
+        if (identifier is not { Parts.Length: 1 }) return null;
+
+        var reference = identifier.Parts[0];
+        if (reference.WasQuoted) return null;
+        var matches = aliases
+            .Where(alias => string.Equals(
+                alias.Value,
+                reference.Value,
+                StringComparison.OrdinalIgnoreCase))
+            .Take(2)
+            .ToArray();
+        if (matches.Length > 1)
+        {
+            throw new SqlCompilationException(
+                $"ORDER BY alias '{reference.Value}' is ambiguous among preserved projection aliases.");
+        }
+        if (matches.Length == 0) return null;
+        return new RenderedExpression(
+            RenderAlias(matches[0], compiler),
+            ImmutableArray<object?>.Empty);
     }
 
     private static RenderedExpression RenderExpression(SqlExpr expression, Compiler compiler)
@@ -901,9 +945,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static string NormalizeIdentifierValue(IdentifierPart part, Compiler compiler)
     {
-        // Parser-native identifier parts carry source spans and therefore lexical quote intent;
-        // programmatic/structured DTO AST nodes use Unknown spans and already carry semantic names.
-        if (part.WasQuoted || part.Span == SourceSpan.Unknown) return part.Value;
+        if (part.WasQuoted || part.PreserveSpelling) return part.Value;
         return compiler switch
         {
             PostgresCompiler => part.Value.ToLowerInvariant(),
