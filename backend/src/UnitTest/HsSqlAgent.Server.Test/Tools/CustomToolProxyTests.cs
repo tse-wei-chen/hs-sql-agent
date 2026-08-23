@@ -218,12 +218,7 @@ public class CustomToolProxyTests
         provider.SetupGet(x => x.Connections).Returns(connections.Object);
         _providerFactoryMock.Setup(f => f.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
 
-        var approval = new Mock<IDmlApprovalClient>();
-        approval.SetupGet(x => x.SupportsElicitation).Returns(true);
-        approval.Setup(x => x.ElicitAsync(
-                It.IsAny<ElicitRequestParams>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(new ValueTask<ElicitResult>(new ElicitResult { Action = "decline" }));
+        var approval = new DecliningApprovalClient();
 
         var dmlProxy = new CustomToolProxy(
             "insert_user",
@@ -237,13 +232,11 @@ public class CustomToolProxyTests
 
         var result = await dmlProxy.Execute(
             JsonSerializer.SerializeToElement(new { }),
-            approval.Object,
+            approval,
             TestContext.Current.CancellationToken);
 
         Assert.Contains("cancelled by user", result, StringComparison.OrdinalIgnoreCase);
-        approval.Verify(x => x.ElicitAsync(
-            It.IsAny<ElicitRequestParams>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(1, approval.ElicitCount);
         connections.Verify(x => x.Create(It.IsAny<string>()), Times.Never);
         metadata.VerifyAll();
     }
@@ -352,5 +345,19 @@ public class CustomToolProxyTests
         if (parsed.Statement is not SelectStatement { From: NamedTableSource source }) return false;
         var actual = string.Join('.', source.Name.Parts.Select(part => part.Value));
         return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class DecliningApprovalClient : IDmlApprovalClient
+    {
+        public bool SupportsElicitation => true;
+        public int ElicitCount { get; private set; }
+
+        public ValueTask<ElicitResult> ElicitAsync(
+            ElicitRequestParams request,
+            CancellationToken cancellationToken)
+        {
+            ElicitCount++;
+            return ValueTask.FromResult(new ElicitResult { Action = "decline" });
+        }
     }
 }
