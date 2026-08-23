@@ -13,7 +13,6 @@ using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Controllers;
@@ -122,9 +121,8 @@ public class CustomSqlToolControllerTests
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
         var dbService = CreateDbService(3);
         var crypto = CreateCrypto();
-        var strategy = CreateStrategy();
         var strategyFactory = new Mock<ISqlStrategyFactory>();
-        strategyFactory.Setup(x => x.GetStrategy(SqlAgentToolType.Postgres)).Returns(strategy.Object);
+        ConfigureProviderFactory(strategyFactory);
         var runtimePolicy = new SecurityPolicyModel { QueryMaxRows = 50, QueryTimeoutSeconds = 15 };
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(runtimePolicy);
@@ -176,9 +174,8 @@ public class CustomSqlToolControllerTests
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
         var dbService = CreateDbService(3);
         var crypto = CreateCrypto();
-        var strategy = CreateStrategy();
         var strategyFactory = new Mock<ISqlStrategyFactory>();
-        strategyFactory.Setup(x => x.GetStrategy(SqlAgentToolType.Postgres)).Returns(strategy.Object);
+        ConfigureProviderFactory(strategyFactory);
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
         var limiter = CreateLimiter();
@@ -286,12 +283,15 @@ public class CustomSqlToolControllerTests
         return crypto;
     }
 
-    private static Mock<ISqlStrategy> CreateStrategy()
+    private static void ConfigureProviderFactory(Mock<ISqlStrategyFactory> factory)
     {
-        var strategy = new Mock<ISqlStrategy>();
-        strategy.SetupGet(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-        strategy.Setup(x => x.BuildConnectionString(It.IsAny<BuildDbConnectionModelBase>())).Returns("connection");
-        return strategy;
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        factory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        factory.Setup(x => x.BuildConnectionString(
+                SqlAgentToolType.Postgres,
+                It.IsAny<BuildDbConnectionModelBase>()))
+            .Returns("connection");
     }
 
     private static Mock<ISqlExecutionConcurrencyLimiter> CreateLimiter()

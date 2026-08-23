@@ -297,8 +297,8 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
 
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(dbPwd.PasswordHash, hmacSecret);
-        var strategy = sqlStrategyFactory.GetStrategy(dbType);
-        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
+        var provider = sqlStrategyFactory.GetProvider(dbType);
+        var connectionString = sqlStrategyFactory.BuildConnectionString(dbType, new BuildDbConnectionModelBase
         {
             Host = dbPwd.Host,
             Port = dbPwd.Port,
@@ -331,7 +331,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                     return BadRequest(new { error = "Validation failed.", errors });
 
                 var execution = await typedQueryRuntime.ExecuteAsync(
-                    strategy,
+                    provider,
                     connectionString,
                     queryDef,
                     dbType,
@@ -353,7 +353,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 }
 
                 var session = await new TypedDmlRuntime().PreviewAsync(
-                    strategy,
+                    provider,
                     connectionString,
                     dmlDef,
                     runtimePolicy,

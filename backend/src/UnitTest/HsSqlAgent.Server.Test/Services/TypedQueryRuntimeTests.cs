@@ -2,6 +2,7 @@ using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using Moq;
 using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
@@ -24,7 +25,7 @@ public class TypedQueryRuntimeTests
     public void Compile_AppliesCoreMaxRowsAndKeepsValuesParameterized()
     {
         var runtime = new TypedQueryRuntime();
-        var strategy = CreateStrategy(SqlAgentToolType.Postgres);
+        var provider = CreateProvider(SqlAgentToolType.Postgres);
         var definition = new QueryDefinition
         {
             TableName = "public.users",
@@ -42,7 +43,7 @@ public class TypedQueryRuntimeTests
         var policy = CreatePolicy(maxRows: 25);
 
         var command = runtime.Compile(
-            strategy.Object,
+            provider.Object,
             definition,
             SqlAgentToolType.Postgres,
             policy,
@@ -59,7 +60,7 @@ public class TypedQueryRuntimeTests
     public void Compile_RejectsUnauthorizedTableBeforeExecution()
     {
         var runtime = new TypedQueryRuntime();
-        var strategy = CreateStrategy(SqlAgentToolType.Postgres);
+        var provider = CreateProvider(SqlAgentToolType.Postgres);
         var definition = new QueryDefinition
         {
             TableName = "public.secrets",
@@ -67,7 +68,7 @@ public class TypedQueryRuntimeTests
         };
 
         Assert.Throws<UnauthorizedAccessException>(() => runtime.Compile(
-            strategy.Object,
+            provider.Object,
             definition,
             SqlAgentToolType.Postgres,
             CreatePolicy(),
@@ -78,7 +79,7 @@ public class TypedQueryRuntimeTests
     public void Compile_PolicyOrAuthorizationChange_ChangesPlanFingerprint()
     {
         var runtime = new TypedQueryRuntime();
-        var strategy = CreateStrategy(SqlAgentToolType.Postgres);
+        var provider = CreateProvider(SqlAgentToolType.Postgres);
         var definition = new QueryDefinition
         {
             TableName = "public.users",
@@ -86,13 +87,13 @@ public class TypedQueryRuntimeTests
         };
 
         var first = runtime.Compile(
-            strategy.Object,
+            provider.Object,
             definition,
             SqlAgentToolType.Postgres,
             CreatePolicy(maxRows: 10),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
         var second = runtime.Compile(
-            strategy.Object,
+            provider.Object,
             definition,
             SqlAgentToolType.Postgres,
             CreatePolicy(maxRows: 20),
@@ -101,11 +102,11 @@ public class TypedQueryRuntimeTests
         Assert.NotEqual(first.PlanFingerprint, second.PlanFingerprint);
     }
 
-    private static Mock<ISqlStrategy> CreateStrategy(SqlAgentToolType type)
+    private static Mock<ISqlProvider> CreateProvider(SqlAgentToolType type)
     {
-        var strategy = new Mock<ISqlStrategy>();
-        strategy.SetupGet(s => s.DbType).Returns(type);
-        return strategy;
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(type);
+        return provider;
     }
 
     private static SecurityPolicyModel CreatePolicy(int maxRows = 100) => new()

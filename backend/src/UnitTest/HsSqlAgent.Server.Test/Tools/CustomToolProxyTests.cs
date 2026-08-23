@@ -10,7 +10,6 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
 using HsSqlAgent.Server.Tools;
 using HsSqlAgent.Server.Services;
 using Xunit;
@@ -110,10 +109,7 @@ public class CustomToolProxyTests
         _queryValueParserMock.Setup(q => q.UnwrapJsonElement(It.IsAny<JsonElement>()))
             .Returns("email");
 
-        var strategyMock = new Mock<ISqlStrategy>();
-        strategyMock.SetupGet(s => s.DbType).Returns(SqlAgentToolType.Postgres);
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
-            .Returns(strategyMock.Object);
+        SetupPostgresProvider();
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
@@ -168,10 +164,7 @@ public class CustomToolProxyTests
         };
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("delete_user", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
-
-        var strategyMock = new Mock<ISqlStrategy>();
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
-            .Returns(strategyMock.Object);
+        SetupPostgresProvider();
 
         var dmlProxy = new CustomToolProxy("delete_user",
             _toolServiceMock.Object,
@@ -201,10 +194,7 @@ public class CustomToolProxyTests
         };
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("insert_user", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
-
-        var strategyMock = new Mock<ISqlStrategy>();
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
-            .Returns(strategyMock.Object);
+        SetupPostgresProvider();
 
         var dmlProxy = new CustomToolProxy("insert_user",
             _toolServiceMock.Object,
@@ -236,10 +226,7 @@ public class CustomToolProxyTests
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
-        var strategyMock = new Mock<ISqlStrategy>();
-        strategyMock.SetupGet(s => s.DbType).Returns(SqlAgentToolType.Postgres);
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
-            .Returns(strategyMock.Object);
+        SetupPostgresProvider();
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
@@ -282,5 +269,14 @@ public class CustomToolProxyTests
             "failed",
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private void SetupPostgresProvider()
+    {
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(p => p.Type).Returns(SqlAgentToolType.Postgres);
+        _strategyFactoryMock
+            .Setup(f => f.GetProvider(SqlAgentToolType.Postgres))
+            .Returns(provider.Object);
     }
 }

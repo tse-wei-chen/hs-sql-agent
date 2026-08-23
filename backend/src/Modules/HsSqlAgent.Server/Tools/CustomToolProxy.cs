@@ -13,7 +13,6 @@ using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Validation;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
@@ -112,7 +111,7 @@ public class CustomToolProxy(
             }
 
             renderedSql = CustomToolSqlTemplate.Render(tool.SqlTemplate, tool.ParametersJson, parameters);
-            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+            var provider = _sqlStrategyFactory.GetProvider(dbType);
 
             string result;
             bool isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);
@@ -136,7 +135,7 @@ public class CustomToolProxy(
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
                     var execution = await _typedQueryRuntime.ExecuteAsync(
-                        strategy,
+                        provider,
                         sqlConfig.ConnectionString,
                         queryDef,
                         dbType,
@@ -172,7 +171,7 @@ public class CustomToolProxy(
                     _sqlConcurrencyLimiter,
                     ResolveTableWhitelist);
                 var dmlExecution = await flow.ExecuteAsync(
-                    strategy,
+                    provider,
                     sqlConfig.ConnectionString,
                     dmlDef,
                     approvalClient,

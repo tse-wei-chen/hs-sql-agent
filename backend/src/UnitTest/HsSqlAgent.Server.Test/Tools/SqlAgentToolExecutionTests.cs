@@ -10,7 +10,6 @@ using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
@@ -27,7 +26,7 @@ public class SqlAgentToolExecutionTests
         var securityPolicyState = new Mock<ISecurityPolicyRuntimeState>();
         var concurrencyLimiter = new Mock<ISqlExecutionConcurrencyLimiter>();
         var typedQueryRuntime = new Mock<ITypedQueryRuntime>();
-        var strategy = new Mock<ISqlStrategy>();
+        var provider = new Mock<ISqlProvider>();
 
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
@@ -44,12 +43,12 @@ public class SqlAgentToolExecutionTests
         concurrencyLimiter
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
-        strategy.SetupGet(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-        strategyFactory.Setup(x => x.GetStrategy(SqlAgentToolType.Postgres)).Returns(strategy.Object);
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        strategyFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
 
         typedQueryRuntime
             .Setup(x => x.ExecuteAsync(
-                It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
+                It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
                 It.Is<QueryDefinition>(q => q.TableName == "public.users"),
                 SqlAgentToolType.Postgres,
@@ -97,7 +96,7 @@ public class SqlAgentToolExecutionTests
         var securityPolicyState = new Mock<ISecurityPolicyRuntimeState>();
         var concurrencyLimiter = new Mock<ISqlExecutionConcurrencyLimiter>();
         var typedQueryRuntime = new Mock<ITypedQueryRuntime>();
-        var strategy = new Mock<ISqlStrategy>();
+        var provider = new Mock<ISqlProvider>();
 
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
@@ -108,11 +107,11 @@ public class SqlAgentToolExecutionTests
         concurrencyLimiter
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
-        strategy.SetupGet(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-        strategyFactory.Setup(x => x.GetStrategy(SqlAgentToolType.Postgres)).Returns(strategy.Object);
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        strategyFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
             .Setup(x => x.ExecuteAsync(
-                It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
+                It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<QueryDefinition>(),
                 SqlAgentToolType.Postgres,

@@ -35,6 +35,21 @@ public class ProviderRuntimeBoundaryTests
     }
 
     [Fact]
+    public void StrategyRuntimeCompatibilityBridges_HaveBeenRemoved()
+    {
+        var assembly = typeof(TypedQueryRuntime).Assembly;
+        Assert.Null(assembly.GetType(
+            "HsSqlAgent.Server.Services.TypedQueryRuntimeStrategyCompatibilityExtensions",
+            throwOnError: false));
+        Assert.Null(assembly.GetType(
+            "HsSqlAgent.Server.Services.TypedDmlRuntimeStrategyCompatibilityExtensions",
+            throwOnError: false));
+        Assert.Null(assembly.GetType(
+            "HsSqlAgent.Server.Tools.TypedDmlApprovalFlowStrategyCompatibilityExtensions",
+            throwOnError: false));
+    }
+
+    [Fact]
     public void LegacySqlProviderAdapter_TypeHasBeenRemoved()
     {
         var serviceAssembly = typeof(ISqlStrategy).Assembly;

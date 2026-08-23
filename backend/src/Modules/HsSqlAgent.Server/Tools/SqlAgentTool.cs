@@ -50,7 +50,7 @@ public partial class SqlAgentTool(
         {
             return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
         }
-        var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+        var provider = _sqlStrategyFactory.GetProvider(dbType);
         QueryDefinition? definition = null;
         try
         {
@@ -73,7 +73,7 @@ public partial class SqlAgentTool(
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
                 execution = await _typedQueryRuntime.ExecuteAsync(
-                    strategy,
+                    provider,
                     sqlConfig.ConnectionString,
                     definition,
                     dbType,
@@ -156,14 +156,14 @@ public partial class SqlAgentTool(
                     "The production typed DML path currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
             }
 
-            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+            var provider = _sqlStrategyFactory.GetProvider(dbType);
             var flow = new TypedDmlApprovalFlow(
                 new TypedDmlRuntime(),
                 _securityPolicyRuntimeState,
                 _sqlConcurrencyLimiter,
                 ResolveTableWhitelist);
             var execution = await flow.ExecuteAsync(
-                strategy,
+                provider,
                 sqlConfig.ConnectionString,
                 dml,
                 new McpDmlApprovalClient(server),
@@ -236,13 +236,23 @@ public partial class SqlAgentTool(
             {
                 return "Table name cannot be empty.";
             }
-            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+            var provider = _sqlStrategyFactory.GetProvider(dbType);
             List<ColumnInfo> columns;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                columns = await strategy.GetColumnsAsync(sqlConfig.ConnectionString, schemaName, tableName);
+                var metadata = await provider.Metadata.GetColumnsAsync(
+                    sqlConfig.ConnectionString,
+                    schemaName,
+                    tableName);
+                columns = metadata
+                    .Select(column => new ColumnInfo(
+                        column.Name,
+                        column.Type,
+                        column.IsPrimaryKey,
+                        column.PrimaryKeyOrdinal))
+                    .ToList();
             }
 
             var dbId = ResolveDbManagementId();
@@ -296,13 +306,13 @@ public partial class SqlAgentTool(
             {
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
-            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+            var provider = _sqlStrategyFactory.GetProvider(dbType);
             IEnumerable<string> schemas;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                schemas = await strategy.GetSchemasAsync(sqlConfig.ConnectionString);
+                schemas = await provider.Metadata.GetSchemasAsync(sqlConfig.ConnectionString);
             }
 
             await _auditService.WriteLogAsync("mcp.get_schemas", "database", "success");
@@ -326,13 +336,13 @@ public partial class SqlAgentTool(
             {
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
-            var strategy = _sqlStrategyFactory.GetStrategy(dbType);
+            var provider = _sqlStrategyFactory.GetProvider(dbType);
             IEnumerable<string> tables;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                tables = await strategy.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
+                tables = await provider.Metadata.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
             }
 
             var whitelist = ResolveTableWhitelist();
