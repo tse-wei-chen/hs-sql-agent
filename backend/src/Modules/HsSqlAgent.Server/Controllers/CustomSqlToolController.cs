@@ -209,11 +209,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             if (IsDml(tool))
             {
                 var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
-                if (parsedDml.Statement is not (UpdateStatement or DeleteStatement))
-                {
-                    throw new NotSupportedException(
-                        "Published Custom Tool DML currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
-                }
+                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
                 _ = CoreDmlCompiler.CreateDefault().Compile(
                     parsedDml,
@@ -346,11 +342,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             else
             {
                 var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
-                if (parsedDml.Statement is not (UpdateStatement or DeleteStatement))
-                {
-                    throw new NotSupportedException(
-                        "Custom Tool test execution supports typed UPDATE/DELETE preview only. INSERT remains fail-closed until its production approval semantics are defined.");
-                }
+                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
                 var session = await new TypedDmlRuntime().PreviewAsync(
                     provider,
