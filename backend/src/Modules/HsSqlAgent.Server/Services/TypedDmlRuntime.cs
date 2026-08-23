@@ -4,6 +4,7 @@ using Admin.Service.Models;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
 namespace HsSqlAgent.Server.Services;
