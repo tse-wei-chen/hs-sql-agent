@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DotNet.Testcontainers.Builders;
 using MySql.Data.MySqlClient;
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -146,9 +147,9 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenSyntaxIsInvalid()
+    public async Task ExecuteQueryAsync_ShouldFailClosedBeforeDb_WhenOperatorIsUnsupported()
     {
-        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -157,9 +158,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Equal(SqlAgentToolType.MySQL, ex.ProviderType);
-        Assert.Equal("query", ex.Operation);
-        Assert.Equal("1064", ex.Code);
-        Assert.Contains("syntax", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("operator.ilike", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }
