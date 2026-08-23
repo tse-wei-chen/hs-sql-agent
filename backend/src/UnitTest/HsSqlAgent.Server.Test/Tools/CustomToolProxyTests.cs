@@ -5,8 +5,10 @@ using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
+using ModelContextProtocol.Protocol;
 using Moq;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -189,13 +191,71 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_InsertCustomTool_RemainsFailClosed()
+    public async Task Execute_InsertValuesCustomTool_ReachesInteractiveApprovalPreview()
     {
         var tool = new CustomSqlTool
         {
             Name = "insert_user",
             Type = "DML",
-            SqlTemplate = "INSERT INTO users (name) VALUES ('Alice')"
+            SqlTemplate = "INSERT INTO public.users (name) VALUES ('Alice')"
+        };
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("insert_user", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tool);
+
+        var metadata = new Mock<IProviderMetadataReader>();
+        metadata.Setup(x => x.GetColumnsAsync(
+                "Host=localhost;Database=testdb",
+                "public",
+                "users",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new DatabaseColumnMetadata("public", "users", "name", "text", false)
+            ]);
+        var connections = new Mock<IDbConnectionFactory>(MockBehavior.Strict);
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        provider.SetupGet(x => x.Metadata).Returns(metadata.Object);
+        provider.SetupGet(x => x.Connections).Returns(connections.Object);
+        _providerFactoryMock.Setup(f => f.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+
+        var approval = new Mock<IDmlApprovalClient>();
+        approval.SetupGet(x => x.SupportsElicitation).Returns(true);
+        approval.Setup(x => x.ElicitAsync(
+                It.IsAny<ElicitRequestParams>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<ElicitResult>(new ElicitResult { Action = "decline" }));
+
+        var dmlProxy = new CustomToolProxy(
+            "insert_user",
+            _toolServiceMock.Object,
+            _httpContextAccessorMock.Object,
+            _providerFactoryMock.Object,
+            _auditServiceMock.Object,
+            _queryValueParserMock.Object,
+            _securityPolicyRuntimeStateMock.Object,
+            _sqlConcurrencyLimiterMock.Object);
+
+        var result = await dmlProxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            approval.Object,
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains("cancelled by user", result, StringComparison.OrdinalIgnoreCase);
+        approval.Verify(x => x.ElicitAsync(
+            It.IsAny<ElicitRequestParams>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        connections.Verify(x => x.Create(It.IsAny<string>()), Times.Never);
+        metadata.VerifyAll();
+    }
+
+    [Fact]
+    public async Task Execute_InsertSelectCustomTool_RemainsFailClosed()
+    {
+        var tool = new CustomSqlTool
+        {
+            Name = "insert_user",
+            Type = "DML",
+            SqlTemplate = "INSERT INTO public.users (name) SELECT name FROM public.pending_users"
         };
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("insert_user", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
@@ -216,7 +276,7 @@ public class CustomToolProxyTests
             approvalClient: null,
             TestContext.Current.CancellationToken);
 
-        Assert.Contains("INSERT", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("INSERT ... SELECT", result, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", result, StringComparison.OrdinalIgnoreCase);
     }
 
