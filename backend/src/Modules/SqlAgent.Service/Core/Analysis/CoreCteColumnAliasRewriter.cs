@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 
 namespace SqlAgent.Service.Core.Analysis;
@@ -82,13 +83,13 @@ internal static class CoreCteColumnAliasRewriter
         return cte with
         {
             Query = query,
-            ColumnAliases = ImmutableArray<IdentifierPart>.Empty
+            ColumnAliases = ImmutableArray<SqlIdentifier>.Empty
         };
     }
 
     private static SqlStatement ApplyOutputAliases(
         SqlStatement statement,
-        ImmutableArray<IdentifierPart> aliases,
+        ImmutableArray<SqlIdentifier> aliases,
         SqlIdentifier cteName)
     {
         return statement switch
@@ -105,9 +106,15 @@ internal static class CoreCteColumnAliasRewriter
 
     private static SelectStatement ApplyOutputAliases(
         SelectStatement select,
-        ImmutableArray<IdentifierPart> aliases,
+        ImmutableArray<SqlIdentifier> aliases,
         SqlIdentifier cteName)
     {
+        if (aliases.Any(alias => alias.Parts.Length != 1))
+        {
+            throw new SqlCompilationException(
+                $"CTE '{IdentifierText(cteName)}' column aliases must be unqualified identifiers.");
+        }
+
         if (select.Select.Any(item => ContainsWildcard(item.Expression)))
         {
             throw new SqlCompilationException(
@@ -122,7 +129,7 @@ internal static class CoreCteColumnAliasRewriter
         }
 
         var projection = select.Select
-            .Select((item, index) => item with { Alias = aliases[index] })
+            .Select((item, index) => item with { Alias = aliases[index].Parts[0] })
             .ToImmutableArray();
         return select with { Select = projection };
     }

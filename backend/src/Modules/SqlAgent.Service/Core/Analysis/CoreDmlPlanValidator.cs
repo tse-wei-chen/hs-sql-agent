@@ -24,7 +24,7 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
         ValidateInsertShape(insert);
         var validationCarrier = insert.Source switch
         {
-            InsertQuerySource querySource => querySource.Query,
+            InsertQuerySource insertQuerySource => insertQuerySource.Query,
             InsertValuesSource values => CreateValuesCarrier(values),
             _ => throw new SqlCompilationException(
                 $"Unsupported INSERT source during validation: {insert.Source.GetType().Name}")
@@ -37,10 +37,10 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
         // The common validator may canonicalize query-only structures such as CTE column aliases.
         // Preserve that validated query in INSERT ... SELECT rather than returning the stale source
         // shape and re-introducing an unsupported lowerer form after validation.
-        var validatedInsert = insert.Source is InsertQuerySource querySource
+        var validatedInsert = insert.Source is InsertQuerySource originalQuerySource
             ? insert with
             {
-                Source = querySource with { Query = validatedCarrier.Statement }
+                Source = originalQuerySource with { Query = validatedCarrier.Statement }
             }
             : insert;
 
