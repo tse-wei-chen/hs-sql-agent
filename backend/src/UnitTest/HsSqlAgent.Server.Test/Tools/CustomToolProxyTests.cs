@@ -5,6 +5,7 @@ using Admin.Service.Models;
 using Microsoft.AspNetCore.Http;
 using Moq;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
@@ -114,7 +115,7 @@ public class CustomToolProxyTests
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
-                strategyMock.Object,
+                It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
                 It.Is<QueryDefinition>(q => q.TableName == "users"),
                 SqlAgentToolType.Postgres,
@@ -240,7 +241,7 @@ public class CustomToolProxyTests
         _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres))
             .Returns(strategyMock.Object);
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
-                strategyMock.Object,
+                It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<QueryDefinition>(),
                 SqlAgentToolType.Postgres,
