@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
 using Admin.Service.Models;
+using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Enums;
@@ -81,13 +82,8 @@ public class SqlAgentToolTests
     }
 
     [Fact]
-    public void DmlToolBoundary_AllowsInsertValuesButRejectsInsertSelect()
+    public void TypedDmlSupportGuard_AllowsInsertValuesButRejectsInsertSelect()
     {
-        var method = typeof(SqlAgentTool).GetMethod(
-            "IsSupportedProductionDml",
-            BindingFlags.Static | BindingFlags.NonPublic);
-        Assert.NotNull(method);
-
         var insertValues = CoreSqlTextParser.ParseDml(
             "INSERT INTO public.users (id, name) VALUES (1, 'Alice')",
             SqlAgentToolType.Postgres);
@@ -95,8 +91,12 @@ public class SqlAgentToolTests
             "INSERT INTO public.users (name) SELECT name FROM public.pending_users",
             SqlAgentToolType.Postgres);
 
-        Assert.True((bool)method!.Invoke(null, [insertValues.Statement])!);
-        Assert.False((bool)method.Invoke(null, [insertSelect.Statement])!);
+        Assert.True(TypedDmlRuntime.SupportsStatement(insertValues.Statement));
+        Assert.False(TypedDmlRuntime.SupportsStatement(insertSelect.Statement));
+        var error = Assert.Throws<NotSupportedException>(() =>
+            TypedDmlRuntime.EnsureSupportedStatement(insertSelect.Statement));
+        Assert.Contains("INSERT ... SELECT", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
