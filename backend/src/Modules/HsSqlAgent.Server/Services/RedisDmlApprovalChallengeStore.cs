@@ -66,7 +66,8 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
                 Key(challenge.Nonce),
                 payload,
                 ttl,
-                When.NotExists)
+                When.NotExists,
+                CommandFlags.None)
             .WaitAsync(cancellationToken);
         if (!registered)
             throw new InvalidOperationException("Duplicate DML approval challenge nonce.");
