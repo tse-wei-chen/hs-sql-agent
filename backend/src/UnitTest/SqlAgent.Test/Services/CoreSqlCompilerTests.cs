@@ -1,4 +1,5 @@
 using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -22,7 +23,7 @@ public class CoreSqlCompilerTests
             ]
         };
 
-        var command = CoreSqlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -57,7 +58,7 @@ public class CoreSqlCompilerTests
             ]
         };
 
-        var command = CoreSqlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             SqlAgentToolType.MsSqlServer,
             SqlAgentToolType.Postgres,
@@ -103,7 +104,7 @@ public class CoreSqlCompilerTests
             ]
         };
 
-        var command = CoreSqlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -138,7 +139,7 @@ public class CoreSqlCompilerTests
         };
 
         var ex = Assert.Throws<SqlCompilationException>(() =>
-            CoreSqlCompiler.CreateDefault().Compile(
+            Compile(
                 definition,
                 SqlAgentToolType.MySQL,
                 SqlAgentToolType.MySQL,
@@ -177,7 +178,7 @@ public class CoreSqlCompilerTests
             Offset = 5
         };
 
-        var command = CoreSqlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             provider,
             provider,
@@ -207,7 +208,7 @@ public class CoreSqlCompilerTests
         };
 
         Assert.Throws<UnauthorizedAccessException>(() =>
-            CoreSqlCompiler.CreateDefault().Compile(
+            Compile(
                 definition,
                 SqlAgentToolType.Postgres,
                 SqlAgentToolType.Postgres,
@@ -216,4 +217,16 @@ public class CoreSqlCompilerTests
                     new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }),
                 new SqlExecutionPlanPolicy()));
     }
+
+    private static CompiledSqlCommand Compile(
+        QueryDefinition definition,
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        SqlExecutionPlanPolicy executionPolicy) =>
+        CoreSqlCompiler.CreateDefault().Compile(
+            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), sourceDialect),
+            targetProvider,
+            validationContext,
+            executionPolicy);
 }
