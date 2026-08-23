@@ -27,7 +27,8 @@ public sealed record SqlIdentifier(
 public sealed record IdentifierPart(
     string Value,
     bool WasQuoted,
-    SourceSpan Span)
+    SourceSpan Span,
+    bool PreserveSpelling = false)
 {
     /// <summary>
     /// Compatibility conversion for structured DTOs and programmatic AST construction. A plain
