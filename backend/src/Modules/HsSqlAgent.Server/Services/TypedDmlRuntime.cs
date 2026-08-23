@@ -1,18 +1,18 @@
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 
 namespace HsSqlAgent.Server.Services;
 
 /// <summary>
-/// Server-side typed DML boundary. The MCP layer supplies the parsed definition, current security
-/// policy and table authorization; this service owns immutable plan construction, preview and commit
-/// revalidation against an explicit provider and never depends on legacy strategies.
+/// Server-side typed DML boundary. The MCP layer supplies a parser-native Core statement, current
+/// security policy and table authorization; this service owns immutable plan construction, preview
+/// and commit revalidation against an explicit provider and never depends on transport DTOs or
+/// legacy strategies.
 /// </summary>
 public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
@@ -25,17 +25,17 @@ public sealed class TypedDmlRuntime(
     public async Task<TypedDmlApprovalSession> PreviewAsync(
         ISqlProvider provider,
         string connectionString,
-        DmlDefinition definition,
+        ParsedStatement parsedMutation,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(parsedMutation);
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        if (definition.Operation is not (DmlOperation.Update or DmlOperation.Delete))
+        if (parsedMutation.Statement is not (UpdateStatement or DeleteStatement))
         {
             throw new NotSupportedException(
                 "The typed DML runtime currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
@@ -52,8 +52,7 @@ public sealed class TypedDmlRuntime(
 
         var plan = await new DmlPlanFactory(provider.Metadata).CreateAsync(
             connectionString,
-            definition,
-            provider.Type,
+            parsedMutation,
             provider.Type,
             validationContext,
             compilationPolicy,
