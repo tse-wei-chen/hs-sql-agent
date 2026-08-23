@@ -32,6 +32,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
+using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
@@ -118,6 +119,10 @@ public static class HsSqlAgentServiceExtensions
             options.SqlConcurrencyFailureMode,
             options.SqlConcurrencyKey,
             options.SqlConcurrencyLeaseSeconds);
+        services.AddDmlApprovalChallengeStore(
+            options.DmlApprovalStoreProvider,
+            options.DmlApprovalStoreConnectionString,
+            options.DmlApprovalStoreKeyPrefix);
         services.AddOutboundDeliverySync(
             options.OutboundDeliverySyncProvider,
             options.OutboundDeliverySyncConnectionString,
@@ -199,6 +204,8 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<ISqlConnectionStringFactory>(provider => provider.GetRequiredService<SqlStrategyFactory>());
         services.AddScoped<IDbSetterService, DbSetterService>();
         services.AddScoped<ITypedQueryRuntime, TypedQueryRuntime>();
+        services.AddSingleton(provider => new TypedDmlRuntime(
+            challengeStore: provider.GetRequiredService<IDmlApprovalChallengeStore>()));
 
         // --- Options ---
         services.Configure<JwtSettings>(jwt =>
@@ -455,7 +462,9 @@ public static class HsSqlAgentServiceExtensions
                                     sp.GetRequiredService<IAuditService>(),
                                     sp.GetRequiredService<IQueryValueParserService>(),
                                     sp.GetRequiredService<ISecurityPolicyRuntimeState>(),
-                                    sp.GetRequiredService<ISqlExecutionConcurrencyLimiter>());
+                                    sp.GetRequiredService<ISqlExecutionConcurrencyLimiter>(),
+                                    sp.GetRequiredService<ITypedQueryRuntime>(),
+                                    sp.GetRequiredService<TypedDmlRuntime>());
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
                                 return await proxy.Execute(json, server, ct2);
                             });
@@ -542,5 +551,4 @@ internal class CustomAIFunction : AIFunction
     protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         => await _handler(arguments, cancellationToken);
 }
-
 
