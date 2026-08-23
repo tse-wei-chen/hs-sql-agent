@@ -48,11 +48,8 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             new SqlExecutionPlanPolicy(policy.QueryMaxRows));
     }
 
-    /// <summary>
-    /// Compatibility helper for structured DTO entry points. The public runtime interface stays
-    /// parser-native; callers that own a DTO should map it before crossing the execution boundary.
-    /// </summary>
-    internal CompiledSqlCommand CompileStructured(
+    [Obsolete("Structured DTO callers should map to ParsedStatement before compilation.")]
+    public CompiledSqlCommand Compile(
         ISqlProvider provider,
         QueryDefinition definition,
         SqlAgentToolType sourceDialect,
