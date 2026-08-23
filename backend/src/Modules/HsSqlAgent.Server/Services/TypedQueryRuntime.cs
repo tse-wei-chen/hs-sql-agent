@@ -16,6 +16,15 @@ public interface ITypedQueryRuntime
     Task<QueryExecutionResult> ExecuteAsync(
         ISqlProvider provider,
         string connectionString,
+        ParsedStatement parsed,
+        SecurityPolicyModel policy,
+        IReadOnlySet<string>? allowedTables,
+        CancellationToken cancellationToken = default);
+
+    [Obsolete("Transport DTO callers should map/parse to ParsedStatement before entering the query runtime.")]
+    Task<QueryExecutionResult> ExecuteAsync(
+        ISqlProvider provider,
+        string connectionString,
         QueryDefinition definition,
         SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
@@ -24,27 +33,21 @@ public interface ITypedQueryRuntime
 }
 
 /// <summary>
-/// Server-side SELECT execution boundary. Callers provide an explicit provider, source dialect,
-/// current security policy and table authorization. The transport DTO is mapped to an independent
-/// Core ParsedStatement before entering the compiler pipeline; execution receives only the final
-/// immutable command and has no dependency on legacy strategies.
+/// Server-side SELECT execution boundary. Production raw-SQL callers pass a parser-native
+/// <see cref="ParsedStatement"/>; structured DTO callers may use the compatibility overload while
+/// migration completes. Compilation and execution after this boundary never depend on transport DTOs.
 /// </summary>
 public sealed class TypedQueryRuntime : ITypedQueryRuntime
 {
     public CompiledSqlCommand Compile(
         ISqlProvider provider,
-        QueryDefinition definition,
-        SqlAgentToolType sourceDialect,
+        ParsedStatement parsed,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(parsed);
         ArgumentNullException.ThrowIfNull(policy);
-
-        var parsed = new ParsedStatement(
-            QueryDefinitionCoreMapper.Map(definition),
-            sourceDialect);
 
         return CoreSqlCompiler.CreateDefault().Compile(
             parsed,
@@ -55,24 +58,36 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             new SqlExecutionPlanPolicy(policy.QueryMaxRows));
     }
 
+    [Obsolete("Transport DTO callers should map/parse to ParsedStatement before entering the query runtime.")]
+    public CompiledSqlCommand Compile(
+        ISqlProvider provider,
+        QueryDefinition definition,
+        SqlAgentToolType sourceDialect,
+        SecurityPolicyModel policy,
+        IReadOnlySet<string>? allowedTables)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        return Compile(
+            provider,
+            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), sourceDialect),
+            policy,
+            allowedTables);
+    }
+
     public async Task<QueryExecutionResult> ExecuteAsync(
         ISqlProvider provider,
         string connectionString,
-        QueryDefinition definition,
-        SqlAgentToolType sourceDialect,
+        ParsedStatement parsed,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(parsed);
+        ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        var command = Compile(
-            provider,
-            definition,
-            sourceDialect,
-            policy,
-            allowedTables);
+        var command = Compile(provider, parsed, policy, allowedTables);
         var executor = new CompiledSqlCommandExecutor(provider.Connections);
         try
         {
@@ -86,6 +101,26 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         {
             throw provider.Errors.Map(ex, "query");
         }
+    }
+
+    [Obsolete("Transport DTO callers should map/parse to ParsedStatement before entering the query runtime.")]
+    public Task<QueryExecutionResult> ExecuteAsync(
+        ISqlProvider provider,
+        string connectionString,
+        QueryDefinition definition,
+        SqlAgentToolType sourceDialect,
+        SecurityPolicyModel policy,
+        IReadOnlySet<string>? allowedTables,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        return ExecuteAsync(
+            provider,
+            connectionString,
+            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), sourceDialect),
+            policy,
+            allowedTables,
+            cancellationToken);
     }
 
     internal static string ComputePolicyVersion(
