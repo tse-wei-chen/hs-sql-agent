@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
@@ -9,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Moq;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -106,6 +108,72 @@ public class CustomSqlToolControllerTests
     }
 
     [Fact]
+    public async Task Publish_InsertValues_ShouldPassDefinitionValidation()
+    {
+        var controller = CreateController();
+        var tool = new CustomSqlTool
+        {
+            Id = 12,
+            Name = "insert_user",
+            Description = "Insert one user",
+            Type = "DML",
+            SqlTemplate = "INSERT INTO public.users (id) VALUES ({{id}})",
+            ParametersJson = """[{"name":"id","type":"number"}]""",
+            DbManagementId = 3
+        };
+        _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
+        _toolServiceMock.Setup(s => s.PublishAsync(tool.Id, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tool);
+        var policy = new Mock<ISecurityPolicyRuntimeState>();
+        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        var dbService = CreateDbService(3);
+
+        var result = await controller.Publish(
+            tool.Id,
+            policy.Object,
+            dbService.Object,
+            TestContext.Current.CancellationToken);
+
+        Assert.IsType<OkObjectResult>(result);
+        _toolServiceMock.Verify(
+            s => s.PublishAsync(tool.Id, It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Publish_InsertSelect_ShouldRemainFailClosed()
+    {
+        var controller = CreateController();
+        var tool = new CustomSqlTool
+        {
+            Id = 13,
+            Name = "copy_users",
+            Description = "Copy users",
+            Type = "DML",
+            SqlTemplate = "INSERT INTO public.users (id) SELECT id FROM public.pending_users",
+            DbManagementId = 3
+        };
+        _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
+        var policy = new Mock<ISecurityPolicyRuntimeState>();
+        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        var dbService = CreateDbService(3);
+
+        var result = await controller.Publish(
+            tool.Id,
+            policy.Object,
+            dbService.Object,
+            TestContext.Current.CancellationToken);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var json = JsonSerializer.Serialize(badRequest.Value);
+        Assert.Contains("INSERT ... SELECT", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", json, StringComparison.OrdinalIgnoreCase);
+        _toolServiceMock.Verify(
+            s => s.PublishAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task TestExecute_Query_UsesTypedRuntime()
     {
         var controller = CreateController();
@@ -160,16 +228,16 @@ public class CustomSqlToolControllerTests
     }
 
     [Fact]
-    public async Task TestExecute_InsertDml_FailsClosedDuringDefinitionValidation()
+    public async Task TestExecute_InsertValues_ReturnsTypedPreviewWithoutCommit()
     {
         var controller = CreateController();
         var tool = new CustomSqlTool
         {
-            Id = 12,
+            Id = 14,
             Name = "insert_user",
             Description = "Insert one user",
             Type = "DML",
-            SqlTemplate = "INSERT INTO users (id) VALUES ({{id}})",
+            SqlTemplate = "INSERT INTO public.users (id) VALUES ({{id}})",
             ParametersJson = """[{"name":"id","type":"number"}]""",
             DbManagementId = 3
         };
@@ -178,10 +246,29 @@ public class CustomSqlToolControllerTests
         var crypto = CreateCrypto();
         var providerFactory = new Mock<ISqlProviderFactory>();
         var connectionStringFactory = new Mock<ISqlConnectionStringFactory>();
+        var metadata = new Mock<IProviderMetadataReader>();
+        metadata.Setup(x => x.GetColumnsAsync(
+                "connection",
+                "public",
+                "users",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new DatabaseColumnMetadata("public", "users", "id", "integer", false)
+            ]);
+        var connections = new Mock<IDbConnectionFactory>(MockBehavior.Strict);
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        provider.SetupGet(x => x.Metadata).Returns(metadata.Object);
+        provider.SetupGet(x => x.Connections).Returns(connections.Object);
+        providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        connectionStringFactory.Setup(x => x.BuildConnectionString(
+                SqlAgentToolType.Postgres,
+                It.IsAny<BuildDbConnectionModelBase>()))
+            .Returns("connection");
         var policy = new Mock<ISecurityPolicyRuntimeState>();
-        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel { DmlMaxAffectedRows = 1 });
         var limiter = CreateLimiter();
-        var typedQueryRuntime = new Mock<ITypedQueryRuntime>();
+        var typedQueryRuntime = new Mock<ITypedQueryRuntime>(MockBehavior.Strict);
 
         var result = await controller.TestExecute(
             new CustomToolTestExecuteRequest(tool.Id, new Dictionary<string, object?> { ["id"] = 1 }),
@@ -195,13 +282,14 @@ public class CustomSqlToolControllerTests
             typedQueryRuntime.Object,
             TestContext.Current.CancellationToken);
 
-        Assert.IsType<BadRequestObjectResult>(result);
-        providerFactory.Verify(
-            x => x.GetProvider(It.IsAny<SqlAgentToolType>()),
-            Times.Never);
-        crypto.Verify(
-            x => x.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
-            Times.Never);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var json = JsonSerializer.Serialize(ok.Value);
+        Assert.Contains("\"success\":true", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Insert", json, StringComparison.Ordinal);
+        Assert.Contains("\"affectedRows\":1", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"committed\":false", json, StringComparison.OrdinalIgnoreCase);
+        connections.Verify(x => x.Create(It.IsAny<string>()), Times.Never);
+        metadata.VerifyAll();
         typedQueryRuntime.VerifyNoOtherCalls();
     }
 
