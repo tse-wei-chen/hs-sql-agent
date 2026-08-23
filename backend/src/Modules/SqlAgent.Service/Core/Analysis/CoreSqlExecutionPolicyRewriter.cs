@@ -49,8 +49,10 @@ public sealed class CoreSqlExecutionPolicyRewriter : ISqlExecutionPolicyRewriter
         };
     }
 
-    private static int ClampLimit(int? requested, int maxRows) =>
-        requested is > 0 and <= int.MaxValue
-            ? Math.Min(requested.Value, maxRows)
-            : maxRows;
+    private static int ClampLimit(int? requested, int maxRows) => requested switch
+    {
+        0 => 0,
+        > 0 => Math.Min(requested.Value, maxRows),
+        _ => maxRows
+    };
 }
