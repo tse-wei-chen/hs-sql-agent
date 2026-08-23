@@ -20,22 +20,12 @@ public interface ITypedQueryRuntime
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default);
-
-    [Obsolete("Transport DTO callers should map/parse to ParsedStatement before entering the query runtime.")]
-    Task<QueryExecutionResult> ExecuteAsync(
-        ISqlProvider provider,
-        string connectionString,
-        QueryDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SecurityPolicyModel policy,
-        IReadOnlySet<string>? allowedTables,
-        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
 /// Server-side SELECT execution boundary. Production raw-SQL callers pass a parser-native
-/// <see cref="ParsedStatement"/>; structured DTO callers may use the compatibility overload while
-/// migration completes. Compilation and execution after this boundary never depend on transport DTOs.
+/// <see cref="ParsedStatement"/>. Compilation and execution after this boundary never depend on
+/// transport DTOs or legacy strategy translators.
 /// </summary>
 public sealed class TypedQueryRuntime : ITypedQueryRuntime
 {
@@ -58,7 +48,7 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             new SqlExecutionPlanPolicy(policy.QueryMaxRows));
     }
 
-    [Obsolete("Transport DTO callers should map/parse to ParsedStatement before entering the query runtime.")]
+    [Obsolete("Structured DTO callers should map to ParsedStatement before compilation.")]
     public CompiledSqlCommand Compile(
         ISqlProvider provider,
         QueryDefinition definition,
@@ -101,26 +91,6 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         {
             throw provider.Errors.Map(ex, "query");
         }
-    }
-
-    [Obsolete("Transport DTO callers should map/parse to ParsedStatement before entering the query runtime.")]
-    public Task<QueryExecutionResult> ExecuteAsync(
-        ISqlProvider provider,
-        string connectionString,
-        QueryDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SecurityPolicyModel policy,
-        IReadOnlySet<string>? allowedTables,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(definition);
-        return ExecuteAsync(
-            provider,
-            connectionString,
-            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), sourceDialect),
-            policy,
-            allowedTables,
-            cancellationToken);
     }
 
     internal static string ComputePolicyVersion(
