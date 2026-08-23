@@ -1,3 +1,4 @@
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -34,11 +35,13 @@ public class CoreZeroLimitSafetyTests
             SelectColumns = [new FieldSelectCondition { FieldName = "id" }],
             Limit = 0
         };
+        var parsed = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            SqlAgentToolType.Postgres);
 
         var error = Assert.Throws<InvalidOperationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(
-                definition,
-                SqlAgentToolType.Postgres,
+                parsed,
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1"),
                 new SqlExecutionPlanPolicy(QueryMaxRows: 100)));
