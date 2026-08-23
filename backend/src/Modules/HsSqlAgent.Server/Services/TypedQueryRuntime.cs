@@ -3,6 +3,7 @@ using System.Text;
 using Admin.Service.Models;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -24,8 +25,9 @@ public interface ITypedQueryRuntime
 
 /// <summary>
 /// Server-side SELECT execution boundary. Callers provide an explicit provider, source dialect,
-/// current security policy and table authorization. The runtime compiles through the Core pipeline
-/// and executes only the resulting immutable command; it has no dependency on legacy strategies.
+/// current security policy and table authorization. The transport DTO is mapped to an independent
+/// Core ParsedStatement before entering the compiler pipeline; execution receives only the final
+/// immutable command and has no dependency on legacy strategies.
 /// </summary>
 public sealed class TypedQueryRuntime : ITypedQueryRuntime
 {
@@ -40,9 +42,12 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(policy);
 
+        var parsed = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            sourceDialect);
+
         return CoreSqlCompiler.CreateDefault().Compile(
-            definition,
-            sourceDialect,
+            parsed,
             provider.Type,
             new SqlPlanValidationContext(
                 ComputePolicyVersion(policy, allowedTables),
