@@ -8,6 +8,7 @@ using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Moq;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -132,8 +133,7 @@ public class CustomSqlToolControllerTests
         typedQueryRuntime.Setup(x => x.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "connection",
-                It.Is<QueryDefinition>(q => q.TableName == "users"),
-                SqlAgentToolType.Postgres,
+                It.Is<ParsedStatement>(parsed => IsUsersQuery(parsed)),
                 runtimePolicy,
                 null,
                 It.IsAny<CancellationToken>()))
@@ -261,6 +261,11 @@ public class CustomSqlToolControllerTests
         Assert.IsType<CreatedAtActionResult>(result);
         _toolServiceMock.Verify(s => s.CreateToolAsync(tool), Times.Once);
     }
+
+    private static bool IsUsersQuery(ParsedStatement parsed)
+        => parsed.Statement is SelectStatement { From: NamedTableSource source }
+           && source.Name.Parts.Length == 1
+           && source.Name.Parts[0].Value.Equals("users", StringComparison.OrdinalIgnoreCase);
 
     private static Mock<IDbManagementService> CreateDbService(int id)
     {
