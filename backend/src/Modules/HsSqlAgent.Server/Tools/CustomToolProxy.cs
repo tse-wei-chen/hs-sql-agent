@@ -1,5 +1,5 @@
-using System.Text.Json;
 using System.Diagnostics;
+using System.Text.Json;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
@@ -8,6 +8,8 @@ using HsSqlAgent.Server.Services;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
@@ -71,9 +73,10 @@ public class CustomToolProxy(
         }
 
         CustomSqlTool? tool = null;
-        QueryDefinition? auditQuery = null;
+        ParsedStatement? auditQuery = null;
+        QueryFacts? auditQueryFacts = null;
         DmlDefinition? auditDml = null;
-        string renderedSql = "";
+        string renderedSql = string.Empty;
         try
         {
             ValidateToolAccess();
@@ -85,6 +88,7 @@ public class CustomToolProxy(
                 await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
                 return error;
             }
+
             tool = await _customSqlToolService.GetPublishedToolByNameAsync(
                 _name,
                 dbManagementId.Value,
@@ -112,23 +116,15 @@ public class CustomToolProxy(
 
             renderedSql = CustomToolSqlTemplate.Render(tool.SqlTemplate, tool.ParametersJson, parameters);
             var provider = _sqlProviderFactory.GetProvider(dbType);
-
             string result;
-            bool isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);
-            bool isDml = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
+            var isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);
+            var isDml = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
 
             if (isQuery)
             {
-                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(renderedSql), dbType);
-                auditQuery = queryDef;
-
-                var qErrors = DefinitionValidator.Validate(queryDef);
-                if (qErrors.Count > 0)
-                {
-                    result = "Validation failed:\n" + string.Join("\n", qErrors);
-                    await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", result);
-                    return result;
-                }
+                var parsedQuery = CoreSqlTextParser.ParseQuery(renderedSql, dbType);
+                auditQuery = parsedQuery;
+                auditQueryFacts = new SqlAstBinder().Bind(parsedQuery).Facts;
 
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
@@ -137,8 +133,7 @@ public class CustomToolProxy(
                     var execution = await _typedQueryRuntime.ExecuteAsync(
                         provider,
                         sqlConfig.ConnectionString,
-                        queryDef,
-                        dbType,
+                        parsedQuery,
                         _securityPolicyRuntimeState.GetCurrent(),
                         ResolveTableWhitelist(),
                         cancellationToken);
@@ -150,7 +145,6 @@ public class CustomToolProxy(
             {
                 var dmlDef = SqlDefinitionParser.ParseDml(renderedSql, dbType);
                 auditDml = dmlDef;
-
                 var dmlErrors = DefinitionValidator.Validate(dmlDef);
                 if (dmlErrors.Count > 0)
                 {
@@ -226,7 +220,7 @@ public class CustomToolProxy(
                     AffectedRows = isDml ? dmlAffectedRows : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
                     Definition = isQuery && auditQuery != null
-                        ? DescribeQuery(auditQuery)
+                        ? DescribeQuery(auditQuery, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 $"Type: {tool.Type}",
@@ -250,33 +244,34 @@ public class CustomToolProxy(
                     AffectedRows = dmlAffectedRows,
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQuery != null
-                        ? DescribeQuery(auditQuery)
+                        ? DescribeQuery(auditQuery, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 ex.Message,
                 cancellationToken);
             var toolType = tool?.Type ?? "Unknown";
-            var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase) ? "execute_query_sql" : "execute_dml_sql";
+            var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase)
+                ? "execute_query_sql"
+                : "execute_dml_sql";
             return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
         }
     }
 
-    private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs)
-        => Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
+    private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
+        Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
-    private static string DescribeQuery(QueryDefinition definition)
-        => JsonSerializer.Serialize(new
+    private static string DescribeQuery(ParsedStatement parsed, QueryFacts? facts) =>
+        JsonSerializer.Serialize(new
         {
-            definition.TableName,
-            SelectColumnCount = definition.SelectColumns?.Count ?? 0,
-            WhereConditionCount = definition.WhereColumnsAndValues?.Count ?? 0,
-            JoinCount = definition.Joins?.Count ?? 0,
-            definition.Limit,
-            definition.Offset
+            SourceDialect = parsed.SourceDialect.ToString(),
+            Span = new { parsed.Statement.Span.Start, parsed.Statement.Span.End },
+            ReferencedTables = facts?.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray() ?? [],
+            facts?.ContainsCte,
+            facts?.ContainsSubquery
         });
 
-    private static string DescribeDml(DmlDefinition definition)
-        => JsonSerializer.Serialize(new
+    private static string DescribeDml(DmlDefinition definition) =>
+        JsonSerializer.Serialize(new
         {
             Operation = definition.Operation.ToString(),
             definition.TableName,
@@ -301,7 +296,7 @@ public class CustomToolProxy(
     {
         var context = _httpContextAccessor.HttpContext;
         return context?.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var value) == true
-            && value is int id
+               && value is int id
             ? id
             : null;
     }
@@ -312,7 +307,8 @@ public class CustomToolProxy(
         if (context == null) return null;
         var tableWhitelist = context.Items[McpContextItemKeys.TableWhitelist] as string;
         if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
-        return tableWhitelist.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        return tableWhitelist
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -322,7 +318,8 @@ public class CustomToolProxy(
         if (context == null) return;
         var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string;
         if (string.IsNullOrWhiteSpace(allowedTools)) return;
-        var allowed = allowedTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        var allowed = allowedTools
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(x => string.Equals(x, _name, StringComparison.OrdinalIgnoreCase));
         if (!allowed)
             throw new UnauthorizedAccessException($"API key does not have permission to use tool: {_name}");
@@ -344,6 +341,6 @@ internal sealed class McpDmlApprovalClient(McpServer server) : IDmlApprovalClien
 
     public ValueTask<ElicitResult> ElicitAsync(
         ElicitRequestParams request,
-        CancellationToken cancellationToken)
-        => server.ElicitAsync(request, cancellationToken);
+        CancellationToken cancellationToken) =>
+        server.ElicitAsync(request, cancellationToken);
 }
