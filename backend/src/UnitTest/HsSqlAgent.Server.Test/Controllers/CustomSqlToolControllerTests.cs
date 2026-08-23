@@ -283,11 +283,14 @@ public class CustomSqlToolControllerTests
             TestContext.Current.CancellationToken);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var json = JsonSerializer.Serialize(ok.Value);
-        Assert.Contains("\"success\":true", json, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Insert", json, StringComparison.Ordinal);
-        Assert.Contains("\"affectedRows\":1", json, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("\"committed\":false", json, StringComparison.OrdinalIgnoreCase);
+        using var outer = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        Assert.True(outer.RootElement.GetProperty("success").GetBoolean());
+        var data = outer.RootElement.GetProperty("data").GetString();
+        Assert.NotNull(data);
+        using var preview = JsonDocument.Parse(data!);
+        Assert.Equal("Insert", preview.RootElement.GetProperty("operation").GetString());
+        Assert.Equal(1, preview.RootElement.GetProperty("affectedRows").GetInt32());
+        Assert.False(preview.RootElement.GetProperty("committed").GetBoolean());
         connections.Verify(x => x.Create(It.IsAny<string>()), Times.Never);
         metadata.VerifyAll();
         typedQueryRuntime.VerifyNoOtherCalls();
