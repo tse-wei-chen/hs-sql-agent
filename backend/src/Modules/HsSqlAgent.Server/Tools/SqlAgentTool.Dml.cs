@@ -13,16 +13,17 @@ namespace HsSqlAgent.Server.Tools;
 public partial class SqlAgentTool
 {
     [McpServerTool, Description(@"
-        Execute one UPDATE or DELETE SQL statement through the typed DML approval pipeline.
+        Execute one UPDATE, DELETE, or INSERT VALUES SQL statement through the typed DML approval pipeline.
         The server parses SQL directly into the Core AST, binds and validates it, compiles an immutable
-        mutation command, previews the exact primary-key row set, and presents it for interactive approval.
+        mutation command, and presents the exact impact for interactive approval.
 
-        Commit revalidates the current security policy, table authorization and row identities inside
-        the same transaction before executing the already-approved compiled command. INSERT remains
-        unavailable until its production approval semantics are defined.
+        UPDATE/DELETE preview and commit bind approval to the exact primary-key row set and revalidate
+        row identities inside the transaction. INSERT VALUES preview binds approval to the immutable
+        literal payload and exact compiled command; commit verifies the approved payload row count.
+        INSERT ... SELECT remains unavailable until source-rowset approval semantics are defined.
     ")]
     public async Task<string> ExecuteDmlSql(
-        [Description("A single UPDATE or DELETE SQL statement to parse, validate, preview, and approve.")]
+        [Description("A single UPDATE, DELETE, or INSERT VALUES SQL statement to parse, validate, preview, and approve.")]
         string sql,
         McpServer server,
         CancellationToken cancellationToken)
@@ -43,10 +44,12 @@ public partial class SqlAgentTool
 
             parsedMutation = CoreSqlTextParser.ParseDml(sql, dbType);
             var descriptor = DescribeMutation(parsedMutation);
-            if (parsedMutation.Statement is not (UpdateStatement or DeleteStatement))
+            if (!IsSupportedProductionDml(parsedMutation.Statement))
             {
                 throw new NotSupportedException(
-                    "The production typed DML path currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
+                    parsedMutation.Statement is InsertStatement
+                        ? "The production typed DML path supports INSERT VALUES only. INSERT ... SELECT remains fail-closed until source-rowset approval semantics are defined."
+                        : $"The production typed DML path does not support statement '{parsedMutation.Statement.GetType().Name}'.");
             }
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
@@ -80,6 +83,9 @@ public partial class SqlAgentTool
                 return execution.Result;
             }
 
+            var validationDetail = descriptor.Operation == "INSERT"
+                ? "exact-payload approval validation"
+                : "typed policy and row-set revalidation";
             await WriteDmlAuditAsync(
                 parsedMutation,
                 "success",
@@ -87,7 +93,7 @@ public partial class SqlAgentTool
                 stopwatch,
                 approvalWaitDurationMs,
                 affectedRowCount,
-                $"Operation: {descriptor.Operation} (committed after typed policy and row-set revalidation)",
+                $"Operation: {descriptor.Operation} (committed after {validationDetail})",
                 cancellationToken);
             return execution.Result;
         }
@@ -146,9 +152,16 @@ public partial class SqlAgentTool
     private static string DescribeDml(ParsedStatement parsedMutation)
     {
         var descriptor = DescribeMutation(parsedMutation);
-        var assignedColumns = parsedMutation.Statement is UpdateStatement updateStatement
-            ? updateStatement.Assignments.Select(assignment => IdentifierText(assignment.Column)).ToArray()
-            : [];
+        var valueFields = parsedMutation.Statement switch
+        {
+            UpdateStatement updateStatement => updateStatement.Assignments
+                .Select(assignment => IdentifierText(assignment.Column))
+                .ToArray(),
+            InsertStatement insertStatement => insertStatement.Columns
+                .Select(IdentifierText)
+                .ToArray(),
+            _ => []
+        };
         var hasWhere = parsedMutation.Statement switch
         {
             UpdateStatement updateWithPredicate => updateWithPredicate.Predicate is not null,
@@ -159,10 +172,15 @@ public partial class SqlAgentTool
         {
             descriptor.Operation,
             TableName = descriptor.Table,
-            ValueFields = assignedColumns,
+            ValueFields = valueFields,
             HasWhere = hasWhere
         });
     }
+
+    private static bool IsSupportedProductionDml(SqlStatement statement) =>
+        statement is UpdateStatement
+            or DeleteStatement
+            or InsertStatement { Source: InsertValuesSource };
 
     private static DmlDescriptor DescribeMutation(ParsedStatement parsedMutation) =>
         parsedMutation.Statement switch

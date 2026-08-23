@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Reflection;
+using System.Text.Json;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Tools;
 using SqlAgent.Service.Core.Binding;
@@ -59,11 +60,15 @@ public class SqlAgentToolTests
         var dmlMethod = typeof(SqlAgentTool).GetMethod(nameof(SqlAgentTool.ExecuteDmlSql));
 
         var queryDescription = queryMethod?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+        var dmlDescription = dmlMethod?.GetCustomAttribute<DescriptionAttribute>()?.Description;
         var queryParam = Assert.Single(queryMethod!.GetParameters());
         var dmlParams = dmlMethod!.GetParameters();
 
         Assert.NotNull(queryDescription);
         Assert.Contains("SELECT SQL", queryDescription);
+        Assert.NotNull(dmlDescription);
+        Assert.Contains("INSERT VALUES", dmlDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("INSERT ... SELECT", dmlDescription, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(typeof(string), queryParam.ParameterType);
         Assert.Equal("sql", queryParam.Name);
         Assert.Equal(3, dmlParams.Length);
@@ -73,6 +78,47 @@ public class SqlAgentToolTests
         Assert.Equal("server", dmlParams[1].Name);
         Assert.Equal(typeof(CancellationToken), dmlParams[2].ParameterType);
         Assert.Equal("cancellationToken", dmlParams[2].Name);
+    }
+
+    [Fact]
+    public void DmlToolBoundary_AllowsInsertValuesButRejectsInsertSelect()
+    {
+        var method = typeof(SqlAgentTool).GetMethod(
+            "IsSupportedProductionDml",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var insertValues = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (id, name) VALUES (1, 'Alice')",
+            SqlAgentToolType.Postgres);
+        var insertSelect = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (name) SELECT name FROM public.pending_users",
+            SqlAgentToolType.Postgres);
+
+        Assert.True((bool)method!.Invoke(null, [insertValues.Statement])!);
+        Assert.False((bool)method.Invoke(null, [insertSelect.Statement])!);
+    }
+
+    [Fact]
+    public void DmlAuditDescription_InsertValuesIncludesTargetColumns()
+    {
+        var method = typeof(SqlAgentTool).GetMethod(
+            "DescribeDml",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (id, name) VALUES (1, 'Alice')",
+            SqlAgentToolType.Postgres);
+
+        var json = Assert.IsType<string>(method!.Invoke(null, [parsed]));
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal("INSERT", root.GetProperty("Operation").GetString());
+        Assert.Equal("public.users", root.GetProperty("TableName").GetString());
+        Assert.Equal(
+            ["id", "name"],
+            root.GetProperty("ValueFields").EnumerateArray().Select(value => value.GetString()).ToArray());
+        Assert.False(root.GetProperty("HasWhere").GetBoolean());
     }
 
     [Fact]
