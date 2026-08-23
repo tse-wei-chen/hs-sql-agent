@@ -6,10 +6,10 @@ using SqlAgent.Service.Core.Compilation;
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
-/// Typed DML approval coordinator. Preview is read-only. Commit consumes a one-time approval,
-/// opens a transaction, re-queries the matched row identity set, compares the approved challenge,
-/// then executes exactly the compiled mutation command. Count equality alone is insufficient in
-/// Strict mode.
+/// Typed DML approval coordinator. UPDATE/DELETE preview is read-only and commit re-queries the
+/// matched row identity set before executing the exact compiled mutation. INSERT VALUES has no
+/// pre-existing row set, so preview exposes the immutable payload and commit is bound to the exact
+/// compiled command fingerprint plus approved payload row count. Every challenge is one-time.
 /// </summary>
 public sealed class DmlCoordinator(
     IDbConnectionFactory connectionFactory,
@@ -36,18 +36,22 @@ public sealed class DmlCoordinator(
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
+            return await PreviewInsertValuesAsync(plan, cancellationToken);
+
+        var matchCommand = RequireMatchCommand(plan);
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await _previewTransactionFactory.BeginAsync(
             connection,
-            plan.MatchQueryCommand.TargetProvider,
-            _transactionIsolationPolicy.PreviewIsolation(plan.MatchQueryCommand.TargetProvider),
+            matchCommand.TargetProvider,
+            _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
             cancellationToken);
 
         var rows = await QueryRowsAsync(
             connection,
             transaction,
-            plan.MatchQueryCommand,
+            matchCommand,
             cancellationToken);
 
         await transaction.RollbackAsync(cancellationToken);
@@ -59,19 +63,7 @@ public sealed class DmlCoordinator(
         }
 
         var rowSetFingerprint = ComputeRowSetFingerprint(plan, rows);
-        var now = _timeProvider.GetUtcNow();
-        var ttl = plan.ApprovalTtl > TimeSpan.Zero
-            ? plan.ApprovalTtl
-            : TimeSpan.FromMinutes(5);
-        var challenge = new DmlApprovalChallenge(
-            plan.PlanFingerprint,
-            rowSetFingerprint,
-            rows.Count,
-            plan.PolicyVersion,
-            now,
-            now.Add(ttl),
-            Guid.NewGuid().ToString("N"));
-
+        var challenge = CreateChallenge(plan, rowSetFingerprint, rows.Count);
         await _challengeStore.RegisterAsync(challenge, cancellationToken);
 
         return new DmlPreview(
@@ -106,10 +98,21 @@ public sealed class DmlCoordinator(
 
         try
         {
+            if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
+            {
+                return await CommitInsertValuesAsync(
+                    connection,
+                    transaction,
+                    plan,
+                    approvedChallenge,
+                    cancellationToken);
+            }
+
+            var matchCommand = RequireMatchCommand(plan);
             var currentRows = await QueryRowsAsync(
                 connection,
                 transaction,
-                plan.MatchQueryCommand,
+                matchCommand,
                 cancellationToken);
 
             if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
@@ -165,6 +168,80 @@ public sealed class DmlCoordinator(
         }
     }
 
+    private async Task<DmlPreview> PreviewInsertValuesAsync(
+        ValidatedDmlPlan plan,
+        CancellationToken cancellationToken)
+    {
+        var affectedRows = plan.InsertRows.Length;
+        if (plan.MaxAffectedRows > 0 && affectedRows > plan.MaxAffectedRows)
+        {
+            throw new UnauthorizedAccessException(
+                $"Security policy denied INSERT: rowCount={affectedRows} exceeds maximum {plan.MaxAffectedRows}.");
+        }
+
+        var challenge = CreateChallenge(plan, rowSetFingerprint: null, affectedRows);
+        await _challengeStore.RegisterAsync(challenge, cancellationToken);
+
+        return new DmlPreview(
+            plan.Operation,
+            plan.TableName,
+            affectedRows,
+            plan.InsertRows
+                .Take(PreviewRowLimit)
+                .Select(row => (IReadOnlyDictionary<string, object?>)row)
+                .ToImmutableArray(),
+            challenge);
+    }
+
+    private static async Task<DmlCommitResult> CommitInsertValuesAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        ValidatedDmlPlan plan,
+        DmlApprovalChallenge approvedChallenge,
+        CancellationToken cancellationToken)
+    {
+        var affected = await ExecuteAsync(
+            connection,
+            transaction,
+            plan.MutationCommand,
+            cancellationToken);
+
+        if (affected != approvedChallenge.AffectedRows)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new DmlCommitResult(
+                false,
+                0,
+                $"INSERT execution cancelled: approved payload row count changed " +
+                $"(approved={approvedChallenge.AffectedRows}, executed={affected}).");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new DmlCommitResult(
+            true,
+            affected,
+            "INSERT VALUES committed after exact-plan approval validation.");
+    }
+
+    private DmlApprovalChallenge CreateChallenge(
+        ValidatedDmlPlan plan,
+        string? rowSetFingerprint,
+        int affectedRows)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var ttl = plan.ApprovalTtl > TimeSpan.Zero
+            ? plan.ApprovalTtl
+            : TimeSpan.FromMinutes(5);
+        return new DmlApprovalChallenge(
+            plan.PlanFingerprint,
+            rowSetFingerprint,
+            affectedRows,
+            plan.PolicyVersion,
+            now,
+            now.Add(ttl),
+            Guid.NewGuid().ToString("N"));
+    }
+
     private void ValidateChallenge(
         ValidatedDmlPlan plan,
         DmlApprovalChallenge challenge)
@@ -183,6 +260,16 @@ public sealed class DmlCoordinator(
             throw new InvalidOperationException("DML plan changed after approval.");
         if (plan.MaxAffectedRows > 0 && challenge.AffectedRows > plan.MaxAffectedRows)
             throw new InvalidOperationException("DML approval exceeds the validated maximum affected row count.");
+
+        if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
+        {
+            if (challenge.RowSetFingerprint is not null)
+                throw new InvalidOperationException("INSERT VALUES approval must not contain a row-set fingerprint.");
+            if (challenge.AffectedRows != plan.InsertRows.Length)
+                throw new InvalidOperationException("INSERT VALUES approved row count does not match the immutable payload.");
+            return;
+        }
+
         if (plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict
             && string.IsNullOrWhiteSpace(challenge.RowSetFingerprint))
         {
@@ -205,10 +292,16 @@ public sealed class DmlCoordinator(
             throw new InvalidOperationException(
                 $"DML mutation command has invalid kind {plan.MutationCommand.Kind}.");
         }
-        if (plan.MatchQueryCommand.Kind != SqlStatementKind.Select)
-            throw new InvalidOperationException("DML match command must be a SELECT command.");
-        if (plan.MutationCommand.TargetProvider != plan.MatchQueryCommand.TargetProvider)
-            throw new InvalidOperationException("DML mutation and match commands target different providers.");
+
+        var expectedKind = plan.Operation switch
+        {
+            SqlAgent.Service.Enums.DmlOperation.Insert => SqlStatementKind.Insert,
+            SqlAgent.Service.Enums.DmlOperation.Update => SqlStatementKind.Update,
+            SqlAgent.Service.Enums.DmlOperation.Delete => SqlStatementKind.Delete,
+            _ => throw new InvalidOperationException($"Unsupported DML operation {plan.Operation}.")
+        };
+        if (plan.MutationCommand.Kind != expectedKind)
+            throw new InvalidOperationException("DML operation does not match its compiled mutation command kind.");
 
         var expectedFingerprint = DmlFingerprintService.ComputePlanFingerprint(
             plan.MutationCommand,
@@ -216,13 +309,50 @@ public sealed class DmlCoordinator(
         if (!string.Equals(expectedFingerprint, plan.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("Validated DML plan fingerprint does not match its mutation command.");
 
-        if (plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict
-            && plan.RowIdentityColumns.IsDefaultOrEmpty)
+        switch (plan.ApprovalMode)
         {
-            throw new InvalidOperationException(
-                "Strict DML approval requires one or more row identity columns.");
+            case DmlApprovalMode.InsertValues:
+                if (plan.Operation != SqlAgent.Service.Enums.DmlOperation.Insert)
+                    throw new InvalidOperationException("INSERT VALUES approval mode requires an INSERT operation.");
+                if (plan.MatchQueryCommand is not null)
+                    throw new InvalidOperationException("INSERT VALUES approval must not carry a row-set match command.");
+                if (!plan.RowIdentityColumns.IsDefaultOrEmpty)
+                    throw new InvalidOperationException("INSERT VALUES approval must not carry pre-existing row identity columns.");
+                if (plan.RowIdentityAssurance != DmlRowIdentityAssurance.CountOnly)
+                    throw new InvalidOperationException("INSERT VALUES approval uses exact payload validation, not strict row identity.");
+                if (plan.InsertRows.IsDefaultOrEmpty)
+                    throw new InvalidOperationException("INSERT VALUES approval requires one or more immutable preview rows.");
+                if (plan.MaxAffectedRows > 0 && plan.InsertRows.Length > plan.MaxAffectedRows)
+                    throw new InvalidOperationException("INSERT VALUES payload exceeds the validated maximum affected row count.");
+                return;
+
+            case DmlApprovalMode.RowSetMutation:
+                if (plan.Operation == SqlAgent.Service.Enums.DmlOperation.Insert)
+                    throw new InvalidOperationException("INSERT cannot use row-set mutation approval mode.");
+                if (plan.MatchQueryCommand is null)
+                    throw new InvalidOperationException("Row-set DML approval requires a SELECT match command.");
+                if (plan.MatchQueryCommand.Kind != SqlStatementKind.Select)
+                    throw new InvalidOperationException("DML match command must be a SELECT command.");
+                if (plan.MutationCommand.TargetProvider != plan.MatchQueryCommand.TargetProvider)
+                    throw new InvalidOperationException("DML mutation and match commands target different providers.");
+                if (!plan.InsertRows.IsDefaultOrEmpty)
+                    throw new InvalidOperationException("Row-set DML approval must not carry INSERT preview rows.");
+                if (plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict
+                    && plan.RowIdentityColumns.IsDefaultOrEmpty)
+                {
+                    throw new InvalidOperationException(
+                        "Strict DML approval requires one or more row identity columns.");
+                }
+                return;
+
+            default:
+                throw new InvalidOperationException($"Unsupported DML approval mode {plan.ApprovalMode}.");
         }
     }
+
+    private static CompiledSqlCommand RequireMatchCommand(ValidatedDmlPlan plan) =>
+        plan.MatchQueryCommand
+        ?? throw new InvalidOperationException("Row-set DML approval requires a match query command.");
 
     private static string? ComputeRowSetFingerprint(
         ValidatedDmlPlan plan,
