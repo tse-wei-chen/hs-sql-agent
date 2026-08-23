@@ -3,17 +3,15 @@ using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Lowering;
-using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Core.Pipeline;
 
 /// <summary>
 /// Compiler pipeline entry point. The typed boundary starts at <see cref="ParsedStatement"/> so
 /// binding, normalization, validation, policy rewriting and lowering cannot be invoked with a
-/// transport DTO. The QueryDefinition overload is a temporary strangler adapter only.
+/// transport DTO.
 /// </summary>
 public sealed class CoreSqlCompiler(
     ISqlBinder binder,
@@ -31,25 +29,6 @@ public sealed class CoreSqlCompiler(
         CoreSqlNormalizer.CreateDefault(),
         new CoreSqlPlanValidator(),
         new CoreSqlExecutionPolicyRewriter());
-
-    /// <summary>
-    /// Temporary DTO adapter retained while external structured-query callers migrate to an
-    /// explicit DTO-to-Core parsing/mapping boundary. It never mutates the supplied DTO.
-    /// </summary>
-    [Obsolete("Map QueryDefinition to ParsedStatement first, then call Compile(ParsedStatement, ...).")]
-    public CompiledSqlCommand Compile(
-        QueryDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider,
-        SqlPlanValidationContext validationContext,
-        SqlExecutionPlanPolicy executionPolicy)
-    {
-        ArgumentNullException.ThrowIfNull(definition);
-        var parsed = new ParsedStatement(
-            QueryDefinitionCoreMapper.Map(definition),
-            sourceDialect);
-        return Compile(parsed, targetProvider, validationContext, executionPolicy);
-    }
 
     public CompiledSqlCommand Compile(
         ParsedStatement parsed,
