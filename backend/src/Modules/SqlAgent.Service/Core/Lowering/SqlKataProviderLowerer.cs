@@ -100,7 +100,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             if (!cte.ColumnAliases.IsDefaultOrEmpty)
                 throw new SqlCompilationException("CTE column aliases are not yet supported by the Core SqlKata lowerer.");
-            query.With(IdentifierText(cte.Name), BuildQuery(cte.Query, compiler));
+            query.With(CteName(cte.Name, compiler), BuildQuery(cte.Query, compiler));
         }
 
         if (statement.From is not null)
@@ -179,13 +179,8 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         switch (source)
         {
             case NamedTableSource named:
-            {
-                var name = IdentifierText(named.Name);
-                query.From(named.Alias is null
-                    ? name
-                    : $"{name} AS {AliasText(named.Alias, compiler)}");
+                query.FromRaw(RenderNamedTableSource(named, compiler));
                 return;
-            }
             case DerivedTableSource derived:
                 query.From(BuildQuery(derived.Query, compiler), AliasText(derived.Alias, compiler));
                 return;
@@ -214,9 +209,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             switch (join.Source)
             {
                 case NamedTableSource named:
-                    query.CrossJoin(named.Alias is null
-                        ? IdentifierText(named.Name)
-                        : $"{IdentifierText(named.Name)} AS {AliasText(named.Alias, compiler)}");
+                    AddNamedJoin(query, named, type, predicate: null, compiler);
                     return;
                 case DerivedTableSource derived:
                     query.Join(
@@ -237,16 +230,8 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         switch (join.Source)
         {
             case NamedTableSource named:
-            {
-                var table = named.Alias is null
-                    ? IdentifierText(named.Name)
-                    : $"{IdentifierText(named.Name)} AS {AliasText(named.Alias, compiler)}";
-                query.Join(
-                    table,
-                    j => j.WhereRaw(predicate.Sql, predicate.Bindings.ToArray()),
-                    type);
+                AddNamedJoin(query, named, type, predicate, compiler);
                 return;
-            }
             case DerivedTableSource derived:
                 query.Join(
                     BuildQuery(derived.Query, compiler).As(AliasText(derived.Alias, compiler)),
@@ -257,6 +242,21 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 throw new SqlCompilationException(
                     $"Unsupported JOIN source '{join.Source.GetType().Name}'.");
         }
+    }
+
+    private static void AddNamedJoin(
+        Query query,
+        NamedTableSource source,
+        string type,
+        RenderedExpression? predicate,
+        Compiler compiler)
+    {
+        var backendJoin = new Join()
+            .FromRaw(RenderNamedTableSource(source, compiler))
+            .AsType(type);
+        if (predicate is not null)
+            backendJoin.WhereRaw(predicate.Sql, predicate.Bindings.ToArray());
+        query.AddComponent("join", new BaseJoin { Join = backendJoin });
     }
 
     private static void ApplyOrderBy(
@@ -714,7 +714,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 orderParts.Add(sql);
                 bindings.AddRange(rendered.Bindings);
             }
-            parts.Add("ORDER BY " + string.Join(", ", orderParts));
+            parts.Add("ORDER BY " + string.Join(" ", orderParts));
         }
 
         if (windowed.Window.Frame is not null)
@@ -826,44 +826,86 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         };
     }
 
-    private static RenderedExpression RenderIdentifier(SqlIdentifier identifier, Compiler compiler)
+    private static RenderedExpression RenderIdentifier(SqlIdentifier identifier, Compiler compiler) =>
+        new(
+            RenderIdentifierSql(identifier, compiler, allowWildcard: true),
+            ImmutableArray<object?>.Empty);
+
+    private static string RenderIdentifierSql(
+        SqlIdentifier identifier,
+        Compiler compiler,
+        bool allowWildcard)
     {
         if (identifier.Parts.IsDefaultOrEmpty)
             throw new SqlCompilationException("SQL identifier has no parts.");
-        foreach (var part in identifier.Parts)
+
+        var rendered = new string[identifier.Parts.Length];
+        for (var i = 0; i < identifier.Parts.Length; i++)
         {
-            if (part.Value != "*" && !Regex.IsMatch(
-                    part.Value,
-                    @"^[A-Za-z_][A-Za-z0-9_$]*$",
-                    RegexOptions.CultureInvariant))
+            var part = identifier.Parts[i];
+            var wildcard = part.Value == "*" && !part.WasQuoted;
+            if (wildcard)
             {
-                throw new SqlCompilationException($"Unsafe SQL identifier part '{part.Value}'.");
+                if (!allowWildcard || i != identifier.Parts.Length - 1)
+                    throw new SqlCompilationException("SQL wildcard is only valid as the final expression identifier part.");
+                rendered[i] = "*";
+                continue;
             }
+
+            ValidateIdentifierPart(part, "identifier");
+            rendered[i] = compiler.WrapValue(NormalizeIdentifierValue(part, compiler));
         }
 
-        var parts = identifier.Parts.Select(part =>
-            part.Value == "*"
-                ? part.Value
-                : compiler is PostgresCompiler && !part.WasQuoted
-                    ? part.Value.ToLowerInvariant()
-                    : part.Value);
-        return new RenderedExpression(
-            compiler.Wrap(string.Join('.', parts)),
-            ImmutableArray<object?>.Empty);
+        return string.Join('.', rendered);
+    }
+
+    private static string RenderNamedTableSource(NamedTableSource source, Compiler compiler)
+    {
+        var table = RenderIdentifierSql(source.Name, compiler, allowWildcard: false);
+        return source.Alias is null
+            ? table
+            : $"{table} AS {RenderAlias(source.Alias, compiler)}";
+    }
+
+    private static string CteName(SqlIdentifier identifier, Compiler compiler)
+    {
+        if (identifier.Parts.Length != 1)
+            throw new SqlCompilationException("CTE name must contain exactly one identifier part.");
+        return AliasText(identifier.Parts[0], compiler);
     }
 
     private static string AliasText(IdentifierPart alias, Compiler compiler)
     {
-        var value = alias.Value.Trim();
-        if (!Regex.IsMatch(value, @"^[A-Za-z_][A-Za-z0-9_$]*$", RegexOptions.CultureInvariant))
-            throw new SqlCompilationException($"Unsafe SQL alias '{alias.Value}'.");
-        if (compiler is PostgresCompiler && !alias.WasQuoted)
-            value = value.ToLowerInvariant();
-        return value;
+        ValidateIdentifierPart(alias, "alias");
+        return NormalizeIdentifierValue(alias, compiler);
     }
 
     private static string RenderAlias(IdentifierPart alias, Compiler compiler) =>
-        compiler.Wrap(AliasText(alias, compiler));
+        compiler.WrapValue(AliasText(alias, compiler));
+
+    private static void ValidateIdentifierPart(IdentifierPart part, string label)
+    {
+        if (part.WasQuoted)
+        {
+            if (part.Value.Length == 0 || part.Value.Any(char.IsControl))
+                throw new SqlCompilationException($"Unsafe quoted SQL {label} '{part.Value}'.");
+            return;
+        }
+
+        if (!Regex.IsMatch(part.Value, @"^[A-Za-z_][A-Za-z0-9_$]*$", RegexOptions.CultureInvariant))
+            throw new SqlCompilationException($"Unsafe SQL {label} '{part.Value}'.");
+    }
+
+    private static string NormalizeIdentifierValue(IdentifierPart part, Compiler compiler)
+    {
+        if (part.WasQuoted) return part.Value;
+        return compiler switch
+        {
+            PostgresCompiler => part.Value.ToLowerInvariant(),
+            OracleCompiler or FirebirdCompiler => part.Value.ToUpperInvariant(),
+            _ => part.Value
+        };
+    }
 
     private static void RequireArguments(FunctionCallExpr function, int count)
     {
