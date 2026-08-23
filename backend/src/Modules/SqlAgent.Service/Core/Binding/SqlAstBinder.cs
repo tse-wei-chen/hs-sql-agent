@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Binding;
 
@@ -14,11 +15,11 @@ public sealed class SqlAstBinder : ISqlBinder
     public BoundStatement Bind(ParsedStatement statement)
     {
         ArgumentNullException.ThrowIfNull(statement);
-        var state = new BindingState();
+        var state = new BindingState(statement.SourceDialect);
         var bound = BindStatement(
             statement.Statement,
             parentScope: null,
-            ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase),
+            ImmutableHashSet<string>.Empty.WithComparer(state.IdentifierComparer),
             state);
 
         return new BoundStatement(
@@ -57,7 +58,7 @@ public sealed class SqlAstBinder : ISqlBinder
         if (update.Assignments.IsDefaultOrEmpty)
             throw new InvalidOperationException("UPDATE requires at least one assignment.");
 
-        var scope = new BindingScope(state.NextScopeId++, parentScope);
+        var scope = new BindingScope(state.NextScopeId++, parentScope, state);
         var target = (NamedTableSource)BindSource(update.Target, scope, visibleCtes, state);
         var assignments = update.Assignments.Select(assignment =>
         {
@@ -88,7 +89,7 @@ public sealed class SqlAstBinder : ISqlBinder
         ImmutableHashSet<string> visibleCtes,
         BindingState state)
     {
-        var scope = new BindingScope(state.NextScopeId++, parentScope);
+        var scope = new BindingScope(state.NextScopeId++, parentScope, state);
         var target = (NamedTableSource)BindSource(delete.Target, scope, visibleCtes, state);
         return delete with
         {
@@ -108,7 +109,7 @@ public sealed class SqlAstBinder : ISqlBinder
         var head = BindSelect(query.Head, parentScope, inheritedCtes, state);
         var visibleCtes = inheritedCtes;
         foreach (var cte in query.Head.Ctes)
-            visibleCtes = visibleCtes.Add(Name(cte.Name));
+            visibleCtes = visibleCtes.Add(state.IdentifierKey(cte.Name));
 
         var operations = query.SetOperations
             .Select(operation => operation with
@@ -139,12 +140,12 @@ public sealed class SqlAstBinder : ISqlBinder
             {
                 var boundQuery = BindStatement(cte.Query, null, localCtes, state);
                 boundCtesBuilder.Add(cte with { Query = boundQuery });
-                localCtes = localCtes.Add(Name(cte.Name));
+                localCtes = localCtes.Add(state.IdentifierKey(cte.Name));
             }
         }
         var boundCtes = boundCtesBuilder.ToImmutable();
 
-        var scope = new BindingScope(state.NextScopeId++, parentScope);
+        var scope = new BindingScope(state.NextScopeId++, parentScope, state);
         var boundFrom = select.From is null
             ? null
             : BindSource(select.From, scope, localCtes, state);
@@ -189,7 +190,7 @@ public sealed class SqlAstBinder : ISqlBinder
             case NamedTableSource named:
             {
                 var tableName = Name(named.Name);
-                var isCte = visibleCtes.Contains(tableName);
+                var isCte = visibleCtes.Contains(state.IdentifierKey(named.Name));
                 if (!isCte) state.PhysicalTables.Add(tableName);
 
                 var symbol = new TableSymbol(
@@ -198,7 +199,7 @@ public sealed class SqlAstBinder : ISqlBinder
                     IsDerived: false,
                     IsCte: isCte,
                     named.Span);
-                scope.Add(symbol);
+                scope.AddNamed(symbol, named.Name, named.Alias);
                 RegisterAliasFact(symbol, scope.Id, state);
                 return named;
             }
@@ -215,7 +216,7 @@ public sealed class SqlAstBinder : ISqlBinder
                     IsDerived: true,
                     IsCte: false,
                     derived.Span);
-                scope.Add(symbol);
+                scope.AddDerived(symbol, derived.Alias);
                 RegisterAliasFact(symbol, scope.Id, state);
                 return derived with { Query = query };
             }
@@ -308,8 +309,9 @@ public sealed class SqlAstBinder : ISqlBinder
         if (parts.Length == 1)
             return new BoundColumnExpr(column.Name, scope.TryResolveSingleVisibleSource(), column.Span);
 
-        var qualifier = string.Join('.', parts.Take(parts.Length - 1).Select(p => p.Value));
-        var resolved = scope.ResolveQualifier(qualifier);
+        var qualifierParts = parts.Take(parts.Length - 1).ToArray();
+        var qualifier = string.Join('.', qualifierParts.Select(p => p.Value));
+        var resolved = scope.ResolveQualifier(qualifierParts);
         if (resolved is null)
             throw new InvalidOperationException(
                 $"Column '{Name(column.Name)}' references unknown table/alias qualifier '{qualifier}'.");
@@ -349,48 +351,87 @@ public sealed class SqlAstBinder : ISqlBinder
 
     private sealed class BindingState
     {
+        public BindingState(SqlAgentToolType sourceDialect)
+        {
+            SourceDialect = sourceDialect;
+            IdentifierComparer = sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
+                ? StringComparer.Ordinal
+                : StringComparer.OrdinalIgnoreCase;
+        }
+
+        private SqlAgentToolType SourceDialect { get; }
+        public StringComparer IdentifierComparer { get; }
         public HashSet<string> PhysicalTables { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<QueryAliasFact> AliasFacts { get; } = [];
         public int NextScopeId { get; set; }
         public bool ContainsSubquery { get; set; }
         public bool ContainsCte { get; set; }
+
+        public string IdentifierKey(SqlIdentifier identifier) => IdentifierKey(identifier.Parts);
+
+        public string IdentifierKey(IEnumerable<IdentifierPart> parts)
+        {
+            var builder = new System.Text.StringBuilder();
+            foreach (var part in parts)
+            {
+                var value = CanonicalPart(part);
+                builder.Append(value.Length).Append(':').Append(value).Append(';');
+            }
+            return builder.ToString();
+        }
+
+        private string CanonicalPart(IdentifierPart part)
+        {
+            if (part.WasQuoted) return part.Value;
+            return SourceDialect switch
+            {
+                SqlAgentToolType.Postgres => part.Value.ToLowerInvariant(),
+                SqlAgentToolType.Oracle or SqlAgentToolType.Firebird => part.Value.ToUpperInvariant(),
+                _ => part.Value
+            };
+        }
     }
 
-    private sealed class BindingScope(int id, BindingScope? parent)
+    private sealed class BindingScope(int id, BindingScope? parent, BindingState state)
     {
         private readonly List<TableSymbol> _sources = [];
-        private readonly Dictionary<string, List<TableSymbol>> _qualifiers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<TableSymbol>> _qualifiers = new(state.IdentifierComparer);
+        private readonly HashSet<string> _aliasKeys = new(state.IdentifierComparer);
 
         public int Id { get; } = id;
         public BindingScope? Parent { get; } = parent;
 
-        public void Add(TableSymbol symbol)
+        public void AddNamed(TableSymbol symbol, SqlIdentifier name, IdentifierPart? alias)
         {
-            if (!string.IsNullOrWhiteSpace(symbol.Alias)
-                && _sources.Any(existing =>
-                    !string.IsNullOrWhiteSpace(existing.Alias)
-                    && string.Equals(existing.Alias, symbol.Alias, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new InvalidOperationException(
-                    $"Duplicate table alias '{symbol.Alias}' in SQL scope {Id}.");
-            }
-
+            RegisterAlias(alias, symbol);
             _sources.Add(symbol);
-            AddQualifier(symbol.Name, symbol);
-            var lastDot = symbol.Name.LastIndexOf('.');
-            if (lastDot >= 0) AddQualifier(symbol.Name[(lastDot + 1)..], symbol);
-            if (!string.IsNullOrWhiteSpace(symbol.Alias)) AddQualifier(symbol.Alias, symbol);
+            AddQualifier(state.IdentifierKey(name), symbol);
+            if (!name.Parts.IsDefaultOrEmpty)
+                AddQualifier(state.IdentifierKey([name.Parts[^1]]), symbol);
+            if (alias is not null)
+                AddQualifier(state.IdentifierKey([alias]), symbol);
         }
 
-        public TableSymbol? ResolveQualifier(string qualifier)
+        public void AddDerived(TableSymbol symbol, IdentifierPart alias)
         {
-            if (_qualifiers.TryGetValue(qualifier, out var matches))
+            RegisterAlias(alias, symbol);
+            _sources.Add(symbol);
+            AddQualifier(state.IdentifierKey([alias]), symbol);
+        }
+
+        public TableSymbol? ResolveQualifier(IEnumerable<IdentifierPart> qualifierParts)
+        {
+            var key = state.IdentifierKey(qualifierParts);
+            if (_qualifiers.TryGetValue(key, out var matches))
             {
                 if (matches.Count != 1)
+                {
+                    var qualifier = string.Join('.', qualifierParts.Select(part => part.Value));
                     throw new InvalidOperationException($"Ambiguous table/alias qualifier '{qualifier}' in SQL scope {Id}.");
+                }
                 return matches[0];
             }
-            return Parent?.ResolveQualifier(qualifier);
+            return Parent?.ResolveQualifier(qualifierParts);
         }
 
         public TableSymbol? TryResolveSingleVisibleSource()
@@ -400,12 +441,23 @@ public sealed class SqlAstBinder : ISqlBinder
             return Parent?.TryResolveSingleVisibleSource();
         }
 
-        private void AddQualifier(string qualifier, TableSymbol symbol)
+        private void RegisterAlias(IdentifierPart? alias, TableSymbol symbol)
         {
-            if (!_qualifiers.TryGetValue(qualifier, out var matches))
+            if (alias is null) return;
+            var key = state.IdentifierKey([alias]);
+            if (!_aliasKeys.Add(key))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate table alias '{symbol.Alias}' in SQL scope {Id}.");
+            }
+        }
+
+        private void AddQualifier(string key, TableSymbol symbol)
+        {
+            if (!_qualifiers.TryGetValue(key, out var matches))
             {
                 matches = [];
-                _qualifiers[qualifier] = matches;
+                _qualifiers[key] = matches;
             }
             if (!matches.Contains(symbol)) matches.Add(symbol);
         }
