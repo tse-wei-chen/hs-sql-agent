@@ -14,13 +14,16 @@ namespace SqlAgent.Service.Core.Execution;
 public sealed class DmlCoordinator(
     IDbConnectionFactory connectionFactory,
     TimeProvider? timeProvider = null,
-    IDmlApprovalChallengeStore? challengeStore = null) : IDmlCoordinator
+    IDmlApprovalChallengeStore? challengeStore = null,
+    IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null) : IDmlCoordinator
 {
     private const int PreviewRowLimit = 20;
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
+    private readonly IDmlTransactionIsolationPolicy _transactionIsolationPolicy =
+        transactionIsolationPolicy ?? new StrictDmlTransactionIsolationPolicy();
 
     public async Task<DmlPreview> PreviewAsync(
         string connectionString,
@@ -32,7 +35,9 @@ public sealed class DmlCoordinator(
 
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(
+            _transactionIsolationPolicy.PreviewIsolation(plan.MatchQueryCommand.TargetProvider),
+            cancellationToken);
 
         var rows = await QueryRowsAsync(
             connection,
@@ -90,7 +95,9 @@ public sealed class DmlCoordinator(
 
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(
+            _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
+            cancellationToken);
 
         try
         {
