@@ -244,6 +244,10 @@ public sealed class SqlAstBinder : ISqlBinder
                 Left = BindExpr(binary.Left, scope, visibleCtes, state),
                 Right = BindExpr(binary.Right, scope, visibleCtes, state)
             },
+            FunctionCallExpr function when function.Name.Parts.Length != 1
+                || function.Name.Parts[0].WasQuoted =>
+                throw new InvalidOperationException(
+                    $"Quoted or qualified function identifier '{Name(function.Name)}' is not supported by the portable Core function registry."),
             FunctionCallExpr function => function with
             {
                 Arguments = function.Arguments.Select(argument => BindExpr(argument, scope, visibleCtes, state)).ToImmutableArray()
