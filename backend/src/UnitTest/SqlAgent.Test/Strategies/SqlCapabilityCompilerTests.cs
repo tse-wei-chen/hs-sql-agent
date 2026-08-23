@@ -1,4 +1,5 @@
 using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -336,8 +337,7 @@ public class SqlCapabilityCompilerTests
         SqlAgentToolType source,
         SqlAgentToolType target) =>
         CoreSqlCompiler.CreateDefault().Compile(
-            definition,
-            source,
+            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), source),
             target,
             new SqlPlanValidationContext("capability-test"),
             new SqlExecutionPlanPolicy());

@@ -3,11 +3,8 @@ using System.Text;
 using Admin.Service.Models;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 
 namespace HsSqlAgent.Server.Services;
 
@@ -23,8 +20,8 @@ public interface ITypedQueryRuntime
 }
 
 /// <summary>
-/// Server-side SELECT execution boundary. Production raw-SQL callers pass a parser-native
-/// <see cref="ParsedStatement"/>. Compilation and execution after this boundary never depend on
+/// Server-side SELECT execution boundary. Callers pass a parser-native or explicitly mapped
+/// <see cref="ParsedStatement"/>; compilation and execution after this boundary never depend on
 /// transport DTOs or legacy strategy translators.
 /// </summary>
 public sealed class TypedQueryRuntime : ITypedQueryRuntime
@@ -46,22 +43,6 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
                 ComputePolicyVersion(policy, allowedTables),
                 allowedTables),
             new SqlExecutionPlanPolicy(policy.QueryMaxRows));
-    }
-
-    [Obsolete("Structured DTO callers should map to ParsedStatement before compilation.")]
-    public CompiledSqlCommand Compile(
-        ISqlProvider provider,
-        QueryDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SecurityPolicyModel policy,
-        IReadOnlySet<string>? allowedTables)
-    {
-        ArgumentNullException.ThrowIfNull(definition);
-        return Compile(
-            provider,
-            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), sourceDialect),
-            policy,
-            allowedTables);
     }
 
     public async Task<QueryExecutionResult> ExecuteAsync(
