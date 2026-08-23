@@ -1,4 +1,6 @@
 using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Core.Mapping;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.SqlParsing;
 using Xunit;
@@ -20,7 +22,7 @@ public class ParserP0RegressionTests
         Assert.Equal("beta", join.Table);
         Assert.Equal("b", join.Alias);
 
-        var facts = QueryFactsBinder.Bind(definition);
+        var facts = BindFacts(definition);
         Assert.Contains("alpha", facts.ReferencedTables);
         Assert.Contains("beta", facts.ReferencedTables);
     }
@@ -38,7 +40,7 @@ public class ParserP0RegressionTests
         Assert.Equal(JoinType.Cross, join.Type);
         Assert.Equal("beta", join.Table);
 
-        var facts = QueryFactsBinder.Bind(definition);
+        var facts = BindFacts(definition);
         Assert.Contains("alpha", facts.ReferencedTables);
         Assert.Contains("beta", facts.ReferencedTables);
     }
@@ -55,5 +57,13 @@ public class ParserP0RegressionTests
 
         Assert.Contains("IN lists", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("scalar literals", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static QueryFacts BindFacts(SqlAgent.Service.Models.QueryDefinition definition)
+    {
+        var parsed = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            SqlAgentToolType.Postgres);
+        return new SqlAstBinder().Bind(parsed).Facts;
     }
 }
