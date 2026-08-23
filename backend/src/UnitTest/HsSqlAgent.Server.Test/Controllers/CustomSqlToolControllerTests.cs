@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Moq;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -130,7 +131,7 @@ public class CustomSqlToolControllerTests
         var limiter = CreateLimiter();
         var typedQueryRuntime = new Mock<ITypedQueryRuntime>();
         typedQueryRuntime.Setup(x => x.ExecuteAsync(
-                strategy.Object,
+                It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "connection",
                 It.Is<QueryDefinition>(q => q.TableName == "users"),
                 SqlAgentToolType.Postgres,
@@ -169,7 +170,7 @@ public class CustomSqlToolControllerTests
             Description = "Insert one user",
             Type = "DML",
             SqlTemplate = "INSERT INTO users (id) VALUES ({{id}})",
-            ParametersJson = """[{"name":"id","type":"number"}]""",
+            ParametersJson = """[{"name":"id","type":"number"}]"",
             DbManagementId = 3
         };
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
