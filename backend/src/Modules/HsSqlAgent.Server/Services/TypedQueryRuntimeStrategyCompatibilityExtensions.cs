@@ -12,7 +12,7 @@ namespace HsSqlAgent.Server.Services;
 /// Temporary call-site bridge while MCP/server entry points migrate from ISqlStrategyFactory to
 /// ISqlProviderFactory. TypedQueryRuntime itself is provider-native; new code must pass ISqlProvider.
 /// </summary>
-internal static class TypedQueryRuntimeStrategyCompatibilityExtensions
+public static class TypedQueryRuntimeStrategyCompatibilityExtensions
 {
     public static Task<QueryExecutionResult> ExecuteAsync(
         this ITypedQueryRuntime runtime,
