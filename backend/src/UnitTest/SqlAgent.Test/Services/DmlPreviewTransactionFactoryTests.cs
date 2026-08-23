@@ -66,17 +66,19 @@ public sealed class DmlPreviewTransactionFactoryTests
     [Fact]
     public async Task Sqlite_UsesPortableTransactionWithoutPretendingNativeReadOnly()
     {
+        var cancellationToken = TestContext.Current.CancellationToken;
         await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
+        await connection.OpenAsync(cancellationToken);
         var factory = new ProviderDmlPreviewTransactionFactory();
 
         await using var transaction = await factory.BeginAsync(
             connection,
             SqlAgentToolType.Sqlite,
-            IsolationLevel.Serializable);
+            IsolationLevel.Serializable,
+            cancellationToken);
 
         Assert.Equal(IsolationLevel.Serializable, transaction.IsolationLevel);
-        await transaction.RollbackAsync();
+        await transaction.RollbackAsync(cancellationToken);
     }
 
     [Fact]
@@ -89,7 +91,8 @@ public sealed class DmlPreviewTransactionFactoryTests
             factory.BeginAsync(
                 connection,
                 SqlAgentToolType.Firebird,
-                IsolationLevel.Serializable));
+                IsolationLevel.Serializable,
+                TestContext.Current.CancellationToken));
 
         Assert.Contains("FbConnection", error.Message, StringComparison.Ordinal);
     }

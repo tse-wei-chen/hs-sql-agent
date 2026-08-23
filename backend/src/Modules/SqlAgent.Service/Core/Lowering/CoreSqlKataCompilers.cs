@@ -17,7 +17,14 @@ internal static class CoreSqlKataPagination
     public static OffsetClause? Offset(SqlResult ctx, string engineCode) =>
         ctx.Query.GetOneComponent<OffsetClause>("offset", engineCode);
 
-    public static string? CompileAnsiLimitOffset(
+    /// <summary>
+    /// SqlKata's compiler contract historically uses null as the sentinel for an absent clause,
+    /// even though the override return type is annotated as non-nullable. Keep that upstream
+    /// behavior isolated here instead of spreading nullable suppressions through each compiler.
+    /// </summary>
+    public static string AbsentClause() => null!;
+
+    public static string CompileAnsiLimitOffset(
         SqlResult ctx,
         string engineCode,
         string placeholder)
@@ -25,7 +32,7 @@ internal static class CoreSqlKataPagination
         var limit = Limit(ctx, engineCode);
         var offset = Offset(ctx, engineCode);
         if (limit is null && offset is null)
-            return null;
+            return AbsentClause();
 
         if (offset is null)
         {
@@ -58,7 +65,7 @@ internal sealed class CoreMySqlCompiler : MySqlCompiler
         var limit = CoreSqlKataPagination.Limit(ctx, EngineCode);
         var offset = CoreSqlKataPagination.Offset(ctx, EngineCode);
         if (limit is null && offset is null)
-            return null;
+            return CoreSqlKataPagination.AbsentClause();
 
         if (offset is null)
         {
@@ -85,7 +92,7 @@ internal sealed class CoreSqliteCompiler : SqliteCompiler
         var limit = CoreSqlKataPagination.Limit(ctx, EngineCode);
         var offset = CoreSqlKataPagination.Offset(ctx, EngineCode);
         if (limit is null && offset is null)
-            return null;
+            return CoreSqlKataPagination.AbsentClause();
 
         if (limit is null)
         {
@@ -115,7 +122,7 @@ internal sealed class CoreOracleCompiler : OracleCompiler
         var limit = CoreSqlKataPagination.Limit(ctx, EngineCode);
         var offset = CoreSqlKataPagination.Offset(ctx, EngineCode);
         if (limit is null && offset is null)
-            return null;
+            return CoreSqlKataPagination.AbsentClause();
 
         var safeOrder = ctx.Query.HasComponent("order", EngineCode)
             ? string.Empty
