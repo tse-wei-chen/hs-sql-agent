@@ -117,7 +117,7 @@ public class SqlAgentToolTests
         Assert.Equal("public.users", root.GetProperty("TableName").GetString());
         Assert.Equal(
             ["id", "name"],
-            root.GetProperty("ValueFields").EnumerateArray().Select(value => value.GetString()).ToArray());
+            root.GetProperty("ValueFields").EnumerateArray().Select(value => value.GetString()!).ToArray());
         Assert.False(root.GetProperty("HasWhere").GetBoolean());
     }
 
