@@ -12,7 +12,26 @@ public sealed record NamedTableSource(
 public sealed record DerivedTableSource(
     SqlStatement Query,
     IdentifierPart Alias,
-    SourceSpan Span) : TableSource(Span);
+    SourceSpan Span) : TableSource(Span)
+{
+    /// <summary>
+    /// Structured DTOs and programmatic callers that supply a plain alias string have no source
+    /// quote metadata. Represent that alias explicitly as unquoted rather than flowing a nullable
+    /// user-defined conversion into this required-alias boundary.
+    /// </summary>
+    public DerivedTableSource(SqlStatement query, string alias, SourceSpan span)
+        : this(
+            query,
+            new IdentifierPart(
+                string.IsNullOrWhiteSpace(alias)
+                    ? throw new ArgumentException("Derived table alias cannot be empty.", nameof(alias))
+                    : alias.Trim(),
+                WasQuoted: false,
+                span),
+            span)
+    {
+    }
+}
 
 public sealed record SelectItem(SqlExpr Expression, IdentifierPart? Alias, SourceSpan Span) : SqlNode(Span);
 
