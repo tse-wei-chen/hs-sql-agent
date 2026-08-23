@@ -48,7 +48,11 @@ public sealed class StrategyBackedSqlProviderFactory : ISqlProviderFactory
     public IReadOnlyCollection<SqlAgentToolType> GetSupportedProviderTypes() =>
         _providers.Keys.ToArray();
 
-    internal static ISqlProvider CreateProvider(ISqlStrategy strategy)
+    /// <summary>
+    /// Temporary single-strategy bridge for call sites that have not yet switched to
+    /// ISqlProviderFactory. New production code should resolve providers through the factory.
+    /// </summary>
+    public static ISqlProvider CreateProvider(ISqlStrategy strategy)
     {
         ArgumentNullException.ThrowIfNull(strategy);
 
