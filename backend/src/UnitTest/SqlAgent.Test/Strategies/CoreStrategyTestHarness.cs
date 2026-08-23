@@ -13,51 +13,48 @@ namespace SqlAgent.Test.Strategies;
 
 /// <summary>
 /// Provider integration harness that exercises the canonical Core query pipeline against the
-/// provider implementation directly. The historical strategy contract remains only as a test
-/// registration detail; no strategy-to-provider adapter participates in compilation or execution.
+/// provider implementation directly. During the strangler migration the fixture must satisfy both
+/// the historical strategy contract and ISqlProvider at compile time; no runtime cast or
+/// strategy-to-provider adapter participates in compilation or execution.
 /// </summary>
 public sealed class CoreStrategyTestHarness<TStrategy>
-    where TStrategy : ISqlStrategy
+    where TStrategy : ISqlStrategy, ISqlProvider
 {
-    private readonly TStrategy _strategy;
-    private readonly ISqlProvider _provider;
+    private readonly TStrategy _provider;
     private readonly CoreSqlCompiler _compiler = CoreSqlCompiler.CreateDefault();
     private readonly CompiledSqlCommandExecutor _executor;
 
-    public CoreStrategyTestHarness(TStrategy strategy)
+    public CoreStrategyTestHarness(TStrategy provider)
     {
-        _strategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
-        _provider = strategy as ISqlProvider
-            ?? throw new InvalidOperationException(
-                $"Provider integration fixture {strategy.GetType().FullName} must implement {nameof(ISqlProvider)} directly.");
+        _provider = provider ?? throw new ArgumentNullException(nameof(provider));
         _executor = new CompiledSqlCommandExecutor(_provider.Connections);
     }
 
     public SqlAgentToolType DbType => _provider.Type;
 
     public string BuildConnectionString(BuildDbConnectionModelBase model) =>
-        _strategy.BuildConnectionString(model);
+        _provider.BuildConnectionString(model);
 
     public DbConnection CreateConnection(string connectionString) =>
-        _strategy.CreateConnection(connectionString);
+        _provider.CreateConnection(connectionString);
 
     public Task<List<string>> GetSchemasAsync(
         string connectionString,
         CancellationToken cancellationToken = default) =>
-        _strategy.GetSchemasAsync(connectionString, cancellationToken);
+        _provider.GetSchemasAsync(connectionString, cancellationToken);
 
     public Task<List<string>> GetTablesAsync(
         string connectionString,
         string schemaName,
         CancellationToken cancellationToken = default) =>
-        _strategy.GetTablesAsync(connectionString, schemaName, cancellationToken);
+        _provider.GetTablesAsync(connectionString, schemaName, cancellationToken);
 
     public Task<List<ColumnInfo>> GetColumnsAsync(
         string connectionString,
         string schemaName,
         string tableName,
         CancellationToken cancellationToken = default) =>
-        _strategy.GetColumnsAsync(connectionString, schemaName, tableName, cancellationToken);
+        _provider.GetColumnsAsync(connectionString, schemaName, tableName, cancellationToken);
 
     public Task<string> ExecuteQueryAsync(
         QueryDefinition definition,
