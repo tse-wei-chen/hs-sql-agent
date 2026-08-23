@@ -58,7 +58,12 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
 
     private static void ValidateSelect(SelectStatement select, SqlAgentToolType provider)
     {
-        foreach (var cte in select.Ctes) ValidateCapabilities(cte.Query, provider);
+        foreach (var cte in select.Ctes)
+        {
+            if (!cte.ColumnAliases.IsDefaultOrEmpty)
+                throw CapabilityError(provider, "query.cte_column_aliases");
+            ValidateCapabilities(cte.Query, provider);
+        }
         if (select.From is not null) ValidateSource(select.From, provider);
         foreach (var join in select.Joins)
         {
