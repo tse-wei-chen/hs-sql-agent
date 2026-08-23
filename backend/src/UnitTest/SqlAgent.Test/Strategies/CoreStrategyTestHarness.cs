@@ -7,14 +7,13 @@ using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
-using SqlAgent.Service.Strategies.Adapters;
 
 namespace SqlAgent.Test.Strategies;
 
 /// <summary>
-/// Provider integration harness that exercises the canonical Core query pipeline while retaining
-/// the strategy only as the temporary provider connection/metadata implementation. Runtime DB
-/// exceptions are mapped through the provider contract instead of legacy strategy execution.
+/// Provider integration harness that exercises the canonical Core query pipeline against the
+/// provider implementation directly. The historical strategy contract remains only as a test
+/// registration detail; no strategy-to-provider adapter participates in compilation or execution.
 /// </summary>
 public sealed class CoreStrategyTestHarness<TStrategy>
     where TStrategy : ISqlStrategy
@@ -27,11 +26,13 @@ public sealed class CoreStrategyTestHarness<TStrategy>
     public CoreStrategyTestHarness(TStrategy strategy)
     {
         _strategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
-        _provider = StrategyBackedSqlProviderFactory.CreateProvider(strategy);
+        _provider = strategy as ISqlProvider
+            ?? throw new InvalidOperationException(
+                $"Provider integration fixture {strategy.GetType().FullName} must implement {nameof(ISqlProvider)} directly.");
         _executor = new CompiledSqlCommandExecutor(_provider.Connections);
     }
 
-    public SqlAgentToolType DbType => _strategy.DbType;
+    public SqlAgentToolType DbType => _provider.Type;
 
     public string BuildConnectionString(BuildDbConnectionModelBase model) =>
         _strategy.BuildConnectionString(model);

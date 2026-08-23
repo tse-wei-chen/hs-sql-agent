@@ -1,5 +1,6 @@
 using System.Reflection;
 using HsSqlAgent.Server.Services;
+using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Strategies;
 using Xunit;
@@ -35,6 +36,14 @@ public class ProviderRuntimeBoundaryTests
     }
 
     [Fact]
+    public void ProviderStrategyBase_ImplementsRuntimeCapabilitiesDirectly()
+    {
+        Assert.True(typeof(ISqlProvider).IsAssignableFrom(typeof(BaseSqlStrategy)));
+        Assert.True(typeof(IDbConnectionFactory).IsAssignableFrom(typeof(BaseSqlStrategy)));
+        Assert.True(typeof(IProviderMetadataReader).IsAssignableFrom(typeof(BaseSqlStrategy)));
+    }
+
+    [Fact]
     public void StrategyRuntimeCompatibilityBridges_HaveBeenRemoved()
     {
         var assembly = typeof(TypedQueryRuntime).Assembly;
@@ -59,9 +68,12 @@ public class ProviderRuntimeBoundaryTests
     }
 
     [Fact]
-    public void LegacySqlProviderAdapter_TypeHasBeenRemoved()
+    public void StrategyBackedProviderAdapter_HasBeenRemoved()
     {
-        var serviceAssembly = typeof(ISqlStrategy).Assembly;
+        var serviceAssembly = typeof(ISqlProvider).Assembly;
+        Assert.Null(serviceAssembly.GetType(
+            "SqlAgent.Service.Strategies.Adapters.StrategyBackedSqlProviderFactory",
+            throwOnError: false));
         Assert.Null(serviceAssembly.GetType(
             "SqlAgent.Service.Strategies.Adapters.LegacySqlProviderAdapter",
             throwOnError: false));

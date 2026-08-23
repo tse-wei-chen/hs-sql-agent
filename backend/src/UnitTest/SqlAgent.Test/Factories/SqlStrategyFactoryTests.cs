@@ -13,26 +13,34 @@ public class SqlStrategyFactoryTests
     [Fact]
     public void Constructor_WithDuplicateStrategies_ThrowsInvalidOperationException()
     {
-        var mockDb1 = new Mock<ISqlStrategy>();
-        mockDb1.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-
-        var mockDb2 = new Mock<ISqlStrategy>();
-        mockDb2.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+        var mockDb1 = CreateProvider(SqlAgentToolType.Postgres);
+        var mockDb2 = CreateProvider(SqlAgentToolType.Postgres);
 
         Assert.Throws<InvalidOperationException>(() =>
             new SqlStrategyFactory([mockDb1.Object, mockDb2.Object]));
     }
 
     [Fact]
-    public void GetProvider_WithValidType_ReturnsCoreProvider()
+    public void Constructor_WithNonProviderStrategy_ThrowsInvalidOperationException()
     {
-        var mockDb = new Mock<ISqlStrategy>();
-        mockDb.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+        var registration = new Mock<ISqlStrategy>();
+        registration.SetupGet(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            new SqlStrategyFactory([registration.Object]));
+
+        Assert.Contains(nameof(ISqlProvider), error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetProvider_WithValidType_ReturnsRegisteredProviderDirectly()
+    {
+        var mockDb = CreateProvider(SqlAgentToolType.Postgres);
         var factory = new SqlStrategyFactory([mockDb.Object]);
 
         var result = factory.GetProvider(SqlAgentToolType.Postgres);
 
-        Assert.IsType<SqlProvider>(result);
+        Assert.Same(mockDb.Object, result);
         Assert.Equal(SqlAgentToolType.Postgres, result.Type);
     }
 
@@ -48,10 +56,8 @@ public class SqlStrategyFactoryTests
     [Fact]
     public void GetSupportedProviderTypes_ReturnsExpectedTypes()
     {
-        var mockDb1 = new Mock<ISqlStrategy>();
-        mockDb1.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-        var mockDb2 = new Mock<ISqlStrategy>();
-        mockDb2.Setup(x => x.DbType).Returns(SqlAgentToolType.MySQL);
+        var mockDb1 = CreateProvider(SqlAgentToolType.Postgres);
+        var mockDb2 = CreateProvider(SqlAgentToolType.MySQL);
         var factory = new SqlStrategyFactory([mockDb1.Object, mockDb2.Object]);
 
         var types = factory.GetSupportedProviderTypes();
@@ -65,8 +71,7 @@ public class SqlStrategyFactoryTests
     public void BuildConnectionString_DelegatesWithoutExposingStrategy()
     {
         var model = new BuildDbConnectionModelBase { Host = "db.example" };
-        var mockDb = new Mock<ISqlStrategy>();
-        mockDb.Setup(x => x.DbType).Returns(SqlAgentToolType.Postgres);
+        var mockDb = CreateProvider(SqlAgentToolType.Postgres);
         mockDb.Setup(x => x.BuildConnectionString(model)).Returns("Host=db.example");
         var factory = new SqlStrategyFactory([mockDb.Object]);
 
@@ -87,5 +92,12 @@ public class SqlStrategyFactoryTests
         Assert.DoesNotContain(implementationMethods, method => method.Name == "GetStrategy");
         Assert.DoesNotContain(implementationMethods, method => method.Name == "GetSupportedDatabaseTypes");
         Assert.DoesNotContain(implementationMethods, method => typeof(ISqlStrategy).IsAssignableFrom(method.ReturnType));
+    }
+
+    private static Mock<BaseSqlStrategy> CreateProvider(SqlAgentToolType type)
+    {
+        var provider = new Mock<BaseSqlStrategy>();
+        provider.SetupGet(x => x.DbType).Returns(type);
+        return provider;
     }
 }
