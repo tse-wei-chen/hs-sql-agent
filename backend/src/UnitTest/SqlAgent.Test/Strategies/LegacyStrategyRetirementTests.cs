@@ -76,6 +76,8 @@ public class LegacyStrategyRetirementTests
         Assert.Same(strategy, provider.Connections);
         Assert.Same(strategy, provider.Metadata);
         Assert.Equal(SqlAgentToolType.Postgres, provider.Lowerer.Provider);
+        Assert.IsType<ProviderExecutionErrorMapper>(provider.Errors);
+        Assert.Equal("SqlAgent.Service.Core.Providers", provider.Errors.GetType().Namespace);
     }
 
     [Fact]
@@ -91,6 +93,7 @@ public class LegacyStrategyRetirementTests
         Assert.Contains("query", mapped.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("code=unknown", mapped.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("boom", mapped.Message, StringComparison.Ordinal);
+        Assert.IsType<ProviderExecutionException>(mapped);
     }
 
     private static bool IsAsyncLocal(Type type) =>

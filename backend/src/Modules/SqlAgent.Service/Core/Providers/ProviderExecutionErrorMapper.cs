@@ -4,14 +4,14 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using MySql.Data.MySqlClient;
 using Npgsql;
-using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Strategies.Adapters;
+namespace SqlAgent.Service.Core.Providers;
 
 /// <summary>
-/// Provider-aware execution error mapper used by the transitional strategy adapter. It preserves
-/// stable provider error codes without routing execution back through BaseSqlStrategy.
+/// Provider-owned execution error mapper. It normalizes database-specific exception details into
+/// the stable <see cref="IProviderErrorMapper"/> contract without routing execution through the
+/// historical strategy surface.
 /// </summary>
 public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) : IProviderErrorMapper
 {

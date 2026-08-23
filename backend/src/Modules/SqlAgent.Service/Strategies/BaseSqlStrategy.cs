@@ -5,7 +5,6 @@ using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies.Adapters;
 
 namespace SqlAgent.Service.Strategies;
 
