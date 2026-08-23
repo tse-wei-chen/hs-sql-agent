@@ -1,10 +1,10 @@
 using System.Text.Json;
 using DotNet.Testcontainers.Builders;
 using MySql.Data.MySqlClient;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Strategies;
-using SqlAgent.Service.Strategies.Adapters;
 using Testcontainers.MySql;
 using Xunit;
 

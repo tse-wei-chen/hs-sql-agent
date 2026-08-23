@@ -1,9 +1,9 @@
 using System.Text.Json;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
-using SqlAgent.Service.Strategies.Adapters;
 using Testcontainers.PostgreSql;
 using Xunit;
 
