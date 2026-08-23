@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -77,11 +78,15 @@ public sealed class CoreStrategyTestHarness<TStrategy>
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        var sourceDialect = definition.SourceDialect ?? DbType;
+        var parsed = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            sourceDialect);
+
         // Keep compilation outside the execution catch, matching the Core/typed-runtime boundary:
         // fail-closed compilation errors retain their concrete SqlCompilationException type.
         var command = _compiler.Compile(
-            definition,
-            definition.SourceDialect ?? DbType,
+            parsed,
             DbType,
             new SqlPlanValidationContext("provider-integration-test"),
             new SqlExecutionPlanPolicy(policy.QueryMaxRows));
