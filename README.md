@@ -14,7 +14,7 @@ Instead of executing unrestricted LLM-generated SQL, the server parses supported
 
 - **Six database providers** — SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird.
 - **Governed access** — Per-key database binding, table whitelisting, CORS, rate limits, and execution policies.
-- **Safe DML** — Transactional dry-run followed by MCP Elicitation for explicit human approval.
+- **Safe DML** — Read-only impact preview, one-time approval challenge, commit-time row-set revalidation, and MCP Elicitation for explicit human approval.
 - **Admin Panel** — Manage databases, keys, roles, custom tools, audit records, and runtime policies.
 - **Enterprise ready** — OIDC SSO, TOTP MFA, audit retention, Prometheus metrics, OTLP, and webhook/SIEM delivery.
 - **Semantic metadata** — Table and column synonyms, relationships, and scoped metric metadata for schema discovery.
@@ -59,7 +59,7 @@ See the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/
 2. Parse supported SQL into a structured definition.
 3. Validate the definition and compile it for the configured database provider.
 4. Execute queries within configured limits.
-5. For DML, dry-run in a transaction and require human approval through MCP Elicitation before commit.
+5. For DML, build a read-only impact preview, bind approval to the validated plan and matched row set, require human approval through MCP Elicitation, then revalidate inside the commit transaction before executing the mutation.
 
 Custom SQL tools pass through the same parser, validation, access policy, and execution limits as built-in tools. Lifecycle, parameter, and publishing rules are documented in the [Admin Panel guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Admin-Panel).
 

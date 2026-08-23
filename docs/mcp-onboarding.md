@@ -44,10 +44,19 @@ untested version here.
 
 ## DML and Elicitation
 
-`execute_dml_sql` and published DML Custom Tools require form Elicitation. The
-server first executes a rollback-only dry run, sends `elicitation/create`, and only
-commits after the human accepts. If the client does not declare and implement form
-Elicitation, the operation is refused.
+`execute_dml_sql` and published DML Custom Tools require form Elicitation. For
+UPDATE and DELETE, the server first reads the matched rows in a preview transaction
+without executing the mutation, binds a one-time challenge to the validated
+compiled plan, policy version, affected row count, and row-set fingerprint, then
+sends `elicitation/create`. INSERT VALUES previews the immutable payload and binds
+the challenge to that exact compiled plan instead of a pre-existing row set.
+
+After the human accepts, the server validates and consumes the challenge. For
+row-set mutations it opens the commit transaction, re-queries the matched rows and
+compares the current row-set fingerprint before executing the exact compiled
+mutation. A changed plan, policy, challenge, row set, or affected row count cancels
+the operation instead of committing. If the client does not declare and implement
+form Elicitation, the operation is refused.
 
 Before allowing DML in production, test the exact client version by invoking DML
 and verify both Decline and Accept paths. Query-only keys do not require Elicitation;
