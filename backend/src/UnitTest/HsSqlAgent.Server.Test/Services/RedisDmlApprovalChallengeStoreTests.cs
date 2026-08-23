@@ -73,15 +73,8 @@ public class RedisDmlApprovalChallengeStoreTests
         var payload = JsonSerializer.Serialize(challenge);
         var scripts = new List<string>();
         var keys = new List<RedisKey[]>();
+        var callCount = 0;
         var database = new Mock<IDatabase>();
-        database
-            .SetupSequence(x => x.ScriptEvaluateAsync(
-                It.IsAny<string>(),
-                It.IsAny<RedisKey[]>(),
-                It.IsAny<RedisValue[]>(),
-                It.IsAny<CommandFlags>()))
-            .ReturnsAsync(RedisResult.Create((RedisValue)payload))
-            .ReturnsAsync(RedisResult.Create(RedisValue.Null));
         database
             .Setup(x => x.ScriptEvaluateAsync(
                 It.IsAny<string>(),
@@ -92,7 +85,10 @@ public class RedisDmlApprovalChallengeStoreTests
             {
                 scripts.Add(script);
                 keys.Add(redisKeys);
-            });
+            })
+            .ReturnsAsync(() => callCount++ == 0
+                ? RedisResult.Create((RedisValue)payload)
+                : RedisResult.Create(RedisValue.Null));
         var store = CreateStore(database.Object, now);
 
         Assert.True(await store.TryConsumeAsync(challenge, TestContext.Current.CancellationToken));
