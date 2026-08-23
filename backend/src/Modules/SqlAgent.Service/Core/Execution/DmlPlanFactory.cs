@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -114,32 +113,6 @@ public sealed class DmlPlanFactory(
             validationContext.PolicyVersion,
             approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
             maxAffectedRows);
-    }
-
-    [Obsolete("Map DmlDefinition to ParsedStatement before DML planning.")]
-    public Task<ValidatedDmlPlan> CreateAsync(
-        string connectionString,
-        DmlDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider,
-        SqlPlanValidationContext validationContext,
-        DmlCompilationPolicy? compilationPolicy = null,
-        DmlRowIdentityAssurance assurance = DmlRowIdentityAssurance.Strict,
-        int maxAffectedRows = 0,
-        TimeSpan? approvalTtl = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(definition);
-        return CreateAsync(
-            connectionString,
-            new ParsedStatement(DmlDefinitionCoreMapper.Map(definition), sourceDialect),
-            targetProvider,
-            validationContext,
-            compilationPolicy,
-            assurance,
-            maxAffectedRows,
-            approvalTtl,
-            cancellationToken);
     }
 
     private static (DmlOperation Operation, NamedTableSource Target, SqlExpr? Predicate) MutationShape(
