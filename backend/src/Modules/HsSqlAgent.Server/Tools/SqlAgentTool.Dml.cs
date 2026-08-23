@@ -44,13 +44,7 @@ public partial class SqlAgentTool
 
             parsedMutation = CoreSqlTextParser.ParseDml(sql, dbType);
             var descriptor = DescribeMutation(parsedMutation);
-            if (!IsSupportedProductionDml(parsedMutation.Statement))
-            {
-                throw new NotSupportedException(
-                    parsedMutation.Statement is InsertStatement
-                        ? "The production typed DML path supports INSERT VALUES only. INSERT ... SELECT remains fail-closed until source-rowset approval semantics are defined."
-                        : $"The production typed DML path does not support statement '{parsedMutation.Statement.GetType().Name}'.");
-            }
+            TypedDmlRuntime.EnsureSupportedStatement(parsedMutation.Statement);
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             var flow = new TypedDmlApprovalFlow(
@@ -176,11 +170,6 @@ public partial class SqlAgentTool
             HasWhere = hasWhere
         });
     }
-
-    private static bool IsSupportedProductionDml(SqlStatement statement) =>
-        statement is UpdateStatement
-            or DeleteStatement
-            or InsertStatement { Source: InsertValuesSource };
 
     private static DmlDescriptor DescribeMutation(ParsedStatement parsedMutation) =>
         parsedMutation.Statement switch
