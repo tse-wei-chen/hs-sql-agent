@@ -1,4 +1,5 @@
 using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -22,7 +23,7 @@ public class CoreDmlCompilerTests
             ]
         };
 
-        var command = CoreDmlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -52,7 +53,7 @@ public class CoreDmlCompilerTests
             ]
         };
 
-        var command = CoreDmlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -77,7 +78,7 @@ public class CoreDmlCompilerTests
             ]
         };
 
-        var command = CoreDmlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -108,7 +109,7 @@ public class CoreDmlCompilerTests
             ]
         };
 
-        var command = CoreDmlCompiler.CreateDefault().Compile(
+        var command = Compile(
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -131,7 +132,7 @@ public class CoreDmlCompilerTests
         };
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
+            Compile(
                 definition,
                 SqlAgentToolType.Postgres,
                 SqlAgentToolType.Postgres,
@@ -160,7 +161,8 @@ public class CoreDmlCompilerTests
         };
         var compiler = CoreDmlCompiler.CreateDefault();
 
-        Assert.Throws<UnauthorizedAccessException>(() => compiler.Compile(
+        Assert.Throws<UnauthorizedAccessException>(() => Compile(
+            compiler,
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -168,7 +170,8 @@ public class CoreDmlCompilerTests
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.archive" })));
 
-        var command = compiler.Compile(
+        var command = Compile(
+            compiler,
             definition,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
@@ -200,7 +203,7 @@ public class CoreDmlCompilerTests
         };
 
         Assert.Throws<UnauthorizedAccessException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
+            Compile(
                 definition,
                 SqlAgentToolType.Postgres,
                 SqlAgentToolType.Postgres,
@@ -221,7 +224,7 @@ public class CoreDmlCompilerTests
         };
 
         Assert.Throws<UnauthorizedAccessException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
+            Compile(
                 definition,
                 SqlAgentToolType.Postgres,
                 SqlAgentToolType.Postgres,
@@ -229,4 +232,31 @@ public class CoreDmlCompilerTests
                     "policy-v1",
                     new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" })));
     }
+
+    private static CompiledSqlCommand Compile(
+        DmlDefinition definition,
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? policy = null) =>
+        Compile(
+            CoreDmlCompiler.CreateDefault(),
+            definition,
+            sourceDialect,
+            targetProvider,
+            validationContext,
+            policy);
+
+    private static CompiledSqlCommand Compile(
+        CoreDmlCompiler compiler,
+        DmlDefinition definition,
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? policy = null) =>
+        compiler.Compile(
+            new ParsedStatement(DmlDefinitionCoreMapper.Map(definition), sourceDialect),
+            targetProvider,
+            validationContext,
+            policy);
 }
