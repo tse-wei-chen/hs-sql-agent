@@ -14,7 +14,8 @@ public partial class SqlAgentTool(
     IDbSemanticService semanticService,
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
     ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
-    ITypedQueryRuntime? typedQueryRuntime = null)
+    ITypedQueryRuntime? typedQueryRuntime = null,
+    TypedDmlRuntime? typedDmlRuntime = null)
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
@@ -23,4 +24,5 @@ public partial class SqlAgentTool(
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
     private readonly ITypedQueryRuntime _typedQueryRuntime = typedQueryRuntime ?? new TypedQueryRuntime();
+    private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
 }
