@@ -6,6 +6,7 @@ using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -136,9 +137,49 @@ public class CoreSqlPlanValidatorTests
         Assert.Contains("expression.boolean_select", ex.Message);
     }
 
+    [Fact]
+    public void Validate_RejectsModeledCteColumnAliasesBeforeLowering()
+    {
+        var canonical = PrepareSql(
+            "WITH recent(id) AS (SELECT id FROM orders) SELECT id FROM recent",
+            SqlAgentToolType.Postgres);
+
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            new CoreSqlPlanValidator().Validate(
+                canonical,
+                new SqlPlanValidationContext("policy-v1")));
+
+        Assert.Contains("query.cte_column_aliases", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Postgres", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_CteColumnAliases_RemainsFailClosedAtValidatedPlanBoundary()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "WITH recent(id) AS (SELECT id FROM orders) SELECT id FROM recent",
+            SqlAgentToolType.Postgres);
+
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("policy-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("query.cte_column_aliases", ex.Message, StringComparison.Ordinal);
+    }
+
     private static CanonicalStatement Prepare(QueryDefinition definition, SqlAgentToolType target)
     {
         var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), target);
+        var bound = new SqlAstBinder().Bind(parsed);
+        return CoreSqlNormalizer.CreateDefault().Normalize(bound, target);
+    }
+
+    private static CanonicalStatement PrepareSql(string sql, SqlAgentToolType target)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(sql, target);
         var bound = new SqlAstBinder().Bind(parsed);
         return CoreSqlNormalizer.CreateDefault().Normalize(bound, target);
     }
