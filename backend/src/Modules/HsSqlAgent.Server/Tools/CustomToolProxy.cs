@@ -29,7 +29,8 @@ public class CustomToolProxy(
     IQueryValueParserService queryValueParserService,
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
     ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
-    ITypedQueryRuntime? typedQueryRuntime = null)
+    ITypedQueryRuntime? typedQueryRuntime = null,
+    TypedDmlRuntime? typedDmlRuntime = null)
 {
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
@@ -40,6 +41,7 @@ public class CustomToolProxy(
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
     private readonly ITypedQueryRuntime _typedQueryRuntime = typedQueryRuntime ?? new TypedQueryRuntime();
+    private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
 
     public async Task<string> Execute(
         JsonElement arguments,
@@ -152,7 +154,7 @@ public class CustomToolProxy(
                 }
 
                 var flow = new TypedDmlApprovalFlow(
-                    new TypedDmlRuntime(),
+                    _typedDmlRuntime,
                     _securityPolicyRuntimeState,
                     _sqlConcurrencyLimiter,
                     ResolveTableWhitelist);
