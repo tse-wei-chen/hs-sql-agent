@@ -4,10 +4,9 @@ using System.Text.Json;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Server;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Tools;
 
@@ -15,8 +14,8 @@ public partial class SqlAgentTool
 {
     [McpServerTool, Description(@"
         Execute one UPDATE or DELETE SQL statement through the typed DML approval pipeline.
-        The server parses and validates the statement, compiles an immutable mutation command,
-        previews the exact primary-key row set, and presents it for interactive approval.
+        The server parses SQL directly into the Core AST, binds and validates it, compiles an immutable
+        mutation command, previews the exact primary-key row set, and presents it for interactive approval.
 
         Commit revalidates the current security policy, table authorization and row identities inside
         the same transaction before executing the already-approved compiled command. INSERT remains
@@ -30,7 +29,7 @@ public partial class SqlAgentTool
     {
         var stopwatch = Stopwatch.StartNew();
         long approvalWaitDurationMs = 0;
-        DmlDefinition? dml = null;
+        ParsedStatement? parsedMutation = null;
         int? affectedRowCount = null;
         try
         {
@@ -42,12 +41,9 @@ public partial class SqlAgentTool
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 
-            dml = SqlDefinitionParser.ParseDml(sql, dbType);
-            var dmlErrors = DefinitionValidator.Validate(dml);
-            if (dmlErrors.Count > 0)
-                return "Validation failed:\n" + string.Join("\n", dmlErrors);
-
-            if (dml.Operation is not (DmlOperation.Update or DmlOperation.Delete))
+            parsedMutation = CoreSqlTextParser.ParseDml(sql, dbType);
+            var descriptor = DescribeMutation(parsedMutation);
+            if (parsedMutation.Statement is not (UpdateStatement or DeleteStatement))
             {
                 throw new NotSupportedException(
                     "The production typed DML path currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
@@ -62,9 +58,9 @@ public partial class SqlAgentTool
             var execution = await flow.ExecuteAsync(
                 provider,
                 sqlConfig.ConnectionString,
-                dml,
+                parsedMutation,
                 new McpDmlApprovalClient(server),
-                $"{dml.Operation} on `{dml.TableName}`",
+                $"{descriptor.Operation} on `{descriptor.Table}`",
                 cancellationToken);
 
             approvalWaitDurationMs = execution.ApprovalWaitDurationMs;
@@ -73,7 +69,7 @@ public partial class SqlAgentTool
             {
                 var cancelled = execution.Result.Contains("cancelled", StringComparison.OrdinalIgnoreCase);
                 await WriteDmlAuditAsync(
-                    dml,
+                    parsedMutation,
                     cancelled ? "cancelled" : "failed",
                     cancelled ? "declined" : "not-completed",
                     stopwatch,
@@ -85,31 +81,32 @@ public partial class SqlAgentTool
             }
 
             await WriteDmlAuditAsync(
-                dml,
+                parsedMutation,
                 "success",
                 "interactive-accepted",
                 stopwatch,
                 approvalWaitDurationMs,
                 affectedRowCount,
-                $"Operation: {dml.Operation} (committed after typed policy and row-set revalidation)",
+                $"Operation: {descriptor.Operation} (committed after typed policy and row-set revalidation)",
                 cancellationToken);
             return execution.Result;
         }
         catch (Exception ex)
         {
+            var descriptor = parsedMutation is null ? null : DescribeMutation(parsedMutation);
             await _auditService.WriteEventAsync(
                 "mcp.dml.executed",
-                dml?.TableName ?? "unknown",
+                descriptor?.Table ?? "unknown",
                 "failed",
                 new AuditEventContext
                 {
                     ToolName = "execute_dml_sql",
-                    Operation = dml?.Operation.ToString().ToLowerInvariant(),
+                    Operation = descriptor?.Operation.ToLowerInvariant(),
                     DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                     AffectedRows = affectedRowCount,
                     ApprovalStatus = "not-completed",
                     ErrorCategory = ex.GetType().Name,
-                    Definition = dml == null ? null : DescribeDml(dml)
+                    Definition = parsedMutation is null ? null : DescribeDml(parsedMutation)
                 },
                 ex.Message,
                 cancellationToken);
@@ -118,7 +115,7 @@ public partial class SqlAgentTool
     }
 
     private async Task WriteDmlAuditAsync(
-        DmlDefinition dml,
+        ParsedStatement parsedMutation,
         string result,
         string approvalStatus,
         Stopwatch stopwatch,
@@ -127,33 +124,60 @@ public partial class SqlAgentTool
         string detail,
         CancellationToken cancellationToken)
     {
+        var descriptor = DescribeMutation(parsedMutation);
         await _auditService.WriteEventAsync(
             "mcp.dml.executed",
-            dml.TableName,
+            descriptor.Table,
             result,
             new AuditEventContext
             {
                 ToolName = "execute_dml_sql",
-                Operation = dml.Operation.ToString().ToLowerInvariant(),
+                Operation = descriptor.Operation.ToLowerInvariant(),
                 DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                 AffectedRows = affectedRows,
                 ApprovalStatus = approvalStatus,
                 ErrorCategory = result == "failed" ? "PolicyOrExecutionDenied" : null,
-                Definition = DescribeDml(dml)
+                Definition = DescribeDml(parsedMutation)
             },
             detail,
             cancellationToken);
     }
 
-    private static string DescribeDml(DmlDefinition definition) =>
-        JsonSerializer.Serialize(new
+    private static string DescribeDml(ParsedStatement parsedMutation)
+    {
+        var descriptor = DescribeMutation(parsedMutation);
+        var assignedColumns = parsedMutation.Statement is UpdateStatement update
+            ? update.Assignments.Select(assignment => IdentifierText(assignment.Column)).ToArray()
+            : [];
+        var hasWhere = parsedMutation.Statement switch
         {
-            Operation = definition.Operation.ToString(),
-            definition.TableName,
-            ValueFields = definition.Values?.Select(x => x.FieldName).ToArray() ?? [],
-            WhereConditionCount = definition.WhereConditions?.Count ?? 0
+            UpdateStatement update => update.Predicate is not null,
+            DeleteStatement delete => delete.Predicate is not null,
+            _ => false
+        };
+        return JsonSerializer.Serialize(new
+        {
+            descriptor.Operation,
+            TableName = descriptor.Table,
+            ValueFields = assignedColumns,
+            HasWhere = hasWhere
         });
+    }
+
+    private static DmlDescriptor DescribeMutation(ParsedStatement parsedMutation) =>
+        parsedMutation.Statement switch
+        {
+            UpdateStatement update => new DmlDescriptor("UPDATE", IdentifierText(update.Target.Name)),
+            DeleteStatement delete => new DmlDescriptor("DELETE", IdentifierText(delete.Target.Name)),
+            InsertStatement insert => new DmlDescriptor("INSERT", IdentifierText(insert.Target.Name)),
+            _ => new DmlDescriptor(parsedMutation.Statement.GetType().Name, "unknown")
+        };
+
+    private static string IdentifierText(SqlIdentifier identifier) =>
+        string.Join('.', identifier.Parts.Select(part => part.Value));
 
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
         Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
+
+    private sealed record DmlDescriptor(string Operation, string Table);
 }
