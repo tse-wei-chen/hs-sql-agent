@@ -31,14 +31,19 @@ public sealed record IdentifierPart(
     bool PreserveSpelling = false)
 {
     /// <summary>
-    /// Compatibility conversion for structured DTOs and programmatic AST construction. A plain
-    /// string has no quote-intent metadata, so it is represented explicitly as an unquoted alias.
+    /// Compatibility conversion for structured DTOs and programmatic alias construction. A plain
+    /// string has no lexical quote-intent metadata, so it remains unquoted while retaining the
+    /// caller-requested alias spelling for contexts (such as projection output names) that need it.
     /// Parser-native SQL must construct IdentifierPart from the source token instead.
     /// </summary>
     public static implicit operator IdentifierPart?(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? null
-            : new IdentifierPart(value.Trim(), WasQuoted: false, SourceSpan.Unknown);
+            : new IdentifierPart(
+                value.Trim(),
+                WasQuoted: false,
+                SourceSpan.Unknown,
+                PreserveSpelling: true);
 }
 
 public sealed record LiteralExpr(object? Value, SourceSpan Span) : SqlExpr(Span);
