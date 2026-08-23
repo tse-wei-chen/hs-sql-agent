@@ -20,11 +20,6 @@ public sealed class CoreSqlExecutionPolicyRewriter : ISqlExecutionPolicyRewriter
             ? ApplyMaxRows(plan.Statement, policy.QueryMaxRows)
             : plan.Statement;
 
-        // The current SqlKata backend omits LIMIT when the numeric value is zero. Silently lowering
-        // LIMIT 0 as an unbounded query would widen the approved result set, so reject it until the
-        // backend has an explicit zero-limit representation.
-        EnsureNoZeroLimit(statement);
-
         return new ExecutableSqlPlan(
             statement,
             plan.Facts,
@@ -60,35 +55,4 @@ public sealed class CoreSqlExecutionPolicyRewriter : ISqlExecutionPolicyRewriter
         > 0 => Math.Min(requested.Value, maxRows),
         _ => maxRows
     };
-
-    private static void EnsureNoZeroLimit(SqlStatement statement)
-    {
-        switch (statement)
-        {
-            case SelectStatement select:
-                if (select.Limit == 0)
-                    throw new InvalidOperationException(
-                        "LIMIT 0 is rejected because the current SQL backend cannot lower it without widening the result set.");
-                foreach (var cte in select.Ctes)
-                    EnsureNoZeroLimit(cte.Query);
-                if (select.From is DerivedTableSource derived)
-                    EnsureNoZeroLimit(derived.Query);
-                foreach (var join in select.Joins)
-                    if (join.Source is DerivedTableSource joinedDerived)
-                        EnsureNoZeroLimit(joinedDerived.Query);
-                return;
-
-            case QueryStatement query:
-                if (query.Limit == 0)
-                    throw new InvalidOperationException(
-                        "LIMIT 0 is rejected because the current SQL backend cannot lower it without widening the result set.");
-                EnsureNoZeroLimit(query.Head);
-                foreach (var operation in query.SetOperations)
-                    EnsureNoZeroLimit(operation.Query);
-                return;
-
-            default:
-                return;
-        }
-    }
 }

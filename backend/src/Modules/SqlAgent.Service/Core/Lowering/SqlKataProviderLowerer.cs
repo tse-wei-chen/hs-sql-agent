@@ -76,7 +76,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         }
 
         if (statement.OrderBy.IsDefaultOrEmpty
-            && statement.Limit is not > 0
+            && statement.Limit is null
             && statement.Offset is not > 0)
             return setQuery;
 
@@ -84,7 +84,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             .From(setQuery, "_set")
             .Select("*");
         ApplyOrderBy(query, statement.OrderBy, compiler);
-        if (statement.Limit is > 0) query.Limit(statement.Limit.Value);
+        if (statement.Limit is >= 0) query.Limit(statement.Limit.Value);
         if (statement.Offset is > 0) query.Offset(statement.Offset.Value);
         return query;
     }
@@ -167,7 +167,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         if (includeTail)
         {
             ApplyOrderBy(query, statement.OrderBy, compiler);
-            if (statement.Limit is > 0) query.Limit(statement.Limit.Value);
+            if (statement.Limit is >= 0) query.Limit(statement.Limit.Value);
             if (statement.Offset is > 0) query.Offset(statement.Offset.Value);
         }
 
@@ -943,12 +943,12 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     internal static Compiler CreateCompiler(SqlAgentToolType provider) => provider switch
     {
-        SqlAgentToolType.Sqlite => new SqliteCompiler(),
-        SqlAgentToolType.Postgres => new PostgresCompiler(),
-        SqlAgentToolType.MySQL => new MySqlCompiler(),
-        SqlAgentToolType.MsSqlServer => new SqlServerCompiler { UseLegacyPagination = true },
-        SqlAgentToolType.Oracle => new OracleCompiler(),
-        SqlAgentToolType.Firebird => new FirebirdCompiler(),
+        SqlAgentToolType.Sqlite => new CoreSqliteCompiler(),
+        SqlAgentToolType.Postgres => new CorePostgresCompiler(),
+        SqlAgentToolType.MySQL => new CoreMySqlCompiler(),
+        SqlAgentToolType.MsSqlServer => new CoreSqlServerCompiler { UseLegacyPagination = true },
+        SqlAgentToolType.Oracle => new CoreOracleCompiler(),
+        SqlAgentToolType.Firebird => new CoreFirebirdCompiler(),
         _ => throw new SqlCompilationException($"Unsupported target provider '{provider}'.")
     };
 
