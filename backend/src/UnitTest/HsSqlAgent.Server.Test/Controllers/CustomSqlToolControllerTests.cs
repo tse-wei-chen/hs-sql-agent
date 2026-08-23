@@ -170,7 +170,7 @@ public class CustomSqlToolControllerTests
             Description = "Insert one user",
             Type = "DML",
             SqlTemplate = "INSERT INTO users (id) VALUES ({{id}})",
-            ParametersJson = """[{"name":"id","type":"number"}]"",
+            ParametersJson = """[{"name":"id","type":"number"}]""",
             DbManagementId = 3
         };
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
