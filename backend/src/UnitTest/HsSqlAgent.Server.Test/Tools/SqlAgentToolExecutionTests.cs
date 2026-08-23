@@ -6,6 +6,7 @@ using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Moq;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -48,7 +49,7 @@ public class SqlAgentToolExecutionTests
 
         typedQueryRuntime
             .Setup(x => x.ExecuteAsync(
-                strategy.Object,
+                It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
                 It.Is<QueryDefinition>(q => q.TableName == "public.users"),
                 SqlAgentToolType.Postgres,
@@ -107,10 +108,11 @@ public class SqlAgentToolExecutionTests
         concurrencyLimiter
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
+        strategy.SetupGet(x => x.DbType).Returns(SqlAgentToolType.Postgres);
         strategyFactory.Setup(x => x.GetStrategy(SqlAgentToolType.Postgres)).Returns(strategy.Object);
         typedQueryRuntime
             .Setup(x => x.ExecuteAsync(
-                It.IsAny<ISqlStrategy>(),
+                It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<QueryDefinition>(),
                 SqlAgentToolType.Postgres,
