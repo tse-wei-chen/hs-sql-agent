@@ -4,9 +4,9 @@ using HsSqlAgent.Server.Services;
 using Moq;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;
@@ -16,7 +16,7 @@ public class TypedDmlRuntimeTests
     [Fact]
     public async Task PreviewAsync_InsertFailsClosedBeforeProviderAccess()
     {
-        var strategy = new Mock<ISqlStrategy>(MockBehavior.Strict);
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
         var runtime = new TypedDmlRuntime();
         var definition = new DmlDefinition
         {
@@ -27,7 +27,7 @@ public class TypedDmlRuntimeTests
 
         var error = await Assert.ThrowsAsync<NotSupportedException>(() =>
             runtime.PreviewAsync(
-                strategy.Object,
+                provider.Object,
                 "connection",
                 definition,
                 new SecurityPolicyModel(),
@@ -35,7 +35,7 @@ public class TypedDmlRuntimeTests
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("INSERT", error.Message, StringComparison.OrdinalIgnoreCase);
-        strategy.VerifyNoOtherCalls();
+        provider.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -50,11 +50,11 @@ public class TypedDmlRuntimeTests
             TypedDmlRuntime.ComputePolicyVersion(previewPolicy, null));
         var changedPolicy = previewPolicy.Clone();
         changedPolicy.DmlMaxAffectedRows = 10;
-        var strategy = new Mock<ISqlStrategy>(MockBehavior.Strict);
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new TypedDmlRuntime().CommitAsync(
-                strategy.Object,
+                provider.Object,
                 "connection",
                 session,
                 changedPolicy,
@@ -63,7 +63,7 @@ public class TypedDmlRuntimeTests
 
         Assert.Contains("security policy", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("new preview", error.Message, StringComparison.OrdinalIgnoreCase);
-        strategy.VerifyNoOtherCalls();
+        provider.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -81,11 +81,11 @@ public class TypedDmlRuntimeTests
             "public.users",
             "public.orders"
         };
-        var strategy = new Mock<ISqlStrategy>(MockBehavior.Strict);
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new TypedDmlRuntime().CommitAsync(
-                strategy.Object,
+                provider.Object,
                 "connection",
                 session,
                 policy,
@@ -94,7 +94,7 @@ public class TypedDmlRuntimeTests
 
         Assert.Contains("table authorization", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("new preview", error.Message, StringComparison.OrdinalIgnoreCase);
-        strategy.VerifyNoOtherCalls();
+        provider.VerifyNoOtherCalls();
     }
 
     [Fact]
