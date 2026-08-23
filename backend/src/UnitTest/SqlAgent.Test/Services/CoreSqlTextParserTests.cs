@@ -27,6 +27,64 @@ public class CoreSqlTextParserTests
     }
 
     [Fact]
+    public void ParseQuery_PreservesProjectionAndTableAliasQuoteIntent()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id AS \"DisplayName\" FROM users AS \"UserScope\"",
+            SqlAgentToolType.Postgres);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var projectionAlias = Assert.Single(select.Select).Alias;
+        var tableAlias = Assert.IsType<NamedTableSource>(select.From).Alias;
+
+        Assert.NotNull(projectionAlias);
+        Assert.Equal("DisplayName", projectionAlias.Value);
+        Assert.True(projectionAlias.WasQuoted);
+        Assert.NotNull(tableAlias);
+        Assert.Equal("UserScope", tableAlias.Value);
+        Assert.True(tableAlias.WasQuoted);
+    }
+
+    [Fact]
+    public void Compile_PostgresAliases_PreserveQuotedCaseAndFoldUnquotedCase()
+    {
+        var quoted = CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(
+                "SELECT id AS \"DisplayName\" FROM users AS \"UserScope\"",
+                SqlAgentToolType.Postgres),
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("\"DisplayName\"", quoted.Sql, StringComparison.Ordinal);
+        Assert.Contains("\"UserScope\"", quoted.Sql, StringComparison.Ordinal);
+
+        var unquoted = CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(
+                "SELECT id AS DisplayName FROM users AS UserScope",
+                SqlAgentToolType.Postgres),
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("\"displayname\"", unquoted.Sql, StringComparison.Ordinal);
+        Assert.Contains("\"userscope\"", unquoted.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"DisplayName\"", unquoted.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"UserScope\"", unquoted.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_PostgresDerivedAlias_PreservesQuotedCase()
+    {
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(
+                "SELECT \"DerivedScope\".id FROM (SELECT id FROM users) AS \"DerivedScope\"",
+                SqlAgentToolType.Postgres),
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("\"DerivedScope\"", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ParseQuery_InIdentifier_PreservesColumnSemanticsInsteadOfCoercingLiteral()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
