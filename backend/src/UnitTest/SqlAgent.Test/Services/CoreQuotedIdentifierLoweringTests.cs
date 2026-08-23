@@ -1,6 +1,8 @@
 using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
 using Xunit;
 
@@ -115,14 +117,11 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
-    public void Bind_QualifiedFunction_FailsBeforeRegistryNameFlattening()
+    public void Parse_QualifiedFunction_FailsClosedBeforeRegistryNameFlattening()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
+        Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseQuery(
             "SELECT custom.fn(id) FROM users",
-            SqlAgentToolType.Postgres);
-
-        var error = Assert.Throws<InvalidOperationException>(() => new SqlAstBinder().Bind(parsed));
-        Assert.Contains("quoted or qualified function identifier", error.Message, StringComparison.OrdinalIgnoreCase);
+            SqlAgentToolType.Postgres));
     }
 
     [Theory]
@@ -138,6 +137,34 @@ public sealed class CoreQuotedIdentifierLoweringTests
         var quoted = Compile("SELECT \"MixedCase\" FROM \"MixedTable\"", provider);
         Assert.Contains("\"MixedCase\"", quoted.Sql, StringComparison.Ordinal);
         Assert.Contains("\"MixedTable\"", quoted.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_StructuredDtoOracleNames_AreExactAndTableAliasOmitsAs()
+    {
+        var statement = QueryDefinitionCoreMapper.Map(new QueryDefinition
+        {
+            TableName = "MixedTable",
+            Alias = "t",
+            SelectColumns =
+            [
+                new FieldSelectCondition
+                {
+                    FieldName = "t.MixedColumn",
+                    Alias = "result_name"
+                }
+            ]
+        });
+
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            new ParsedStatement(statement, SqlAgentToolType.Oracle),
+            SqlAgentToolType.Oracle,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("FROM \"MixedTable\" \"t\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"MixedTable\" AS \"t\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"t\".\"MixedColumn\" AS \"result_name\"", command.Sql, StringComparison.Ordinal);
     }
 
     [Fact]
