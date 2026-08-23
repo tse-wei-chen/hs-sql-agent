@@ -3,10 +3,8 @@ using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Lowering;
-using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Core.Pipeline;
 
@@ -17,8 +15,8 @@ public sealed record DmlCompilationPolicy(
     bool AllowFullTableDelete = false);
 
 /// <summary>
-/// Typed INSERT/UPDATE/DELETE compiler. The compiler boundary starts at ParsedStatement; the
-/// DmlDefinition overload remains only as a strangler adapter for legacy callers.
+/// Typed INSERT/UPDATE/DELETE compiler. The compiler boundary starts at <see cref="ParsedStatement"/>.
+/// Transport DTOs must be mapped explicitly before entering the compiler pipeline.
 /// </summary>
 public sealed class CoreDmlCompiler(
     ISqlBinder binder,
@@ -33,21 +31,6 @@ public sealed class CoreDmlCompiler(
         new CoreDmlBinder(),
         new CoreDmlNormalizer(),
         new CoreDmlPlanValidator());
-
-    [Obsolete("Map DmlDefinition to ParsedStatement first, then call Compile(ParsedStatement, ...).")]
-    public CompiledSqlCommand Compile(
-        DmlDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider,
-        SqlPlanValidationContext validationContext,
-        DmlCompilationPolicy? policy = null)
-    {
-        ArgumentNullException.ThrowIfNull(definition);
-        var parsed = new ParsedStatement(
-            DmlDefinitionCoreMapper.Map(definition),
-            sourceDialect);
-        return Compile(parsed, targetProvider, validationContext, policy);
-    }
 
     public CompiledSqlCommand Compile(
         ParsedStatement parsed,
