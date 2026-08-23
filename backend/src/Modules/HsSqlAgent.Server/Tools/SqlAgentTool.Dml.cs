@@ -51,7 +51,7 @@ public partial class SqlAgentTool
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             var flow = new TypedDmlApprovalFlow(
-                new TypedDmlRuntime(),
+                _typedDmlRuntime,
                 _securityPolicyRuntimeState,
                 _sqlConcurrencyLimiter,
                 ResolveTableWhitelist);
