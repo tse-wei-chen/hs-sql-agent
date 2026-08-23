@@ -179,11 +179,11 @@ internal sealed class CoreQueryTextParser
         {
             var start = _reader.Position;
             var expression = _expressions.ParseExpression();
-            string? alias = null;
+            IdentifierPart? alias = null;
             if (_reader.MatchWord("AS"))
-                alias = _reader.ExpectIdentifier("projection alias").Value;
+                alias = CoreTokenReader.ToIdentifierPart(_reader.ExpectIdentifier("projection alias"));
             else if (_reader.Peek().Type == TokenType.Identifier)
-                alias = _reader.Advance().Value;
+                alias = CoreTokenReader.ToIdentifierPart(_reader.Advance());
             items.Add(new SelectItem(expression, alias, _reader.SpanFrom(start)));
         } while (_reader.Match(TokenType.Comma));
         return items.ToImmutable();
@@ -204,7 +204,7 @@ internal sealed class CoreQueryTextParser
             var query = ParseQueryExpression();
             _reader.Expect(TokenType.RParen, "')' after derived table query");
             var alias = ParseOptionalAlias();
-            if (requireDerivedAlias && string.IsNullOrWhiteSpace(alias))
+            if (requireDerivedAlias && alias is null)
                 throw CoreTokenReader.Error("A derived table requires an explicit alias.", _reader.Peek());
             return new DerivedTableSource(query, alias!, _reader.SpanFrom(start));
         }
@@ -262,10 +262,12 @@ internal sealed class CoreQueryTextParser
         return new JoinSource(kind, source, predicate, _reader.SpanFrom(start));
     }
 
-    private string? ParseOptionalAlias()
+    private IdentifierPart? ParseOptionalAlias()
     {
-        if (_reader.MatchWord("AS")) return _reader.ExpectIdentifier("table alias").Value;
-        if (_reader.Peek().Type == TokenType.Identifier) return _reader.Advance().Value;
+        if (_reader.MatchWord("AS"))
+            return CoreTokenReader.ToIdentifierPart(_reader.ExpectIdentifier("table alias"));
+        if (_reader.Peek().Type == TokenType.Identifier)
+            return CoreTokenReader.ToIdentifierPart(_reader.Advance());
         return null;
     }
 

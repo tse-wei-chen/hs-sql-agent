@@ -114,7 +114,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             {
                 var renderedSubquery = RenderSubquery(subquery.Query, compiler);
                 var expression = renderedSubquery.Sql;
-                if (!string.IsNullOrWhiteSpace(item.Alias))
+                if (item.Alias is not null)
                     expression += $" AS {RenderAlias(item.Alias, compiler)}";
                 query.Select(new RawColumn
                 {
@@ -125,11 +125,13 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             }
 
             var rendered = RenderExpression(item.Expression, compiler);
+            var renderedSql = rendered.Sql;
+            if (item.Alias is not null)
+                renderedSql += $" AS {RenderAlias(item.Alias, compiler)}";
             query.Select(new RawColumn
             {
-                Expression = rendered.Sql,
-                Bindings = rendered.Bindings.ToArray(),
-                Alias = item.Alias
+                Expression = renderedSql,
+                Bindings = rendered.Bindings.ToArray()
             });
         }
 
@@ -179,13 +181,13 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             case NamedTableSource named:
             {
                 var name = IdentifierText(named.Name);
-                query.From(string.IsNullOrWhiteSpace(named.Alias)
+                query.From(named.Alias is null
                     ? name
-                    : $"{name} AS {named.Alias}");
+                    : $"{name} AS {AliasText(named.Alias, compiler)}");
                 return;
             }
             case DerivedTableSource derived:
-                query.From(BuildQuery(derived.Query, compiler), derived.Alias);
+                query.From(BuildQuery(derived.Query, compiler), AliasText(derived.Alias, compiler));
                 return;
             default:
                 throw new SqlCompilationException(
@@ -212,13 +214,13 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             switch (join.Source)
             {
                 case NamedTableSource named:
-                    query.CrossJoin(string.IsNullOrWhiteSpace(named.Alias)
+                    query.CrossJoin(named.Alias is null
                         ? IdentifierText(named.Name)
-                        : $"{IdentifierText(named.Name)} AS {named.Alias}");
+                        : $"{IdentifierText(named.Name)} AS {AliasText(named.Alias, compiler)}");
                     return;
                 case DerivedTableSource derived:
                     query.Join(
-                        BuildQuery(derived.Query, compiler).As(derived.Alias),
+                        BuildQuery(derived.Query, compiler).As(AliasText(derived.Alias, compiler)),
                         j => j,
                         type);
                     return;
@@ -236,9 +238,9 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             case NamedTableSource named:
             {
-                var table = string.IsNullOrWhiteSpace(named.Alias)
+                var table = named.Alias is null
                     ? IdentifierText(named.Name)
-                    : $"{IdentifierText(named.Name)} AS {named.Alias}";
+                    : $"{IdentifierText(named.Name)} AS {AliasText(named.Alias, compiler)}";
                 query.Join(
                     table,
                     j => j.WhereRaw(predicate.Sql, predicate.Bindings.ToArray()),
@@ -247,7 +249,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             }
             case DerivedTableSource derived:
                 query.Join(
-                    BuildQuery(derived.Query, compiler).As(derived.Alias),
+                    BuildQuery(derived.Query, compiler).As(AliasText(derived.Alias, compiler)),
                     j => j.WhereRaw(predicate.Sql, predicate.Bindings.ToArray()),
                     type);
                 return;
@@ -850,15 +852,18 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             ImmutableArray<object?>.Empty);
     }
 
-    private static string RenderAlias(string alias, Compiler compiler)
+    private static string AliasText(IdentifierPart alias, Compiler compiler)
     {
-        var trimmed = alias.Trim();
-        if (!Regex.IsMatch(trimmed, @"^[A-Za-z_][A-Za-z0-9_$]*$", RegexOptions.CultureInvariant))
-            throw new SqlCompilationException($"Unsafe projection alias '{alias}'.");
-        if (compiler is PostgresCompiler)
-            trimmed = trimmed.ToLowerInvariant();
-        return compiler.Wrap(trimmed);
+        var value = alias.Value.Trim();
+        if (!Regex.IsMatch(value, @"^[A-Za-z_][A-Za-z0-9_$]*$", RegexOptions.CultureInvariant))
+            throw new SqlCompilationException($"Unsafe SQL alias '{alias.Value}'.");
+        if (compiler is PostgresCompiler && !alias.WasQuoted)
+            value = value.ToLowerInvariant();
+        return value;
     }
+
+    private static string RenderAlias(IdentifierPart alias, Compiler compiler) =>
+        compiler.Wrap(AliasText(alias, compiler));
 
     private static void RequireArguments(FunctionCallExpr function, int count)
     {

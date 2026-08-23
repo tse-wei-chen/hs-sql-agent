@@ -27,7 +27,18 @@ public sealed record SqlIdentifier(
 public sealed record IdentifierPart(
     string Value,
     bool WasQuoted,
-    SourceSpan Span);
+    SourceSpan Span)
+{
+    /// <summary>
+    /// Compatibility conversion for structured DTOs and programmatic AST construction. A plain
+    /// string has no quote-intent metadata, so it is represented explicitly as an unquoted alias.
+    /// Parser-native SQL must construct IdentifierPart from the source token instead.
+    /// </summary>
+    public static implicit operator IdentifierPart?(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? null
+            : new IdentifierPart(value.Trim(), WasQuoted: false, SourceSpan.Unknown);
+}
 
 public sealed record LiteralExpr(object? Value, SourceSpan Span) : SqlExpr(Span);
 

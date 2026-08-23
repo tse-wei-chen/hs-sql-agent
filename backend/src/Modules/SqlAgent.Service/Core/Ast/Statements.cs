@@ -6,15 +6,15 @@ public abstract record TableSource(SourceSpan Span) : SqlNode(Span);
 
 public sealed record NamedTableSource(
     SqlIdentifier Name,
-    string? Alias,
+    IdentifierPart? Alias,
     SourceSpan Span) : TableSource(Span);
 
 public sealed record DerivedTableSource(
     SqlStatement Query,
-    string Alias,
+    IdentifierPart Alias,
     SourceSpan Span) : TableSource(Span);
 
-public sealed record SelectItem(SqlExpr Expression, string? Alias, SourceSpan Span) : SqlNode(Span);
+public sealed record SelectItem(SqlExpr Expression, IdentifierPart? Alias, SourceSpan Span) : SqlNode(Span);
 
 public sealed record OrderByItem(
     SqlExpr Expression,
