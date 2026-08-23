@@ -39,19 +39,7 @@ public sealed class TypedDmlRuntime(
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        switch (parsedMutation.Statement)
-        {
-            case UpdateStatement:
-            case DeleteStatement:
-            case InsertStatement { Source: InsertValuesSource }:
-                break;
-            case InsertStatement:
-                throw new NotSupportedException(
-                    "The typed DML runtime supports INSERT VALUES only. INSERT ... SELECT remains fail-closed until source-rowset approval semantics are defined.");
-            default:
-                throw new NotSupportedException(
-                    $"The typed DML runtime does not support statement '{parsedMutation.Statement.GetType().Name}'.");
-        }
+        EnsureSupportedStatement(parsedMutation.Statement);
 
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
@@ -124,6 +112,26 @@ public sealed class TypedDmlRuntime(
             session.Plan,
             session.Preview.Challenge,
             cancellationToken);
+    }
+
+    internal static bool SupportsStatement(SqlStatement statement) =>
+        statement is UpdateStatement
+            or DeleteStatement
+            or InsertStatement { Source: InsertValuesSource };
+
+    internal static void EnsureSupportedStatement(SqlStatement statement)
+    {
+        ArgumentNullException.ThrowIfNull(statement);
+        if (SupportsStatement(statement)) return;
+
+        if (statement is InsertStatement)
+        {
+            throw new NotSupportedException(
+                "The typed DML runtime supports INSERT VALUES only. INSERT ... SELECT remains fail-closed until source-rowset approval semantics are defined.");
+        }
+
+        throw new NotSupportedException(
+            $"The typed DML runtime does not support statement '{statement.GetType().Name}'.");
     }
 
     internal static string ComputePolicyVersion(
