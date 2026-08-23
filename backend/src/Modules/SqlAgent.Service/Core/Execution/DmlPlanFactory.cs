@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -81,10 +82,12 @@ public sealed class DmlPlanFactory(
                 ? maxAffectedRows == int.MaxValue ? int.MaxValue : maxAffectedRows + 1
                 : null
         };
+        var parsedMatch = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(matchDefinition),
+            sourceDialect);
 
         var matchCommand = _queryCompiler.Compile(
-            matchDefinition,
-            sourceDialect,
+            parsedMatch,
             targetProvider,
             validationContext,
             new SqlExecutionPlanPolicy());
