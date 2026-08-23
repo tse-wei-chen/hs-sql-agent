@@ -2,7 +2,6 @@ using System.Reflection;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Strategies;
-using SqlAgent.Service.Strategies.Adapters;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;
@@ -67,14 +66,16 @@ public class LegacyStrategyRetirementTests
     }
 
     [Fact]
-    public void StrategyBackedProviderFactory_ReturnsCoreOwnedProviderComposition()
+    public void ProviderStrategy_ImplementsCoreRuntimeCapabilitiesDirectly()
     {
-        var factory = new StrategyBackedSqlProviderFactory([new PostgresStrategy()]);
-        var provider = factory.GetProvider(SqlAgentToolType.Postgres);
+        var strategy = new PostgresStrategy();
+        var provider = Assert.IsAssignableFrom<ISqlProvider>(strategy);
 
-        Assert.IsType<SqlProvider>(provider);
+        Assert.Same(strategy, provider);
         Assert.Equal(SqlAgentToolType.Postgres, provider.Type);
-        Assert.Equal([SqlAgentToolType.Postgres], factory.GetSupportedProviderTypes());
+        Assert.Same(strategy, provider.Connections);
+        Assert.Same(strategy, provider.Metadata);
+        Assert.Equal(SqlAgentToolType.Postgres, provider.Lowerer.Provider);
     }
 
     [Fact]
