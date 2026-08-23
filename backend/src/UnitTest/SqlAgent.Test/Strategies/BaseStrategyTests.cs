@@ -23,7 +23,7 @@ public interface IDbFixture : IAsyncLifetime
 /// typed DML/Core boundary instead of being duplicated here.
 /// </summary>
 public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFixture>
-    where TStrategy : ISqlStrategy, ISqlProvider
+    where TStrategy : ISqlStrategy
     where TFixture : class, IDbFixture
 {
     protected readonly TFixture Fixture;

@@ -21,15 +21,9 @@ public class SqlStrategyFactoryTests
     }
 
     [Fact]
-    public void Constructor_WithNonProviderStrategy_ThrowsInvalidOperationException()
+    public void StrategyContract_InheritsCoreProviderContract()
     {
-        var registration = new Mock<ISqlStrategy>();
-        registration.SetupGet(x => x.DbType).Returns(SqlAgentToolType.Postgres);
-
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            new SqlStrategyFactory([registration.Object]));
-
-        Assert.Contains(nameof(ISqlProvider), error.Message, StringComparison.Ordinal);
+        Assert.True(typeof(ISqlProvider).IsAssignableFrom(typeof(ISqlStrategy)));
     }
 
     [Fact]

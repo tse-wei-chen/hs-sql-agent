@@ -13,12 +13,11 @@ namespace SqlAgent.Test.Strategies;
 
 /// <summary>
 /// Provider integration harness that exercises the canonical Core query pipeline against the
-/// provider implementation directly. During the strangler migration the fixture must satisfy both
-/// the historical strategy contract and ISqlProvider at compile time; no runtime cast or
-/// strategy-to-provider adapter participates in compilation or execution.
+/// provider implementation directly. ISqlStrategy now inherits ISqlProvider, so the historical
+/// registration type carries the Core runtime contract at compile time with no cast or adapter.
 /// </summary>
 public sealed class CoreStrategyTestHarness<TStrategy>
-    where TStrategy : ISqlStrategy, ISqlProvider
+    where TStrategy : ISqlStrategy
 {
     private readonly TStrategy _provider;
     private readonly CoreSqlCompiler _compiler = CoreSqlCompiler.CreateDefault();

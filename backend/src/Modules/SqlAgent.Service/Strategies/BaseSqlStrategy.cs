@@ -11,10 +11,10 @@ namespace SqlAgent.Service.Strategies;
 /// <summary>
 /// Provider implementation base retained under the historical strategy name while provider files
 /// are migrated incrementally. SQL parsing, compilation, policy rewriting, lowering and execution
-/// belong to the Core/typed runtime pipeline; this type now implements the provider runtime
-/// capabilities directly instead of requiring a strategy-to-provider adapter.
+/// belong to the Core/typed runtime pipeline; ISqlStrategy now carries the Core provider contract
+/// directly, so this shell no longer declares a separate provider identity.
 /// </summary>
-public abstract class BaseSqlStrategy : ISqlStrategy, ISqlProvider, IDbConnectionFactory, IProviderMetadataReader
+public abstract class BaseSqlStrategy : ISqlStrategy, IDbConnectionFactory, IProviderMetadataReader
 {
     private IProviderLowerer? _lowerer;
     private IProviderErrorMapper? _errors;

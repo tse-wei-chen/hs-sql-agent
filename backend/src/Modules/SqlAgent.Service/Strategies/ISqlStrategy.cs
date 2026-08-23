@@ -1,15 +1,17 @@
 using System.Data.Common;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Strategies;
 
 /// <summary>
-/// Transitional provider contract. Query compilation/execution belongs to Core/typed runtimes;
-/// DML execution belongs to the typed approval pipeline. Strategies retain only provider identity,
-/// connection construction and metadata access until native ISqlProvider implementations replace them.
+/// Transitional provider-management contract layered on the Core provider runtime. Any remaining
+/// strategy is therefore an ISqlProvider by type; query compilation/execution and DML execution
+/// stay in the Core/typed pipelines while connection-string construction and legacy metadata
+/// shapes are retired incrementally.
 /// </summary>
-public interface ISqlStrategy
+public interface ISqlStrategy : ISqlProvider
 {
     SqlAgentToolType DbType { get; }
     string BuildConnectionString(BuildDbConnectionModelBase model);
