@@ -5,10 +5,10 @@ using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Moq;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
@@ -16,7 +16,7 @@ namespace HsSqlAgent.Server.Test.Tools;
 public class SqlAgentToolExecutionTests
 {
     [Fact]
-    public async Task ExecuteQuerySql_UsesTypedRuntime()
+    public async Task ExecuteQuerySql_UsesParserNativeTypedRuntime()
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
         var providerFactory = new Mock<ISqlProviderFactory>();
@@ -49,8 +49,7 @@ public class SqlAgentToolExecutionTests
             .Setup(x => x.ExecuteAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
-                It.Is<QueryDefinition>(q => q.TableName == "public.users"),
-                SqlAgentToolType.Postgres,
+                It.Is<ParsedStatement>(p => IsTable(p, "public.users")),
                 policy,
                 It.Is<IReadOnlySet<string>?>(tables => tables != null && tables.Contains("public.users")),
                 It.IsAny<CancellationToken>()))
@@ -78,9 +77,9 @@ public class SqlAgentToolExecutionTests
             "public.users",
             "success",
             It.Is<AuditEventContext>(audit =>
-                audit.ToolName == "execute_query_sql" &&
-                audit.Operation == "select" &&
-                audit.ReturnedRows == 1),
+                audit.ToolName == "execute_query_sql"
+                && audit.Operation == "select"
+                && audit.ReturnedRows == 1),
             It.Is<string>(detail => detail.Contains("Postgres", StringComparison.Ordinal)),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -112,8 +111,7 @@ public class SqlAgentToolExecutionTests
             .Setup(x => x.ExecuteAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
-                It.IsAny<QueryDefinition>(),
-                SqlAgentToolType.Postgres,
+                It.IsAny<ParsedStatement>(),
                 It.IsAny<SecurityPolicyModel>(),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
@@ -131,5 +129,12 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.secrets");
 
         Assert.Contains("table denied", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsTable(ParsedStatement parsed, string expected)
+    {
+        if (parsed.Statement is not SelectStatement { From: NamedTableSource source }) return false;
+        var actual = string.Join('.', source.Name.Parts.Select(part => part.Value));
+        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
     }
 }
