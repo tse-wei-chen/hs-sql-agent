@@ -1,4 +1,5 @@
 using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -105,8 +106,7 @@ public class CoreProviderFinalizationTests
 
     private static CompiledSqlCommand Compile(QueryDefinition definition, SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(
-            definition,
-            provider,
+            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), provider),
             provider,
             new SqlPlanValidationContext("provider-finalization-test"),
             new SqlExecutionPlanPolicy());
