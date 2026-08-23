@@ -2,7 +2,9 @@ using System.ComponentModel;
 using System.Reflection;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Tools;
-using SqlAgent.Service.Models;
+using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Enums;
+using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
@@ -69,86 +71,36 @@ public class SqlAgentToolTests
         Assert.Equal("sql", dmlParams[0].Name);
         Assert.Equal(typeof(ModelContextProtocol.Server.McpServer), dmlParams[1].ParameterType);
         Assert.Equal("server", dmlParams[1].Name);
-        Assert.Equal(typeof(System.Threading.CancellationToken), dmlParams[2].ParameterType);
+        Assert.Equal(typeof(CancellationToken), dmlParams[2].ParameterType);
         Assert.Equal("cancellationToken", dmlParams[2].Name);
     }
 
     [Fact]
-    public void CollectReferencesAndAliases_ShouldInspectSelectFunctionWindowExpressions()
+    public void BinderFacts_ShouldInspectNestedWindowSubqueries()
     {
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        List<SelectCondition> selectColumns =
-        [
-            new FunctionSelectCondition
-            {
-                FunctionName = "LAG",
-                Arguments = [new FieldSelectCondition { FieldName = "orders.order_date" }],
-                Window = new WindowDefinition
-                {
-                    PartitionBy =
-                    [
-                        new FunctionGroupByCondition
-                        {
-                            FunctionName = "COALESCE",
-                            Arguments =
-                            [
-                                new SubQuerySelectCondition
-                                {
-                                    TableName = "secret_partition_table",
-                                    SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
-                                }
-                            ]
-                        }
-                    ],
-                    OrderBy =
-                    [
-                        new FunctionOrderByCondition
-                        {
-                            FunctionName = "COALESCE",
-                            Arguments =
-                            [
-                                new SubQuerySelectCondition
-                                {
-                                    TableName = "secret_order_table",
-                                    SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
-                                }
-                            ]
-                        }
-                    ]
-                }
-            }
-        ];
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT LAG(order_date) OVER (" +
+            "PARTITION BY COALESCE((SELECT id FROM secret_partition_table), 0) " +
+            "ORDER BY COALESCE((SELECT id FROM secret_order_table), 0)) FROM orders",
+            SqlAgentToolType.Postgres);
 
-        var method = typeof(SqlAgentTool).GetMethod(
-            "CollectReferencesAndAliases",
-            BindingFlags.Static | BindingFlags.NonPublic);
+        var facts = new SqlAstBinder().Bind(parsed).Facts;
 
-        method!.Invoke(null, [null, null, null, null, null, selectColumns, null, referenced, aliases]);
-
-        Assert.Contains("secret_partition_table", referenced);
-        Assert.Contains("secret_order_table", referenced);
+        Assert.Contains("orders", facts.ReferencedTables);
+        Assert.Contains("secret_partition_table", facts.ReferencedTables);
+        Assert.Contains("secret_order_table", facts.ReferencedTables);
+        Assert.True(facts.ContainsSubquery);
     }
 
     [Fact]
-    public void CollectFromQueryDefinition_ShouldNotTreatTableAliasAsPhysicalTableExemption()
+    public void BinderFacts_ShouldNotTreatTableAliasAsPhysicalTableExemption()
     {
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var query = new QueryDefinition
-        {
-            TableName = "secret",
-            Alias = "secret",
-            SelectColumns = [new FieldSelectCondition { FieldName = "secret.id" }]
-        };
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT secret.id FROM secret AS secret",
+            SqlAgentToolType.Postgres);
 
-        var method = typeof(SqlAgentTool).GetMethod(
-            "CollectFromQueryDefinition",
-            BindingFlags.Static | BindingFlags.NonPublic);
+        var facts = new SqlAstBinder().Bind(parsed).Facts;
 
-        method!.Invoke(null, [query, referenced, aliases]);
-
-        Assert.Contains("secret", referenced);
+        Assert.Contains("secret", facts.ReferencedTables);
     }
-
 }

@@ -1,19 +1,19 @@
-using System.Text;
-using System.Text.Json;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using HsSqlAgent.Server.Authorization;
-using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Models;
-using HsSqlAgent.Server.Tools;
+using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
@@ -206,13 +206,19 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         try
         {
             var sql = CustomToolSqlTemplate.RenderForValidation(tool.SqlTemplate, tool.ParametersJson);
-            var errors = IsDml(tool)
-                ? ValidateDmlDefinition(SqlDefinitionParser.ParseDml(sql, dbType), policy)
-                : DefinitionValidator.Validate(SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql), dbType));
+            if (IsDml(tool))
+            {
+                var errors = ValidateDmlDefinition(SqlDefinitionParser.ParseDml(sql, dbType), policy);
+                return errors.Count == 0 ? null : new { error = "Validation failed.", errors };
+            }
 
-            return errors.Count == 0
-                ? null
-                : new { error = "Validation failed.", errors };
+            var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
+            _ = CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                dbType,
+                new SqlPlanValidationContext("custom-tool-definition-validation"),
+                new SqlExecutionPlanPolicy(policy?.QueryMaxRows ?? 0));
+            return null;
         }
         catch (Exception ex) when (ex is SqlParseException or InvalidOperationException or JsonException)
         {
@@ -279,14 +285,12 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
 
         var isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);
         var isDml = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
-
         if (!isQuery && !isDml)
             return BadRequest(new { error = "Type must be 'Query' or 'DML'." });
 
         var db = await dbManagementService.GetDbByIdAsync(tool.DbManagementId.Value, true, cancellationToken);
         if (db is not DbManagementPwdVM dbPwd)
             return NotFound(new { error = $"Database with ID {tool.DbManagementId} not found." });
-
         if (!Enum.TryParse<SqlAgentToolType>(dbPwd.SqlProvider, true, out var dbType))
             return BadRequest(new { error = $"Invalid SQL provider '{dbPwd.SqlProvider}'." });
 
@@ -309,7 +313,6 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             Database = dbPwd.Database,
             ExtraSettings = dbPwd.ExtraSettings
         });
-
         var runtimePolicy = securityPolicyRuntimeState.GetCurrent();
 
         try
@@ -320,23 +323,20 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 request.Parameters ?? new Dictionary<string, object?>());
             await using var lease = await sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken);
             if (lease is null)
+            {
                 return StatusCode(
                     StatusCodes.Status429TooManyRequests,
                     new { success = false, error = "Maximum concurrent SQL operations reached." });
+            }
 
             string result;
             if (isQuery)
             {
-                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql), dbType);
-                var errors = DefinitionValidator.Validate(queryDef);
-                if (errors.Count > 0)
-                    return BadRequest(new { error = "Validation failed.", errors });
-
+                var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
                 var execution = await typedQueryRuntime.ExecuteAsync(
                     provider,
                     connectionString,
-                    queryDef,
-                    dbType,
+                    parsed,
                     runtimePolicy,
                     allowedTables: null,
                     cancellationToken);
@@ -395,5 +395,4 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         => User.FindFirstValue(JwtRegisteredClaimNames.Sub)
            ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
            ?? User.Identity?.Name;
-
 }

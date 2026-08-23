@@ -2,15 +2,15 @@ using System.Text.Json;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using HsSqlAgent.Server.Services;
+using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Moq;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
-using HsSqlAgent.Server.Tools;
-using HsSqlAgent.Server.Services;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
@@ -57,7 +57,8 @@ public class CustomToolProxyTests
         context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
 
-        _proxy = new CustomToolProxy("test_tool",
+        _proxy = new CustomToolProxy(
+            "test_tool",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
             _providerFactoryMock.Object,
@@ -74,8 +75,9 @@ public class CustomToolProxyTests
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync((CustomSqlTool?)null);
 
-        var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("not available", result);
     }
@@ -85,7 +87,9 @@ public class CustomToolProxyTests
     {
         _httpContextAccessorMock.Object.HttpContext!.Items[Common.Models.McpContextItemKeys.AllowedTools] = "get_tables";
 
-        var result = await _proxy.Execute(JsonSerializer.SerializeToElement(new { }), cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("does not have permission", result);
         _toolServiceMock.Verify(
@@ -94,7 +98,7 @@ public class CustomToolProxyTests
     }
 
     [Fact]
-    public async Task Execute_QueryTool_UsesTypedRuntime()
+    public async Task Execute_QueryTool_UsesParserNativeTypedRuntime()
     {
         var tool = new CustomSqlTool
         {
@@ -112,8 +116,7 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
-                It.Is<QueryDefinition>(q => q.TableName == "users"),
-                SqlAgentToolType.Postgres,
+                It.Is<ParsedStatement>(parsed => IsTable(parsed, "users")),
                 It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == 1000 && p.QueryTimeoutSeconds == 30),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
@@ -123,8 +126,9 @@ public class CustomToolProxyTests
                 TimeSpan.Zero,
                 []));
 
-        var args = JsonSerializer.SerializeToElement(new { email = "test@example.com" });
-        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { email = "test@example.com" }),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("test@example.com", result);
         _typedQueryRuntimeMock.VerifyAll();
@@ -146,8 +150,9 @@ public class CustomToolProxyTests
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
-        var args = JsonSerializer.SerializeToElement(new { });
-        var result = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("missing", result, StringComparison.OrdinalIgnoreCase);
     }
@@ -165,7 +170,8 @@ public class CustomToolProxyTests
             .ReturnsAsync(tool);
         SetupPostgresProvider();
 
-        var dmlProxy = new CustomToolProxy("delete_user",
+        var dmlProxy = new CustomToolProxy(
+            "delete_user",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
             _providerFactoryMock.Object,
@@ -195,7 +201,8 @@ public class CustomToolProxyTests
             .ReturnsAsync(tool);
         SetupPostgresProvider();
 
-        var dmlProxy = new CustomToolProxy("insert_user",
+        var dmlProxy = new CustomToolProxy(
+            "insert_user",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
             _providerFactoryMock.Object,
@@ -229,26 +236,26 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
-                It.IsAny<QueryDefinition>(),
-                SqlAgentToolType.Postgres,
+                It.IsAny<ParsedStatement>(),
                 It.IsAny<SecurityPolicyModel>(),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QueryExecutionResult([], 0, TimeSpan.Zero, []));
 
-        var args = JsonSerializer.SerializeToElement(new { });
-        _ = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
+        _ = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         _auditServiceMock.Verify(a => a.WriteEventAsync(
             "mcp.test_tool.executed",
             "test_tool",
             "success",
             It.Is<AuditEventContext>(c =>
-                c.ToolName == "test_tool" &&
-                c.Operation == "select" &&
-                c.ReturnedRows == 0 &&
-                c.Definition != null &&
-                !c.Definition.Contains("test@example.com")),
+                c.ToolName == "test_tool"
+                && c.Operation == "select"
+                && c.ReturnedRows == 0
+                && c.Definition != null
+                && !c.Definition.Contains("test@example.com")),
             It.Is<string>(s => s.Contains("Query")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -259,8 +266,9 @@ public class CustomToolProxyTests
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync((CustomSqlTool?)null);
 
-        var args = JsonSerializer.SerializeToElement(new { });
-        _ = await _proxy.Execute(args, cancellationToken: TestContext.Current.CancellationToken);
+        _ = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         _auditServiceMock.Verify(a => a.WriteLogAsync(
             "mcp.test_tool.executed",
@@ -277,5 +285,12 @@ public class CustomToolProxyTests
         _providerFactoryMock
             .Setup(f => f.GetProvider(SqlAgentToolType.Postgres))
             .Returns(provider.Object);
+    }
+
+    private static bool IsTable(ParsedStatement parsed, string expected)
+    {
+        if (parsed.Statement is not SelectStatement { From: NamedTableSource source }) return false;
+        var actual = string.Join('.', source.Name.Parts.Select(part => part.Value));
+        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
     }
 }
