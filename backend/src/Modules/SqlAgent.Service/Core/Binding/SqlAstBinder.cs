@@ -366,6 +366,15 @@ public sealed class SqlAstBinder : ISqlBinder
 
         public void Add(TableSymbol symbol)
         {
+            if (!string.IsNullOrWhiteSpace(symbol.Alias)
+                && _sources.Any(existing =>
+                    !string.IsNullOrWhiteSpace(existing.Alias)
+                    && string.Equals(existing.Alias, symbol.Alias, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate table alias '{symbol.Alias}' in SQL scope {Id}.");
+            }
+
             _sources.Add(symbol);
             AddQualifier(symbol.Name, symbol);
             var lastDot = symbol.Name.LastIndexOf('.');
