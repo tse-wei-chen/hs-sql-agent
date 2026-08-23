@@ -11,9 +11,9 @@ using SqlAgent.Service.Models;
 namespace SqlAgent.Service.Core.Pipeline;
 
 /// <summary>
-/// Single entry point for the strangler compiler pipeline. Callers receive a CompiledSqlCommand
-/// only after mapping, binding, normalization, authorization/capability validation and policy
-/// rewriting have all succeeded.
+/// Compiler pipeline entry point. The typed boundary starts at <see cref="ParsedStatement"/> so
+/// binding, normalization, validation, policy rewriting and lowering cannot be invoked with a
+/// transport DTO. The QueryDefinition overload is a temporary strangler adapter only.
 /// </summary>
 public sealed class CoreSqlCompiler(
     ISqlBinder binder,
@@ -32,6 +32,11 @@ public sealed class CoreSqlCompiler(
         new CoreSqlPlanValidator(),
         new CoreSqlExecutionPolicyRewriter());
 
+    /// <summary>
+    /// Temporary DTO adapter retained while external structured-query callers migrate to an
+    /// explicit DTO-to-Core parsing/mapping boundary. It never mutates the supplied DTO.
+    /// </summary>
+    [Obsolete("Map QueryDefinition to ParsedStatement first, then call Compile(ParsedStatement, ...).")]
     public CompiledSqlCommand Compile(
         QueryDefinition definition,
         SqlAgentToolType sourceDialect,
@@ -40,11 +45,22 @@ public sealed class CoreSqlCompiler(
         SqlExecutionPlanPolicy executionPolicy)
     {
         ArgumentNullException.ThrowIfNull(definition);
+        var parsed = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            sourceDialect);
+        return Compile(parsed, targetProvider, validationContext, executionPolicy);
+    }
+
+    public CompiledSqlCommand Compile(
+        ParsedStatement parsed,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        SqlExecutionPlanPolicy executionPolicy)
+    {
+        ArgumentNullException.ThrowIfNull(parsed);
         ArgumentNullException.ThrowIfNull(validationContext);
         ArgumentNullException.ThrowIfNull(executionPolicy);
 
-        NormalizeLegacyDtoSurface(definition);
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), sourceDialect);
         var bound = _binder.Bind(parsed);
         var canonical = _normalizer.Normalize(bound, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
@@ -52,135 +68,6 @@ public sealed class CoreSqlCompiler(
         ValidateSqlKataBackendCompatibility(executable.Statement);
         return new SqlKataProviderLowerer(targetProvider).Lower(executable);
     }
-
-    /// <summary>
-    /// Temporary strangler adapter for public DTO spellings that predate the canonical AST. It
-    /// changes only equivalent spellings and internal template tokens; it performs no dialect
-    /// inference and must stay ahead of the parser-independent mapper boundary.
-    /// </summary>
-    private static void NormalizeLegacyDtoSurface(QueryDefinition definition)
-    {
-        NormalizeWhereList(definition.WhereColumnsAndValues);
-        if (definition.Joins is not null)
-            foreach (var join in definition.Joins)
-            {
-                NormalizeWhereList(join.OnConditions);
-                if (join.SubQuery is not null) NormalizeLegacyDtoSurface(join.SubQuery);
-            }
-        if (definition.SelectColumns is not null)
-            NormalizeSelectList(definition.SelectColumns);
-        if (definition.FromQuery is not null) NormalizeLegacyDtoSurface(definition.FromQuery);
-        if (definition.CombineConditions is not null)
-            foreach (var combine in definition.CombineConditions) NormalizeLegacyDtoSurface(combine.Query);
-        if (definition.CteConditions is not null)
-            foreach (var cte in definition.CteConditions) NormalizeLegacyDtoSurface(cte.Query);
-    }
-
-    private static void NormalizeWhereList(IReadOnlyList<WhereCondition>? conditions)
-    {
-        if (conditions is null) return;
-        foreach (var condition in conditions)
-        {
-            switch (condition)
-            {
-                case BasicWhereCondition basic:
-                    basic.Operator = NormalizePredicateAlias(basic.Operator);
-                    break;
-                case ColumnCompareWhereCondition compare:
-                    compare.Operator = NormalizePredicateAlias(compare.Operator);
-                    break;
-                case ExpressionWhereCondition expression:
-                    expression.Operator = NormalizePredicateAlias(expression.Operator);
-                    NormalizeSelect(expression.LeftExpression);
-                    if (expression.RightExpression is not null) NormalizeSelect(expression.RightExpression);
-                    break;
-                case GroupWhereCondition group:
-                    NormalizeWhereList(group.Groups);
-                    break;
-                case SubQueryWhereCondition subquery:
-                    subquery.Operator = NormalizePredicateAlias(subquery.Operator);
-                    NormalizeLegacyDtoSurface(subquery.SubQuery);
-                    break;
-            }
-        }
-    }
-
-    private static string NormalizePredicateAlias(string value)
-    {
-        var normalized = string.Join(' ', value
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .ToUpperInvariant();
-        return normalized switch
-        {
-            "ISNULL" => "IS",
-            "ISNOTNULL" => "IS NOT",
-            _ => normalized
-        };
-    }
-
-    private static void NormalizeSelectList(IList<SelectCondition> conditions)
-    {
-        for (var i = 0; i < conditions.Count; i++)
-            conditions[i] = NormalizeSelect(conditions[i]);
-    }
-
-    private static SelectCondition NormalizeSelect(SelectCondition condition)
-    {
-        switch (condition)
-        {
-            case FunctionSelectCondition function when function.Arguments is not null:
-                NormalizeSelectList(function.Arguments);
-                NormalizeWhereList(function.FilterWhereConditions);
-                return function;
-            case OperationSelectCondition operation:
-                NormalizeSelect(operation.Left);
-                NormalizeSelect(operation.Right);
-                return operation;
-            case CastSelectCondition cast:
-                NormalizeSelect(cast.Expression);
-                return cast;
-            case SubQuerySelectCondition subquery:
-                NormalizeLegacyDtoSurface(ToDefinition(subquery));
-                return subquery;
-            case TemplateSqlTokenSelectCondition token:
-                return NormalizeTemplateToken(token);
-            default:
-                return condition;
-        }
-    }
-
-    private static SelectCondition NormalizeTemplateToken(TemplateSqlTokenSelectCondition token)
-    {
-        var value = token.Token.Replace("_", string.Empty, StringComparison.Ordinal).Trim().ToUpperInvariant();
-        return value switch
-        {
-            "CURRENTDATE" => new FunctionSelectCondition { FunctionName = "CURRENT_DATE", Alias = token.Alias },
-            "CURRENTTIME" => new FunctionSelectCondition { FunctionName = "CURRENT_TIME", Alias = token.Alias },
-            "CURRENTTIMESTAMP" => new FunctionSelectCondition { FunctionName = "CURRENT_TIMESTAMP", Alias = token.Alias },
-            "SYSDATE" => new FunctionSelectCondition { FunctionName = "SYSDATE", Alias = token.Alias },
-            "DAY" or "WEEK" or "MONTH" or "QUARTER" or "YEAR" or "HOUR" or "MINUTE" or "SECOND" =>
-                new FieldSelectCondition { FieldName = value, Alias = token.Alias },
-            _ => throw new SqlCompilationException($"Unsupported SQL template token '{token.Token}'.")
-        };
-    }
-
-    private static QueryDefinition ToDefinition(SubQuerySelectCondition source) => new()
-    {
-        TableName = source.TableName,
-        FromQuery = source.FromQuery,
-        Alias = source.Alias,
-        Distinct = source.Distinct,
-        SelectColumns = source.SelectColumns,
-        WhereColumnsAndValues = source.WhereColumnsAndValues,
-        OrderByColumns = source.OrderByColumns,
-        GroupByConditions = source.GroupByConditions,
-        HavingConditions = source.HavingConditions,
-        Joins = source.Joins,
-        CombineConditions = source.CombineConditions,
-        CteConditions = source.CteConditions,
-        Limit = source.Limit,
-        Offset = source.Offset
-    };
 
     private static void ValidateSqlKataBackendCompatibility(SqlStatement statement)
     {

@@ -14,7 +14,7 @@ public sealed record QueryFacts(
 /// <summary>
 /// Transitional facts pass over the public DTO model. This centralizes table discovery while the
 /// parser is migrated to the independent Core AST. Alias uniqueness is enforced per SQL scope,
-/// not globally, and unknown node kinds fail closed.
+/// CTE visibility follows declaration order, and unknown node kinds fail closed.
 /// </summary>
 public static class QueryFactsBinder
 {
@@ -47,11 +47,13 @@ public static class QueryFactsBinder
             state.ContainsCte = true;
             foreach (var cte in query.CteConditions)
             {
+                // Match SqlAstBinder: a CTE body can see inherited and previously declared CTEs,
+                // but not itself or a later sibling. The legacy DTO does not retain WITH RECURSIVE,
+                // so treating a self-reference as physical is the safer fail-closed behavior.
+                VisitQuery(cte.Query, state, localCtes);
                 if (!string.IsNullOrWhiteSpace(cte.CteAliasName))
                     localCtes = localCtes.Add(cte.CteAliasName.Trim());
             }
-            foreach (var cte in query.CteConditions)
-                VisitQuery(cte.Query, state, localCtes);
         }
 
         if (query.FromQuery is not null)
@@ -101,7 +103,7 @@ public static class QueryFactsBinder
 
         if (query.CombineConditions is not null)
             foreach (var combine in query.CombineConditions)
-                VisitQuery(combine.Query, state, inheritedCtes);
+                VisitQuery(combine.Query, state, localCtes);
     }
 
     private static void VisitSelect(
@@ -162,10 +164,11 @@ public static class QueryFactsBinder
         {
             state.ContainsCte = true;
             foreach (var cte in query.CteConditions)
+            {
+                VisitQuery(cte.Query, state, localCtes);
                 if (!string.IsNullOrWhiteSpace(cte.CteAliasName))
                     localCtes = localCtes.Add(cte.CteAliasName.Trim());
-            foreach (var cte in query.CteConditions)
-                VisitQuery(cte.Query, state, localCtes);
+            }
         }
 
         if (query.FromQuery is not null)

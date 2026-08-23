@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
@@ -8,6 +9,8 @@ namespace SqlAgent.Service.Core.Mapping;
 /// <summary>
 /// Strangler adapter from the public QueryDefinition contract into the independent Core AST.
 /// It intentionally fails closed for legacy shapes that the Core AST cannot yet preserve.
+/// Mapping is pure: legacy-equivalent spellings are normalized while constructing Core nodes and
+/// the supplied transport DTO is never rewritten in place.
 /// </summary>
 public static class QueryDefinitionCoreMapper
 {
@@ -138,8 +141,24 @@ public static class QueryDefinitionCoreMapper
                 @case.ElseValue is null ? null : new LiteralExpr(@case.ElseValue, Unknown),
                 Unknown),
             SubQuerySelectCondition subquery => new SubqueryExpr(Map(ToDefinition(subquery)), Unknown),
+            TemplateSqlTokenSelectCondition token => MapTemplateToken(token),
             _ => throw new InvalidOperationException(
                 $"Unsupported SELECT expression for Core AST mapping: {condition.GetType().Name}")
+        };
+    }
+
+    private static SqlExpr MapTemplateToken(TemplateSqlTokenSelectCondition token)
+    {
+        var value = token.Token.Replace("_", string.Empty, StringComparison.Ordinal).Trim().ToUpperInvariant();
+        return value switch
+        {
+            "CURRENTDATE" => MapFunction("CURRENT_DATE", null, false, null, null),
+            "CURRENTTIME" => MapFunction("CURRENT_TIME", null, false, null, null),
+            "CURRENTTIMESTAMP" => MapFunction("CURRENT_TIMESTAMP", null, false, null, null),
+            "SYSDATE" => MapFunction("SYSDATE", null, false, null, null),
+            "DAY" or "WEEK" or "MONTH" or "QUARTER" or "YEAR" or "HOUR" or "MINUTE" or "SECOND" =>
+                new ColumnExpr(Identifier(value), Unknown),
+            _ => throw new SqlCompilationException($"Unsupported SQL template token '{token.Token}'.")
         };
     }
 
@@ -489,6 +508,8 @@ public static class QueryDefinitionCoreMapper
             "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or
             "LIKE" or "ILIKE" or "IN" or "NOT IN" or "BETWEEN" or "NOT BETWEEN" or
             "IS" or "IS NOT" or "EXISTS" or "NOT EXISTS" => normalized,
+            "ISNULL" => "IS",
+            "ISNOTNULL" => "IS NOT",
             "NOTIN" => "NOT IN",
             "NOTBETWEEN" => "NOT BETWEEN",
             "NOTEXISTS" => "NOT EXISTS",

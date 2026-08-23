@@ -17,8 +17,8 @@ public sealed record DmlCompilationPolicy(
     bool AllowFullTableDelete = false);
 
 /// <summary>
-/// Typed INSERT/UPDATE/DELETE compiler. Mapping, binding, normalization, authorization and
-/// capability validation all run before SqlKata lowering.
+/// Typed INSERT/UPDATE/DELETE compiler. The compiler boundary starts at ParsedStatement; the
+/// DmlDefinition overload remains only as a strangler adapter for legacy callers.
 /// </summary>
 public sealed class CoreDmlCompiler(
     ISqlBinder binder,
@@ -34,6 +34,7 @@ public sealed class CoreDmlCompiler(
         new CoreDmlNormalizer(),
         new CoreDmlPlanValidator());
 
+    [Obsolete("Map DmlDefinition to ParsedStatement first, then call Compile(ParsedStatement, ...).")]
     public CompiledSqlCommand Compile(
         DmlDefinition definition,
         SqlAgentToolType sourceDialect,
@@ -42,14 +43,24 @@ public sealed class CoreDmlCompiler(
         DmlCompilationPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(definition);
-        ArgumentNullException.ThrowIfNull(validationContext);
-        policy ??= new DmlCompilationPolicy();
-
-        ValidateMutationPolicy(definition, policy);
-
         var parsed = new ParsedStatement(
             DmlDefinitionCoreMapper.Map(definition),
             sourceDialect);
+        return Compile(parsed, targetProvider, validationContext, policy);
+    }
+
+    public CompiledSqlCommand Compile(
+        ParsedStatement parsed,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? policy = null)
+    {
+        ArgumentNullException.ThrowIfNull(parsed);
+        ArgumentNullException.ThrowIfNull(validationContext);
+        policy ??= new DmlCompilationPolicy();
+
+        ValidateMutationPolicy(parsed.Statement, policy);
+
         var bound = _binder.Bind(parsed);
         var canonical = _normalizer.Normalize(bound, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
@@ -63,42 +74,41 @@ public sealed class CoreDmlCompiler(
         var command = validated.Statement is InsertStatement insert
             ? new SqlKataInsertLowerer(targetProvider).Lower(executable, insert)
             : new SqlKataDmlLowerer(targetProvider).Lower(executable);
-        var expectedKind = definition.Operation switch
+        var expectedKind = parsed.Statement switch
         {
-            DmlOperation.Insert => SqlStatementKind.Insert,
-            DmlOperation.Update => SqlStatementKind.Update,
-            DmlOperation.Delete => SqlStatementKind.Delete,
+            InsertStatement => SqlStatementKind.Insert,
+            UpdateStatement => SqlStatementKind.Update,
+            DeleteStatement => SqlStatementKind.Delete,
             _ => throw new SqlCompilationException(
-                $"DML operation '{definition.Operation}' is not supported by the Core DML compiler.")
+                $"Statement '{parsed.Statement.GetType().Name}' is not supported by the Core DML compiler.")
         };
         if (command.Kind != expectedKind)
             throw new SqlCompilationException(
-                $"Core DML lowerer produced {command.Kind} for {definition.Operation}.");
+                $"Core DML lowerer produced {command.Kind} for expected {expectedKind} statement.");
         return command;
     }
 
     private static void ValidateMutationPolicy(
-        DmlDefinition definition,
+        SqlStatement statement,
         DmlCompilationPolicy policy)
     {
-        var hasWhere = definition.WhereConditions is { Count: > 0 };
-        switch (definition.Operation)
+        switch (statement)
         {
-            case DmlOperation.Update when !hasWhere
-                && (policy.RequireWhereForUpdate || !policy.AllowFullTableUpdate):
+            case UpdateStatement { Predicate: null }
+                when policy.RequireWhereForUpdate || !policy.AllowFullTableUpdate:
                 throw new UnauthorizedAccessException(
                     "Security policy denies UPDATE without WHERE.");
-            case DmlOperation.Delete when !hasWhere
-                && (policy.RequireWhereForDelete || !policy.AllowFullTableDelete):
+            case DeleteStatement { Predicate: null }
+                when policy.RequireWhereForDelete || !policy.AllowFullTableDelete:
                 throw new UnauthorizedAccessException(
                     "Security policy denies DELETE without WHERE.");
-            case DmlOperation.Insert:
-            case DmlOperation.Update:
-            case DmlOperation.Delete:
+            case InsertStatement:
+            case UpdateStatement:
+            case DeleteStatement:
                 return;
             default:
                 throw new SqlCompilationException(
-                    $"Unsupported DML operation '{definition.Operation}'.");
+                    $"Unsupported DML statement '{statement.GetType().Name}'.");
         }
     }
 }
