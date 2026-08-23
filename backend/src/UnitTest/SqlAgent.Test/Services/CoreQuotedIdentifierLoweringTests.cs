@@ -103,6 +103,28 @@ public sealed class CoreQuotedIdentifierLoweringTests
         Assert.Equal("foo", column.Source?.Alias);
     }
 
+    [Fact]
+    public void Bind_QuotedCanonicalLookingFunction_FailsBeforeNormalization()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
+            SqlAgentToolType.Postgres);
+
+        var error = Assert.Throws<InvalidOperationException>(() => new SqlAstBinder().Bind(parsed));
+        Assert.Contains("quoted or qualified function identifier", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Bind_QualifiedFunction_FailsBeforeRegistryNameFlattening()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT custom.fn(id) FROM users",
+            SqlAgentToolType.Postgres);
+
+        var error = Assert.Throws<InvalidOperationException>(() => new SqlAstBinder().Bind(parsed));
+        Assert.Contains("quoted or qualified function identifier", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
