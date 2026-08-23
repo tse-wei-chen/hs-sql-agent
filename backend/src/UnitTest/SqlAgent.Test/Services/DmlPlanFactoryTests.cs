@@ -1,5 +1,6 @@
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
+using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
@@ -31,8 +32,7 @@ public class DmlPlanFactoryTests
 
         var plan = await new DmlPlanFactory(metadata).CreateAsync(
             "connection",
-            definition,
-            SqlAgentToolType.Postgres,
+            Map(definition),
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext(
                 "policy-v2",
@@ -89,8 +89,7 @@ public class DmlPlanFactoryTests
 
         var plan = await new DmlPlanFactory(metadata).CreateAsync(
             "connection",
-            definition,
-            SqlAgentToolType.Postgres,
+            Map(definition),
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext(
                 "policy-v3",
@@ -123,8 +122,7 @@ public class DmlPlanFactoryTests
                 new DatabaseColumnMetadata("public", "events", "status", "text", false)
             ])).CreateAsync(
                 "connection",
-                definition,
-                SqlAgentToolType.Postgres,
+                Map(definition),
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1"),
                 assurance: DmlRowIdentityAssurance.Strict,
@@ -132,6 +130,9 @@ public class DmlPlanFactoryTests
 
         Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static ParsedStatement Map(DmlDefinition definition) =>
+        new(DmlDefinitionCoreMapper.Map(definition), SqlAgentToolType.Postgres);
 
     private sealed class StubMetadataReader(
         IReadOnlyList<DatabaseColumnMetadata> columns,
