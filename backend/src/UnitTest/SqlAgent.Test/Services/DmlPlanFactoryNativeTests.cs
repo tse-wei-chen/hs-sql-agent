@@ -47,7 +47,7 @@ public class DmlPlanFactoryNativeTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("public.users", plan.TableName);
-        Assert.Equal(["id"], plan.IdentityColumns);
+        Assert.Equal("id", Assert.Single(plan.IdentityColumns));
         Assert.Equal(SqlStatementKind.Update, plan.MutationCommand.Kind);
         Assert.Equal(SqlStatementKind.Select, plan.MatchCommand.Kind);
         Assert.Contains("owner_id", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
