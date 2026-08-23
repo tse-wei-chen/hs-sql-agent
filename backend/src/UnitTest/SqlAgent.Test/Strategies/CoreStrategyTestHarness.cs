@@ -13,8 +13,8 @@ namespace SqlAgent.Test.Strategies;
 
 /// <summary>
 /// Provider integration harness that exercises the canonical Core query pipeline while retaining
-/// the strategy only as the temporary provider connection/metadata adapter. Runtime DB exceptions
-/// are mapped through the provider contract instead of reflection or legacy strategy execution.
+/// the strategy only as the temporary provider connection/metadata implementation. Runtime DB
+/// exceptions are mapped through the provider contract instead of legacy strategy execution.
 /// </summary>
 public sealed class CoreStrategyTestHarness<TStrategy>
     where TStrategy : ISqlStrategy
@@ -27,7 +27,7 @@ public sealed class CoreStrategyTestHarness<TStrategy>
     public CoreStrategyTestHarness(TStrategy strategy)
     {
         _strategy = strategy ?? throw new ArgumentNullException(nameof(strategy));
-        _provider = LegacySqlProviderAdapter.Adapt(strategy);
+        _provider = StrategyBackedSqlProviderFactory.CreateProvider(strategy);
         _executor = new CompiledSqlCommandExecutor(_provider.Connections);
     }
 
