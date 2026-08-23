@@ -4,9 +4,9 @@ using MySql.Data.MySqlClient;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Strategies;
+namespace SqlAgent.Service.Core.Providers;
 
-public class MySqlStrategy : BaseSqlStrategy
+public class MySqlProvider : SqlProviderBase
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
 

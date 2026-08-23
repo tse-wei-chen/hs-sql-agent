@@ -2,19 +2,18 @@ using System.Data.Common;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Lowering;
 using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Strategies;
+namespace SqlAgent.Service.Core.Providers;
 
 /// <summary>
-/// Provider implementation base retained under the historical strategy name while provider files
-/// are migrated incrementally. SQL parsing, compilation, policy rewriting, lowering and execution
-/// belong to the Core/typed runtime pipeline; ISqlStrategy now carries the Core provider contract
-/// directly, so this shell no longer declares a separate provider identity.
+/// Shared database-provider implementation surface. SQL parsing, compilation, policy rewriting,
+/// lowering and execution live in the Core/typed runtime; provider implementations own only
+/// provider identity, connection creation, metadata access and management-side connection-string
+/// construction.
 /// </summary>
-public abstract class BaseSqlStrategy : ISqlStrategy, IDbConnectionFactory, IProviderMetadataReader
+public abstract class SqlProviderBase : ISqlProvider, IDbConnectionFactory, IProviderMetadataReader
 {
     private IProviderLowerer? _lowerer;
     private IProviderErrorMapper? _errors;

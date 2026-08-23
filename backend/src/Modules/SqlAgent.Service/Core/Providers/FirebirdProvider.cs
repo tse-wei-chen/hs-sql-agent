@@ -4,9 +4,9 @@ using FirebirdSql.Data.FirebirdClient;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Strategies;
+namespace SqlAgent.Service.Core.Providers;
 
-public class FirebirdStrategy : BaseSqlStrategy
+public class FirebirdProvider : SqlProviderBase
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
 

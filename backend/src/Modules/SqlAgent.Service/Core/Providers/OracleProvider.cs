@@ -4,9 +4,9 @@ using Oracle.ManagedDataAccess.Client;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Strategies;
+namespace SqlAgent.Service.Core.Providers;
 
-public class OracleStrategy : BaseSqlStrategy
+public class OracleProvider : SqlProviderBase
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
 

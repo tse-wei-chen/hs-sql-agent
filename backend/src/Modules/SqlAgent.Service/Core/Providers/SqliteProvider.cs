@@ -4,9 +4,9 @@ using Microsoft.Data.Sqlite;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Strategies;
+namespace SqlAgent.Service.Core.Providers;
 
-public class SqliteStrategy : BaseSqlStrategy
+public class SqliteProvider : SqlProviderBase
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 

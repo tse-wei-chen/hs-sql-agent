@@ -1,12 +1,12 @@
+using System.Data.Common;
 using Dapper;
 using Npgsql;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
-using System.Data.Common;
 
-namespace SqlAgent.Service.Strategies;
+namespace SqlAgent.Service.Core.Providers;
 
-public class PostgresStrategy : BaseSqlStrategy
+public class PostgresProvider : SqlProviderBase
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 

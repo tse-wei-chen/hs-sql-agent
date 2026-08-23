@@ -4,9 +4,9 @@ using Microsoft.Data.SqlClient;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Strategies;
+namespace SqlAgent.Service.Core.Providers;
 
-public class MsSqlServerStrategy : BaseSqlStrategy
+public class MsSqlServerProvider : SqlProviderBase
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
