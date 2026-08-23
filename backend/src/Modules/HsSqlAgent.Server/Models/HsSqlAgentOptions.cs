@@ -47,6 +47,9 @@ public class HsSqlAgentServiceOptions
     public string SqlConcurrencyFailureMode { get; set; } = "FailClosed";
     public string SqlConcurrencyKey { get; set; } = "hsqlagent:sql-concurrency";
     public int SqlConcurrencyLeaseSeconds { get; set; } = 30;
+    public string DmlApprovalStoreProvider { get; set; } = "Memory";
+    public string DmlApprovalStoreConnectionString { get; set; } = string.Empty;
+    public string DmlApprovalStoreKeyPrefix { get; set; } = "hsqlagent:dml-approval:";
 
     public string CacheProvider { get; set; } = "Memory";
     public string CacheConnectionString { get; set; } = string.Empty;
