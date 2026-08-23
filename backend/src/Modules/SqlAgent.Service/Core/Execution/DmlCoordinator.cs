@@ -67,7 +67,7 @@ public sealed class DmlCoordinator(
             now.Add(ttl),
             Guid.NewGuid().ToString("N"));
 
-        _challengeStore.Register(challenge);
+        await _challengeStore.RegisterAsync(challenge, cancellationToken);
 
         return new DmlPreview(
             plan.Operation,
@@ -87,7 +87,7 @@ public sealed class DmlCoordinator(
         ValidateChallenge(plan, approvedChallenge);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        if (!_challengeStore.TryConsume(approvedChallenge))
+        if (!await _challengeStore.TryConsumeAsync(approvedChallenge, cancellationToken))
         {
             throw new InvalidOperationException(
                 "DML approval challenge is unknown, modified, expired, or has already been consumed.");
