@@ -4,17 +4,16 @@ using Admin.Service.Models;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
-using SqlAgent.Service.Strategies.Adapters;
 
 namespace HsSqlAgent.Server.Services;
 
 public interface ITypedQueryRuntime
 {
     Task<QueryExecutionResult> ExecuteAsync(
-        ISqlStrategy strategy,
+        ISqlProvider provider,
         string connectionString,
         QueryDefinition definition,
         SqlAgentToolType sourceDialect,
@@ -24,26 +23,22 @@ public interface ITypedQueryRuntime
 }
 
 /// <summary>
-/// Server-side strangler boundary for SELECT execution. Callers provide an explicit source
-/// dialect plus the current security policy and table authorization. The runtime compiles through
-/// the Core pipeline and executes only the resulting immutable command.
+/// Server-side SELECT execution boundary. Callers provide an explicit provider, source dialect,
+/// current security policy and table authorization. The runtime compiles through the Core pipeline
+/// and executes only the resulting immutable command; it has no dependency on legacy strategies.
 /// </summary>
 public sealed class TypedQueryRuntime : ITypedQueryRuntime
 {
     public CompiledSqlCommand Compile(
-        ISqlStrategy strategy,
+        ISqlProvider provider,
         QueryDefinition definition,
         SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables)
     {
-        ArgumentNullException.ThrowIfNull(strategy);
+        ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(policy);
-
-        var provider = LegacySqlProviderAdapter.Adapt(strategy);
-        if (provider.Type != strategy.DbType)
-            throw new InvalidOperationException("Query provider adapter type does not match the selected strategy.");
 
         return CoreSqlCompiler.CreateDefault().Compile(
             definition,
@@ -56,7 +51,7 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
     }
 
     public async Task<QueryExecutionResult> ExecuteAsync(
-        ISqlStrategy strategy,
+        ISqlProvider provider,
         string connectionString,
         QueryDefinition definition,
         SqlAgentToolType sourceDialect,
@@ -64,15 +59,15 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(provider);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         var command = Compile(
-            strategy,
+            provider,
             definition,
             sourceDialect,
             policy,
             allowedTables);
-        var provider = LegacySqlProviderAdapter.Adapt(strategy);
         var executor = new CompiledSqlCommandExecutor(provider.Connections);
         try
         {
