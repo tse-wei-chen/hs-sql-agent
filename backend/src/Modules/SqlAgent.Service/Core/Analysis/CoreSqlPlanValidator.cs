@@ -67,22 +67,35 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
 
         // CTE output aliases are represented explicitly in the parser/Core AST, while SqlKata does
         // not model the list syntax. Canonicalize them to equivalent projection aliases before the
-        // capability walk so every downstream stage sees one fully lowerable shape.
+        // semantic/capability walk so every downstream stage sees one fully lowerable shape.
         var canonicalStatement = CoreCteColumnAliasRewriter.Rewrite(statement.Statement);
 
         ValidateTableAccess(statement.Facts, context.AllowedTables);
+        CoreSqlSemanticValidator.Validate(canonicalStatement, statement.TargetProvider);
         ValidateCapabilities(canonicalStatement, statement.TargetProvider);
-        return new ValidatedSqlPlan(canonicalStatement, statement.Facts, statement.SourceDialect, statement.TargetProvider, context.PolicyVersion);
+        return new ValidatedSqlPlan(
+            canonicalStatement,
+            statement.Facts,
+            statement.SourceDialect,
+            statement.TargetProvider,
+            context.PolicyVersion);
     }
 
     private static void ValidateTableAccess(QueryFacts facts, IReadOnlySet<string>? allowedTables)
     {
         if (allowedTables is null || allowedTables.Count == 0) return;
         var allowed = allowedTables is HashSet<string> hash && hash.Comparer.Equals(StringComparer.OrdinalIgnoreCase)
-            ? hash : allowedTables.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var violations = facts.ReferencedTables.Where(table => !allowed.Contains(table)).OrderBy(table => table, StringComparer.OrdinalIgnoreCase).ToArray();
+            ? hash
+            : allowedTables.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var violations = facts.ReferencedTables
+            .Where(table => !allowed.Contains(table))
+            .OrderBy(table => table, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         if (violations.Length > 0)
-            throw new UnauthorizedAccessException($"SQL plan is not authorized to access table(s): {string.Join(", ", violations)}");
+        {
+            throw new UnauthorizedAccessException(
+                $"SQL plan is not authorized to access table(s): {string.Join(", ", violations)}");
+        }
     }
 
     private static void ValidateCapabilities(SqlStatement statement, SqlAgentToolType provider)
@@ -94,22 +107,27 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 return;
             case QueryStatement query:
                 ValidateSelect(query.Head, provider);
-                foreach (var operation in query.SetOperations) ValidateCapabilities(operation.Query, provider);
+                foreach (var operation in query.SetOperations)
+                    ValidateCapabilities(operation.Query, provider);
                 ValidateOrdering(query.OrderBy, provider);
-                foreach (var item in query.OrderBy) ValidateExpression(item.Expression, provider, ExpressionContext.OrderBy);
+                foreach (var item in query.OrderBy)
+                    ValidateExpression(item.Expression, provider, ExpressionContext.OrderBy);
                 return;
             case UpdateStatement update:
                 if (update.Assignments.IsDefaultOrEmpty)
                     throw new SqlCompilationException("UPDATE requires at least one assignment.");
                 foreach (var assignment in update.Assignments)
                     ValidateExpression(assignment.Value, provider, ExpressionContext.Assignment);
-                if (update.Predicate is not null) ValidateExpression(update.Predicate, provider, ExpressionContext.Predicate);
+                if (update.Predicate is not null)
+                    ValidateExpression(update.Predicate, provider, ExpressionContext.Predicate);
                 return;
             case DeleteStatement delete:
-                if (delete.Predicate is not null) ValidateExpression(delete.Predicate, provider, ExpressionContext.Predicate);
+                if (delete.Predicate is not null)
+                    ValidateExpression(delete.Predicate, provider, ExpressionContext.Predicate);
                 return;
             default:
-                throw new SqlCompilationException($"Unsupported statement during capability validation: {statement.GetType().Name}");
+                throw new SqlCompilationException(
+                    $"Unsupported statement during capability validation: {statement.GetType().Name}");
         }
     }
 
@@ -117,40 +135,55 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
     {
         foreach (var cte in select.Ctes)
             ValidateCapabilities(cte.Query, provider);
-        if (select.From is not null) ValidateSource(select.From, provider);
+        if (select.From is not null)
+            ValidateSource(select.From, provider);
         foreach (var join in select.Joins)
         {
             ValidateJoinKind(join.Kind);
             ValidateSource(join.Source, provider);
-            if (join.Predicate is not null) ValidateExpression(join.Predicate, provider, ExpressionContext.Predicate);
+            if (join.Predicate is not null)
+                ValidateExpression(join.Predicate, provider, ExpressionContext.Predicate);
         }
         foreach (var item in select.Select)
         {
             ValidateExpression(item.Expression, provider, ExpressionContext.Projection);
-            if (provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer && IsBooleanProjection(item.Expression))
+            if (provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
+                && IsBooleanProjection(item.Expression))
+            {
                 throw CapabilityError(provider, "expression.boolean_select");
+            }
         }
-        if (select.Where is not null) ValidateExpression(select.Where, provider, ExpressionContext.Predicate);
-        foreach (var expression in select.GroupBy) ValidateExpression(expression, provider, ExpressionContext.GroupBy);
-        if (select.Having is not null) ValidateExpression(select.Having, provider, ExpressionContext.Predicate);
+        if (select.Where is not null)
+            ValidateExpression(select.Where, provider, ExpressionContext.Predicate);
+        foreach (var expression in select.GroupBy)
+            ValidateExpression(expression, provider, ExpressionContext.GroupBy);
+        if (select.Having is not null)
+            ValidateExpression(select.Having, provider, ExpressionContext.Predicate);
         ValidateOrdering(select.OrderBy, provider);
-        foreach (var item in select.OrderBy) ValidateExpression(item.Expression, provider, ExpressionContext.OrderBy);
+        foreach (var item in select.OrderBy)
+            ValidateExpression(item.Expression, provider, ExpressionContext.OrderBy);
     }
 
     private static void ValidateSource(TableSource source, SqlAgentToolType provider)
     {
         switch (source)
         {
-            case NamedTableSource: return;
-            case DerivedTableSource derived: ValidateCapabilities(derived.Query, provider); return;
-            default: throw new SqlCompilationException($"Unsupported table source during capability validation: {source.GetType().Name}");
+            case NamedTableSource:
+                return;
+            case DerivedTableSource derived:
+                ValidateCapabilities(derived.Query, provider);
+                return;
+            default:
+                throw new SqlCompilationException(
+                    $"Unsupported table source during capability validation: {source.GetType().Name}");
         }
     }
 
     private static void ValidateOrdering(IEnumerable<OrderByItem> orderBy, SqlAgentToolType provider)
     {
         if (provider is not (SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)) return;
-        if (orderBy.Any(item => item.NullOrdering != NullOrderingKind.Default)) throw CapabilityError(provider, "ordering.nulls");
+        if (orderBy.Any(item => item.NullOrdering != NullOrderingKind.Default))
+            throw CapabilityError(provider, "ordering.nulls");
     }
 
     private static void ValidateExpression(
@@ -163,9 +196,11 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         {
             case LiteralExpr:
             case ColumnExpr:
-            case BoundColumnExpr: return;
+            case BoundColumnExpr:
+                return;
             case IntervalExpr:
-                if (provider != SqlAgentToolType.Postgres) throw CapabilityError(provider, "expression.interval");
+                if (provider != SqlAgentToolType.Postgres)
+                    throw CapabilityError(provider, "expression.interval");
                 return;
             case UnaryExpr unary:
                 ValidateExpression(unary.Operand, provider, context);
@@ -185,8 +220,11 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                     ValidateExpression(argument, provider, ExpressionContext.FunctionArgument);
                 return;
             case FilterExpr filter:
-                if (provider is not (SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird))
+                if (provider is not (
+                    SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird))
+                {
                     throw CapabilityError(provider, "expression.filter");
+                }
                 ValidateFilterTarget(filter.Expression);
                 ValidateExpression(filter.Expression, provider, context, withinWindow);
                 ValidateExpression(filter.Predicate, provider, ExpressionContext.Predicate);
@@ -210,11 +248,13 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                     ValidateExpression(branch.Condition, provider, ExpressionContext.Predicate);
                     ValidateExpression(branch.Value, provider, context);
                 }
-                if (@case.ElseExpression is not null) ValidateExpression(@case.ElseExpression, provider, context);
+                if (@case.ElseExpression is not null)
+                    ValidateExpression(@case.ElseExpression, provider, context);
                 return;
             case InExpr @in:
                 ValidateExpression(@in.Value, provider, context);
-                foreach (var item in @in.Items) ValidateExpression(item, provider, context);
+                foreach (var item in @in.Items)
+                    ValidateExpression(item, provider, context);
                 return;
             case BetweenExpr between:
                 ValidateExpression(between.Value, provider, context);
@@ -231,7 +271,8 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 ValidateCapabilities(exists.Query, provider);
                 return;
             default:
-                throw new SqlCompilationException($"Unsupported expression during capability validation: {expression.GetType().Name}");
+                throw new SqlCompilationException(
+                    $"Unsupported expression during capability validation: {expression.GetType().Name}");
         }
     }
 
@@ -243,7 +284,8 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         var name = IdentifierText(function.Name).ToUpperInvariant();
         if (FunctionShapes.TryGetValue(name, out var shape))
         {
-            if (function.Arguments.Length < shape.MinArguments || function.Arguments.Length > shape.MaxArguments)
+            if (function.Arguments.Length < shape.MinArguments
+                || function.Arguments.Length > shape.MaxArguments)
             {
                 var expected = shape.MinArguments == shape.MaxArguments
                     ? shape.MinArguments.ToString()
@@ -253,7 +295,10 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             }
 
             if (function.IsDistinct && !shape.AllowDistinct)
-                throw new SqlCompilationException($"Function '{name}' does not support DISTINCT in the Core pipeline.");
+            {
+                throw new SqlCompilationException(
+                    $"Function '{name}' does not support DISTINCT in the Core pipeline.");
+            }
 
             if (shape.RequireWindow && !withinWindow)
                 throw new SqlCompilationException($"Function '{name}' requires an OVER clause.");
@@ -263,6 +308,8 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         }
         else if (function.IsDistinct)
         {
+            // Registry-backed ordinary functions have a validated source/target name and arity, but
+            // the registry does not model DISTINCT semantics. Never guess that modifier support.
             throw new SqlCompilationException(
                 $"Function '{name}' has no Core DISTINCT capability declaration.");
         }
@@ -328,11 +375,18 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
 
     private static void ValidateWindowBound(WindowFrameBoundCore bound)
     {
-        var requiresOffset = bound.Kind is WindowFrameBoundKindCore.Preceding or WindowFrameBoundKindCore.Following;
+        var requiresOffset = bound.Kind is
+            WindowFrameBoundKindCore.Preceding or WindowFrameBoundKindCore.Following;
         if (requiresOffset && bound.Offset is null or < 0)
-            throw new SqlCompilationException($"Window frame bound '{bound.Kind}' requires a non-negative offset.");
+        {
+            throw new SqlCompilationException(
+                $"Window frame bound '{bound.Kind}' requires a non-negative offset.");
+        }
         if (!requiresOffset && bound.Offset is not null)
-            throw new SqlCompilationException($"Window frame bound '{bound.Kind}' must not carry an offset.");
+        {
+            throw new SqlCompilationException(
+                $"Window frame bound '{bound.Kind}' must not carry an offset.");
+        }
     }
 
     private static long WindowBoundPosition(WindowFrameBoundCore bound) => bound.Kind switch
@@ -364,17 +418,29 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
     {
         IsNullExpr or InExpr or BetweenExpr or ExistsExpr => true,
         UnaryExpr unary when unary.Operator == "NOT" => true,
-        BinaryExpr binary when binary.Operator is "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or "LIKE" or "ILIKE" or "AND" or "OR" or "IN" or "NOT IN" => true,
+        BinaryExpr binary when binary.Operator is
+            "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or
+            "LIKE" or "ILIKE" or "AND" or "OR" or "IN" or "NOT IN" => true,
         _ => false
     };
 
     private static string IdentifierText(SqlIdentifier identifier) =>
         string.Join('.', identifier.Parts.Select(part => part.Value));
 
-    private static SqlCompilationException CapabilityError(SqlAgentToolType provider, string capability) =>
+    private static SqlCompilationException CapabilityError(
+        SqlAgentToolType provider,
+        string capability) =>
         new($"SQL capability '{capability}' is not supported by provider {provider} for this Core plan.");
 
-    private enum ExpressionContext { Projection, Predicate, GroupBy, OrderBy, FunctionArgument, Assignment }
+    private enum ExpressionContext
+    {
+        Projection,
+        Predicate,
+        GroupBy,
+        OrderBy,
+        FunctionArgument,
+        Assignment
+    }
 
     private sealed record FunctionShape(
         int MinArguments,
@@ -385,6 +451,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         bool RequireWindow)
     {
         public static FunctionShape Scalar(int arguments) => Scalar(arguments, arguments);
+
         public static FunctionShape Scalar(int minArguments, int maxArguments) =>
             new(minArguments, maxArguments, false, false, false, false);
 
@@ -392,6 +459,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             new(arguments, arguments, true, true, true, false);
 
         public static FunctionShape Window(int arguments) => Window(arguments, arguments);
+
         public static FunctionShape Window(int minArguments, int maxArguments) =>
             new(minArguments, maxArguments, false, false, true, true);
     }
