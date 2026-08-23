@@ -194,7 +194,7 @@ public sealed class SqlAstBinder : ISqlBinder
 
                 var symbol = new TableSymbol(
                     tableName,
-                    NormalizeAlias(named.Alias),
+                    AliasValue(named.Alias),
                     IsDerived: false,
                     IsCte: isCte,
                     named.Span);
@@ -205,13 +205,13 @@ public sealed class SqlAstBinder : ISqlBinder
             case DerivedTableSource derived:
             {
                 state.ContainsSubquery = true;
-                if (string.IsNullOrWhiteSpace(derived.Alias))
+                if (string.IsNullOrWhiteSpace(derived.Alias.Value))
                     throw new InvalidOperationException("Derived table must have an alias before binding.");
 
                 var query = BindStatement(derived.Query, null, visibleCtes, state);
                 var symbol = new TableSymbol(
                     "<subquery>",
-                    derived.Alias.Trim(),
+                    derived.Alias.Value.Trim(),
                     IsDerived: true,
                     IsCte: false,
                     derived.Span);
@@ -344,7 +344,8 @@ public sealed class SqlAstBinder : ISqlBinder
     }
 
     private static string Name(SqlIdentifier identifier) => string.Join('.', identifier.Parts.Select(part => part.Value));
-    private static string? NormalizeAlias(string? alias) => string.IsNullOrWhiteSpace(alias) ? null : alias.Trim();
+    private static string? AliasValue(IdentifierPart? alias) =>
+        alias is null || string.IsNullOrWhiteSpace(alias.Value) ? null : alias.Value.Trim();
 
     private sealed class BindingState
     {
