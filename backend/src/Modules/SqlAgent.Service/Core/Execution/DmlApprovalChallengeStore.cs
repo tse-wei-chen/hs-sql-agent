@@ -4,13 +4,18 @@ namespace SqlAgent.Service.Core.Execution;
 
 public interface IDmlApprovalChallengeStore
 {
-    void Register(DmlApprovalChallenge challenge);
-    bool TryConsume(DmlApprovalChallenge challenge);
+    ValueTask RegisterAsync(
+        DmlApprovalChallenge challenge,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<bool> TryConsumeAsync(
+        DmlApprovalChallenge challenge,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Process-local one-time challenge store. The interface allows a distributed implementation for
-/// multi-instance deployments. Exact record equality prevents nonce reuse with modified fields.
+/// Process-local one-time challenge store. The async interface allows distributed implementations
+/// without blocking threads. Exact record equality prevents nonce reuse with modified fields.
 /// </summary>
 public sealed class InMemoryDmlApprovalChallengeStore(TimeProvider? timeProvider = null)
     : IDmlApprovalChallengeStore
@@ -19,21 +24,28 @@ public sealed class InMemoryDmlApprovalChallengeStore(TimeProvider? timeProvider
         new(StringComparer.Ordinal);
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
-    public void Register(DmlApprovalChallenge challenge)
+    public ValueTask RegisterAsync(
+        DmlApprovalChallenge challenge,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(challenge);
+        cancellationToken.ThrowIfCancellationRequested();
         PurgeExpired();
         if (!_challenges.TryAdd(challenge.Nonce, challenge))
             throw new InvalidOperationException("Duplicate DML approval challenge nonce.");
+        return ValueTask.CompletedTask;
     }
 
-    public bool TryConsume(DmlApprovalChallenge challenge)
+    public ValueTask<bool> TryConsumeAsync(
+        DmlApprovalChallenge challenge,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(challenge);
+        cancellationToken.ThrowIfCancellationRequested();
         PurgeExpired();
         if (!_challenges.TryRemove(challenge.Nonce, out var registered))
-            return false;
-        return registered == challenge;
+            return ValueTask.FromResult(false);
+        return ValueTask.FromResult(registered == challenge);
     }
 
     private void PurgeExpired()
