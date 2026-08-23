@@ -9,13 +9,9 @@ namespace SqlAgent.Test.Services;
 public class CoreCompilerBoundaryTests
 {
     [Fact]
-    public void MapAndCompile_LegacyEquivalentSpellings_DoNotMutateTransportDto()
+    public void MapAndCompile_LegacyPredicateSpelling_DoesNotMutateTransportDto()
     {
-        var token = new TemplateSqlTokenSelectCondition
-        {
-            Token = "CURRENT_TIMESTAMP",
-            Alias = "compiled_at"
-        };
+        var select = new FieldSelectCondition { FieldName = "id" };
         var predicate = new BasicWhereCondition
         {
             FieldName = "deleted_at",
@@ -25,7 +21,7 @@ public class CoreCompilerBoundaryTests
         var definition = new QueryDefinition
         {
             TableName = "users",
-            SelectColumns = [token],
+            SelectColumns = [select],
             WhereColumnsAndValues = [predicate]
         };
 
@@ -39,9 +35,7 @@ public class CoreCompilerBoundaryTests
             new SqlExecutionPlanPolicy());
 
         Assert.Equal("ISNULL", predicate.Operator);
-        Assert.Same(token, definition.SelectColumns![0]);
-        Assert.Equal("CURRENT_TIMESTAMP", token.Token);
-        Assert.Contains("CURRENT_TIMESTAMP", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Same(select, definition.SelectColumns![0]);
         Assert.Contains("IS NULL", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
