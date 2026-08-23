@@ -52,10 +52,12 @@ public sealed class DmlPlanFactory(
             assurance,
             cancellationToken);
         var resolvedDefinition = WithResolvedTarget(definition, identity.QualifiedTableName);
+        var parsedMutation = new ParsedStatement(
+            DmlDefinitionCoreMapper.Map(resolvedDefinition),
+            sourceDialect);
 
         var mutationCommand = _dmlCompiler.Compile(
-            resolvedDefinition,
-            sourceDialect,
+            parsedMutation,
             targetProvider,
             validationContext,
             compilationPolicy);
