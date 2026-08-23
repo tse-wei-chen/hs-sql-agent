@@ -2,6 +2,8 @@ using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using Moq;
 using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Mapping;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -44,8 +46,7 @@ public class TypedQueryRuntimeTests
 
         var command = runtime.Compile(
             provider.Object,
-            definition,
-            SqlAgentToolType.Postgres,
+            Map(definition, SqlAgentToolType.Postgres),
             policy,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
 
@@ -69,8 +70,7 @@ public class TypedQueryRuntimeTests
 
         Assert.Throws<UnauthorizedAccessException>(() => runtime.Compile(
             provider.Object,
-            definition,
-            SqlAgentToolType.Postgres,
+            Map(definition, SqlAgentToolType.Postgres),
             CreatePolicy(),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }));
     }
@@ -85,22 +85,24 @@ public class TypedQueryRuntimeTests
             TableName = "public.users",
             SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
         };
+        var parsed = Map(definition, SqlAgentToolType.Postgres);
 
         var first = runtime.Compile(
             provider.Object,
-            definition,
-            SqlAgentToolType.Postgres,
+            parsed,
             CreatePolicy(maxRows: 10),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
         var second = runtime.Compile(
             provider.Object,
-            definition,
-            SqlAgentToolType.Postgres,
+            parsed,
             CreatePolicy(maxRows: 20),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
 
         Assert.NotEqual(first.PlanFingerprint, second.PlanFingerprint);
     }
+
+    private static ParsedStatement Map(QueryDefinition definition, SqlAgentToolType sourceDialect) =>
+        new(QueryDefinitionCoreMapper.Map(definition), sourceDialect);
 
     private static Mock<ISqlProvider> CreateProvider(SqlAgentToolType type)
     {
