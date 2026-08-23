@@ -323,7 +323,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             return new RenderedExpression("?", [postgresOffset.Value.ToUniversalTime()]);
 
         if (literal.Value is DateTimeOffset postgresRawOffset && compiler is PostgresCompiler)
-            return new RenderedExpression("?", [postgresRawOffset.Value.ToUniversalTime()]);
+            return new RenderedExpression("?", [postgresRawOffset.ToUniversalTime()]);
 
         var value = NormalizeBindingValue(literal.Value);
         if (compiler is FirebirdCompiler)
