@@ -13,13 +13,17 @@ namespace SqlAgent.Test.Services;
 
 public class DbSetterServiceTests
 {
-    private readonly Mock<ISqlStrategyFactory> _providerFactoryMock;
+    private readonly Mock<ISqlProviderFactory> _providerFactoryMock;
+    private readonly Mock<ISqlConnectionStringFactory> _connectionStringFactoryMock;
     private readonly DbSetterService _service;
 
     public DbSetterServiceTests()
     {
-        _providerFactoryMock = new Mock<ISqlStrategyFactory>();
-        _service = new DbSetterService(_providerFactoryMock.Object);
+        _providerFactoryMock = new Mock<ISqlProviderFactory>();
+        _connectionStringFactoryMock = new Mock<ISqlConnectionStringFactory>();
+        _service = new DbSetterService(
+            _providerFactoryMock.Object,
+            _connectionStringFactoryMock.Object);
     }
 
     private Mock<DbConnection> CreateMockDbConnection(bool throwOnOpen = false, string errorMessage = "Connection failed")
@@ -59,7 +63,7 @@ public class DbSetterServiceTests
             Database = "test_db"
         };
         var connString = "Host=localhost;Database=test_db;";
-        _providerFactoryMock
+        _connectionStringFactoryMock
             .Setup(f => f.BuildConnectionString(
                 SqlAgentToolType.Postgres,
                 It.Is<BuildDbConnectionModelBase>(m =>
@@ -78,7 +82,7 @@ public class DbSetterServiceTests
 
         Assert.True(result.IsSuccess);
         Assert.Null(result.ErrorMessage);
-        _providerFactoryMock.Verify(f => f.BuildConnectionString(
+        _connectionStringFactoryMock.Verify(f => f.BuildConnectionString(
             SqlAgentToolType.Postgres,
             It.Is<BuildDbConnectionModelBase>(m =>
                 m.Host == request.Host &&
@@ -92,7 +96,7 @@ public class DbSetterServiceTests
     {
         var request = new TestDbConnectionBase { SqlProvider = SqlAgentToolType.MySQL };
         var connString = "Server=localhost;";
-        _providerFactoryMock
+        _connectionStringFactoryMock
             .Setup(f => f.BuildConnectionString(
                 SqlAgentToolType.MySQL,
                 It.IsAny<BuildDbConnectionModelBase>()))
@@ -118,14 +122,14 @@ public class DbSetterServiceTests
     {
         var model = new BuildDbConnectionModel { Provider = "MsSqlServer" };
         var expectedConnString = "Server=localhost;Database=db;";
-        _providerFactoryMock
+        _connectionStringFactoryMock
             .Setup(f => f.BuildConnectionString(SqlAgentToolType.MsSqlServer, model))
             .Returns(expectedConnString);
 
         var result = await _service.BuildDbConnectionAsync(model, TestContext.Current.CancellationToken);
 
         Assert.Equal(expectedConnString, result);
-        _providerFactoryMock.Verify(
+        _connectionStringFactoryMock.Verify(
             f => f.BuildConnectionString(SqlAgentToolType.MsSqlServer, model),
             Times.Once);
     }

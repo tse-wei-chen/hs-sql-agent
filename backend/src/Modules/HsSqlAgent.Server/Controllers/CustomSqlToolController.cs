@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -262,7 +263,8 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> TestExecute(
         [FromBody] CustomToolTestExecuteRequest request,
-        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] IDbManagementService dbManagementService,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
@@ -297,8 +299,8 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
 
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(dbPwd.PasswordHash, hmacSecret);
-        var provider = sqlStrategyFactory.GetProvider(dbType);
-        var connectionString = sqlStrategyFactory.BuildConnectionString(dbType, new BuildDbConnectionModelBase
+        var provider = providerFactory.GetProvider(dbType);
+        var connectionString = connectionStringFactory.BuildConnectionString(dbType, new BuildDbConnectionModelBase
         {
             Host = dbPwd.Host,
             Port = dbPwd.Port,

@@ -6,6 +6,7 @@ using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -72,7 +73,8 @@ public class DbManagementController(
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetSchemas(
         int id,
-        [FromServices] ISqlStrategyFactory providerFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
@@ -80,7 +82,7 @@ public class DbManagementController(
         if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
-        var connectionString = BuildConnectionString(db, dbType, providerFactory, cryptoService, mcpKeySettings);
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
         var provider = providerFactory.GetProvider(dbType);
         return Ok(await provider.Metadata.GetSchemasAsync(connectionString, cancellationToken));
     }
@@ -89,7 +91,8 @@ public class DbManagementController(
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetTables(
         int id, [FromQuery] string? schema,
-        [FromServices] ISqlStrategyFactory providerFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
@@ -97,7 +100,7 @@ public class DbManagementController(
         if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
-        var connectionString = BuildConnectionString(db, dbType, providerFactory, cryptoService, mcpKeySettings);
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
         var provider = providerFactory.GetProvider(dbType);
         return Ok(await provider.Metadata.GetTablesAsync(
             connectionString,
@@ -109,7 +112,8 @@ public class DbManagementController(
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetColumns(
         int id, [FromQuery] string? schema, [FromQuery] string table,
-        [FromServices] ISqlStrategyFactory providerFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
@@ -119,7 +123,7 @@ public class DbManagementController(
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
         var schemaName = schema ?? string.Empty;
-        var connectionString = BuildConnectionString(db, dbType, providerFactory, cryptoService, mcpKeySettings);
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
         var provider = providerFactory.GetProvider(dbType);
         var metadata = await provider.Metadata.GetColumnsAsync(
             connectionString,

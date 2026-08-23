@@ -8,7 +8,6 @@ using Moq;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
 using Xunit;
 
@@ -20,7 +19,7 @@ public class SqlAgentToolExecutionTests
     public async Task ExecuteQuerySql_UsesTypedRuntime()
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
-        var strategyFactory = new Mock<ISqlStrategyFactory>();
+        var providerFactory = new Mock<ISqlProviderFactory>();
         var auditService = new Mock<IAuditService>();
         var semanticService = new Mock<IDbSemanticService>();
         var securityPolicyState = new Mock<ISecurityPolicyRuntimeState>();
@@ -44,7 +43,7 @@ public class SqlAgentToolExecutionTests
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
-        strategyFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
 
         typedQueryRuntime
             .Setup(x => x.ExecuteAsync(
@@ -63,7 +62,7 @@ public class SqlAgentToolExecutionTests
 
         var tool = new SqlAgentTool(
             httpContextAccessor.Object,
-            strategyFactory.Object,
+            providerFactory.Object,
             auditService.Object,
             semanticService.Object,
             securityPolicyState.Object,
@@ -90,7 +89,7 @@ public class SqlAgentToolExecutionTests
     public async Task ExecuteQuerySql_TypedRuntimeAuthorizationFailure_RemainsFailClosed()
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
-        var strategyFactory = new Mock<ISqlStrategyFactory>();
+        var providerFactory = new Mock<ISqlProviderFactory>();
         var auditService = new Mock<IAuditService>();
         var semanticService = new Mock<IDbSemanticService>();
         var securityPolicyState = new Mock<ISecurityPolicyRuntimeState>();
@@ -108,7 +107,7 @@ public class SqlAgentToolExecutionTests
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
-        strategyFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
             .Setup(x => x.ExecuteAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
@@ -122,7 +121,7 @@ public class SqlAgentToolExecutionTests
 
         var tool = new SqlAgentTool(
             httpContextAccessor.Object,
-            strategyFactory.Object,
+            providerFactory.Object,
             auditService.Object,
             semanticService.Object,
             securityPolicyState.Object,

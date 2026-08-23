@@ -7,7 +7,6 @@ using Moq;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using HsSqlAgent.Server.Tools;
@@ -20,7 +19,7 @@ public class CustomToolProxyTests
 {
     private readonly Mock<ICustomSqlToolService> _toolServiceMock;
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
-    private readonly Mock<ISqlStrategyFactory> _strategyFactoryMock;
+    private readonly Mock<ISqlProviderFactory> _providerFactoryMock;
     private readonly Mock<IAuditService> _auditServiceMock;
     private readonly Mock<IQueryValueParserService> _queryValueParserMock;
     private readonly Mock<ISecurityPolicyRuntimeState> _securityPolicyRuntimeStateMock;
@@ -32,7 +31,7 @@ public class CustomToolProxyTests
     {
         _toolServiceMock = new Mock<ICustomSqlToolService>();
         _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
-        _strategyFactoryMock = new Mock<ISqlStrategyFactory>();
+        _providerFactoryMock = new Mock<ISqlProviderFactory>();
         _auditServiceMock = new Mock<IAuditService>();
         _queryValueParserMock = new Mock<IQueryValueParserService>();
         _securityPolicyRuntimeStateMock = new Mock<ISecurityPolicyRuntimeState>();
@@ -61,7 +60,7 @@ public class CustomToolProxyTests
         _proxy = new CustomToolProxy("test_tool",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
-            _strategyFactoryMock.Object,
+            _providerFactoryMock.Object,
             _auditServiceMock.Object,
             _queryValueParserMock.Object,
             _securityPolicyRuntimeStateMock.Object,
@@ -169,7 +168,7 @@ public class CustomToolProxyTests
         var dmlProxy = new CustomToolProxy("delete_user",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
-            _strategyFactoryMock.Object,
+            _providerFactoryMock.Object,
             _auditServiceMock.Object,
             _queryValueParserMock.Object,
             _securityPolicyRuntimeStateMock.Object,
@@ -199,7 +198,7 @@ public class CustomToolProxyTests
         var dmlProxy = new CustomToolProxy("insert_user",
             _toolServiceMock.Object,
             _httpContextAccessorMock.Object,
-            _strategyFactoryMock.Object,
+            _providerFactoryMock.Object,
             _auditServiceMock.Object,
             _queryValueParserMock.Object,
             _securityPolicyRuntimeStateMock.Object,
@@ -275,7 +274,7 @@ public class CustomToolProxyTests
     {
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(p => p.Type).Returns(SqlAgentToolType.Postgres);
-        _strategyFactoryMock
+        _providerFactoryMock
             .Setup(f => f.GetProvider(SqlAgentToolType.Postgres))
             .Returns(provider.Object);
     }

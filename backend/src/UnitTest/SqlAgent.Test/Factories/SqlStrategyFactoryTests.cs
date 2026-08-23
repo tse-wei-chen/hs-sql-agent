@@ -77,16 +77,15 @@ public class SqlStrategyFactoryTests
     }
 
     [Fact]
-    public void FactoryContracts_DoNotExposeLegacyStrategyRetrieval()
+    public void FactoryContracts_AreExplicitAndDoNotExposeStrategies()
     {
-        var interfaceMethods = typeof(ISqlStrategyFactory).GetMethods();
+        var interfaces = typeof(SqlStrategyFactory).GetInterfaces();
         var implementationMethods = typeof(SqlStrategyFactory).GetMethods();
 
-        Assert.DoesNotContain(interfaceMethods, method => method.Name == "GetStrategy");
-        Assert.DoesNotContain(interfaceMethods, method => method.Name == "GetSupportedDatabaseTypes");
+        Assert.Contains(typeof(ISqlProviderFactory), interfaces);
+        Assert.Contains(typeof(ISqlConnectionStringFactory), interfaces);
         Assert.DoesNotContain(implementationMethods, method => method.Name == "GetStrategy");
         Assert.DoesNotContain(implementationMethods, method => method.Name == "GetSupportedDatabaseTypes");
-        Assert.DoesNotContain(interfaceMethods, method => typeof(ISqlStrategy).IsAssignableFrom(method.ReturnType));
         Assert.DoesNotContain(implementationMethods, method => typeof(ISqlStrategy).IsAssignableFrom(method.ReturnType));
     }
 }

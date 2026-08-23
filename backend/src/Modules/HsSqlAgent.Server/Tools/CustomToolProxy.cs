@@ -8,8 +8,8 @@ using HsSqlAgent.Server.Services;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
@@ -22,7 +22,7 @@ public class CustomToolProxy(
     string name,
     ICustomSqlToolService customSqlToolService,
     IHttpContextAccessor httpContextAccessor,
-    ISqlStrategyFactory sqlStrategyFactory,
+    ISqlProviderFactory sqlProviderFactory,
     IAuditService auditService,
     IQueryValueParserService queryValueParserService,
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
@@ -32,7 +32,7 @@ public class CustomToolProxy(
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
-    private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
+    private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
     private readonly IAuditService _auditService = auditService;
     private readonly IQueryValueParserService _queryValueParserService = queryValueParserService;
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
@@ -111,7 +111,7 @@ public class CustomToolProxy(
             }
 
             renderedSql = CustomToolSqlTemplate.Render(tool.SqlTemplate, tool.ParametersJson, parameters);
-            var provider = _sqlStrategyFactory.GetProvider(dbType);
+            var provider = _sqlProviderFactory.GetProvider(dbType);
 
             string result;
             bool isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);

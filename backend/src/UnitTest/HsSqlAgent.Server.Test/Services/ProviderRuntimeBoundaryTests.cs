@@ -50,6 +50,15 @@ public class ProviderRuntimeBoundaryTests
     }
 
     [Fact]
+    public void TransitionalStrategyFactoryAlias_HasBeenRemoved()
+    {
+        var serviceAssembly = typeof(ISqlProviderFactory).Assembly;
+        Assert.Null(serviceAssembly.GetType(
+            "SqlAgent.Service.Factories.ISqlStrategyFactory",
+            throwOnError: false));
+    }
+
+    [Fact]
     public void LegacySqlProviderAdapter_TypeHasBeenRemoved()
     {
         var serviceAssembly = typeof(ISqlStrategy).Assembly;

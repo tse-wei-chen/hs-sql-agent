@@ -121,8 +121,9 @@ public class CustomSqlToolControllerTests
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
         var dbService = CreateDbService(3);
         var crypto = CreateCrypto();
-        var strategyFactory = new Mock<ISqlStrategyFactory>();
-        ConfigureProviderFactory(strategyFactory);
+        var providerFactory = new Mock<ISqlProviderFactory>();
+        var connectionStringFactory = new Mock<ISqlConnectionStringFactory>();
+        ConfigureProviderFactories(providerFactory, connectionStringFactory);
         var runtimePolicy = new SecurityPolicyModel { QueryMaxRows = 50, QueryTimeoutSeconds = 15 };
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(runtimePolicy);
@@ -144,7 +145,8 @@ public class CustomSqlToolControllerTests
 
         var result = await controller.TestExecute(
             new CustomToolTestExecuteRequest(tool.Id, new Dictionary<string, object?> { ["id"] = 1 }),
-            strategyFactory.Object,
+            providerFactory.Object,
+            connectionStringFactory.Object,
             dbService.Object,
             crypto.Object,
             Options.Create(new McpKeySettings { HmacSecretKey = new string('x', 32) }),
@@ -174,15 +176,17 @@ public class CustomSqlToolControllerTests
         _toolServiceMock.Setup(s => s.GetToolByIdAsync(tool.Id)).ReturnsAsync(tool);
         var dbService = CreateDbService(3);
         var crypto = CreateCrypto();
-        var strategyFactory = new Mock<ISqlStrategyFactory>();
-        ConfigureProviderFactory(strategyFactory);
+        var providerFactory = new Mock<ISqlProviderFactory>();
+        var connectionStringFactory = new Mock<ISqlConnectionStringFactory>();
+        ConfigureProviderFactories(providerFactory, connectionStringFactory);
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
         var limiter = CreateLimiter();
 
         var result = await controller.TestExecute(
             new CustomToolTestExecuteRequest(tool.Id, new Dictionary<string, object?> { ["id"] = 1 }),
-            strategyFactory.Object,
+            providerFactory.Object,
+            connectionStringFactory.Object,
             dbService.Object,
             crypto.Object,
             Options.Create(new McpKeySettings { HmacSecretKey = new string('x', 32) }),
@@ -283,12 +287,14 @@ public class CustomSqlToolControllerTests
         return crypto;
     }
 
-    private static void ConfigureProviderFactory(Mock<ISqlStrategyFactory> factory)
+    private static void ConfigureProviderFactories(
+        Mock<ISqlProviderFactory> providerFactory,
+        Mock<ISqlConnectionStringFactory> connectionStringFactory)
     {
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
-        factory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
-        factory.Setup(x => x.BuildConnectionString(
+        providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        connectionStringFactory.Setup(x => x.BuildConnectionString(
                 SqlAgentToolType.Postgres,
                 It.IsAny<BuildDbConnectionModelBase>()))
             .Returns("connection");

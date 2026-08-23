@@ -1,4 +1,5 @@
 using System.Data.Common;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
@@ -6,9 +7,12 @@ using SqlAgent.Service.Factories;
 
 namespace SqlAgent.Service.Services
 {
-    public class DbSetterService(ISqlStrategyFactory providerFactory) : IDbSetterService
+    public class DbSetterService(
+        ISqlProviderFactory providerFactory,
+        ISqlConnectionStringFactory connectionStringFactory) : IDbSetterService
     {
-        private readonly ISqlStrategyFactory _providerFactory = providerFactory;
+        private readonly ISqlProviderFactory _providerFactory = providerFactory;
+        private readonly ISqlConnectionStringFactory _connectionStringFactory = connectionStringFactory;
 
         public async Task<TestDbConnectionVM> TestDbConnectionAsync(
             TestDbConnectionBase request,
@@ -22,7 +26,7 @@ namespace SqlAgent.Service.Services
                 if (provider == null)
                     return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is null." };
 
-                var connString = _providerFactory.BuildConnectionString(
+                var connString = _connectionStringFactory.BuildConnectionString(
                     provider.Value,
                     new BuildDbConnectionModelBase
                     {
@@ -55,7 +59,7 @@ namespace SqlAgent.Service.Services
             CancellationToken cancellationToken = default)
         {
             var provider = Enum.Parse<SqlAgentToolType>(model.Provider);
-            return Task.FromResult<string?>(_providerFactory.BuildConnectionString(provider, model));
+            return Task.FromResult<string?>(_connectionStringFactory.BuildConnectionString(provider, model));
         }
     }
 }

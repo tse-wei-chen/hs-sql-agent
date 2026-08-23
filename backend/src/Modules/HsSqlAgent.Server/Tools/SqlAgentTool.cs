@@ -7,8 +7,8 @@ using Admin.Service.Models;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Server;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Validation;
@@ -18,7 +18,7 @@ namespace HsSqlAgent.Server.Tools;
 [McpServerToolType]
 public partial class SqlAgentTool(
     IHttpContextAccessor httpContextAccessor,
-    ISqlStrategyFactory sqlStrategyFactory,
+    ISqlProviderFactory sqlProviderFactory,
     IAuditService auditService,
     IDbSemanticService semanticService,
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
@@ -26,7 +26,7 @@ public partial class SqlAgentTool(
     ITypedQueryRuntime? typedQueryRuntime = null)
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
-    private readonly ISqlStrategyFactory _sqlStrategyFactory = sqlStrategyFactory;
+    private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
     private readonly IAuditService _auditService = auditService;
     private readonly IDbSemanticService _semanticService = semanticService;
     private readonly ISecurityPolicyRuntimeState _securityPolicyRuntimeState = securityPolicyRuntimeState;
@@ -50,7 +50,7 @@ public partial class SqlAgentTool(
         {
             return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
         }
-        var provider = _sqlStrategyFactory.GetProvider(dbType);
+        var provider = _sqlProviderFactory.GetProvider(dbType);
         QueryDefinition? definition = null;
         try
         {
@@ -156,7 +156,7 @@ public partial class SqlAgentTool(
                     "The production typed DML path currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
             }
 
-            var provider = _sqlStrategyFactory.GetProvider(dbType);
+            var provider = _sqlProviderFactory.GetProvider(dbType);
             var flow = new TypedDmlApprovalFlow(
                 new TypedDmlRuntime(),
                 _securityPolicyRuntimeState,
@@ -236,7 +236,7 @@ public partial class SqlAgentTool(
             {
                 return "Table name cannot be empty.";
             }
-            var provider = _sqlStrategyFactory.GetProvider(dbType);
+            var provider = _sqlProviderFactory.GetProvider(dbType);
             List<ColumnInfo> columns;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
@@ -306,7 +306,7 @@ public partial class SqlAgentTool(
             {
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
-            var provider = _sqlStrategyFactory.GetProvider(dbType);
+            var provider = _sqlProviderFactory.GetProvider(dbType);
             IEnumerable<string> schemas;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {
@@ -336,7 +336,7 @@ public partial class SqlAgentTool(
             {
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
             }
-            var provider = _sqlStrategyFactory.GetProvider(dbType);
+            var provider = _sqlProviderFactory.GetProvider(dbType);
             IEnumerable<string> tables;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
             {

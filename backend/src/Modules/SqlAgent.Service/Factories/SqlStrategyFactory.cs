@@ -7,10 +7,11 @@ using SqlAgent.Service.Strategies.Adapters;
 namespace SqlAgent.Service.Factories;
 
 /// <summary>
-/// Transitional DI registration that exposes only provider resolution and management-side
-/// connection-string construction. Legacy strategies remain internal implementation details.
+/// Transitional DI implementation that exposes provider resolution and management-side
+/// connection-string construction through separate contracts. Legacy strategies remain internal
+/// implementation details until provider-native construction replaces them entirely.
 /// </summary>
-public class SqlStrategyFactory : ISqlStrategyFactory
+public class SqlStrategyFactory : ISqlProviderFactory, ISqlConnectionStringFactory
 {
     private readonly IReadOnlyDictionary<SqlAgentToolType, ISqlStrategy> _strategies;
     private readonly StrategyBackedSqlProviderFactory _providers;

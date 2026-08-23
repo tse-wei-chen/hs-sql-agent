@@ -32,6 +32,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
@@ -186,14 +187,16 @@ public static class HsSqlAgentServiceExtensions
                 });
         }
 
-        // --- SQL strategies ---
+        // --- SQL provider runtime ---
         services.AddScoped<ISqlStrategy, MySqlStrategy>();
         services.AddScoped<ISqlStrategy, PostgresStrategy>();
         services.AddScoped<ISqlStrategy, SqliteStrategy>();
         services.AddScoped<ISqlStrategy, MsSqlServerStrategy>();
         services.AddScoped<ISqlStrategy, OracleStrategy>();
         services.AddScoped<ISqlStrategy, FirebirdStrategy>();
-        services.AddScoped<ISqlStrategyFactory, SqlStrategyFactory>();
+        services.AddScoped<SqlStrategyFactory>();
+        services.AddScoped<ISqlProviderFactory>(provider => provider.GetRequiredService<SqlStrategyFactory>());
+        services.AddScoped<ISqlConnectionStringFactory>(provider => provider.GetRequiredService<SqlStrategyFactory>());
         services.AddScoped<IDbSetterService, DbSetterService>();
         services.AddScoped<ITypedQueryRuntime, TypedQueryRuntime>();
 
@@ -448,7 +451,7 @@ public static class HsSqlAgentServiceExtensions
                                     ct.Name,
                                     sp.GetRequiredService<ICustomSqlToolService>(),
                                     sp.GetRequiredService<IHttpContextAccessor>(),
-                                    sp.GetRequiredService<ISqlStrategyFactory>(),
+                                    sp.GetRequiredService<ISqlProviderFactory>(),
                                     sp.GetRequiredService<IAuditService>(),
                                     sp.GetRequiredService<IQueryValueParserService>(),
                                     sp.GetRequiredService<ISecurityPolicyRuntimeState>(),
