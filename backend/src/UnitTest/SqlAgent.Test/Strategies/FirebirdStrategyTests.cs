@@ -114,12 +114,12 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     protected override string TableNotFoundErrorCode => "FB_SQL_-204";
     protected override string ColumnNotFoundErrorCode => "FB_SQL_-206";
 
-    // Firebird uppercases unquoted identifiers, so result properties are UPPERCASE.
-    private const string PropUname = "UNAME";
-    private const string PropAge = "AGE";
-    private const string PropUid = "UID";
-    private const string PropOrderCount = "ORDER_COUNT";
-    private const string PropUserType = "USER_TYPE";
+    // Structured projection aliases define the API result schema and preserve caller spelling.
+    private const string PropUname = "uname";
+    private const string PropAge = "age";
+    private const string PropUid = "uid";
+    private const string PropOrderCount = "order_count";
+    private const string PropUserType = "user_type";
 
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
@@ -217,7 +217,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.Equal(2, rows.Count);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.Equal("Bob", rows[0].GetProperty(PropUname).GetString());
     }
 
@@ -398,7 +398,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
         Assert.Single(rows);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.Equal("Alice", rows[0].GetProperty(PropUname).GetString());
     }
 
@@ -460,7 +460,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
         Assert.Equal(2, rows.Count);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.Equal("Alice", rows[0].GetProperty(PropUname).GetString());
         Assert.Equal("Bob", rows[1].GetProperty(PropUname).GetString());
     }
@@ -510,7 +510,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.True(rows[0].TryGetProperty(PropOrderCount, out _));
     }
 }
