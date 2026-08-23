@@ -16,11 +16,14 @@ namespace HsSqlAgent.Server.Services;
 /// </summary>
 public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
-    IDmlApprovalChallengeStore? challengeStore = null)
+    IDmlApprovalChallengeStore? challengeStore = null,
+    IDmlPreviewTransactionFactory? previewTransactionFactory = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
+    private readonly IDmlPreviewTransactionFactory _previewTransactionFactory =
+        previewTransactionFactory ?? new ProviderDmlPreviewTransactionFactory();
 
     public async Task<TypedDmlApprovalSession> PreviewAsync(
         ISqlProvider provider,
@@ -63,7 +66,8 @@ public sealed class TypedDmlRuntime(
         var coordinator = new DmlCoordinator(
             provider.Connections,
             _timeProvider,
-            _challengeStore);
+            _challengeStore,
+            previewTransactionFactory: _previewTransactionFactory);
         var preview = await coordinator.PreviewAsync(
             connectionString,
             plan,
@@ -104,7 +108,8 @@ public sealed class TypedDmlRuntime(
         var coordinator = new DmlCoordinator(
             provider.Connections,
             _timeProvider,
-            _challengeStore);
+            _challengeStore,
+            previewTransactionFactory: _previewTransactionFactory);
         return await coordinator.CommitAsync(
             connectionString,
             session.Plan,

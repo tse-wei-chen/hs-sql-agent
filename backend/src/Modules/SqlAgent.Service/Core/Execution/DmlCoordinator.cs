@@ -15,7 +15,8 @@ public sealed class DmlCoordinator(
     IDbConnectionFactory connectionFactory,
     TimeProvider? timeProvider = null,
     IDmlApprovalChallengeStore? challengeStore = null,
-    IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null) : IDmlCoordinator
+    IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
+    IDmlPreviewTransactionFactory? previewTransactionFactory = null) : IDmlCoordinator
 {
     private const int PreviewRowLimit = 20;
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
@@ -24,6 +25,8 @@ public sealed class DmlCoordinator(
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
     private readonly IDmlTransactionIsolationPolicy _transactionIsolationPolicy =
         transactionIsolationPolicy ?? new StrictDmlTransactionIsolationPolicy();
+    private readonly IDmlPreviewTransactionFactory _previewTransactionFactory =
+        previewTransactionFactory ?? new ProviderDmlPreviewTransactionFactory();
 
     public async Task<DmlPreview> PreviewAsync(
         string connectionString,
@@ -35,7 +38,9 @@ public sealed class DmlCoordinator(
 
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(
+        await using var transaction = await _previewTransactionFactory.BeginAsync(
+            connection,
+            plan.MatchQueryCommand.TargetProvider,
             _transactionIsolationPolicy.PreviewIsolation(plan.MatchQueryCommand.TargetProvider),
             cancellationToken);
 
