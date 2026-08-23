@@ -12,7 +12,8 @@ namespace HsSqlAgent.Server.Services;
 /// Server-side typed DML boundary. The MCP layer supplies a parser-native Core statement, current
 /// security policy and table authorization; this service owns immutable plan construction, preview
 /// and commit revalidation against an explicit provider and never depends on transport DTOs or
-/// legacy strategies.
+/// legacy strategies. INSERT VALUES uses exact-payload approval; INSERT ... SELECT remains
+/// fail-closed until source-rowset approval semantics are defined.
 /// </summary>
 public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
@@ -38,10 +39,18 @@ public sealed class TypedDmlRuntime(
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        if (parsedMutation.Statement is not (UpdateStatement or DeleteStatement))
+        switch (parsedMutation.Statement)
         {
-            throw new NotSupportedException(
-                "The typed DML runtime currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
+            case UpdateStatement:
+            case DeleteStatement:
+            case InsertStatement { Source: InsertValuesSource }:
+                break;
+            case InsertStatement:
+                throw new NotSupportedException(
+                    "The typed DML runtime supports INSERT VALUES only. INSERT ... SELECT remains fail-closed until source-rowset approval semantics are defined.");
+            default:
+                throw new NotSupportedException(
+                    $"The typed DML runtime does not support statement '{parsedMutation.Statement.GetType().Name}'.");
         }
 
         var validationContext = new SqlPlanValidationContext(
