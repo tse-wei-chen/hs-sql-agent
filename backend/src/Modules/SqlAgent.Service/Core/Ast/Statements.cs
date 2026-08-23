@@ -33,7 +33,30 @@ public sealed record DerivedTableSource(
     }
 }
 
-public sealed record SelectItem(SqlExpr Expression, IdentifierPart? Alias, SourceSpan Span) : SqlNode(Span);
+public sealed record SelectItem : SqlNode
+{
+    public SelectItem(SqlExpr Expression, IdentifierPart? Alias, SourceSpan Span)
+        : base(Span)
+    {
+        this.Expression = Expression;
+        this.Alias = Alias is not null && Alias.Span == SourceSpan.Unknown
+            ? Alias with { PreserveSpelling = true }
+            : Alias;
+    }
+
+    public SqlExpr Expression { get; init; }
+    public IdentifierPart? Alias { get; init; }
+
+    public void Deconstruct(
+        out SqlExpr Expression,
+        out IdentifierPart? Alias,
+        out SourceSpan Span)
+    {
+        Expression = this.Expression;
+        Alias = this.Alias;
+        Span = this.Span;
+    }
+}
 
 public sealed record OrderByItem(
     SqlExpr Expression,
