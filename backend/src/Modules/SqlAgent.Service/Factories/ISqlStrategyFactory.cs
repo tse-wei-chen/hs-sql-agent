@@ -5,10 +5,10 @@ using SqlAgent.Service.Strategies;
 namespace SqlAgent.Service.Factories;
 
 /// <summary>
-/// Transitional registration contract. Provider resolution is the supported runtime path; the
-/// strategy-returning members remain only for management/MCP call sites that have not yet migrated.
+/// Transitional registration contract. Provider resolution and connection-string construction are
+/// the supported paths; strategy-returning members remain only for MCP call sites not yet migrated.
 /// </summary>
-public interface ISqlStrategyFactory : ISqlProviderFactory
+public interface ISqlStrategyFactory : ISqlProviderFactory, ISqlConnectionStringFactory
 {
     [Obsolete("Use GetProvider(SqlAgentToolType). Strategy access is a transitional compatibility surface.")]
     ISqlStrategy GetStrategy(SqlAgentToolType dbType);
