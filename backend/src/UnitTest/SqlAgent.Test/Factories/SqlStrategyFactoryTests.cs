@@ -75,4 +75,18 @@ public class SqlStrategyFactoryTests
         Assert.Equal("Host=db.example", result);
         mockDb.Verify(x => x.BuildConnectionString(model), Times.Once);
     }
+
+    [Fact]
+    public void FactoryContracts_DoNotExposeLegacyStrategyRetrieval()
+    {
+        var interfaceMethods = typeof(ISqlStrategyFactory).GetMethods();
+        var implementationMethods = typeof(SqlStrategyFactory).GetMethods();
+
+        Assert.DoesNotContain(interfaceMethods, method => method.Name == "GetStrategy");
+        Assert.DoesNotContain(interfaceMethods, method => method.Name == "GetSupportedDatabaseTypes");
+        Assert.DoesNotContain(implementationMethods, method => method.Name == "GetStrategy");
+        Assert.DoesNotContain(implementationMethods, method => method.Name == "GetSupportedDatabaseTypes");
+        Assert.DoesNotContain(interfaceMethods, method => typeof(ISqlStrategy).IsAssignableFrom(method.ReturnType));
+        Assert.DoesNotContain(implementationMethods, method => typeof(ISqlStrategy).IsAssignableFrom(method.ReturnType));
+    }
 }

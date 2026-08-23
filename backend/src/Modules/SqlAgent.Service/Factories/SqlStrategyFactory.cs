@@ -7,9 +7,8 @@ using SqlAgent.Service.Strategies.Adapters;
 namespace SqlAgent.Service.Factories;
 
 /// <summary>
-/// Transitional DI registration. Runtime callers resolve ISqlProvider; connection-string building
-/// is exposed separately from Core, and direct strategy access remains only for MCP call sites that
-/// have not yet migrated.
+/// Transitional DI registration that exposes only provider resolution and management-side
+/// connection-string construction. Legacy strategies remain internal implementation details.
 /// </summary>
 public class SqlStrategyFactory : ISqlStrategyFactory
 {
@@ -48,14 +47,6 @@ public class SqlStrategyFactory : ISqlStrategyFactory
         return ResolveStrategy(provider).BuildConnectionString(model);
     }
 
-    [Obsolete("Use GetProvider(SqlAgentToolType). Strategy access is a transitional compatibility surface.")]
-    public ISqlStrategy GetStrategy(SqlAgentToolType dbType) =>
-        ResolveStrategy(dbType);
-
-    [Obsolete("Use GetSupportedProviderTypes().")]
-    public IEnumerable<SqlAgentToolType> GetSupportedDatabaseTypes() =>
-        GetSupportedProviderTypes();
-
     private ISqlStrategy ResolveStrategy(SqlAgentToolType dbType)
     {
         if (_strategies.TryGetValue(dbType, out var strategy))
@@ -64,6 +55,6 @@ public class SqlStrategyFactory : ISqlStrategyFactory
         throw new ArgumentOutOfRangeException(
             nameof(dbType),
             dbType,
-            $"No strategy found for database type: {dbType}");
+            $"No SQL provider found for database type: {dbType}");
     }
 }
