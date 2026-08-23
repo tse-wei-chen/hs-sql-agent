@@ -3,8 +3,8 @@ using System.Text.Json;
 using Admin.Service.Interfaces;
 using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Protocol;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
 namespace HsSqlAgent.Server.Tools;
@@ -12,7 +12,7 @@ namespace HsSqlAgent.Server.Tools;
 /// <summary>
 /// Shared interactive approval orchestration for server DML entry points. The flow never accepts
 /// or produces a legacy confirmation token; the only commit credential is the typed one-time
-/// challenge embedded in the preview session.
+/// challenge embedded in the preview session. Provider identity is explicit and strategy-free.
 /// </summary>
 internal sealed class TypedDmlApprovalFlow(
     TypedDmlRuntime runtime,
@@ -21,13 +21,15 @@ internal sealed class TypedDmlApprovalFlow(
     Func<IReadOnlySet<string>?> resolveAllowedTables)
 {
     public async Task<TypedDmlExecutionTiming> ExecuteAsync(
-        ISqlStrategy strategy,
+        ISqlProvider provider,
         string connectionString,
         DmlDefinition definition,
         IDmlApprovalClient? approvalClient,
         string approvalTitle,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(provider);
+
         if (approvalClient?.SupportsElicitation != true)
         {
             return new TypedDmlExecutionTiming(
@@ -52,7 +54,7 @@ internal sealed class TypedDmlApprovalFlow(
             }
 
             session = await runtime.PreviewAsync(
-                strategy,
+                provider,
                 connectionString,
                 definition,
                 previewPolicy,
@@ -118,7 +120,7 @@ internal sealed class TypedDmlApprovalFlow(
             }
 
             var commit = await runtime.CommitAsync(
-                strategy,
+                provider,
                 connectionString,
                 session,
                 currentPolicy,
