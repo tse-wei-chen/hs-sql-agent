@@ -43,3 +43,13 @@ public interface ISqlProvider
     IProviderMetadataReader Metadata { get; }
     IProviderErrorMapper Errors { get; }
 }
+
+/// <summary>
+/// Resolves the complete provider runtime boundary by database type. Core/typed runtimes depend on
+/// this provider abstraction rather than legacy strategies or provider-specific service locators.
+/// </summary>
+public interface ISqlProviderFactory
+{
+    ISqlProvider GetProvider(SqlAgentToolType type);
+    IReadOnlyCollection<SqlAgentToolType> GetSupportedProviderTypes();
+}
