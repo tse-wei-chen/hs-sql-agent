@@ -67,14 +67,14 @@ public class LegacyStrategyRetirementTests
     }
 
     [Fact]
-    public void LegacyProviderAdapter_ReturnsCoreOwnedProviderComposition()
+    public void StrategyBackedProviderFactory_ReturnsCoreOwnedProviderComposition()
     {
-        Assert.False(typeof(ISqlProvider).IsAssignableFrom(typeof(LegacySqlProviderAdapter)));
-
-        var provider = LegacySqlProviderAdapter.Adapt(new PostgresStrategy());
+        var factory = new StrategyBackedSqlProviderFactory([new PostgresStrategy()]);
+        var provider = factory.GetProvider(SqlAgentToolType.Postgres);
 
         Assert.IsType<SqlProvider>(provider);
         Assert.Equal(SqlAgentToolType.Postgres, provider.Type);
+        Assert.Equal([SqlAgentToolType.Postgres], factory.GetSupportedProviderTypes());
     }
 
     [Fact]
