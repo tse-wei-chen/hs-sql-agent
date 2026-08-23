@@ -42,19 +42,20 @@ public class DmlPlanFactoryTests
             maxAffectedRows: 25,
             approvalTtl: TimeSpan.FromMinutes(2),
             cancellationToken: TestContext.Current.CancellationToken);
+        var matchCommand = Assert.IsType<CompiledSqlCommand>(plan.MatchQueryCommand);
 
         Assert.Equal(["id"], plan.RowIdentityColumns);
         Assert.Equal(DmlRowIdentityAssurance.Strict, plan.RowIdentityAssurance);
         Assert.Equal(SqlStatementKind.Update, plan.MutationCommand.Kind);
-        Assert.Equal(SqlStatementKind.Select, plan.MatchQueryCommand.Kind);
+        Assert.Equal(SqlStatementKind.Select, matchCommand.Kind);
         Assert.Contains("UPDATE", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("disabled", plan.MutationCommand.Sql, StringComparison.Ordinal);
         Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, "disabled"));
         Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, 7));
-        Assert.Contains("id", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("7", plan.MatchQueryCommand.Sql, StringComparison.Ordinal);
-        Assert.Contains(plan.MatchQueryCommand.Parameters, parameter => Equals(parameter.Value, 7));
-        Assert.Contains(plan.MatchQueryCommand.Parameters, parameter => Equals(parameter.Value, 26));
+        Assert.Contains("id", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("7", matchCommand.Sql, StringComparison.Ordinal);
+        Assert.Contains(matchCommand.Parameters, parameter => Equals(parameter.Value, 7));
+        Assert.Contains(matchCommand.Parameters, parameter => Equals(parameter.Value, 26));
         Assert.Equal("policy-v2", plan.PolicyVersion);
         Assert.Equal(TimeSpan.FromMinutes(2), plan.ApprovalTtl);
         Assert.Equal(25, plan.MaxAffectedRows);
@@ -95,12 +96,13 @@ public class DmlPlanFactoryTests
                 "policy-v3",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }),
             cancellationToken: TestContext.Current.CancellationToken);
+        var matchCommand = Assert.IsType<CompiledSqlCommand>(plan.MatchQueryCommand);
 
         Assert.Equal("public.users", plan.TableName);
         Assert.Contains("public", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("users", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("public", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("users", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("public", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("users", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
