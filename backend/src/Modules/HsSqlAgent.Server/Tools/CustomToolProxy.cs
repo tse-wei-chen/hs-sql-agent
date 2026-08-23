@@ -8,6 +8,7 @@ using HsSqlAgent.Server.Services;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
@@ -15,7 +16,6 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Validation;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
 namespace HsSqlAgent.Server.Tools;
@@ -75,7 +75,7 @@ public class CustomToolProxy(
         CustomSqlTool? tool = null;
         ParsedStatement? auditQuery = null;
         QueryFacts? auditQueryFacts = null;
-        DmlDefinition? auditDml = null;
+        ParsedStatement? auditDml = null;
         string renderedSql = string.Empty;
         try
         {
@@ -143,17 +143,9 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var dmlDef = SqlDefinitionParser.ParseDml(renderedSql, dbType);
-                auditDml = dmlDef;
-                var dmlErrors = DefinitionValidator.Validate(dmlDef);
-                if (dmlErrors.Count > 0)
-                {
-                    result = "Validation failed:\n" + string.Join("\n", dmlErrors);
-                    await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", result);
-                    return result;
-                }
-
-                if (dmlDef.Operation is not (DmlOperation.Update or DmlOperation.Delete))
+                var parsedDml = CoreSqlTextParser.ParseDml(renderedSql, dbType);
+                auditDml = parsedDml;
+                if (parsedDml.Statement is not (UpdateStatement or DeleteStatement))
                 {
                     throw new NotSupportedException(
                         "Published Custom Tool DML currently supports UPDATE and DELETE through the typed approval pipeline. INSERT remains fail-closed until its production approval semantics are defined.");
@@ -167,7 +159,7 @@ public class CustomToolProxy(
                 var dmlExecution = await flow.ExecuteAsync(
                     provider,
                     sqlConfig.ConnectionString,
-                    dmlDef,
+                    parsedDml,
                     approvalClient,
                     $"Custom tool `{_name}`",
                     cancellationToken);
@@ -187,11 +179,11 @@ public class CustomToolProxy(
                         new AuditEventContext
                         {
                             ToolName = _name,
-                            Operation = dmlDef.Operation.ToString().ToLowerInvariant(),
+                            Operation = DmlOperationName(parsedDml),
                             DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                             AffectedRows = dmlAffectedRows,
                             ApprovalStatus = auditResult == "cancelled" ? "declined" : "not-completed",
-                            Definition = DescribeDml(dmlDef)
+                            Definition = DescribeDml(parsedDml)
                         },
                         result,
                         cancellationToken);
@@ -212,7 +204,7 @@ public class CustomToolProxy(
                 new AuditEventContext
                 {
                     ToolName = _name,
-                    Operation = isQuery ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
+                    Operation = isQuery ? "select" : auditDml is null ? null : DmlOperationName(auditDml),
                     DurationMs = isDml
                         ? ProcessingDuration(stopwatch, approvalWaitDurationMs)
                         : stopwatch.ElapsedMilliseconds,
@@ -236,7 +228,9 @@ public class CustomToolProxy(
                 new AuditEventContext
                 {
                     ToolName = _name,
-                    Operation = auditQuery != null ? "select" : auditDml?.Operation.ToString().ToLowerInvariant(),
+                    Operation = auditQuery != null
+                        ? "select"
+                        : auditDml is null ? null : DmlOperationName(auditDml),
                     DurationMs = auditDml == null
                         ? stopwatch.ElapsedMilliseconds
                         : ProcessingDuration(stopwatch, approvalWaitDurationMs),
@@ -270,14 +264,43 @@ public class CustomToolProxy(
             facts?.ContainsSubquery
         });
 
-    private static string DescribeDml(DmlDefinition definition) =>
-        JsonSerializer.Serialize(new
+    private static string DescribeDml(ParsedStatement parsedDml)
+    {
+        var table = parsedDml.Statement switch
         {
-            Operation = definition.Operation.ToString(),
-            definition.TableName,
-            ValueFields = definition.Values?.Select(x => x.FieldName).ToArray() ?? [],
-            WhereConditionCount = definition.WhereConditions?.Count ?? 0
+            UpdateStatement update => IdentifierText(update.Target.Name),
+            DeleteStatement delete => IdentifierText(delete.Target.Name),
+            InsertStatement insert => IdentifierText(insert.Target.Name),
+            _ => "unknown"
+        };
+        var fields = parsedDml.Statement is UpdateStatement updateStatement
+            ? updateStatement.Assignments.Select(assignment => IdentifierText(assignment.Column)).ToArray()
+            : [];
+        var hasWhere = parsedDml.Statement switch
+        {
+            UpdateStatement update => update.Predicate is not null,
+            DeleteStatement delete => delete.Predicate is not null,
+            _ => false
+        };
+        return JsonSerializer.Serialize(new
+        {
+            Operation = DmlOperationName(parsedDml),
+            TableName = table,
+            ValueFields = fields,
+            HasWhere = hasWhere
         });
+    }
+
+    private static string DmlOperationName(ParsedStatement parsedDml) => parsedDml.Statement switch
+    {
+        UpdateStatement => "update",
+        DeleteStatement => "delete",
+        InsertStatement => "insert",
+        _ => parsedDml.Statement.GetType().Name.ToLowerInvariant()
+    };
+
+    private static string IdentifierText(SqlIdentifier identifier) =>
+        string.Join('.', identifier.Parts.Select(part => part.Value));
 
     private SqlRuntimeConfig ResolveSqlConfig()
     {
