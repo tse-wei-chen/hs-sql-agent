@@ -146,13 +146,13 @@ public partial class SqlAgentTool
     private static string DescribeDml(ParsedStatement parsedMutation)
     {
         var descriptor = DescribeMutation(parsedMutation);
-        var assignedColumns = parsedMutation.Statement is UpdateStatement update
-            ? update.Assignments.Select(assignment => IdentifierText(assignment.Column)).ToArray()
+        var assignedColumns = parsedMutation.Statement is UpdateStatement updateStatement
+            ? updateStatement.Assignments.Select(assignment => IdentifierText(assignment.Column)).ToArray()
             : [];
         var hasWhere = parsedMutation.Statement switch
         {
-            UpdateStatement update => update.Predicate is not null,
-            DeleteStatement delete => delete.Predicate is not null,
+            UpdateStatement updateWithPredicate => updateWithPredicate.Predicate is not null,
+            DeleteStatement deleteWithPredicate => deleteWithPredicate.Predicate is not null,
             _ => false
         };
         return JsonSerializer.Serialize(new
@@ -167,9 +167,9 @@ public partial class SqlAgentTool
     private static DmlDescriptor DescribeMutation(ParsedStatement parsedMutation) =>
         parsedMutation.Statement switch
         {
-            UpdateStatement update => new DmlDescriptor("UPDATE", IdentifierText(update.Target.Name)),
-            DeleteStatement delete => new DmlDescriptor("DELETE", IdentifierText(delete.Target.Name)),
-            InsertStatement insert => new DmlDescriptor("INSERT", IdentifierText(insert.Target.Name)),
+            UpdateStatement updateTarget => new DmlDescriptor("UPDATE", IdentifierText(updateTarget.Target.Name)),
+            DeleteStatement deleteTarget => new DmlDescriptor("DELETE", IdentifierText(deleteTarget.Target.Name)),
+            InsertStatement insertTarget => new DmlDescriptor("INSERT", IdentifierText(insertTarget.Target.Name)),
             _ => new DmlDescriptor(parsedMutation.Statement.GetType().Name, "unknown")
         };
 

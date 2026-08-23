@@ -1,4 +1,5 @@
 using Moq;
+using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
@@ -47,15 +48,15 @@ public class DmlPlanFactoryNativeTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("public.users", plan.TableName);
-        Assert.Equal("id", Assert.Single(plan.IdentityColumns));
+        Assert.Equal("id", Assert.Single(plan.RowIdentityColumns));
         Assert.Equal(SqlStatementKind.Update, plan.MutationCommand.Kind);
-        Assert.Equal(SqlStatementKind.Select, plan.MatchCommand.Kind);
+        Assert.Equal(SqlStatementKind.Select, plan.MatchQueryCommand.Kind);
         Assert.Contains("owner_id", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("other_id", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("owner_id", plan.MatchCommand.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("other_id", plan.MatchCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("owner_id", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("other_id", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, "disabled"));
         Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, 7));
-        Assert.Single(plan.MatchCommand.Parameters, parameter => Equals(parameter.Value, 7));
+        Assert.Single(plan.MatchQueryCommand.Parameters, parameter => Equals(parameter.Value, 7));
     }
 }
