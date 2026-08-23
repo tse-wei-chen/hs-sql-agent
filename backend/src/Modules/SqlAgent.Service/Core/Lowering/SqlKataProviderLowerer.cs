@@ -862,9 +862,12 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
     private static string RenderNamedTableSource(NamedTableSource source, Compiler compiler)
     {
         var table = RenderIdentifierSql(source.Name, compiler, allowWildcard: false);
-        return source.Alias is null
-            ? table
-            : $"{table} AS {RenderAlias(source.Alias, compiler)}";
+        if (source.Alias is null) return table;
+
+        var alias = RenderAlias(source.Alias, compiler);
+        return compiler is OracleCompiler
+            ? $"{table} {alias}"
+            : $"{table} AS {alias}";
     }
 
     private static string CteName(SqlIdentifier identifier, Compiler compiler)
@@ -898,7 +901,9 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static string NormalizeIdentifierValue(IdentifierPart part, Compiler compiler)
     {
-        if (part.WasQuoted) return part.Value;
+        // Parser-native identifier parts carry source spans and therefore lexical quote intent;
+        // programmatic/structured DTO AST nodes use Unknown spans and already carry semantic names.
+        if (part.WasQuoted || part.Span == SourceSpan.Unknown) return part.Value;
         return compiler switch
         {
             PostgresCompiler => part.Value.ToLowerInvariant(),
