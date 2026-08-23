@@ -8,7 +8,7 @@ namespace SqlAgent.Test.Services;
 public class CoreAliasSemanticsTests
 {
     [Fact]
-    public void StructuredDtoAliases_AreExplicitlyUnquotedInCoreAst()
+    public void StructuredDtoAliases_AreUnquotedButProjectionSpellingIsExplicit()
     {
         var definition = new QueryDefinition
         {
@@ -31,8 +31,11 @@ public class CoreAliasSemanticsTests
         Assert.NotNull(sourceAlias);
         Assert.Equal("UserScope", sourceAlias.Value);
         Assert.False(sourceAlias.WasQuoted);
+        Assert.False(sourceAlias.PreserveSpelling);
+
         Assert.NotNull(projectionAlias);
         Assert.Equal("DisplayName", projectionAlias.Value);
         Assert.False(projectionAlias.WasQuoted);
+        Assert.True(projectionAlias.PreserveSpelling);
     }
 }
