@@ -137,6 +137,16 @@ internal sealed class CoreOracleCompiler : OracleCompiler
 
 internal sealed class CoreFirebirdCompiler : FirebirdCompiler
 {
+    public override string WrapValue(string value)
+    {
+        if (value == "*") return value;
+
+        // The Core lowerer owns quoted-vs-unquoted case semantics. The stock Firebird compiler
+        // uppercases every value before quoting, which destroys the case of a delimited identifier.
+        // Here we only delimit and escape the already-normalized Core value.
+        return "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+    }
+
     protected override string CompileColumns(SqlResult ctx)
     {
         var zeroLimit = CoreSqlKataPagination.Limit(ctx, EngineCode) is { Limit: 0 };
