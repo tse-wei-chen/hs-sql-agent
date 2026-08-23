@@ -122,6 +122,7 @@ public sealed record BetweenExpr(
     SqlExpr Value,
     SqlExpr Lower,
     SqlExpr Upper,
+    bool IsNegated,
     SourceSpan Span) : SqlExpr(Span);
 
 public sealed record IsNullExpr(SqlExpr Value, bool IsNegated, SourceSpan Span) : SqlExpr(Span);
