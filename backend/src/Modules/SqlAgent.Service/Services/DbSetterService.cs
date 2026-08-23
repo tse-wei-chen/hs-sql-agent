@@ -6,10 +6,13 @@ using SqlAgent.Service.Factories;
 
 namespace SqlAgent.Service.Services
 {
-    public class DbSetterService(ISqlStrategyFactory strategyFactory) : IDbSetterService
+    public class DbSetterService(ISqlStrategyFactory providerFactory) : IDbSetterService
     {
-        private readonly ISqlStrategyFactory _strategyFactory = strategyFactory;
-        public async Task<TestDbConnectionVM> TestDbConnectionAsync(TestDbConnectionBase request, CancellationToken cancellationToken = default)
+        private readonly ISqlStrategyFactory _providerFactory = providerFactory;
+
+        public async Task<TestDbConnectionVM> TestDbConnectionAsync(
+            TestDbConnectionBase request,
+            CancellationToken cancellationToken = default)
         {
             DbConnection? connection = null;
 
@@ -17,20 +20,20 @@ namespace SqlAgent.Service.Services
             {
                 var provider = request.SqlProvider;
                 if (provider == null)
-                {
                     return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is null." };
-                }
-                var strategy = _strategyFactory.GetStrategy(provider.Value);
-                var connString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
-                {
-                    Host = request.Host,
-                    Port = request.Port,
-                    Username = request.Username,
-                    Password = request.Password,
-                    Database = request.Database,
-                    ExtraSettings = request.ExtraSettings
-                });
-                connection = strategy.CreateConnection(connString);
+
+                var connString = _providerFactory.BuildConnectionString(
+                    provider.Value,
+                    new BuildDbConnectionModelBase
+                    {
+                        Host = request.Host,
+                        Port = request.Port,
+                        Username = request.Username,
+                        Password = request.Password,
+                        Database = request.Database,
+                        ExtraSettings = request.ExtraSettings
+                    });
+                connection = _providerFactory.GetProvider(provider.Value).Connections.Create(connString);
                 await connection.OpenAsync(cancellationToken);
                 await connection.CloseAsync();
                 return new TestDbConnectionVM { IsSuccess = true };
@@ -43,17 +46,16 @@ namespace SqlAgent.Service.Services
             finally
             {
                 if (connection != null)
-                {
                     await connection.DisposeAsync();
-                }
             }
         }
 
-        public async Task<string?> BuildDbConnectionAsync(BuildDbConnectionModel model, CancellationToken cancellationToken = default)
+        public Task<string?> BuildDbConnectionAsync(
+            BuildDbConnectionModel model,
+            CancellationToken cancellationToken = default)
         {
             var provider = Enum.Parse<SqlAgentToolType>(model.Provider);
-            var strategy = _strategyFactory.GetStrategy(provider);
-            return strategy.BuildConnectionString(model);
+            return Task.FromResult<string?>(_providerFactory.BuildConnectionString(provider, model));
         }
     }
 }
