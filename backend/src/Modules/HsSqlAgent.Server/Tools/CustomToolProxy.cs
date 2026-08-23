@@ -147,11 +147,7 @@ public class CustomToolProxy(
             {
                 var parsedDml = CoreSqlTextParser.ParseDml(renderedSql, dbType);
                 auditDml = parsedDml;
-                if (parsedDml.Statement is not (UpdateStatement or DeleteStatement))
-                {
-                    throw new NotSupportedException(
-                        "Published Custom Tool DML currently supports UPDATE and DELETE through the typed approval pipeline. INSERT remains fail-closed until its production approval semantics are defined.");
-                }
+                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
                 var flow = new TypedDmlApprovalFlow(
                     _typedDmlRuntime,
@@ -275,9 +271,16 @@ public class CustomToolProxy(
             InsertStatement insert => IdentifierText(insert.Target.Name),
             _ => "unknown"
         };
-        var fields = parsedDml.Statement is UpdateStatement updateStatement
-            ? updateStatement.Assignments.Select(assignment => IdentifierText(assignment.Column)).ToArray()
-            : [];
+        var fields = parsedDml.Statement switch
+        {
+            UpdateStatement updateStatement => updateStatement.Assignments
+                .Select(assignment => IdentifierText(assignment.Column))
+                .ToArray(),
+            InsertStatement insertStatement => insertStatement.Columns
+                .Select(IdentifierText)
+                .ToArray(),
+            _ => []
+        };
         var hasWhere = parsedDml.Statement switch
         {
             UpdateStatement update => update.Predicate is not null,
