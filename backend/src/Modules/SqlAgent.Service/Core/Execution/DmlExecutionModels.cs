@@ -10,17 +10,30 @@ public enum DmlRowIdentityAssurance
     CountOnly
 }
 
+/// <summary>
+/// Describes what must be revalidated between preview and commit. UPDATE/DELETE approvals bind to
+/// an existing row set. INSERT VALUES approvals bind to the exact compiled payload instead because
+/// there is no pre-existing target row set to fingerprint.
+/// </summary>
+public enum DmlApprovalMode
+{
+    RowSetMutation,
+    InsertValues
+}
+
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
     string TableName,
     CompiledSqlCommand MutationCommand,
-    CompiledSqlCommand MatchQueryCommand,
+    CompiledSqlCommand? MatchQueryCommand,
     ImmutableArray<string> RowIdentityColumns,
     DmlRowIdentityAssurance RowIdentityAssurance,
     string PlanFingerprint,
     string PolicyVersion,
     TimeSpan ApprovalTtl,
-    int MaxAffectedRows = 0);
+    int MaxAffectedRows = 0,
+    DmlApprovalMode ApprovalMode = DmlApprovalMode.RowSetMutation,
+    ImmutableArray<ImmutableDictionary<string, object?>> InsertRows = default);
 
 public sealed record DmlPreview(
     DmlOperation Operation,
