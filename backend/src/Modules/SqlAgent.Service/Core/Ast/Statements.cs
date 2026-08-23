@@ -33,7 +33,27 @@ public sealed record DerivedTableSource(
     }
 }
 
-public sealed record SelectItem(SqlExpr Expression, IdentifierPart? Alias, SourceSpan Span) : SqlNode(Span);
+public sealed record SelectItem(SqlExpr Expression, IdentifierPart? Alias, SourceSpan Span) : SqlNode(Span)
+{
+    /// <summary>
+    /// A plain programmatic projection alias is an API/result-set name rather than source SQL text.
+    /// Keep it unquoted in the AST while preserving its requested output spelling during lowering.
+    /// Parser-native aliases continue to pass an IdentifierPart with lexical quote metadata.
+    /// </summary>
+    public SelectItem(SqlExpr expression, string? alias, SourceSpan span)
+        : this(
+            expression,
+            string.IsNullOrWhiteSpace(alias)
+                ? null
+                : new IdentifierPart(
+                    alias.Trim(),
+                    WasQuoted: false,
+                    span,
+                    PreserveSpelling: true),
+            span)
+    {
+    }
+}
 
 public sealed record OrderByItem(
     SqlExpr Expression,
