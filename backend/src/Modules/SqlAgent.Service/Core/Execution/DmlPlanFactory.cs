@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Mapping;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
@@ -9,8 +10,9 @@ namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
 /// Builds the immutable DML plan consumed by <see cref="DmlCoordinator"/>. Mutation and match
-/// commands are both derived from the same typed DML definition and resolved physical target,
-/// preventing approval of one target or predicate from being paired with a different mutation.
+/// commands are both derived from the same parser-native Core statement and resolved physical
+/// target, preventing approval of one target or predicate from being paired with a different
+/// mutation.
 /// </summary>
 public sealed class DmlPlanFactory(
     IProviderMetadataReader metadataReader,
@@ -23,8 +25,7 @@ public sealed class DmlPlanFactory(
 
     public async Task<ValidatedDmlPlan> CreateAsync(
         string connectionString,
-        DmlDefinition definition,
-        SqlAgentToolType sourceDialect,
+        ParsedStatement parsedMutation,
         SqlAgentToolType targetProvider,
         SqlPlanValidationContext validationContext,
         DmlCompilationPolicy? compilationPolicy = null,
@@ -33,60 +34,64 @@ public sealed class DmlPlanFactory(
         TimeSpan? approvalTtl = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(parsedMutation);
         ArgumentNullException.ThrowIfNull(validationContext);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-        ArgumentException.ThrowIfNullOrWhiteSpace(definition.TableName);
         if (maxAffectedRows < 0)
             throw new ArgumentOutOfRangeException(nameof(maxAffectedRows));
 
-        if (definition.Operation is not (DmlOperation.Update or DmlOperation.Delete))
-        {
-            throw new InvalidOperationException(
-                "Row-set approval planning currently supports UPDATE and DELETE only.");
-        }
+        var (operation, target, predicate) = MutationShape(parsedMutation.Statement);
+        var requestedTarget = IdentifierText(target.Name);
+        if (string.IsNullOrWhiteSpace(requestedTarget))
+            throw new InvalidOperationException("DML target table must not be empty.");
 
         var identity = await _rowIdentityResolver.ResolveTargetAsync(
             connectionString,
-            definition.TableName,
+            requestedTarget,
             assurance,
             cancellationToken);
-        var resolvedDefinition = WithResolvedTarget(definition, identity.QualifiedTableName);
-        var parsedMutation = new ParsedStatement(
-            DmlDefinitionCoreMapper.Map(resolvedDefinition),
-            sourceDialect);
+        var resolvedTarget = new NamedTableSource(
+            MetadataIdentifier(identity.Schema, identity.Table),
+            null,
+            target.Span);
+        var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
+        var resolvedMutation = new ParsedStatement(resolvedStatement, parsedMutation.SourceDialect);
 
         var mutationCommand = _dmlCompiler.Compile(
-            parsedMutation,
+            resolvedMutation,
             targetProvider,
             validationContext,
             compilationPolicy);
 
         var identityColumns = identity.Columns;
-        var selectColumns = identityColumns.IsDefaultOrEmpty
-            ? new List<SelectCondition>
-            {
-                new ConstantSelectCondition { Constant = 1, Alias = "__match" }
-            }
+        var selectItems = identityColumns.IsDefaultOrEmpty
+            ? ImmutableArray.Create(new SelectItem(
+                new LiteralExpr(1, SourceSpan.Unknown),
+                "__match",
+                SourceSpan.Unknown))
             : identityColumns
-                .Select(column => (SelectCondition)new FieldSelectCondition { FieldName = column })
-                .ToList();
+                .Select(column => new SelectItem(
+                    new ColumnExpr(MetadataIdentifier(column), SourceSpan.Unknown),
+                    null,
+                    SourceSpan.Unknown))
+                .ToImmutableArray();
 
-        var matchDefinition = new QueryDefinition
-        {
-            TableName = identity.QualifiedTableName,
-            SelectColumns = selectColumns,
-            WhereColumnsAndValues = resolvedDefinition.WhereConditions,
-            // We only need enough identities to either prove the complete approved set (<= max)
-            // or prove that policy is exceeded. This prevents an unbounded PK materialization just
-            // to discover afterward that the mutation should have been rejected.
-            Limit = maxAffectedRows > 0
+        var matchStatement = new SelectStatement(
+            ImmutableArray<CteDefinition>.Empty,
+            false,
+            selectItems,
+            resolvedTarget,
+            ImmutableArray<JoinSource>.Empty,
+            predicate,
+            ImmutableArray<SqlExpr>.Empty,
+            null,
+            ImmutableArray<OrderByItem>.Empty,
+            maxAffectedRows > 0
                 ? maxAffectedRows == int.MaxValue ? int.MaxValue : maxAffectedRows + 1
-                : null
-        };
-        var parsedMatch = new ParsedStatement(
-            QueryDefinitionCoreMapper.Map(matchDefinition),
-            sourceDialect);
+                : null,
+            null,
+            SourceSpan.Unknown);
+        var parsedMatch = new ParsedStatement(matchStatement, parsedMutation.SourceDialect);
 
         var matchCommand = _queryCompiler.Compile(
             parsedMatch,
@@ -99,7 +104,7 @@ public sealed class DmlPlanFactory(
             validationContext.PolicyVersion);
 
         return new ValidatedDmlPlan(
-            resolvedDefinition.Operation,
+            operation,
             identity.QualifiedTableName,
             mutationCommand,
             matchCommand,
@@ -111,17 +116,62 @@ public sealed class DmlPlanFactory(
             maxAffectedRows);
     }
 
-    private static DmlDefinition WithResolvedTarget(
+    [Obsolete("Map DmlDefinition to ParsedStatement before DML planning.")]
+    public Task<ValidatedDmlPlan> CreateAsync(
+        string connectionString,
         DmlDefinition definition,
-        string qualifiedTableName) => new()
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? compilationPolicy = null,
+        DmlRowIdentityAssurance assurance = DmlRowIdentityAssurance.Strict,
+        int maxAffectedRows = 0,
+        TimeSpan? approvalTtl = null,
+        CancellationToken cancellationToken = default)
     {
-        Operation = definition.Operation,
-        TableName = qualifiedTableName,
-        WhereConditions = definition.WhereConditions,
-        Values = definition.Values,
-        Columns = definition.Columns,
-        MultiValues = definition.MultiValues,
-        FromQuery = definition.FromQuery,
-        ConfirmToken = null
+        ArgumentNullException.ThrowIfNull(definition);
+        return CreateAsync(
+            connectionString,
+            new ParsedStatement(DmlDefinitionCoreMapper.Map(definition), sourceDialect),
+            targetProvider,
+            validationContext,
+            compilationPolicy,
+            assurance,
+            maxAffectedRows,
+            approvalTtl,
+            cancellationToken);
+    }
+
+    private static (DmlOperation Operation, NamedTableSource Target, SqlExpr? Predicate) MutationShape(
+        SqlStatement statement) => statement switch
+    {
+        UpdateStatement update => (DmlOperation.Update, update.Target, update.Predicate),
+        DeleteStatement delete => (DmlOperation.Delete, delete.Target, delete.Predicate),
+        InsertStatement => throw new InvalidOperationException(
+            "Row-set approval planning currently supports UPDATE and DELETE only."),
+        _ => throw new InvalidOperationException(
+            $"Statement '{statement.GetType().Name}' is not a supported DML mutation.")
     };
+
+    private static SqlStatement ReplaceTarget(
+        SqlStatement statement,
+        NamedTableSource resolvedTarget) => statement switch
+    {
+        UpdateStatement update => update with { Target = resolvedTarget },
+        DeleteStatement delete => delete with { Target = resolvedTarget },
+        _ => throw new InvalidOperationException(
+            $"Statement '{statement.GetType().Name}' is not a supported row-set mutation.")
+    };
+
+    private static SqlIdentifier MetadataIdentifier(params string[] parts) =>
+        new(
+            parts.Select(part => new IdentifierPart(
+                    part,
+                    WasQuoted: true,
+                    SourceSpan.Unknown))
+                .ToImmutableArray(),
+            SourceSpan.Unknown);
+
+    private static string IdentifierText(SqlIdentifier identifier) =>
+        string.Join('.', identifier.Parts.Select(part => part.Value));
 }
