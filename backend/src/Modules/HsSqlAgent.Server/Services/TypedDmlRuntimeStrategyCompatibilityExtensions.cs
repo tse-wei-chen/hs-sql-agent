@@ -10,7 +10,7 @@ namespace HsSqlAgent.Server.Services;
 /// Temporary call-site bridge while server tests and MCP entry points migrate from strategies to
 /// providers. TypedDmlRuntime itself remains provider-native.
 /// </summary>
-internal static class TypedDmlRuntimeStrategyCompatibilityExtensions
+public static class TypedDmlRuntimeStrategyCompatibilityExtensions
 {
     public static Task<TypedDmlApprovalSession> PreviewAsync(
         this TypedDmlRuntime runtime,
