@@ -109,7 +109,7 @@ internal sealed class CoreDmlTextParser
             if (equals.Type != TokenType.Operator || equals.Value != "=")
                 throw CoreTokenReader.Error("Expected '=' in UPDATE assignment.", equals);
             _reader.Advance();
-            assignments.Add(new Assignment(column, ParseDmlLiteral(), _reader.SpanFrom(assignmentStart)));
+            assignments.Add(new Assignment(column, ParseUpdateAssignmentValue(), _reader.SpanFrom(assignmentStart)));
         } while (_reader.Match(TokenType.Comma));
 
         SqlExpr? predicate = null;
@@ -129,6 +129,49 @@ internal sealed class CoreDmlTextParser
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
         return new DeleteStatement(target, predicate, _reader.SpanFrom(start));
+    }
+
+    private SqlExpr ParseUpdateAssignmentValue()
+    {
+        var token = _reader.Peek();
+        var expression = _expressions.ParseExpression();
+        return expression switch
+        {
+            LiteralExpr => expression,
+            FunctionCallExpr function when IsCurrentTemporalFunction(function) => function,
+            CastExpr cast => NormalizeDateCast(cast, token),
+            _ => throw CoreTokenReader.Error(
+                "UPDATE assignment values support scalar literals, DATE casts of string literals, " +
+                "and CURRENT_DATE/CURRENT_TIME/CURRENT_TIMESTAMP only.",
+                token)
+        };
+    }
+
+    private static bool IsCurrentTemporalFunction(FunctionCallExpr function)
+    {
+        if (function.IsDistinct || !function.Arguments.IsDefaultOrEmpty || function.Name.Parts.Length != 1)
+            return false;
+        if (function.Name.Parts[0].WasQuoted)
+            return false;
+
+        return function.Name.Parts[0].Value.ToUpperInvariant() is
+            "CURRENT_DATE" or "CURRENT_TIME" or "CURRENT_TIMESTAMP";
+    }
+
+    private static SqlExpr NormalizeDateCast(CastExpr cast, Token token)
+    {
+        if (!cast.TypeName.Trim().Equals("DATE", StringComparison.OrdinalIgnoreCase)
+            || cast.Expression is not LiteralExpr { Value: string literal })
+        {
+            throw CoreTokenReader.Error(
+                "UPDATE assignment casts are restricted to string literals cast explicitly to DATE.",
+                token);
+        }
+
+        if (!SqlTemporalLiteralParser.TryParseDate(literal, out var date))
+            throw CoreTokenReader.Error($"Invalid DATE literal '{literal}'.", token);
+
+        return new LiteralExpr(date, cast.Span);
     }
 
     private SqlExpr ParseDmlLiteral()

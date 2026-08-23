@@ -7,6 +7,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 using SqlKata;
 using SqlKata.Compilers;
 
@@ -62,12 +63,38 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
         {
             if (assignment.Column.Parts.Length != 1)
                 throw new SqlCompilationException("UPDATE assignment columns must be unqualified canonical identifiers.");
-            if (assignment.Value is not LiteralExpr literal)
-                throw new SqlCompilationException(
-                    $"UPDATE assignment '{IdentifierText(assignment.Column)}' is not a literal value; expression assignments are not yet supported.");
-            values.Add(assignment.Column.Parts[0].Value, NormalizeLiteral(literal.Value));
+            values.Add(
+                assignment.Column.Parts[0].Value,
+                LowerAssignmentValue(assignment.Value, compiler, IdentifierText(assignment.Column)));
         }
         return query.AsUpdate(values);
+    }
+
+    private static object? LowerAssignmentValue(SqlExpr expression, Compiler compiler, string column)
+    {
+        if (expression is LiteralExpr literal)
+            return NormalizeLiteral(literal.Value);
+
+        if (expression is FunctionCallExpr function && IsCanonicalCurrentTemporal(function))
+        {
+            var rendered = RenderFunction(function, compiler);
+            if (!rendered.Bindings.IsDefaultOrEmpty)
+                throw new SqlCompilationException(
+                    $"UPDATE assignment '{column}' produced bindings for a current-temporal expression; compilation was rejected.");
+            return SqlKata.Expressions.UnsafeLiteral(rendered.Sql, replaceQuotes: false);
+        }
+
+        throw new SqlCompilationException(
+            $"UPDATE assignment '{column}' is not an approved value expression. " +
+            "Only canonical literals and current temporal expressions are supported.");
+    }
+
+    private static bool IsCanonicalCurrentTemporal(FunctionCallExpr function)
+    {
+        if (function.IsDistinct || !function.Arguments.IsDefaultOrEmpty || function.Name.Parts.Length != 1)
+            return false;
+        return function.Name.Parts[0].Value.ToUpperInvariant() is
+            "CORE_CURRENT_DATE" or "CORE_CURRENT_TIME" or "CORE_CURRENT_TIMESTAMP";
     }
 
     private static Query LowerDelete(DeleteStatement delete, Compiler compiler)
@@ -126,6 +153,18 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
 
     private static RenderedExpression RenderFunction(FunctionCallExpr function, Compiler compiler)
     {
+        var name = IdentifierText(function.Name).ToUpperInvariant();
+        return name switch
+        {
+            "CORE_CURRENT_DATE" => RenderCurrentDate(function, compiler),
+            "CORE_CURRENT_TIME" => RenderCurrentTime(function, compiler),
+            "CORE_CURRENT_TIMESTAMP" => RenderCurrentTimestamp(function),
+            _ => RenderOrdinaryFunction(function, compiler)
+        };
+    }
+
+    private static RenderedExpression RenderOrdinaryFunction(FunctionCallExpr function, Compiler compiler)
+    {
         var name = IdentifierText(function.Name);
         if (!Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant))
             throw new SqlCompilationException($"Unsafe function identifier '{name}'.");
@@ -135,6 +174,37 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
         return new RenderedExpression(
             $"{name}({sql})",
             args.SelectMany(argument => argument.Bindings).ToImmutableArray());
+    }
+
+    private static RenderedExpression RenderCurrentDate(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireCurrentTemporalShape(function);
+        return new RenderedExpression(
+            compiler is SqlServerCompiler ? "CAST(CURRENT_TIMESTAMP AS date)" : "CURRENT_DATE",
+            ImmutableArray<object?>.Empty);
+    }
+
+    private static RenderedExpression RenderCurrentTime(FunctionCallExpr function, Compiler compiler)
+    {
+        RequireCurrentTemporalShape(function);
+        if (compiler is OracleCompiler)
+            throw new SqlCompilationException("CURRENT_TIME is not supported by Oracle.");
+        return new RenderedExpression(
+            compiler is SqlServerCompiler ? "CAST(CURRENT_TIMESTAMP AS time)" : "CURRENT_TIME",
+            ImmutableArray<object?>.Empty);
+    }
+
+    private static RenderedExpression RenderCurrentTimestamp(FunctionCallExpr function)
+    {
+        RequireCurrentTemporalShape(function);
+        return new RenderedExpression("CURRENT_TIMESTAMP", ImmutableArray<object?>.Empty);
+    }
+
+    private static void RequireCurrentTemporalShape(FunctionCallExpr function)
+    {
+        if (function.IsDistinct || !function.Arguments.IsDefaultOrEmpty)
+            throw new SqlCompilationException(
+                $"Canonical current temporal function '{IdentifierText(function.Name)}' must have zero arguments and cannot be DISTINCT.");
     }
 
     private static RenderedExpression RenderCast(CastExpr cast, Compiler compiler)
@@ -206,18 +276,29 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
 
     private static object? NormalizeLiteral(object? value)
     {
-        if (value is not JsonElement json) return value;
-        return json.ValueKind switch
+        if (value is JsonElement json)
         {
-            JsonValueKind.Null or JsonValueKind.Undefined => null,
-            JsonValueKind.String => json.GetString(),
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Number when json.TryGetInt64(out var integer) => integer,
-            JsonValueKind.Number when json.TryGetDecimal(out var number) => number,
-            JsonValueKind.Number => json.GetDouble(),
-            _ => throw new SqlCompilationException(
-                $"DML literal JSON kind '{json.ValueKind}' is not a scalar SQL value.")
+            return json.ValueKind switch
+            {
+                JsonValueKind.Null or JsonValueKind.Undefined => null,
+                JsonValueKind.String => json.GetString(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number when json.TryGetInt64(out var integer) => integer,
+                JsonValueKind.Number when json.TryGetDecimal(out var number) => number,
+                JsonValueKind.Number => json.GetDouble(),
+                _ => throw new SqlCompilationException(
+                    $"DML literal JSON kind '{json.ValueKind}' is not a scalar SQL value.")
+            };
+        }
+
+        return value switch
+        {
+            SqlDateValue date => date.Value.ToDateTime(TimeOnly.MinValue),
+            SqlTimeValue time => time.Value.ToTimeSpan(),
+            SqlLocalDateTimeValue local => DateTime.SpecifyKind(local.Value, DateTimeKind.Unspecified),
+            SqlOffsetDateTimeValue offset => offset.Value,
+            _ => value
         };
     }
 
