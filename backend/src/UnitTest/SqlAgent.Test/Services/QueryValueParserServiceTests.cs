@@ -123,7 +123,8 @@ public class QueryValueParserServiceTests
         var result = _service.TryToDateTime("2023-10-25T10:00:00Z", out var dt);
 
         Assert.True(result);
-        Assert.Equal(new DateTime(2023, 10, 25, 10, 0, 0, DateTimeKind.Utc).ToLocalTime(), dt);
+        Assert.Equal(new DateTime(2023, 10, 25, 10, 0, 0, DateTimeKind.Utc), dt);
+        Assert.Equal(DateTimeKind.Utc, dt.Kind);
     }
 
     [Fact]
@@ -133,6 +134,24 @@ public class QueryValueParserServiceTests
 
         Assert.False(result);
         Assert.Equal(default, dt);
+    }
+
+    [Theory]
+    [InlineData("10/25/2023")]
+    [InlineData("25/10/2023")]
+    [InlineData("October 25, 2023")]
+    public void TryToDateTime_ShouldRejectCultureDependentFormats(string value)
+    {
+        Assert.False(_service.TryToDateTime(value, out _));
+    }
+
+    [Fact]
+    public void TryToDateTime_ShouldPreserveLocalTimestampAsUnspecified()
+    {
+        var result = _service.TryToDateTime("2023-10-25 10:00:00", out var dateTime);
+
+        Assert.True(result);
+        Assert.Equal(DateTimeKind.Unspecified, dateTime.Kind);
     }
 
     #endregion

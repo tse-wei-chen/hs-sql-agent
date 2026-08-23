@@ -1,0 +1,11 @@
+[
+  {"dialect":"MySQL","name":"CHAR_LENGTH","semantic":"StringLength","minArguments":1,"maxArguments":1,"translationKind":"Semantic"},
+  {"dialect":"MySQL","name":"CEIL","semantic":"Ceiling","minArguments":1,"maxArguments":1,"translationKind":"Semantic"},
+  {"dialect":"MySQL","name":"IFNULL","aliases":["COALESCE"],"semantic":"Coalesce","minArguments":2,"maxArguments":2,"translationKind":"Semantic"},
+  {"dialect":"MySQL","name":"COALESCE","semantic":"Coalesce","minArguments":3,"translationKind":"Semantic"},
+  {"dialect":"MySQL","name":"RAND","semantic":"Random","minArguments":0,"maxArguments":0,"translationKind":"Semantic"},
+  {"dialect":"MySQL","name":"REPEAT","semantic":"Repeat","minArguments":2,"maxArguments":2,"translationKind":"Semantic"},
+  {"dialect":"MySQL","name":"NOW","semantic":"CurrentTimestamp","minArguments":0,"maxArguments":0,"translationKind":"Template","template":"@CurrentTimestamp"},
+  {"dialect":"MySQL","name":"GROUP_CONCAT","semantic":"StringAggregate","minArguments":1,"maxArguments":1,"translationKind":"Semantic"},
+  {"dialect":"MySQL","name":"GROUP_CONCAT","semantic":"StringAggregate","minArguments":2,"maxArguments":2,"translationKind":"Semantic"}
+]

@@ -1,0 +1,10 @@
+[
+  {"dialect":"Sqlite","name":"LENGTH","semantic":"StringLength","minArguments":1,"maxArguments":1,"translationKind":"Semantic"},
+  {"dialect":"Sqlite","name":"CEIL","semantic":"Ceiling","minArguments":1,"maxArguments":1,"translationKind":"Semantic"},
+  {"dialect":"Sqlite","name":"SUBSTR","aliases":["SUBSTRING"],"semantic":"Substring","minArguments":2,"maxArguments":3,"translationKind":"Semantic"},
+  {"dialect":"Sqlite","name":"COALESCE","semantic":"Coalesce","minArguments":2,"translationKind":"Semantic"},
+  {"dialect":"Sqlite","name":"RANDOM","semantic":"Random","minArguments":0,"maxArguments":0,"translationKind":"Semantic"},
+  {"dialect":"Sqlite","name":"CURRENT_TIMESTAMP","semantic":"CurrentTimestamp","minArguments":0,"maxArguments":0,"translationKind":"Template","template":"@CurrentTimestamp"},
+  {"dialect":"Sqlite","name":"GROUP_CONCAT","semantic":"StringAggregate","minArguments":1,"maxArguments":1,"translationKind":"Semantic"},
+  {"dialect":"Sqlite","name":"GROUP_CONCAT","semantic":"StringAggregate","minArguments":2,"maxArguments":2,"translationKind":"Semantic"}
+]

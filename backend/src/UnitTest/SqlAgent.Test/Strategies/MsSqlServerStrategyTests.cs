@@ -1,11 +1,8 @@
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Configuration;
-using Moq;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using Testcontainers.MsSql;
 using Xunit;
@@ -29,7 +26,7 @@ public class MsSqlFixture : IDbFixture
     {
         await Container.StartAsync();
 
-        var strategy = new MsSqlServerStrategy(new QueryValueParserService(), new Mock<IConfiguration>().Object);
+        var strategy = new MsSqlServerStrategy();
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
         using var cmd = conn.CreateCommand();
@@ -76,8 +73,8 @@ public class MsSqlFixture : IDbFixture
 
 public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<MsSqlServerStrategy, MsSqlFixture>(fixture)
 {
-    protected override MsSqlServerStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override bool SupportsFormattedDateParsing => false;
+    protected override MsSqlServerStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "Users";
     protected override string TestOrdersTableName => "Orders";
@@ -87,6 +84,8 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
     protected override string TestOrderDetailsDiscountColumn => "Discount";
     protected override string TestSchemaName => "dbo";
     protected override string TestOrdersUserIdColumn => "UserId";
+    protected override string TestOrdersIdColumn => "Id";
+    protected override string TestOrderDateColumn => "OrderDate";
 
     protected override string TableNotFoundErrorCode => "208";
     protected override string ColumnNotFoundErrorCode => "207";
@@ -134,7 +133,7 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
     [Fact]
     public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenConversionIsInvalid()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -143,8 +142,9 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=245", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("conversion", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.MsSqlServer, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal("245", ex.Code);
+        Assert.Contains("conversion", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 }

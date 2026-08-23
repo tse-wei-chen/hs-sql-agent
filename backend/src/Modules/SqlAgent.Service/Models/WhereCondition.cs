@@ -12,6 +12,20 @@ namespace SqlAgent.Service.Models;
 [JsonDerivedType(typeof(ExpressionWhereCondition), "expression")]
 public abstract class WhereCondition
 {
+    private protected WhereCondition()
+    {
+        var type = GetType();
+        if (type != typeof(BasicWhereCondition)
+            && type != typeof(ColumnCompareWhereCondition)
+            && type != typeof(SubQueryWhereCondition)
+            && type != typeof(GroupWhereCondition)
+            && type != typeof(ExpressionWhereCondition))
+        {
+            throw new InvalidOperationException(
+                $"Unsupported WHERE node '{type.Name}'. Register compiler support before adding a new WHERE node type.");
+        }
+    }
+
     [Description("When true, this condition (or group) will be combined using OR instead of AND.")]
     public bool IsOr { get; set; }
     [Description("When true, negates the entire condition or group (NOT).")]

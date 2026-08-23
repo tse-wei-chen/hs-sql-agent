@@ -1,8 +1,12 @@
 using System.ComponentModel;
 using System.Reflection;
+using System.Text.Json;
 using Admin.Service.Models;
+using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
-using SqlAgent.Service.Models;
+using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Enums;
+using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
@@ -57,11 +61,15 @@ public class SqlAgentToolTests
         var dmlMethod = typeof(SqlAgentTool).GetMethod(nameof(SqlAgentTool.ExecuteDmlSql));
 
         var queryDescription = queryMethod?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+        var dmlDescription = dmlMethod?.GetCustomAttribute<DescriptionAttribute>()?.Description;
         var queryParam = Assert.Single(queryMethod!.GetParameters());
         var dmlParams = dmlMethod!.GetParameters();
 
         Assert.NotNull(queryDescription);
         Assert.Contains("SELECT SQL", queryDescription);
+        Assert.NotNull(dmlDescription);
+        Assert.Contains("INSERT VALUES", dmlDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("INSERT ... SELECT", dmlDescription, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(typeof(string), queryParam.ParameterType);
         Assert.Equal("sql", queryParam.Name);
         Assert.Equal(3, dmlParams.Length);
@@ -69,86 +77,76 @@ public class SqlAgentToolTests
         Assert.Equal("sql", dmlParams[0].Name);
         Assert.Equal(typeof(ModelContextProtocol.Server.McpServer), dmlParams[1].ParameterType);
         Assert.Equal("server", dmlParams[1].Name);
-        Assert.Equal(typeof(System.Threading.CancellationToken), dmlParams[2].ParameterType);
+        Assert.Equal(typeof(CancellationToken), dmlParams[2].ParameterType);
         Assert.Equal("cancellationToken", dmlParams[2].Name);
     }
 
     [Fact]
-    public void CollectReferencesAndAliases_ShouldInspectSelectFunctionWindowExpressions()
+    public void TypedDmlSupportGuard_AllowsInsertValuesButRejectsInsertSelect()
     {
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        List<SelectCondition> selectColumns =
-        [
-            new FunctionSelectCondition
-            {
-                FunctionName = "LAG",
-                Arguments = [new FieldSelectCondition { FieldName = "orders.order_date" }],
-                Window = new WindowDefinition
-                {
-                    PartitionBy =
-                    [
-                        new FunctionGroupByCondition
-                        {
-                            FunctionName = "COALESCE",
-                            Arguments =
-                            [
-                                new SubQuerySelectCondition
-                                {
-                                    TableName = "secret_partition_table",
-                                    SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
-                                }
-                            ]
-                        }
-                    ],
-                    OrderBy =
-                    [
-                        new FunctionOrderByCondition
-                        {
-                            FunctionName = "COALESCE",
-                            Arguments =
-                            [
-                                new SubQuerySelectCondition
-                                {
-                                    TableName = "secret_order_table",
-                                    SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
-                                }
-                            ]
-                        }
-                    ]
-                }
-            }
-        ];
+        var insertValues = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (id, name) VALUES (1, 'Alice')",
+            SqlAgentToolType.Postgres);
+        var insertSelect = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (name) SELECT name FROM public.pending_users",
+            SqlAgentToolType.Postgres);
 
-        var method = typeof(SqlAgentTool).GetMethod(
-            "CollectReferencesAndAliases",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        method!.Invoke(null, [null, null, null, null, null, selectColumns, null, referenced, aliases]);
-
-        Assert.Contains("secret_partition_table", referenced);
-        Assert.Contains("secret_order_table", referenced);
+        Assert.True(TypedDmlRuntime.SupportsStatement(insertValues.Statement));
+        Assert.False(TypedDmlRuntime.SupportsStatement(insertSelect.Statement));
+        var error = Assert.Throws<NotSupportedException>(() =>
+            TypedDmlRuntime.EnsureSupportedStatement(insertSelect.Statement));
+        Assert.Contains("INSERT ... SELECT", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void CollectFromQueryDefinition_ShouldNotTreatTableAliasAsPhysicalTableExemption()
+    public void DmlAuditDescription_InsertValuesIncludesTargetColumns()
     {
-        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var query = new QueryDefinition
-        {
-            TableName = "secret",
-            Alias = "secret",
-            SelectColumns = [new FieldSelectCondition { FieldName = "secret.id" }]
-        };
-
         var method = typeof(SqlAgentTool).GetMethod(
-            "CollectFromQueryDefinition",
+            "DescribeDml",
             BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (id, name) VALUES (1, 'Alice')",
+            SqlAgentToolType.Postgres);
 
-        method!.Invoke(null, [query, referenced, aliases]);
-
-        Assert.Contains("secret", referenced);
+        var json = Assert.IsType<string>(method!.Invoke(null, [parsed]));
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal("INSERT", root.GetProperty("Operation").GetString());
+        Assert.Equal("public.users", root.GetProperty("TableName").GetString());
+        Assert.Equal(
+            ["id", "name"],
+            root.GetProperty("ValueFields").EnumerateArray().Select(value => value.GetString()!).ToArray());
+        Assert.False(root.GetProperty("HasWhere").GetBoolean());
     }
 
+    [Fact]
+    public void BinderFacts_ShouldInspectNestedWindowSubqueries()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT LAG(order_date) OVER (" +
+            "PARTITION BY COALESCE((SELECT id FROM secret_partition_table), 0) " +
+            "ORDER BY COALESCE((SELECT id FROM secret_order_table), 0)) FROM orders",
+            SqlAgentToolType.Postgres);
+
+        var facts = new SqlAstBinder().Bind(parsed).Facts;
+
+        Assert.Contains("orders", facts.ReferencedTables);
+        Assert.Contains("secret_partition_table", facts.ReferencedTables);
+        Assert.Contains("secret_order_table", facts.ReferencedTables);
+        Assert.True(facts.ContainsSubquery);
+    }
+
+    [Fact]
+    public void BinderFacts_ShouldNotTreatTableAliasAsPhysicalTableExemption()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT secret.id FROM secret AS secret",
+            SqlAgentToolType.Postgres);
+
+        var facts = new SqlAstBinder().Bind(parsed).Facts;
+
+        Assert.Contains("secret", facts.ReferencedTables);
+    }
 }

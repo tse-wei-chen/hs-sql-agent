@@ -30,7 +30,7 @@ public class MemberServiceTests
         };
         _contextMock.Setup(c => c.Members).ReturnsDbSet(members);
 
-        var result = (await _service.GetMembersAsync()).ToList();
+        var result = (await _service.GetMembersAsync(TestContext.Current.CancellationToken)).ToList();
 
         Assert.Equal(2, result.Count);
         Assert.Equal("a@test.com", result[0].Mail);
@@ -48,7 +48,7 @@ public class MemberServiceTests
         };
         _contextMock.Setup(c => c.Members).ReturnsDbSet(members);
 
-        var result = (await _service.GetMembersAsync()).ToList();
+        var result = (await _service.GetMembersAsync(TestContext.Current.CancellationToken)).ToList();
 
         Assert.Contains("Admin", result[0].Roles);
         Assert.Contains(1, result[0].RoleIds);
@@ -70,7 +70,7 @@ public class MemberServiceTests
 
         // Service adds to member.MemberRoles (navigation property), not _context.MemberRoles.
         // Sync to the backing list on SaveChanges so the re-query finds the data.
-        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
+        _ = _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .Callback(() =>
             {
                 memberRoles.Clear();
@@ -86,7 +86,7 @@ public class MemberServiceTests
             })
             .ReturnsAsync(1);
 
-        var result = await _service.UpdateMemberRolesAsync(1, new UpdateMemberRolesRequest { RoleIds = [1, 2] });
+        var result = await _service.UpdateMemberRolesAsync(1, new UpdateMemberRolesRequest { RoleIds = [1, 2] }, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, result.Id);
         Assert.Contains("Admin", result.Roles);
@@ -100,7 +100,7 @@ public class MemberServiceTests
         _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member>());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _service.UpdateMemberRolesAsync(999, new UpdateMemberRolesRequest { RoleIds = [1] }));
+            _service.UpdateMemberRolesAsync(999, new UpdateMemberRolesRequest { RoleIds = [1] }, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -113,7 +113,7 @@ public class MemberServiceTests
             .Callback<Member>(r => members.Remove(r));
         _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
-        await _service.DeleteMemberAsync(1);
+        await _service.DeleteMemberAsync(1, TestContext.Current.CancellationToken);
 
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
         Assert.Empty(members);
@@ -125,7 +125,7 @@ public class MemberServiceTests
         _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member>());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _service.DeleteMemberAsync(999));
+            _service.DeleteMemberAsync(999, TestContext.Current.CancellationToken));
     }
 
     [Fact]

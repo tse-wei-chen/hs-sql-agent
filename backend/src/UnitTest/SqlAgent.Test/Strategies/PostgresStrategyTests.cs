@@ -1,10 +1,8 @@
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Moq;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -30,8 +28,7 @@ public class PostgresFixture : IDbFixture
     {
         await Container.StartAsync();
 
-        var parser = new QueryValueParserService();
-        var strategy = new PostgresStrategy(parser, new Mock<IConfiguration>().Object);
+        var strategy = new PostgresStrategy();
 
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
@@ -81,8 +78,7 @@ public class PostgresFixture : IDbFixture
 
 public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<PostgresStrategy, PostgresFixture>(fixture)
 {
-    protected override PostgresStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override PostgresStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "users";
     protected override string TestOrdersTableName => "orders";
@@ -140,7 +136,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     [Fact]
     public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenValueFormatIsInvalid()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -149,13 +145,15 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.True(ex.Message.Contains("code=22P02") || ex.Message.Contains("code=42883"), $"Result was: {ex.Message}");
+        Assert.Equal(SqlAgentToolType.Postgres, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.True(ex.Code is "22P02" or "42883", $"Result was: {ex.Message}");
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenOperatorOrTypeMismatch()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -171,15 +169,16 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=42883", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("operator", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.Postgres, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal("42883", ex.Code);
+        Assert.Contains("operator", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenColumnIsAmbiguous()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -202,9 +201,10 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains("code=42702", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.Postgres, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal("42702", ex.Code);
+        Assert.Contains("ambiguous", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -244,6 +244,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
+                SourceDialect = SqlAgentToolType.MySQL,
                 TableName = "orders",
                 SelectColumns =
                 [
@@ -325,6 +326,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
+                SourceDialect = SqlAgentToolType.MySQL,
                 TableName = "orders",
                 SelectColumns =
                 [
@@ -470,6 +472,7 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
+                SourceDialect = SqlAgentToolType.MsSqlServer,
                 TableName = "orders",
                 SelectColumns =
                 [

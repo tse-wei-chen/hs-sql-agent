@@ -1,12 +1,9 @@
 using System.Text.Json;
 using DotNet.Testcontainers.Builders;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using MySql.Data.MySqlClient;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using Testcontainers.MySql;
 using Xunit;
@@ -31,8 +28,7 @@ public class MySqlFixture : IDbFixture
     {
         await Container.StartAsync();
 
-        var parser = new QueryValueParserService();
-        var strategy = new MySqlStrategy(parser, new Mock<IConfiguration>().Object);
+        var strategy = new MySqlStrategy();
 
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
@@ -81,8 +77,8 @@ public class MySqlFixture : IDbFixture
 
 public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlStrategy, MySqlFixture>(fixture)
 {
-    protected override MySqlStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override bool SupportsOffsetTimestamp => false;
+    protected override MySqlStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "users";
     protected override string TestOrdersTableName => "orders";
@@ -135,7 +131,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     [Fact]
     public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenValueFormatIsIncorrect()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -144,13 +140,15 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.True(ex.Message.Contains("code=1292") || ex.Message.Contains("Error"), $"Result was: {ex.Message}");
+        Assert.Equal(SqlAgentToolType.MySQL, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.True(ex.Code is "1292" or "1525", $"Result was: {ex.Message}");
     }
 
     [Fact]
     public async Task ExecuteQueryAsync_ShouldReturnDbError_WhenSyntaxIsInvalid()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -159,8 +157,9 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("code=1064", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("syntax", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.MySQL, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal("1064", ex.Code);
+        Assert.Contains("syntax", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 }

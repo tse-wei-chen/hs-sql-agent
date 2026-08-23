@@ -9,8 +9,20 @@ public static class SqlDefinitionParser
     public static QueryDefinition ParseQuery(string sql, SqlAgentToolType? provider = null)
     {
         var tokens = new SqlTokenizer(sql, provider).Tokenize();
+        var topLimit = NormalizeSqlServerTop(tokens, provider, out var normalizedTokens);
+        tokens = CommaFromNormalizer.Normalize(normalizedTokens);
         ValidateStatementTokens(tokens);
-        return new SqlParser(tokens).Parse();
+        SqlSyntaxGuard.ValidateQuery(tokens);
+        var definition = new SqlParser(tokens).Parse();
+        if (topLimit is not null)
+        {
+            if (definition.CombineConditions is { Count: > 0 })
+                throw new SqlParseException("SQL Server TOP with set operations is not yet represented losslessly by the query AST.");
+            if (definition.Limit is not null)
+                throw new SqlParseException("SQL Server TOP cannot be combined with LIMIT in the canonical query definition.");
+            definition.Limit = topLimit.Value;
+        }
+        return definition;
     }
 
     public static DmlDefinition ParseDml(string sql, SqlAgentToolType? provider = null)
@@ -130,6 +142,50 @@ public static class SqlDefinitionParser
 
         private object? ParseLiteral()
         {
+            if (PeekWord("DATE") || PeekWord("TIME") || PeekWord("TIMESTAMP"))
+            {
+                var temporalType = Peek().Value.ToUpperInvariant();
+                _pos++;
+                bool? withTimeZone = null;
+                if (temporalType is "TIME" or "TIMESTAMP"
+                    && (PeekWord("WITH") || PeekWord("WITHOUT")))
+                {
+                    withTimeZone = PeekWord("WITH");
+                    _pos++;
+                    ExpectWord("TIME");
+                    ExpectWord("ZONE");
+                }
+                var literalToken = Peek();
+                if (literalToken.Type != TokenType.String)
+                    throw Error($"{temporalType} must be followed by a quoted ISO temporal literal.");
+                _pos++;
+                var literal = literalToken.Value[1..^1].Replace("''", "'", StringComparison.Ordinal);
+                if (temporalType == "DATE" && SqlTemporalLiteralParser.TryParseDate(literal, out var date))
+                    return date;
+                if (temporalType == "TIME" && SqlTemporalLiteralParser.TryParseTime(literal, out var time))
+                {
+                    if (withTimeZone == true)
+                        throw Error("TIME WITH TIME ZONE is not yet supported by the canonical temporal model.");
+                    return time;
+                }
+                if (temporalType == "TIMESTAMP" && SqlTemporalLiteralParser.TryParseTimestamp(literal, out var timestamp))
+                {
+                    if (withTimeZone == true && timestamp is not SqlOffsetDateTimeValue)
+                        throw Error("TIMESTAMP WITH TIME ZONE requires an explicit UTC offset or Z suffix.");
+                    if (withTimeZone == false && timestamp is SqlOffsetDateTimeValue)
+                        throw Error("TIMESTAMP WITHOUT TIME ZONE must not include a UTC offset.");
+                    return timestamp;
+                }
+
+                var expected = temporalType switch
+                {
+                    "DATE" => "YYYY-MM-DD",
+                    "TIME" => "HH:mm[:ss[.fffffff]] without an offset",
+                    _ => "YYYY-MM-DD[ T]HH:mm[:ss[.fffffff]][offset]"
+                };
+                throw Error($"Invalid {temporalType} literal '{literal}'. Expected {expected}.");
+            }
+
             var sign = 1;
             if (Peek().Type == TokenType.Operator && Peek().Value is "-" or "+")
             {
@@ -202,6 +258,90 @@ public static class SqlDefinitionParser
 
         private Token Peek() => _pos < tokens.Length ? tokens[_pos] : tokens[^1];
         private SqlParseException Error(string message) => new($"{message} Position {Peek().Pos}.");
+    }
+
+    private static int? NormalizeSqlServerTop(
+        Token[] tokens,
+        SqlAgentToolType? provider,
+        out Token[] normalizedTokens)
+    {
+        normalizedTokens = tokens;
+        if (provider != SqlAgentToolType.MsSqlServer)
+            return null;
+
+        var depth = 0;
+        var selectIndex = -1;
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            var token = tokens[i];
+            if (token.Type == TokenType.LParen)
+            {
+                depth++;
+                continue;
+            }
+            if (token.Type == TokenType.RParen)
+            {
+                depth = Math.Max(0, depth - 1);
+                continue;
+            }
+            if (depth == 0
+                && token.Value.Equals("SELECT", StringComparison.OrdinalIgnoreCase))
+            {
+                selectIndex = i;
+                break;
+            }
+        }
+
+        if (selectIndex < 0)
+            return null;
+
+        var cursor = selectIndex + 1;
+        if (cursor < tokens.Length
+            && (tokens[cursor].Value.Equals("DISTINCT", StringComparison.OrdinalIgnoreCase)
+                || tokens[cursor].Value.Equals("ALL", StringComparison.OrdinalIgnoreCase)))
+        {
+            cursor++;
+        }
+
+        if (cursor >= tokens.Length
+            || !tokens[cursor].Value.Equals("TOP", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var topStart = cursor++;
+        var parenthesized = cursor < tokens.Length && tokens[cursor].Type == TokenType.LParen;
+        if (parenthesized) cursor++;
+        if (cursor >= tokens.Length || tokens[cursor].Type != TokenType.Number
+            || !int.TryParse(tokens[cursor].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var limit)
+            || limit < 0)
+        {
+            throw new SqlParseException(
+                $"SQL Server TOP requires a non-negative integer row count at position {tokens[topStart].Pos}.");
+        }
+        cursor++;
+        if (parenthesized)
+        {
+            if (cursor >= tokens.Length || tokens[cursor].Type != TokenType.RParen)
+                throw new SqlParseException(
+                    $"SQL Server TOP parenthesized row count is malformed at position {tokens[topStart].Pos}.");
+            cursor++;
+        }
+
+        if (cursor < tokens.Length
+            && (tokens[cursor].Value.Equals("PERCENT", StringComparison.OrdinalIgnoreCase)
+                || tokens[cursor].Value.Equals("WITH", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new SqlParseException(
+                $"SQL Server TOP PERCENT/WITH TIES is not yet represented by the canonical query AST at position {tokens[cursor].Pos}.");
+        }
+
+        normalizedTokens =
+        [
+            .. tokens.Take(topStart),
+            .. tokens.Skip(cursor)
+        ];
+        return limit;
     }
 
     private static void ValidateStatementTokens(Token[] tokens)

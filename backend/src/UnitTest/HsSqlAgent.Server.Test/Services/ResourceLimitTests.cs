@@ -19,11 +19,11 @@ public class ResourceLimitTests
         });
         var limiter = CreateLayeredLimiter(state.Object);
 
-        Assert.True((await limiter.AcquireKeyAsync(10, McpKeyRateLimitMode.Inherit, null, null)).IsAllowed);
-        var rejected = await limiter.AcquireKeyAsync(10, McpKeyRateLimitMode.Inherit, null, null);
+        Assert.True((await limiter.AcquireKeyAsync(10, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken)).IsAllowed);
+        var rejected = await limiter.AcquireKeyAsync(10, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken);
         Assert.False(rejected.IsAllowed);
         Assert.True(rejected.RetryAfter > TimeSpan.Zero);
-        Assert.True((await limiter.AcquireKeyAsync(11, McpKeyRateLimitMode.Inherit, null, null)).IsAllowed);
+        Assert.True((await limiter.AcquireKeyAsync(11, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken)).IsAllowed);
     }
 
     [Fact]
@@ -37,12 +37,12 @@ public class ResourceLimitTests
         });
         var limiter = CreateLayeredLimiter(state.Object);
 
-        Assert.True((await limiter.AcquireKeyAsync(20, McpKeyRateLimitMode.Custom, 2, 60)).IsAllowed);
-        Assert.True((await limiter.AcquireKeyAsync(20, McpKeyRateLimitMode.Custom, 2, 60)).IsAllowed);
-        Assert.False((await limiter.AcquireKeyAsync(20, McpKeyRateLimitMode.Custom, 2, 60)).IsAllowed);
+        Assert.True((await limiter.AcquireKeyAsync(20, McpKeyRateLimitMode.Custom, 2, 60, TestContext.Current.CancellationToken)).IsAllowed);
+        Assert.True((await limiter.AcquireKeyAsync(20, McpKeyRateLimitMode.Custom, 2, 60, TestContext.Current.CancellationToken)).IsAllowed);
+        Assert.False((await limiter.AcquireKeyAsync(20, McpKeyRateLimitMode.Custom, 2, 60, TestContext.Current.CancellationToken)).IsAllowed);
 
         for (var i = 0; i < 100; i++)
-            Assert.True((await limiter.AcquireKeyAsync(21, McpKeyRateLimitMode.Unlimited, null, null)).IsAllowed);
+            Assert.True((await limiter.AcquireKeyAsync(21, McpKeyRateLimitMode.Unlimited, null, null, TestContext.Current.CancellationToken)).IsAllowed);
     }
 
     [Fact]
@@ -57,13 +57,13 @@ public class ResourceLimitTests
         state.Setup(x => x.GetCurrent()).Returns(() => policy.Clone());
         var limiter = CreateLayeredLimiter(state.Object);
 
-        Assert.True((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null)).IsAllowed);
-        Assert.False((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null)).IsAllowed);
+        Assert.True((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken)).IsAllowed);
+        Assert.False((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken)).IsAllowed);
 
         policy.KeyPermitLimit = 2;
-        Assert.True((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null)).IsAllowed);
-        Assert.True((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null)).IsAllowed);
-        Assert.False((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null)).IsAllowed);
+        Assert.True((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken)).IsAllowed);
+        Assert.True((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken)).IsAllowed);
+        Assert.False((await limiter.AcquireKeyAsync(30, McpKeyRateLimitMode.Inherit, null, null, TestContext.Current.CancellationToken)).IsAllowed);
     }
 
     [Fact]
@@ -73,9 +73,9 @@ public class ResourceLimitTests
         var firstIp = new RateLimitRequest("ip:192.0.2.1", 1, TimeSpan.FromMinutes(1));
         var secondIp = firstIp with { Partition = "ip:192.0.2.2" };
 
-        Assert.True((await limiter.AcquireAsync(firstIp)).IsAllowed);
-        Assert.False((await limiter.AcquireAsync(firstIp)).IsAllowed);
-        Assert.True((await limiter.AcquireAsync(secondIp)).IsAllowed);
+        Assert.True((await limiter.AcquireAsync(firstIp, TestContext.Current.CancellationToken)).IsAllowed);
+        Assert.False((await limiter.AcquireAsync(firstIp, TestContext.Current.CancellationToken)).IsAllowed);
+        Assert.True((await limiter.AcquireAsync(secondIp, TestContext.Current.CancellationToken)).IsAllowed);
     }
 
     [Fact]

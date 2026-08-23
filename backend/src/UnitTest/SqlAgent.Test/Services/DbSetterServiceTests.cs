@@ -1,24 +1,29 @@
 using System.Data.Common;
 using Moq;
+using SqlAgent.Service.Core.Execution;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
 
 public class DbSetterServiceTests
 {
-    private readonly Mock<ISqlStrategyFactory> _strategyFactoryMock;
+    private readonly Mock<ISqlProviderFactory> _providerFactoryMock;
+    private readonly Mock<ISqlConnectionStringFactory> _connectionStringFactoryMock;
     private readonly DbSetterService _service;
 
     public DbSetterServiceTests()
     {
-        _strategyFactoryMock = new Mock<ISqlStrategyFactory>();
-        _service = new DbSetterService(_strategyFactoryMock.Object);
+        _providerFactoryMock = new Mock<ISqlProviderFactory>();
+        _connectionStringFactoryMock = new Mock<ISqlConnectionStringFactory>();
+        _service = new DbSetterService(
+            _providerFactoryMock.Object,
+            _connectionStringFactoryMock.Object);
     }
 
     private Mock<DbConnection> CreateMockDbConnection(bool throwOnOpen = false, string errorMessage = "Connection failed")
@@ -40,13 +45,10 @@ public class DbSetterServiceTests
     [Fact]
     public async Task TestDbConnectionAsync_ShouldReturnError_WhenProviderIsNull()
     {
-        // Arrange
         var request = new TestDbConnectionBase { SqlProvider = null };
 
-        // Act
         var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
 
-        // Assert
         Assert.False(result.IsSuccess);
         Assert.Equal("Provider is null.", result.ErrorMessage);
     }
@@ -54,76 +56,81 @@ public class DbSetterServiceTests
     [Fact]
     public async Task TestDbConnectionAsync_ShouldReturnSuccess_WhenConnectionOpensSuccessfully()
     {
-        // Arrange
         var request = new TestDbConnectionBase
         {
             SqlProvider = SqlAgentToolType.Postgres,
             Host = "localhost",
             Database = "test_db"
         };
-
         var connString = "Host=localhost;Database=test_db;";
-        var mockStrategy = new Mock<ISqlStrategy>();
-        mockStrategy.Setup(s => s.BuildConnectionString(It.IsAny<BuildDbConnectionModelBase>())).Returns(connString);
+        _connectionStringFactoryMock
+            .Setup(f => f.BuildConnectionString(
+                SqlAgentToolType.Postgres,
+                It.Is<BuildDbConnectionModelBase>(m =>
+                    m.Host == request.Host &&
+                    m.Database == request.Database)))
+            .Returns(connString);
 
         var mockConnection = CreateMockDbConnection();
-        mockStrategy.Setup(s => s.CreateConnection(connString)).Returns(mockConnection.Object);
+        var connectionFactory = new Mock<IDbConnectionFactory>();
+        connectionFactory.Setup(f => f.Create(connString)).Returns(mockConnection.Object);
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(p => p.Connections).Returns(connectionFactory.Object);
+        _providerFactoryMock.Setup(f => f.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
 
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.Postgres)).Returns(mockStrategy.Object);
-
-        // Act
         var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
 
-        // Assert
         Assert.True(result.IsSuccess);
         Assert.Null(result.ErrorMessage);
-        mockStrategy.Verify(s => s.BuildConnectionString(It.Is<BuildDbConnectionModelBase>(m =>
-            m.Host == request.Host &&
-            m.Database == request.Database)), Times.Once);
+        _connectionStringFactoryMock.Verify(f => f.BuildConnectionString(
+            SqlAgentToolType.Postgres,
+            It.Is<BuildDbConnectionModelBase>(m =>
+                m.Host == request.Host &&
+                m.Database == request.Database)), Times.Once);
+        connectionFactory.Verify(f => f.Create(connString), Times.Once);
         mockConnection.Verify(c => c.OpenAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task TestDbConnectionAsync_ShouldReturnError_WhenConnectionThrowsException()
     {
-        // Arrange
         var request = new TestDbConnectionBase { SqlProvider = SqlAgentToolType.MySQL };
         var connString = "Server=localhost;";
-
-        var mockStrategy = new Mock<ISqlStrategy>();
-        mockStrategy.Setup(s => s.BuildConnectionString(It.IsAny<BuildDbConnectionModelBase>())).Returns(connString);
+        _connectionStringFactoryMock
+            .Setup(f => f.BuildConnectionString(
+                SqlAgentToolType.MySQL,
+                It.IsAny<BuildDbConnectionModelBase>()))
+            .Returns(connString);
 
         var mockConnection = CreateMockDbConnection(throwOnOpen: true, errorMessage: "Access denied");
-        mockStrategy.Setup(s => s.CreateConnection(connString)).Returns(mockConnection.Object);
+        var connectionFactory = new Mock<IDbConnectionFactory>();
+        connectionFactory.Setup(f => f.Create(connString)).Returns(mockConnection.Object);
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(p => p.Connections).Returns(connectionFactory.Object);
+        _providerFactoryMock.Setup(f => f.GetProvider(SqlAgentToolType.MySQL)).Returns(provider.Object);
 
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.MySQL)).Returns(mockStrategy.Object);
-
-        // Act
         var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
 
-        // Assert
         Assert.False(result.IsSuccess);
         Assert.Equal("Access denied", result.ErrorMessage);
+        connectionFactory.Verify(f => f.Create(connString), Times.Once);
         mockConnection.Verify(c => c.OpenAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task BuildDbConnectionAsync_ShouldReturnConnectionString()
     {
-        // Arrange
-        var providerStr = "MsSqlServer";
-        var model = new BuildDbConnectionModel { Provider = providerStr };
+        var model = new BuildDbConnectionModel { Provider = "MsSqlServer" };
         var expectedConnString = "Server=localhost;Database=db;";
+        _connectionStringFactoryMock
+            .Setup(f => f.BuildConnectionString(SqlAgentToolType.MsSqlServer, model))
+            .Returns(expectedConnString);
 
-        var mockStrategy = new Mock<ISqlStrategy>();
-        mockStrategy.Setup(s => s.BuildConnectionString(model)).Returns(expectedConnString);
-
-        _strategyFactoryMock.Setup(f => f.GetStrategy(SqlAgentToolType.MsSqlServer)).Returns(mockStrategy.Object);
-
-        // Act
         var result = await _service.BuildDbConnectionAsync(model, TestContext.Current.CancellationToken);
 
-        // Assert
         Assert.Equal(expectedConnString, result);
+        _connectionStringFactoryMock.Verify(
+            f => f.BuildConnectionString(SqlAgentToolType.MsSqlServer, model),
+            Times.Once);
     }
 }

@@ -1,12 +1,9 @@
 using System.Text.Json;
 using DotNet.Testcontainers.Builders;
 using FirebirdSql.Data.FirebirdClient;
-using Microsoft.Extensions.Configuration;
-using Moq;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.Strategies;
 using Testcontainers.FirebirdSql;
 using Xunit;
@@ -30,7 +27,7 @@ public class FirebirdFixture : IDbFixture
     {
         await Container.StartAsync();
         FbConnection.CreateDatabase(ConnectionString);
-        var strategy = new FirebirdStrategy(new QueryValueParserService(), new Mock<IConfiguration>().Object);
+        var strategy = new FirebirdStrategy();
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
         using var cmd = conn.CreateCommand();
@@ -95,8 +92,9 @@ public class FirebirdFixture : IDbFixture
 
 public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<FirebirdStrategy, FirebirdFixture>(fixture)
 {
-    protected override FirebirdStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override bool SupportsPortableDateFormatting => false;
+    protected override bool SupportsFormattedDateParsing => false;
+    protected override FirebirdStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "USERS";
     protected override string TestOrdersTableName => "ORDERS";
@@ -106,6 +104,9 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     protected override string TestOrderDetailsDiscountColumn => "DISCOUNT";
     protected override string TestSchemaName => "Default";
     protected override string TestOrdersUserIdColumn => "USER_ID";
+    protected override string TestOrdersIdColumn => "ID";
+    protected override string TestOrderDateColumn => "ORDER_DATE";
+    protected override int TestFirstOrderId => 101;
     protected override string TestUserIdColumn => "ID";
     protected override string TestUserNameColumn => "NAME";
 
@@ -113,32 +114,33 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     protected override string TableNotFoundErrorCode => "FB_SQL_-204";
     protected override string ColumnNotFoundErrorCode => "FB_SQL_-206";
 
-    // Firebird uppercases unquoted identifiers, so result properties are UPPERCASE.
-    private const string PropUname = "UNAME";
-    private const string PropAge = "AGE";
-    private const string PropUid = "UID";
-    private const string PropOrderCount = "ORDER_COUNT";
-    private const string PropUserType = "USER_TYPE";
+    // Structured projection aliases define the API result schema and preserve caller spelling.
+    private const string PropUname = "uname";
+    private const string PropAge = "age";
+    private const string PropUid = "uid";
+    private const string PropOrderCount = "order_count";
+    private const string PropUserType = "user_type";
 
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = "NON_EXISTENT"
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={TableNotFoundErrorCode}", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("table", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.Firebird, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal(TableNotFoundErrorCode, ex.Code);
+        Assert.Contains("table", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenColumnNotFound()
     {
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(
+        var ex = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
                 TableName = TestTableName,
@@ -146,9 +148,10 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={ColumnNotFoundErrorCode}", ex.Message);
-        Assert.Contains("message=", ex.Message);
-        Assert.Contains("column", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlAgentToolType.Firebird, ex.ProviderType);
+        Assert.Equal("query", ex.Operation);
+        Assert.Equal(ColumnNotFoundErrorCode, ex.Code);
+        Assert.Contains("column", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -214,7 +217,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.Equal(2, rows.Count);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.Equal("Bob", rows[0].GetProperty(PropUname).GetString());
     }
 
@@ -395,7 +398,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
         Assert.Single(rows);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.Equal("Alice", rows[0].GetProperty(PropUname).GetString());
     }
 
@@ -457,7 +460,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
         Assert.Equal(2, rows.Count);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.Equal("Alice", rows[0].GetProperty(PropUname).GetString());
         Assert.Equal("Bob", rows[1].GetProperty(PropUname).GetString());
     }
@@ -507,7 +510,7 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
-        // Firebird uppercases unquoted aliases
+        // Structured projection aliases preserve caller spelling.
         Assert.True(rows[0].TryGetProperty(PropOrderCount, out _));
     }
 }

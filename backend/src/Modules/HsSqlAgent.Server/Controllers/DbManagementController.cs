@@ -6,6 +6,7 @@ using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
@@ -72,7 +73,8 @@ public class DbManagementController(
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetSchemas(
         int id,
-        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
@@ -80,27 +82,17 @@ public class DbManagementController(
         if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
-        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
-        var strategy = sqlStrategyFactory.GetStrategy(dbType);
-        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
-        {
-            Host = db.Host,
-            Port = db.Port,
-            Username = db.Username,
-            Password = password,
-            Database = db.Database,
-            ExtraSettings = db.ExtraSettings
-        });
-
-        return Ok(await strategy.GetSchemasAsync(connectionString, cancellationToken));
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
+        var provider = providerFactory.GetProvider(dbType);
+        return Ok(await provider.Metadata.GetSchemasAsync(connectionString, cancellationToken));
     }
 
     [HttpGet("{id}/tables")]
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetTables(
         int id, [FromQuery] string? schema,
-        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
@@ -108,27 +100,20 @@ public class DbManagementController(
         if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
-        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
-        var strategy = sqlStrategyFactory.GetStrategy(dbType);
-        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
-        {
-            Host = db.Host,
-            Port = db.Port,
-            Username = db.Username,
-            Password = password,
-            Database = db.Database,
-            ExtraSettings = db.ExtraSettings
-        });
-
-        return Ok(await strategy.GetTablesAsync(connectionString, schema ?? string.Empty, cancellationToken));
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
+        var provider = providerFactory.GetProvider(dbType);
+        return Ok(await provider.Metadata.GetTablesAsync(
+            connectionString,
+            schema ?? string.Empty,
+            cancellationToken));
     }
 
     [HttpGet("{id}/columns")]
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetColumns(
         int id, [FromQuery] string? schema, [FromQuery] string table,
-        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         CancellationToken cancellationToken)
@@ -137,19 +122,43 @@ public class DbManagementController(
         if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
+        var schemaName = schema ?? string.Empty;
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
+        var provider = providerFactory.GetProvider(dbType);
+        var metadata = await provider.Metadata.GetColumnsAsync(
+            connectionString,
+            schemaName,
+            table,
+            cancellationToken);
+        var columns = metadata
+            .Select(column => new ColumnInfo(
+                column.Name,
+                column.Type,
+                column.IsPrimaryKey,
+                column.PrimaryKeyOrdinal))
+            .ToArray();
+        return Ok(columns);
+    }
+
+    private static string BuildConnectionString(
+        DbManagementPwdVM db,
+        SqlAgentToolType dbType,
+        ISqlConnectionStringFactory connectionStringFactory,
+        ICryptoService cryptoService,
+        IOptions<McpKeySettings> mcpKeySettings)
+    {
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
-        var strategy = sqlStrategyFactory.GetStrategy(dbType);
-        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
-        {
-            Host = db.Host,
-            Port = db.Port,
-            Username = db.Username,
-            Password = password,
-            Database = db.Database,
-            ExtraSettings = db.ExtraSettings
-        });
-
-        return Ok(await strategy.GetColumnsAsync(connectionString, schema ?? string.Empty, table, cancellationToken));
+        return connectionStringFactory.BuildConnectionString(
+            dbType,
+            new BuildDbConnectionModelBase
+            {
+                Host = db.Host,
+                Port = db.Port,
+                Username = db.Username,
+                Password = password,
+                Database = db.Database,
+                ExtraSettings = db.ExtraSettings
+            });
     }
 }

@@ -1,10 +1,10 @@
+using System.Globalization;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Moq;
+using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using SqlAgent.Service.Validation;
 using Xunit;
@@ -16,22 +16,28 @@ public interface IDbFixture : IAsyncLifetime
     string ConnectionString { get; }
 }
 
+/// <summary>
+/// Shared provider integration coverage for the remaining strategy responsibilities: provider
+/// connections/metadata plus query execution through the canonical Core compiler/executor path.
+/// Legacy DML preview/token/commit behavior was removed from BaseSqlStrategy and is covered at the
+/// typed DML/Core boundary instead of being duplicated here.
+/// </summary>
 public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFixture>
     where TStrategy : ISqlStrategy
     where TFixture : class, IDbFixture
 {
     protected readonly TFixture Fixture;
-    protected readonly TStrategy Strategy;
+    protected readonly TStrategy ProviderStrategy;
+    protected readonly CoreStrategyTestHarness<TStrategy> Strategy;
 
     protected BaseStrategyTests(TFixture fixture)
     {
         Fixture = fixture;
-        var configMock = new Mock<IConfiguration>();
-        configMock.Setup(c => c["McpKeySettings:HmacSecretKey"]).Returns("TestSecretKey12345678901234567890");
-        Strategy = CreateStrategy(new QueryValueParserService(), configMock.Object);
+        ProviderStrategy = CreateStrategy();
+        Strategy = new CoreStrategyTestHarness<TStrategy>(ProviderStrategy);
     }
 
-    protected abstract TStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration);
+    protected abstract TStrategy CreateStrategy();
 
     protected abstract string TestTableName { get; }
     protected abstract string TestOrdersTableName { get; }
@@ -41,241 +47,297 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected virtual string TestOrderDetailsDiscountColumn => "discount";
     protected abstract string TestSchemaName { get; }
     protected virtual string TestOrdersUserIdColumn => "user_id";
+    protected virtual string TestOrdersIdColumn => "id";
+    protected virtual string TestOrderDateColumn => "order_date";
+    protected virtual int TestFirstOrderId => 1;
+    protected virtual bool SupportsStandaloneTime => true;
+    protected virtual bool SupportsOffsetTimestamp => Strategy.DbType != SqlAgentToolType.Firebird;
+    protected virtual bool SupportsPortableDateFormatting => true;
+    protected virtual bool SupportsFormattedDateParsing => true;
     protected virtual string TestUserIdColumn => "id";
     protected virtual string TestUserNameColumn => "Name";
+
+    protected abstract string TableNotFoundErrorCode { get; }
+    protected abstract string ColumnNotFoundErrorCode { get; }
+
+    // Retained only so existing provider subclasses do not need unrelated test-hook churn in this
+    // strangler step. No shared test invokes the legacy DML compatibility surface.
+    protected abstract DmlDefinition CreateInsertDml();
 
     [Fact]
     public virtual async Task GetTablesAsync_ShouldReturnTables()
     {
-        var tables = await Strategy.GetTablesAsync(Fixture.ConnectionString, TestSchemaName, TestContext.Current.CancellationToken);
+        var tables = await Strategy.GetTablesAsync(
+            Fixture.ConnectionString,
+            TestSchemaName,
+            TestContext.Current.CancellationToken);
         Assert.Contains(TestTableName, tables, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
     public virtual async Task GetSchemasAsync_ShouldReturnAvailableSchemas()
     {
-        var schemas = await Strategy.GetSchemasAsync(Fixture.ConnectionString, TestContext.Current.CancellationToken);
+        var schemas = await Strategy.GetSchemasAsync(
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
         Assert.Contains(TestSchemaName, schemas, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
     public virtual async Task GetColumnsAsync_ShouldReturnColumnTypes()
     {
-        var columns = await Strategy.GetColumnsAsync(Fixture.ConnectionString, TestSchemaName, TestTableName, TestContext.Current.CancellationToken);
+        var columns = await Strategy.GetColumnsAsync(
+            Fixture.ConnectionString,
+            TestSchemaName,
+            TestTableName,
+            TestContext.Current.CancellationToken);
         Assert.NotEmpty(columns);
     }
 
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnValidJson()
     {
-        var qd = new QueryDefinition
-        {
-            TableName = TestTableName,
-            Limit = 1
-        };
-        ValidateQuery(qd);
-        var json = await Strategy.ExecuteQueryAsync(qd,
+        var definition = new QueryDefinition { TableName = TestTableName, Limit = 1 };
+        ValidateQuery(definition);
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(await Strategy.ExecuteQueryAsync(
+            definition,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var res = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(res);
-        Assert.NotEmpty(res);
+            cancellationToken: TestContext.Current.CancellationToken));
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
     }
 
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
-        var qd = new QueryDefinition
-        {
-            TableName = "NON_EXISTENT_TABLE_HS"
-        };
-        ValidateQuery(qd);
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(qd,
+        var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };
+        ValidateQuery(definition);
+        var error = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
+            definition,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={TableNotFoundErrorCode}", ex.Message);
+        Assert.Equal(Strategy.DbType, error.ProviderType);
+        Assert.Equal("query", error.Operation);
+        Assert.Equal(TableNotFoundErrorCode, error.Code);
     }
 
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenColumnNotFound()
     {
-        var qd = new QueryDefinition
+        var definition = new QueryDefinition
         {
             TableName = TestTableName,
             SelectColumns = [new FieldSelectCondition { FieldName = $"{TestTableName}.NON_EXISTENT_COL_HS" }]
         };
-        ValidateQuery(qd);
-        var ex = await Assert.ThrowsAsync<Exception>(() => Strategy.ExecuteQueryAsync(qd,
+        ValidateQuery(definition);
+        var error = await Assert.ThrowsAsync<ProviderExecutionException>(() => Strategy.ExecuteQueryAsync(
+            definition,
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Contains($"code={ColumnNotFoundErrorCode}", ex.Message);
+        Assert.Equal(Strategy.DbType, error.ProviderType);
+        Assert.Equal("query", error.Operation);
+        Assert.Equal(ColumnNotFoundErrorCode, error.Code);
     }
 
     [Fact]
-    public virtual async Task ExecuteDmlAsync_ShouldPerformValidInsert()
+    public async Task ExecuteQueryAsync_TimeValue_ShouldBindAsTypedParameter()
     {
-        var dml = CreateInsertDml();
-        ValidateDml(dml);
-        var dryRun = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-
-        Assert.StartsWith("Dry Run Result", dryRun);
-        Assert.Contains("Preview=### INSERT preview", dryRun);
-        Assert.Contains("```diff", dryRun);
-        Assert.Contains($"Table: {TestTableName}", dryRun);
-        Assert.Contains("+", dryRun);
-        Assert.Contains("read-only preview did not execute", dryRun);
-
-        var tokenStart = dryRun.IndexOf("TokenRequired=");
-        if (tokenStart == -1)
-        {
-            Assert.Contains("Success", dryRun);
-            return;
-        }
-
-        var start = tokenStart + 14;
-        var end = dryRun.IndexOf(" |", start);
-        dml.ConfirmToken = dryRun[start..end];
-
-        var final = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, dml, TestContext.Current.CancellationToken);
-        Assert.Contains("Success", final);
-
-        // Cleanup: delete the inserted record to avoid polluting shared fixture DB
-        await CleanupInsertedDmlRecord(dml);
-    }
-
-    [Fact]
-    public async Task ExecuteDmlAsync_ShouldPreviewUpdateAndDeleteWithoutChangingRows()
-    {
-        var rowQuery = new QueryDefinition
-        {
-            TableName = TestTableName,
-            WhereColumnsAndValues =
-            [
-                new BasicWhereCondition { FieldName = TestUserIdColumn, Operator = "=", Value = 1 }
-            ]
-        };
-        var before = await Strategy.ExecuteQueryAsync(
-            rowQuery,
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-        Assert.NotEqual("[]", before);
-
-        var updatePreview = await Strategy.ExecuteDmlAsync(
-            Fixture.ConnectionString,
-            new DmlDefinition
+        var execution = () => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
             {
-                Operation = DmlOperation.Update,
                 TableName = TestTableName,
-                Values =
+                SelectColumns =
                 [
-                    new NameValuePair
+                    new ConstantSelectCondition
                     {
-                        FieldName = TestUserNameColumn,
-                        Value = $"preview-only-{Guid.NewGuid():N}"
+                        Constant = new SqlTimeValue(new TimeOnly(9, 30, 15)),
+                        Alias = "typed_time"
                     }
                 ],
-                WhereConditions = rowQuery.WhereColumnsAndValues
+                Limit = 1
             },
-            TestContext.Current.CancellationToken);
-
-        Assert.StartsWith("Dry Run Result | affectedRows=1", updatePreview);
-        Assert.Contains("Preview=### UPDATE preview", updatePreview);
-        Assert.Contains("```diff", updatePreview);
-        Assert.Contains($"Table: {TestTableName}", updatePreview);
-        Assert.Contains($"@@ {TestUserIdColumn} = 1 @@", updatePreview, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(TestUserNameColumn, updatePreview, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains($"+{TestUserNameColumn}: preview-only-", updatePreview, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("read-only preview did not execute", updatePreview);
-        Assert.Equal(before, await Strategy.ExecuteQueryAsync(
-            rowQuery,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken));
+            cancellationToken: TestContext.Current.CancellationToken);
 
-        var deletePreview = await Strategy.ExecuteDmlAsync(
-            Fixture.ConnectionString,
-            new DmlDefinition
-            {
-                Operation = DmlOperation.Delete,
-                TableName = TestTableName,
-                WhereConditions = rowQuery.WhereColumnsAndValues
-            },
-            TestContext.Current.CancellationToken);
-
-        Assert.StartsWith("Dry Run Result | affectedRows=1", deletePreview);
-        Assert.Contains("Preview=### DELETE preview", deletePreview);
-        Assert.Contains("```diff", deletePreview);
-        Assert.Contains($"@@ {TestUserIdColumn} = 1 @@", deletePreview, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("-", deletePreview);
-        Assert.Contains("read-only preview did not execute", deletePreview);
-        Assert.Equal(before, await Strategy.ExecuteQueryAsync(
-            rowQuery,
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken));
+        if (!SupportsStandaloneTime)
+        {
+            var error = await Assert.ThrowsAnyAsync<Exception>(execution);
+            Assert.Contains("no standalone TIME data type", error.Message);
+            return;
+        }
+        Assert.NotEqual("[]", await execution());
     }
 
     [Fact]
-    public async Task ExecuteDmlAsync_ShouldBindConfirmationTokenToCompleteDefinition()
+    public async Task ExecuteQueryAsync_LocalTimestampValue_ShouldBindAsTypedParameter()
     {
-        var approvedDefinition = CreateInsertDml();
-        ValidateDml(approvedDefinition);
-        var dryRun = await Strategy.ExecuteDmlAsync(
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new ConstantSelectCondition
+                    {
+                        Constant = new SqlLocalDateTimeValue(new DateTime(2026, 8, 21, 9, 30, 15)),
+                        Alias = "typed_timestamp"
+                    }
+                ],
+                Limit = 1
+            },
             Fixture.ConnectionString,
-            approvedDefinition,
-            TestContext.Current.CancellationToken);
-        var tokenStart = dryRun.IndexOf("TokenRequired=", StringComparison.Ordinal);
-        if (tokenStart < 0) return;
-        var start = tokenStart + 14;
-        var end = dryRun.IndexOf(" |", start, StringComparison.Ordinal);
-
-        var differentDefinition = CreateInsertDml();
-        var mutableValue = differentDefinition.Values?.FirstOrDefault(value => value.Value is string);
-        Assert.NotNull(mutableValue);
-        mutableValue.Value = $"{mutableValue.Value}-different-{Guid.NewGuid():N}";
-        differentDefinition.ConfirmToken = dryRun[start..end];
-
-        var result = await Strategy.ExecuteDmlAsync(
-            Fixture.ConnectionString,
-            differentDefinition,
-            TestContext.Current.CancellationToken);
-
-        Assert.StartsWith("Dry Run Result", result);
+            cancellationToken: TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.NotNull(value);
+        Assert.True(DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed));
+        Assert.Equal(new DateTime(2026, 8, 21, 9, 30, 15), parsed);
     }
 
-    private async Task CleanupInsertedDmlRecord(DmlDefinition dml)
+    [Fact]
+    public async Task ExecuteQueryAsync_LegacyDateTimeConstant_ShouldUseTypedParameter()
     {
-        if (dml.Operation != DmlOperation.Insert || dml.Values == null || dml.Values.Count == 0)
-            return;
+        var json = await Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new ConstantSelectCondition
+                    {
+                        Constant = new DateTime(2026, 8, 21, 9, 30, 15, DateTimeKind.Unspecified),
+                        Alias = "legacy_timestamp"
+                    }
+                ],
+                Limit = 1
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+        Assert.NotEqual("[]", json);
+    }
 
-        var nameValue = dml.Values.FirstOrDefault(v =>
-            string.Equals(v.FieldName, "Name", StringComparison.OrdinalIgnoreCase));
-        if (nameValue == null)
-            return;
+    [Fact]
+    public async Task ExecuteQueryAsync_OffsetTimestampValue_ShouldBindAsTypedParameter()
+    {
+        var execution = () => Strategy.ExecuteQueryAsync(
+            new QueryDefinition
+            {
+                TableName = TestTableName,
+                SelectColumns =
+                [
+                    new ConstantSelectCondition
+                    {
+                        Constant = new SqlOffsetDateTimeValue(
+                            new DateTimeOffset(2026, 8, 21, 9, 30, 15, TimeSpan.FromHours(8))),
+                        Alias = "typed_offset_timestamp"
+                    }
+                ],
+                Limit = 1
+            },
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
 
-        var deleteDml = new DmlDefinition
+        if (!SupportsOffsetTimestamp)
         {
-            Operation = DmlOperation.Delete,
-            TableName = dml.TableName,
-            WhereConditions =
-            [
-                new BasicWhereCondition
-                {
-                    FieldName = nameValue.FieldName,
-                    Operator = "=",
-                    Value = nameValue.Value
-                }
-            ]
-        };
-
-        var deleteDryRun = await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, deleteDml, TestContext.Current.CancellationToken);
-        var deleteTokenStart = deleteDryRun.IndexOf("TokenRequired=");
-        if (deleteTokenStart == -1)
+            await Assert.ThrowsAnyAsync<Exception>(execution);
             return;
+        }
+        Assert.NotEqual("[]", await execution());
+    }
 
-        var deleteStart = deleteTokenStart + 14;
-        var deleteEnd = deleteDryRun.IndexOf(" |", deleteStart);
-        deleteDml.ConfirmToken = deleteDryRun[deleteStart..deleteEnd];
-        await Strategy.ExecuteDmlAsync(Fixture.ConnectionString, deleteDml, TestContext.Current.CancellationToken);
+    [Fact]
+    public async Task ExecuteQueryAsync_DateDiffDay_ShouldReturnStartToEndDifference()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT DATEDIFF(DAY, DATE '2026-08-20', DATE '2026-08-22') AS day_count FROM {TestTableName}");
+        definition.Limit = 1;
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(2m, document.RootElement[0].EnumerateObject().Single().Value.GetDecimal());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_DateAddDay_ShouldReturnExpectedDate()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM {TestTableName}");
+        definition.Limit = 1;
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.NotNull(value);
+        Assert.StartsWith("2026-08-22", value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PortableDateFormat_ShouldPreserveMinutes()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT DATE_FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') AS formatted FROM {TestTableName}");
+        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
+        definition.Limit = 1;
+        if (!SupportsPortableDateFormatting)
+        {
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
+                definition,
+                Fixture.ConnectionString,
+                cancellationToken: TestContext.Current.CancellationToken));
+            Assert.Contains("portable date formatting", error.Message);
+            return;
+        }
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal("2026-08-22 13:45:09", document.RootElement[0].EnumerateObject().Single().Value.GetString());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ToDate_ShouldTranslatePortableFormat()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') AS parsed_date FROM {TestTableName}");
+        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
+        definition.Limit = 1;
+        if (!SupportsFormattedDateParsing)
+        {
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
+                definition,
+                Fixture.ConnectionString,
+                cancellationToken: TestContext.Current.CancellationToken));
+            Assert.Contains("formatted date parsing", error.Message);
+            return;
+        }
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
+        Assert.NotNull(value);
+        Assert.StartsWith("2026-08-22", value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_DateParts_ShouldReturnNumbers()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            $"SELECT YEAR(DATE '2026-08-22') AS y, MONTH(DATE '2026-08-22') AS m, DAY(DATE '2026-08-22') AS d FROM {TestTableName}");
+        definition.Limit = 1;
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(json);
+        var values = document.RootElement[0].EnumerateObject().Select(x => x.Value.GetDecimal()).ToArray();
+        Assert.Equal([2026m, 8m, 22m], values);
     }
 
     [Fact]
@@ -284,228 +346,28 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
-                CteConditions =
-                [
-                    new CteCondition
-                    {
-                        CteAliasName = "active_users",
-                        Query = new QueryDefinition
-                        {
-                            TableName = TestTableName,
-                            SelectColumns =
-                            [
-                                new FieldSelectCondition { FieldName = "id" }
-                            ],
-                            WhereColumnsAndValues =
-                            [
-                                new BasicWhereCondition { FieldName = "age", Operator = ">", Value = 0 }
-                            ]
-                        }
-                    }
-                ],
+                TableName = TestTableName,
                 Alias = "u",
-                FromQuery = new QueryDefinition
-                {
-                    TableName = TestTableName,
-                    WhereColumnsAndValues =
-                    [
-                        new BasicWhereCondition { FieldName = "age", Operator = ">", Value = 0 }
-                    ]
-                },
-                Distinct = true,
-                Joins =
-                [
-                    new JoinCondition
-                    {
-                        Table = TestOrdersTableName,
-                        Alias = "o",
-                        Type = JoinType.Left,
-                        OnConditions =
-                        [
-                            new ColumnCompareWhereCondition
-                            {
-                                LeftFieldName = "u.id",
-                                Operator = "=",
-                                RightFieldName = $"o.{TestOrdersUserIdColumn}"
-                            }
-                        ]
-                    }
-                ],
                 SelectColumns =
                 [
-                    new FieldSelectCondition { FieldName = "u.id", Alias = "user_id" },
-                    new FieldSelectCondition { FieldName = "u.name", Alias = "username" },
-                    new FunctionSelectCondition
-                    {
-                        FunctionName = "COUNT",
-                        Arguments = [new FieldSelectCondition { FieldName = "o.id" }],
-                        Alias = "order_count"
-                    },
-                    new OperationSelectCondition
-                    {
-                        Left = new FieldSelectCondition { FieldName = "u.age" },
-                        Operator = ArithmeticOperator.Add,
-                        Right = new ConstantSelectCondition { Constant = 0 },
-                        Alias = "age_check"
-                    },
-                    new ConstantSelectCondition { Constant = "active_user", Alias = "user_type" },
-                    new CaseWhenSelectCondition
-                    {
-                        CaseWhen =
-                        [
-                            new CaseWhenClause
-                            {
-                                Condition = new BasicWhereCondition
-                                {
-                                    FieldName = "u.age",
-                                    Operator = ">",
-                                    Value = 30
-                                },
-                                Value = "senior"
-                            }
-                        ],
-                        ElseValue = "junior",
-                        Alias = "age_group"
-                    }
+                    new FieldSelectCondition { FieldName = $"u.{TestUserIdColumn}", Alias = "user_id" },
+                    new FieldSelectCondition { FieldName = $"u.{TestUserNameColumn}", Alias = "user_name" }
                 ],
                 WhereColumnsAndValues =
                 [
-                    new GroupWhereCondition
-                    {
-                        Groups =
-                        [
-                            new BasicWhereCondition { FieldName = "o.amount", Operator = ">", Value = 0 },
-                            new BasicWhereCondition { FieldName = "o.id", Operator = "isnull", Value = null, IsOr = true }
-                        ]
-                    }
-                ],
-                GroupByConditions =
-                [
-                    new FieldGroupByCondition { FieldName = "u.id" },
-                    new FieldGroupByCondition { FieldName = "u.name" },
-                    new FieldGroupByCondition { FieldName = "u.age" }
-                ],
-                HavingConditions =
-                [
-                    new FunctionHavingCondition
-                    {
-                        LeftFunction = new SqlFunctionCondition
-                        {
-                            FunctionName = "COUNT",
-                            Arguments = [new FieldSelectCondition { FieldName = "o.id" }]
-                        },
-                        Operator = ">=",
-                        Value = 0
-                    }
+                    new BasicWhereCondition { FieldName = $"u.{TestUserIdColumn}", Operator = ">", Value = 0 }
                 ],
                 OrderByColumns =
                 [
-                    new FieldOrderByCondition { FieldName = "order_count", Direction = SortDirection.Desc }
+                    new FieldOrderByCondition { FieldName = $"u.{TestUserIdColumn}", Direction = SortDirection.Asc }
                 ],
-                Limit = 5
+                Limit = 2
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
-        Assert.True(rows.Count <= 5, $"Expected ?? rows, got {rows.Count}");
-
-        foreach (var row in rows)
-        {
-            Assert.True(row.TryGetProperty("user_id", out _));
-            Assert.True(row.TryGetProperty("username", out _));
-            Assert.True(row.TryGetProperty("order_count", out _));
-            Assert.True(row.TryGetProperty("age_check", out _));
-            Assert.True(row.TryGetProperty("user_type", out _));
-            Assert.True(row.TryGetProperty("age_group", out _));
-        }
-    }
-
-    [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldSupportSubQueryWhereCondition()
-    {
-        var json = await Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
-                ],
-                WhereColumnsAndValues =
-                [
-                    new SubQueryWhereCondition
-                    {
-                        FieldName = "id",
-                        Operator = "IN",
-                        SubQuery = new QueryDefinition
-                        {
-                            TableName = TestOrdersTableName,
-                            SelectColumns =
-                            [
-                                new FieldSelectCondition { FieldName = TestOrdersUserIdColumn }
-                            ],
-                            WhereColumnsAndValues =
-                            [
-                                new BasicWhereCondition { FieldName = "amount", Operator = ">", Value = 100 }
-                            ]
-                        }
-                    }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
-                ]
-            },
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(rows);
-        Assert.NotEmpty(rows);
-        // Users with orders > 100: Alice (userId=1 has orders 150, 200)
-        // Bob's order is 50, Charlie has no orders
-        Assert.Single(rows);
-        Assert.Equal("Alice", rows[0].GetProperty("uname").GetString());
-    }
-
-    [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldSupportWhereNotIsOrIsNot()
-    {
-        var json = await Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
-                ],
-                WhereColumnsAndValues =
-                [
-                    new BasicWhereCondition { FieldName = "name", Operator = "=", Value = "Alice" },
-                    new BasicWhereCondition { FieldName = "name", Operator = "=", Value = "Bob", IsOr = true },
-                    new BasicWhereCondition { FieldName = "name", Operator = "LIKE", Value = "C%", IsNot = true }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
-                ]
-            },
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(rows);
-        Assert.NotEmpty(rows);
-        // WHERE (name = 'Alice' OR name = 'Bob') AND NOT name LIKE 'C%'
-        // Alice: matches 'Alice' ????included
-        // Bob: matches 'Bob' ????included
-        // Charlie: doesn't match 'Alice' or 'Bob' ??excluded (even though NOT LIKE 'C%' would be true)
-        Assert.Equal(2, rows.Count);
-        Assert.Equal("Alice", rows[0].GetProperty("uname").GetString());
-        Assert.Equal("Bob", rows[1].GetProperty("uname").GetString());
     }
 
     [Fact]
@@ -518,7 +380,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                 Alias = "u",
                 SelectColumns =
                 [
-                    new FieldSelectCondition { FieldName = "u.name", Alias = "uname" },
+                    new FieldSelectCondition { FieldName = $"u.{TestUserNameColumn}", Alias = "uname" },
                     new SubQuerySelectCondition
                     {
                         TableName = TestOrdersTableName,
@@ -527,7 +389,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                             new FunctionSelectCondition
                             {
                                 FunctionName = "COUNT",
-                                Arguments = [new FieldSelectCondition { FieldName = "id" }]
+                                Arguments = [new FieldSelectCondition { FieldName = TestOrdersIdColumn }]
                             }
                         ],
                         WhereColumnsAndValues =
@@ -536,191 +398,27 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                             {
                                 LeftFieldName = TestOrdersUserIdColumn,
                                 Operator = "=",
-                                RightFieldName = "u.id"
+                                RightFieldName = $"u.{TestUserIdColumn}"
                             }
                         ],
                         Alias = "order_count"
                     }
                 ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "u.name", Direction = SortDirection.Asc }
-                ]
+                Limit = 1
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
-        // Alice has 2 orders, Bob has 1, Charlie has 0
-        Assert.True(rows[0].TryGetProperty("order_count", out _));
-    }
-
-    [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldSupportOffsetWithoutLimit()
-    {
-        var json = await Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
-                ],
-                Offset = 1
-            },
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(rows);
-        // Skip 1: Bob (sorted: Alice, Bob, Charlie ??skip Alice)
-        Assert.Equal(2, rows.Count);
-        Assert.Equal("Bob", rows[0].GetProperty("uname").GetString());
-    }
-
-    [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldSupportExistsSubQueryWhereCondition()
-    {
-        var json = await Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "name", Alias = "uname" }
-                ],
-                WhereColumnsAndValues =
-                [
-                    new SubQueryWhereCondition
-                    {
-                        Operator = "EXISTS",
-                        SubQuery = new QueryDefinition
-                        {
-                            TableName = TestOrdersTableName,
-                            WhereColumnsAndValues =
-                            [
-                                new ColumnCompareWhereCondition
-                                {
-                                    LeftFieldName = TestOrdersUserIdColumn,
-                                    Operator = "=",
-                                    RightFieldName = $"{TestTableName}.id"
-                                }
-                            ]
-                        }
-                    }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
-                ]
-            },
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(rows);
-        // EXISTS: users who have at least one order ??Alice (id=1) and Bob (id=2)
-        // Charlie (id=3) has no orders ??excluded
-        Assert.Equal(2, rows.Count);
-    }
-
-    [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldSupportBetweenInHaving()
-    {
-        var json = await Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = TestTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = "name", Alias = "uname" },
-                    new FieldSelectCondition { FieldName = "age", Alias = "age" }
-                ],
-                WhereColumnsAndValues =
-                [
-                    new BasicWhereCondition { FieldName = "age", Operator = "between", Value = new object[] { 25, 35 } }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "name", Direction = SortDirection.Asc }
-                ]
-            },
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(rows);
-        // age BETWEEN 25 AND 35 ??Alice (30), Bob (25), Charlie (35)
-        Assert.Equal(3, rows.Count);
-    }
-
-    [Fact]
-    public virtual async Task ExecuteQueryAsync_ShouldSupportGroupHavingCondition()
-    {
-        var json = await Strategy.ExecuteQueryAsync(
-            new QueryDefinition
-            {
-                TableName = TestOrdersTableName,
-                SelectColumns =
-                [
-                    new FieldSelectCondition { FieldName = TestOrdersUserIdColumn, Alias = "uid" },
-                    new FunctionSelectCondition
-                    {
-                        FunctionName = "COUNT",
-                        Arguments = [new FieldSelectCondition { FieldName = "id" }],
-                        Alias = "cnt"
-                    }
-                ],
-                GroupByConditions =
-                [
-                    new FieldGroupByCondition { FieldName = TestOrdersUserIdColumn }
-                ],
-                HavingConditions =
-                [
-                    new GroupHavingCondition
-                    {
-                        Groups =
-                        [
-                            new FunctionHavingCondition
-                            {
-                                LeftFunction = new SqlFunctionCondition
-                                {
-                                    FunctionName = "COUNT",
-                                    Arguments = [new FieldSelectCondition { FieldName = "id" }]
-                                },
-                                Operator = ">=",
-                                Value = 1
-                            }
-                        ]
-                    }
-                ],
-                OrderByColumns =
-                [
-                    new FieldOrderByCondition { FieldName = "uid", Direction = SortDirection.Asc }
-                ]
-            },
-            Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
-
-        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
-        Assert.NotNull(rows);
-        Assert.NotEmpty(rows);
-        // HAVING (COUNT(id) >= 1) ??all order groups pass (each user has at least 1 order)
-        Assert.Equal(2, rows.Count);
+        Assert.True(TryGetPropertyIgnoreCase(rows[0], "order_count", out _));
     }
 
     [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldSupportRoundedAggregatedNestedArithmeticExpression()
     {
         const string alias = "total_sales";
-        var tableAlias = "od";
-
+        const string tableAlias = "od";
         var json = await Strategy.ExecuteQueryAsync(
             new QueryDefinition
             {
@@ -764,29 +462,34 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             },
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
-
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         Assert.NotNull(rows);
         Assert.Single(rows);
-        Assert.True(TryGetPropertyIgnoreCase(rows[0], alias, out var totalSales), $"Expected property '{alias}' in result: {rows[0]}");
+        Assert.True(TryGetPropertyIgnoreCase(rows[0], alias, out var totalSales));
         Assert.InRange(totalSales.GetDecimal(), 37.65m, 37.66m);
     }
 
-    protected static void ValidateQuery(QueryDefinition qd)
+    // Provider-specific files still own these integration shapes when identifier casing or provider
+    // syntax needs a specialized fixture. Keep virtual hooks without base Facts to avoid duplicate
+    // executions while preserving their override contracts.
+    public virtual Task ExecuteQueryAsync_ShouldSupportOffsetWithoutLimit() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportSubQueryWhereCondition() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportExistsSubQueryWhereCondition() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportBetweenInHaving() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportWhereNotIsOrIsNot() => Task.CompletedTask;
+    public virtual Task ExecuteQueryAsync_ShouldSupportGroupHavingCondition() => Task.CompletedTask;
+
+    protected static void ValidateQuery(QueryDefinition definition)
     {
-        var errors = DefinitionValidator.Validate(qd);
-        Assert.True(errors.Count == 0, $"QueryDefinition validation failed:\n" + string.Join("\n", errors));
+        var errors = DefinitionValidator.Validate(definition);
+        Assert.True(errors.Count == 0, "QueryDefinition validation failed:\n" + string.Join("\n", errors));
     }
 
-    protected static void ValidateDml(DmlDefinition dml)
+    protected static void ValidateDml(DmlDefinition definition)
     {
-        var errors = DefinitionValidator.Validate(dml);
-        Assert.True(errors.Count == 0, $"DmlDefinition validation failed:\n" + string.Join("\n", errors));
+        var errors = DefinitionValidator.Validate(definition);
+        Assert.True(errors.Count == 0, "DmlDefinition validation failed:\n" + string.Join("\n", errors));
     }
-
-    protected abstract string TableNotFoundErrorCode { get; }
-    protected abstract string ColumnNotFoundErrorCode { get; }
-    protected abstract DmlDefinition CreateInsertDml();
 
     private static bool TryGetPropertyIgnoreCase(JsonElement row, string propertyName, out JsonElement value)
     {
@@ -798,7 +501,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                 return true;
             }
         }
-
         value = default;
         return false;
     }

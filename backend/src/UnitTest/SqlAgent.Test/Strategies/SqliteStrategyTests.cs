@@ -1,12 +1,8 @@
 using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Configuration;
-using Moq;
 using SqlAgent.Service.Enums;
-using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Services;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using Xunit;
@@ -55,8 +51,8 @@ public class SqliteFixture : IDbFixture
 
 public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<SqliteStrategy, SqliteFixture>(fixture)
 {
-    protected override SqliteStrategy CreateStrategy(IQueryValueParserService parser, IConfiguration configuration)
-        => new(parser, configuration);
+    protected override bool SupportsFormattedDateParsing => false;
+    protected override SqliteStrategy CreateStrategy() => new();
 
     protected override string TestTableName => "Users";
     protected override string TestOrdersTableName => "Orders";
@@ -66,6 +62,9 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     protected override string TestOrderDetailsDiscountColumn => "Discount";
     protected override string TestSchemaName => "";
     protected override string TestOrdersUserIdColumn => "UserId";
+    protected override string TestOrdersIdColumn => "Id";
+    protected override string TestOrderDateColumn => "OrderDate";
+    protected override int TestFirstOrderId => 101;
 
     protected override string TableNotFoundErrorCode => "SQLITE_1";
     protected override string ColumnNotFoundErrorCode => "SQLITE_1";
@@ -132,129 +131,6 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     }
 
     [Fact]
-    public async Task ExecuteDmlAsync_ShouldRejectDeleteWithoutWhere_WhenPolicyRequiresWhere()
-    {
-        var result = await Strategy.ExecuteDmlAsync(
-            Fixture.ConnectionString,
-            new DmlDefinition
-            {
-                Operation = DmlOperation.Delete,
-                TableName = TestTableName
-            },
-            new SqlExecutionPolicy
-            {
-                RequireWhereForDelete = true,
-                AllowFullTableDelete = false,
-                DmlMaxAffectedRows = 100
-            },
-            TestContext.Current.CancellationToken);
-
-        Assert.Contains("Security policy denied", result);
-
-        await using var connection = new SqliteConnection(Fixture.ConnectionString);
-        Assert.Equal(3, await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users"));
-    }
-
-    [Fact]
-    public async Task ExecuteDmlAsync_ShouldRollback_WhenAffectedRowsExceedPolicy()
-    {
-        var result = await Strategy.ExecuteDmlAsync(
-            Fixture.ConnectionString,
-            new DmlDefinition
-            {
-                Operation = DmlOperation.Update,
-                TableName = TestTableName,
-                Values = [new NameValuePair { FieldName = "Active", Value = false }]
-            },
-            new SqlExecutionPolicy
-            {
-                RequireWhereForUpdate = false,
-                AllowFullTableUpdate = true,
-                DmlMaxAffectedRows = 1
-            },
-            TestContext.Current.CancellationToken);
-
-        Assert.Contains("affectedRows=3 exceeds", result);
-
-        await using var connection = new SqliteConnection(Fixture.ConnectionString);
-        Assert.Equal(2, await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE Active = 1"));
-    }
-
-    [Fact]
-    public async Task ParsedDml_WithKeywordInsideString_ShouldCompileAndDryRunWithoutChangingData()
-    {
-        var definition = SqlDefinitionParser.ParseDml(
-            "UPDATE Users SET Name = 'where, set' WHERE Id = 1",
-            SqlAgentToolType.Sqlite);
-
-        var result = await Strategy.ExecuteDmlAsync(
-            Fixture.ConnectionString,
-            definition,
-            new SqlExecutionPolicy
-            {
-                RequireWhereForUpdate = true,
-                AllowFullTableUpdate = false,
-                DmlMaxAffectedRows = 10
-            },
-            TestContext.Current.CancellationToken);
-
-        Assert.Contains("Dry Run Result | affectedRows=1", result);
-        Assert.Contains("Preview=### UPDATE preview", result);
-        Assert.Contains("```diff", result);
-        Assert.Contains("Table: Users", result);
-        Assert.Contains("@@ Id = 1 @@", result);
-        Assert.Contains("-Name: Alice", result);
-        Assert.Contains("+Name: where, set", result);
-        Assert.Contains("read-only preview did not execute", result);
-        await using var connection = new SqliteConnection(Fixture.ConnectionString);
-        Assert.Equal("Alice", await connection.ExecuteScalarAsync<string>("SELECT Name FROM Users WHERE Id = 1"));
-    }
-
-    [Fact]
-    public async Task ExecuteDmlAsync_Preview_ShouldNotFireUpdateTriggers()
-    {
-        await using var connection = new SqliteConnection(Fixture.ConnectionString);
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await connection.ExecuteAsync("""
-            CREATE TRIGGER RejectPreviewWrites
-            BEFORE UPDATE ON Users
-            BEGIN
-                SELECT RAISE(ABORT, 'an UPDATE trigger was executed');
-            END;
-            """);
-
-        try
-        {
-            var result = await Strategy.ExecuteDmlAsync(
-                Fixture.ConnectionString,
-                new DmlDefinition
-                {
-                    Operation = DmlOperation.Update,
-                    TableName = TestTableName,
-                    Values = [new NameValuePair { FieldName = "Active", Value = false }],
-                    WhereConditions =
-                    [
-                        new BasicWhereCondition { FieldName = "Id", Operator = "=", Value = 1 }
-                    ]
-                },
-                new SqlExecutionPolicy
-                {
-                    RequireWhereForUpdate = true,
-                    AllowFullTableUpdate = false,
-                    DmlMaxAffectedRows = 10
-                },
-                TestContext.Current.CancellationToken);
-
-            Assert.Contains("Dry Run Result | affectedRows=1", result);
-            Assert.Contains("read-only preview did not execute", result);
-        }
-        finally
-        {
-            await connection.ExecuteAsync("DROP TRIGGER RejectPreviewWrites");
-        }
-    }
-
-    [Fact]
     public override async Task GetSchemasAsync_ShouldReturnAvailableSchemas()
     {
         var schemas = await Strategy.GetSchemasAsync(Fixture.ConnectionString, TestContext.Current.CancellationToken);
@@ -270,7 +146,6 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
         Assert.Equal("INTEGER", columns.First(c => c.Column == "Id").Type, ignoreCase: true);
         Assert.Equal("TEXT", columns.First(c => c.Column == "Name").Type, ignoreCase: true);
     }
-
 
     protected override DmlDefinition CreateInsertDml() => new()
     {
@@ -497,8 +372,6 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
                     new FieldOrderByCondition { FieldName = "UserId", Direction = SortDirection.Asc }
                 ]
             },
-
-
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -665,7 +538,6 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
 
         Assert.NotNull(rows);
         Assert.Single(rows);
-        // All orders: 150.0 + 200.0 + 50.0 = 400.0. 400.0 * 1.05 = 420.0
         Assert.Equal(420m, rows[0].GetProperty("TotalWithTax").GetDecimal());
     }
 }

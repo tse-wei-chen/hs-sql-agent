@@ -1,25 +1,25 @@
-using System.Text;
-using System.Text.Json;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using HsSqlAgent.Server.Authorization;
-using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Models;
-using HsSqlAgent.Server.Tools;
+using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Strategies;
-using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Controllers;
 
@@ -101,11 +101,16 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
     public async Task<IActionResult> Publish(
         int id,
         [FromServices] ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+        [FromServices] IDbManagementService dbManagementService,
         CancellationToken cancellationToken)
     {
         var tool = await toolService.GetToolByIdAsync(id);
         if (tool == null) return NotFound();
-        var validationError = ValidateDefinition(tool, securityPolicyRuntimeState.GetCurrent());
+        var validationError = await ValidateDefinitionAsync(
+            tool,
+            securityPolicyRuntimeState.GetCurrent(),
+            dbManagementService,
+            cancellationToken);
         if (validationError != null) return BadRequest(validationError);
 
         try
@@ -141,20 +146,24 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         int id,
         int revisionId,
         [FromServices] ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+        [FromServices] IDbManagementService dbManagementService,
         CancellationToken cancellationToken)
     {
         try
         {
+            var current = await toolService.GetToolByIdAsync(id);
+            if (current == null) return NotFound();
             var target = (await toolService.GetRevisionsAsync(id, cancellationToken))
                 .FirstOrDefault(x => x.Id == revisionId);
             if (target == null) return NotFound(new { error = "The requested revision does not belong to this tool." });
-            var validationError = ValidateDefinition(new CustomSqlTool
+            var validationError = await ValidateDefinitionAsync(new CustomSqlTool
             {
                 Name = target.Name,
                 SqlTemplate = target.SqlTemplate,
                 Type = target.Type,
-                ParametersJson = target.ParametersJson
-            }, securityPolicyRuntimeState.GetCurrent());
+                ParametersJson = target.ParametersJson,
+                DbManagementId = current.DbManagementId
+            }, securityPolicyRuntimeState.GetCurrent(), dbManagementService, cancellationToken);
             if (validationError != null) return BadRequest(validationError);
 
             var rolledBack = await toolService.RollbackAsync(id, revisionId, CurrentActor(), cancellationToken);
@@ -177,22 +186,52 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         }
     }
 
-    private static object? ValidateDefinition(CustomSqlTool tool, SecurityPolicyModel? policy = null)
+    private static async Task<object?> ValidateDefinitionAsync(
+        CustomSqlTool tool,
+        SecurityPolicyModel? policy,
+        IDbManagementService dbManagementService,
+        CancellationToken cancellationToken)
     {
         var draftError = ValidateDraft(tool);
         if (draftError != null) return draftError;
+        if (tool.DbManagementId is null)
+            return new { error = "A target database is required for SQL validation." };
+
+        var db = await dbManagementService.GetDbByIdAsync(tool.DbManagementId.Value, false, cancellationToken);
+        if (db == null)
+            return new { error = $"Database with ID {tool.DbManagementId} not found." };
+        if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType))
+            return new { error = $"Invalid SQL provider '{db.SqlProvider}'." };
+
         try
         {
             var sql = CustomToolSqlTemplate.RenderForValidation(tool.SqlTemplate, tool.ParametersJson);
-            var errors = IsDml(tool)
-                ? ValidateDmlDefinition(SqlDefinitionParser.ParseDml(sql), policy)
-                : DefinitionValidator.Validate(SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql)));
+            if (IsDml(tool))
+            {
+                var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
+                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
-            return errors.Count == 0
-                ? null
-                : new { error = "Validation failed.", errors };
+                _ = CoreDmlCompiler.CreateDefault().Compile(
+                    parsedDml,
+                    dbType,
+                    new SqlPlanValidationContext("custom-tool-definition-validation"),
+                    new DmlCompilationPolicy(
+                        policy?.RequireWhereForUpdate ?? true,
+                        policy?.RequireWhereForDelete ?? true,
+                        policy?.AllowFullTableUpdate ?? false,
+                        policy?.AllowFullTableDelete ?? false));
+                return null;
+            }
+
+            var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
+            _ = CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                dbType,
+                new SqlPlanValidationContext("custom-tool-definition-validation"),
+                new SqlExecutionPlanPolicy(policy?.QueryMaxRows ?? 0));
+            return null;
         }
-        catch (Exception ex) when (ex is SqlParseException or InvalidOperationException or JsonException)
+        catch (Exception ex) when (ex is SqlParseException or InvalidOperationException or JsonException or NotSupportedException)
         {
             return new { error = "SQL template validation failed.", detail = ex.Message };
         }
@@ -223,55 +262,46 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
     private static bool IsDml(CustomSqlTool tool)
         => string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
 
-    private static List<string> ValidateDmlDefinition(DmlDefinition? definition, SecurityPolicyModel? policy)
-    {
-        var errors = DefinitionValidator.Validate(definition);
-        if (definition == null || policy == null) return errors;
-        var hasWhere = definition.WhereConditions is { Count: > 0 };
-        if (definition.Operation == DmlOperation.Update && !hasWhere
-            && (policy.RequireWhereForUpdate || !policy.AllowFullTableUpdate))
-            errors.Add("Security policy denies UPDATE without WHERE.");
-        if (definition.Operation == DmlOperation.Delete && !hasWhere
-            && (policy.RequireWhereForDelete || !policy.AllowFullTableDelete))
-            errors.Add("Security policy denies DELETE without WHERE.");
-        return errors;
-    }
-
     [HttpPost("test-execute")]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> TestExecute(
         [FromBody] CustomToolTestExecuteRequest request,
-        [FromServices] ISqlStrategyFactory sqlStrategyFactory,
+        [FromServices] ISqlProviderFactory providerFactory,
+        [FromServices] ISqlConnectionStringFactory connectionStringFactory,
         [FromServices] IDbManagementService dbManagementService,
         [FromServices] ICryptoService cryptoService,
         [FromServices] IOptions<McpKeySettings> mcpKeySettings,
         [FromServices] ISecurityPolicyRuntimeState securityPolicyRuntimeState,
         [FromServices] ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
+        [FromServices] ITypedQueryRuntime typedQueryRuntime,
         CancellationToken cancellationToken)
     {
         var tool = await toolService.GetToolByIdAsync(request.ToolId);
         if (tool == null) return NotFound(new { error = $"Custom tool {request.ToolId} was not found." });
         if (tool.DbManagementId is null) return BadRequest(new { error = "The custom tool is not bound to a database." });
-        var definitionError = ValidateDefinition(tool, securityPolicyRuntimeState.GetCurrent());
-        if (definitionError != null) return BadRequest(definitionError);
 
         var isQuery = string.Equals(tool.Type, "Query", StringComparison.OrdinalIgnoreCase);
         var isDml = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
-
         if (!isQuery && !isDml)
             return BadRequest(new { error = "Type must be 'Query' or 'DML'." });
 
         var db = await dbManagementService.GetDbByIdAsync(tool.DbManagementId.Value, true, cancellationToken);
         if (db is not DbManagementPwdVM dbPwd)
             return NotFound(new { error = $"Database with ID {tool.DbManagementId} not found." });
-
         if (!Enum.TryParse<SqlAgentToolType>(dbPwd.SqlProvider, true, out var dbType))
             return BadRequest(new { error = $"Invalid SQL provider '{dbPwd.SqlProvider}'." });
 
+        var definitionError = await ValidateDefinitionAsync(
+            tool,
+            securityPolicyRuntimeState.GetCurrent(),
+            dbManagementService,
+            cancellationToken);
+        if (definitionError != null) return BadRequest(definitionError);
+
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
         var password = cryptoService.DecryptText(dbPwd.PasswordHash, hmacSecret);
-        var strategy = sqlStrategyFactory.GetStrategy(dbType);
-        var connectionString = strategy.BuildConnectionString(new BuildDbConnectionModelBase
+        var provider = providerFactory.GetProvider(dbType);
+        var connectionString = connectionStringFactory.BuildConnectionString(dbType, new BuildDbConnectionModelBase
         {
             Host = dbPwd.Host,
             Port = dbPwd.Port,
@@ -280,18 +310,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             Database = dbPwd.Database,
             ExtraSettings = dbPwd.ExtraSettings
         });
-
         var runtimePolicy = securityPolicyRuntimeState.GetCurrent();
-        var executionPolicy = new SqlExecutionPolicy
-        {
-            QueryMaxRows = runtimePolicy.QueryMaxRows,
-            QueryTimeoutSeconds = runtimePolicy.QueryTimeoutSeconds,
-            RequireWhereForUpdate = runtimePolicy.RequireWhereForUpdate,
-            RequireWhereForDelete = runtimePolicy.RequireWhereForDelete,
-            AllowFullTableUpdate = runtimePolicy.AllowFullTableUpdate,
-            AllowFullTableDelete = runtimePolicy.AllowFullTableDelete,
-            DmlMaxAffectedRows = runtimePolicy.DmlMaxAffectedRows
-        };
 
         try
         {
@@ -301,56 +320,54 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 request.Parameters ?? new Dictionary<string, object?>());
             await using var lease = await sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken);
             if (lease is null)
+            {
                 return StatusCode(
                     StatusCodes.Status429TooManyRequests,
                     new { success = false, error = "Maximum concurrent SQL operations reached." });
+            }
 
             string result;
             if (isQuery)
             {
-                var queryDef = SqlDefinitionParser.ParseQuery(SqlAgentTool.NormalizeSql(sql), dbType);
-                var errors = DefinitionValidator.Validate(queryDef);
-                if (errors.Count > 0)
-                    return BadRequest(new { error = "Validation failed.", errors });
-
-                result = await strategy.ExecuteQueryAsync(
-                    queryDef,
+                var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
+                var execution = await typedQueryRuntime.ExecuteAsync(
+                    provider,
                     connectionString,
-                    executionPolicy,
+                    parsed,
+                    runtimePolicy,
+                    allowedTables: null,
                     cancellationToken);
+                result = JsonSerializer.Serialize(execution.Rows);
             }
             else
             {
-                var dmlDef = SqlDefinitionParser.ParseDml(sql, dbType);
-                var errors = DefinitionValidator.Validate(dmlDef);
-                if (errors.Count > 0)
-                    return BadRequest(new { error = "Validation failed.", errors });
+                var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
+                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
-                // Test execution is always a rollback-only dry run. A token supplied in
-                // JSON or through a placeholder must never turn this endpoint into commit.
-                dmlDef.ConfirmToken = null;
-                result = await strategy.ExecuteDmlAsync(
+                var session = await new TypedDmlRuntime().PreviewAsync(
+                    provider,
                     connectionString,
-                    dmlDef,
-                    executionPolicy,
+                    parsedDml,
+                    runtimePolicy,
+                    allowedTables: null,
                     cancellationToken);
-                result = System.Text.RegularExpressions.Regex.Replace(
-                    result,
-                    @"TokenRequired=\S+",
-                    "TokenRequired=[redacted]",
-                    System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                result = JsonSerializer.Serialize(new
+                {
+                    operation = session.Plan.Operation.ToString(),
+                    table = session.Plan.TableName,
+                    affectedRows = session.Preview.AffectedRows,
+                    preview = session.Preview.Rows,
+                    committed = false
+                });
             }
 
-            var succeeded = isQuery || result.StartsWith("Dry Run Result", StringComparison.Ordinal);
             await auditService.WriteLogAsync(
                 "tool.custom.test-executed",
                 tool.Id.ToString(),
-                succeeded ? "success" : "failed",
+                "success",
                 $"Type: {tool.Type}; DB: {tool.DbManagementId}; Commit: never",
                 cancellationToken);
-            return succeeded
-                ? Ok(new { success = true, data = result })
-                : Ok(new { success = false, error = result });
+            return Ok(new { success = true, data = result });
         }
         catch (Exception ex)
         {
@@ -368,5 +385,4 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         => User.FindFirstValue(JwtRegisteredClaimNames.Sub)
            ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
            ?? User.Identity?.Name;
-
 }
