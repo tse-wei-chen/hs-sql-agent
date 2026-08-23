@@ -30,12 +30,22 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
                 $"Unsupported INSERT source during validation: {insert.Source.GetType().Name}")
         };
 
-        _common.Validate(
+        var validatedCarrier = _common.Validate(
             statement with { Statement = validationCarrier },
             context);
 
+        // The common validator may canonicalize query-only structures such as CTE column aliases.
+        // Preserve that validated query in INSERT ... SELECT rather than returning the stale source
+        // shape and re-introducing an unsupported lowerer form after validation.
+        var validatedInsert = insert.Source is InsertQuerySource querySource
+            ? insert with
+            {
+                Source = querySource with { Query = validatedCarrier.Statement }
+            }
+            : insert;
+
         return new ValidatedSqlPlan(
-            insert,
+            validatedInsert,
             statement.Facts,
             statement.SourceDialect,
             statement.TargetProvider,

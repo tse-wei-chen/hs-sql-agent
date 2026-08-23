@@ -64,9 +64,15 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         ArgumentNullException.ThrowIfNull(statement);
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(context.PolicyVersion);
+
+        // CTE output aliases are represented explicitly in the parser/Core AST, while SqlKata does
+        // not model the list syntax. Canonicalize them to equivalent projection aliases before the
+        // capability walk so every downstream stage sees one fully lowerable shape.
+        var canonicalStatement = CoreCteColumnAliasRewriter.Rewrite(statement.Statement);
+
         ValidateTableAccess(statement.Facts, context.AllowedTables);
-        ValidateCapabilities(statement.Statement, statement.TargetProvider);
-        return new ValidatedSqlPlan(statement.Statement, statement.Facts, statement.SourceDialect, statement.TargetProvider, context.PolicyVersion);
+        ValidateCapabilities(canonicalStatement, statement.TargetProvider);
+        return new ValidatedSqlPlan(canonicalStatement, statement.Facts, statement.SourceDialect, statement.TargetProvider, context.PolicyVersion);
     }
 
     private static void ValidateTableAccess(QueryFacts facts, IReadOnlySet<string>? allowedTables)
@@ -110,11 +116,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
     private static void ValidateSelect(SelectStatement select, SqlAgentToolType provider)
     {
         foreach (var cte in select.Ctes)
-        {
-            if (!cte.ColumnAliases.IsDefaultOrEmpty)
-                throw CapabilityError(provider, "query.cte_column_aliases");
             ValidateCapabilities(cte.Query, provider);
-        }
         if (select.From is not null) ValidateSource(select.From, provider);
         foreach (var join in select.Joins)
         {
@@ -261,8 +263,6 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         }
         else if (function.IsDistinct)
         {
-            // Registry-backed ordinary functions have a validated source/target name and arity, but
-            // the registry does not model DISTINCT semantics. Never guess that modifier support.
             throw new SqlCompilationException(
                 $"Function '{name}' has no Core DISTINCT capability declaration.");
         }
