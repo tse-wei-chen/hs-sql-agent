@@ -714,7 +714,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
                 orderParts.Add(sql);
                 bindings.AddRange(rendered.Bindings);
             }
-            parts.Add("ORDER BY " + string.Join(" ", orderParts));
+            parts.Add("ORDER BY " + string.Join(", ", orderParts));
         }
 
         if (windowed.Window.Frame is not null)
