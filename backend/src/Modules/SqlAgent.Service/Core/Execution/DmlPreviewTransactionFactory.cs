@@ -38,9 +38,12 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
                 connection,
                 isolationLevel,
                 cancellationToken),
-            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle => await BeginThenMarkReadOnlyAsync(
+            SqlAgentToolType.Postgres => await BeginThenMarkReadOnlyAsync(
                 connection,
                 isolationLevel,
+                cancellationToken),
+            SqlAgentToolType.Oracle => await BeginOracleReadOnlyAsync(
+                connection,
                 cancellationToken),
             SqlAgentToolType.Firebird => await BeginFirebirdAsync(
                 connection,
@@ -105,6 +108,21 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
         return await connection.BeginTransactionAsync(isolationLevel, cancellationToken);
     }
 
+    private static async Task<DbTransaction> BeginOracleReadOnlyAsync(
+        DbConnection connection,
+        CancellationToken cancellationToken)
+    {
+        // Oracle READ ONLY is itself a transaction mode with a transaction-start consistent
+        // snapshot. Do not combine it with BeginTransaction(Serializable): that would establish a
+        // conflicting transaction mode before SET TRANSACTION READ ONLY. Begin a normal local
+        // transaction only to obtain the DbTransaction handle; the first SQL statement establishes
+        // the read-only snapshot mode.
+        return await BeginThenMarkReadOnlyAsync(
+            connection,
+            IsolationLevel.ReadCommitted,
+            cancellationToken);
+    }
+
     private static async Task<DbTransaction> BeginThenMarkReadOnlyAsync(
         DbConnection connection,
         IsolationLevel isolationLevel,
@@ -113,8 +131,7 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
         var transaction = await connection.BeginTransactionAsync(isolationLevel, cancellationToken);
         try
         {
-            // PostgreSQL and Oracle both require SET TRANSACTION to run before application work in
-            // the transaction. No preview SQL is executed before this point.
+            // No application SQL is executed before this transaction characteristic is applied.
             await ExecuteSetupSqlAsync(
                 connection,
                 transaction,
