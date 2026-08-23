@@ -3,17 +3,15 @@ using System.Text;
 using Admin.Service.Models;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
-using SqlAgent.Service.Strategies.Adapters;
 
 namespace HsSqlAgent.Server.Services;
 
 /// <summary>
-/// Server-side strangler boundary for the typed DML pipeline. The MCP layer supplies the parsed
-/// definition, current security policy and table authorization; this service owns provider
-/// adaptation, immutable plan construction, preview and commit revalidation.
+/// Server-side typed DML boundary. The MCP layer supplies the parsed definition, current security
+/// policy and table authorization; this service owns immutable plan construction, preview and commit
+/// revalidation against an explicit provider and never depends on legacy strategies.
 /// </summary>
 public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
@@ -24,14 +22,14 @@ public sealed class TypedDmlRuntime(
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
 
     public async Task<TypedDmlApprovalSession> PreviewAsync(
-        ISqlStrategy strategy,
+        ISqlProvider provider,
         string connectionString,
         DmlDefinition definition,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(strategy);
+        ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -42,7 +40,6 @@ public sealed class TypedDmlRuntime(
                 "The typed DML runtime currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
         }
 
-        var provider = LegacySqlProviderAdapter.Adapt(strategy);
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
@@ -76,14 +73,18 @@ public sealed class TypedDmlRuntime(
     }
 
     public async Task<DmlCommitResult> CommitAsync(
-        ISqlStrategy strategy,
+        ISqlProvider provider,
         string connectionString,
         TypedDmlApprovalSession session,
         SecurityPolicyModel currentPolicy,
         IReadOnlySet<string>? currentAllowedTables,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(currentPolicy);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
         var currentPolicyVersion = ComputePolicyVersion(currentPolicy, currentAllowedTables);
         if (!string.Equals(
                 currentPolicyVersion,
@@ -94,24 +95,6 @@ public sealed class TypedDmlRuntime(
                 "DML security policy or table authorization changed after preview; request a new preview before committing.");
         }
 
-        return await CommitCoreAsync(
-            strategy,
-            connectionString,
-            session,
-            cancellationToken);
-    }
-
-    private async Task<DmlCommitResult> CommitCoreAsync(
-        ISqlStrategy strategy,
-        string connectionString,
-        TypedDmlApprovalSession session,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(strategy);
-        ArgumentNullException.ThrowIfNull(session);
-        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-
-        var provider = LegacySqlProviderAdapter.Adapt(strategy);
         if (provider.Type != session.Plan.MutationCommand.TargetProvider)
         {
             throw new InvalidOperationException(
