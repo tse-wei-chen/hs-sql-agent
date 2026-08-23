@@ -1,4 +1,7 @@
 using SqlAgent.Service.Core.Binding;
+using SqlAgent.Service.Core.Mapping;
+using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 using Xunit;
 
@@ -27,7 +30,7 @@ public class QueryFactsCteVisibilityTests
             ]
         };
 
-        var facts = QueryFactsBinder.Bind(definition);
+        var facts = BindFacts(definition);
 
         Assert.Contains("later_cte", facts.ReferencedTables);
         Assert.Contains("physical.source", facts.ReferencedTables);
@@ -57,10 +60,18 @@ public class QueryFactsCteVisibilityTests
             ]
         };
 
-        var facts = QueryFactsBinder.Bind(definition);
+        var facts = BindFacts(definition);
 
         Assert.Single(facts.ReferencedTables);
         Assert.Contains("sales.orders", facts.ReferencedTables);
         Assert.DoesNotContain("recent", facts.ReferencedTables);
+    }
+
+    private static QueryFacts BindFacts(QueryDefinition definition)
+    {
+        var parsed = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            SqlAgentToolType.Postgres);
+        return new SqlAstBinder().Bind(parsed).Facts;
     }
 }
