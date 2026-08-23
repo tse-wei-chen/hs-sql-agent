@@ -79,16 +79,18 @@ public class LegacyStrategyRetirementTests
     }
 
     [Fact]
-    public void ProviderErrorMapper_ReturnsTypedProviderExecutionException()
+    public void ProviderErrorMapping_IsExposedOnlyThroughProviderContract()
     {
-        var mapped = new ProviderExecutionErrorMapper(SqlAgentToolType.Postgres)
-            .Map(new InvalidOperationException("boom"), "query");
+        ISqlProvider provider = new PostgresStrategy();
+        var source = new InvalidOperationException("boom");
 
-        var error = Assert.IsType<ProviderExecutionException>(mapped);
-        Assert.Equal(SqlAgentToolType.Postgres, error.ProviderType);
-        Assert.Equal("query", error.Operation);
-        Assert.Equal("unknown", error.Code);
-        Assert.Equal("boom", error.ProviderMessage);
+        var mapped = provider.Errors.Map(source, "query");
+
+        Assert.NotSame(source, mapped);
+        Assert.Same(source, mapped.InnerException);
+        Assert.Contains("query", mapped.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("code=unknown", mapped.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("boom", mapped.Message, StringComparison.Ordinal);
     }
 
     private static bool IsAsyncLocal(Type type) =>
