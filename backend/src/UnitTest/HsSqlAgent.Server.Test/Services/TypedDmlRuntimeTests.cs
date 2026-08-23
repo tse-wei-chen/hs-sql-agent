@@ -7,6 +7,7 @@ using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;
@@ -18,18 +19,15 @@ public class TypedDmlRuntimeTests
     {
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
         var runtime = new TypedDmlRuntime();
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Insert,
-            TableName = "public.users",
-            Values = [new NameValuePair { FieldName = "name", Value = "Alice" }]
-        };
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (name) VALUES ('Alice')",
+            SqlAgentToolType.Postgres);
 
         var error = await Assert.ThrowsAsync<NotSupportedException>(() =>
             runtime.PreviewAsync(
                 provider.Object,
                 "connection",
-                definition,
+                parsed,
                 new SecurityPolicyModel(),
                 null,
                 TestContext.Current.CancellationToken));

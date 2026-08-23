@@ -3,8 +3,8 @@ using System.Text.Json;
 using Admin.Service.Interfaces;
 using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Protocol;
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Models;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
 namespace HsSqlAgent.Server.Tools;
@@ -12,7 +12,8 @@ namespace HsSqlAgent.Server.Tools;
 /// <summary>
 /// Shared interactive approval orchestration for server DML entry points. The flow never accepts
 /// or produces a legacy confirmation token; the only commit credential is the typed one-time
-/// challenge embedded in the preview session. Provider identity is explicit and strategy-free.
+/// challenge embedded in the preview session. Provider identity and the parser-native mutation are
+/// explicit and strategy-free.
 /// </summary>
 internal sealed class TypedDmlApprovalFlow(
     TypedDmlRuntime runtime,
@@ -23,12 +24,13 @@ internal sealed class TypedDmlApprovalFlow(
     public async Task<TypedDmlExecutionTiming> ExecuteAsync(
         ISqlProvider provider,
         string connectionString,
-        DmlDefinition definition,
+        ParsedStatement parsedMutation,
         IDmlApprovalClient? approvalClient,
         string approvalTitle,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(parsedMutation);
 
         if (approvalClient?.SupportsElicitation != true)
         {
@@ -56,7 +58,7 @@ internal sealed class TypedDmlApprovalFlow(
             session = await runtime.PreviewAsync(
                 provider,
                 connectionString,
-                definition,
+                parsedMutation,
                 previewPolicy,
                 previewAllowedTables,
                 cancellationToken);
@@ -64,6 +66,7 @@ internal sealed class TypedDmlApprovalFlow(
 
         var affectedRows = session.Preview.AffectedRows;
         var previewJson = JsonSerializer.Serialize(session.Preview.Rows);
+        var operation = session.Plan.Operation.ToString().ToUpperInvariant();
         var approvalStopwatch = Stopwatch.StartNew();
         ElicitResult elicitResult;
         try
@@ -72,7 +75,7 @@ internal sealed class TypedDmlApprovalFlow(
             {
                 Message =
                     $"## {approvalTitle}\n\n" +
-                    $"**{definition.Operation} on `{session.Plan.TableName}` — {affectedRows} row(s) affected**\n\n" +
+                    $"**{operation} on `{session.Plan.TableName}` — {affectedRows} row(s) affected**\n\n" +
                     $"### Impact preview\n\n{previewJson}",
                 RequestedSchema = new RequestSchema
                 {
@@ -82,8 +85,7 @@ internal sealed class TypedDmlApprovalFlow(
                         {
                             Title = "Approve execution",
                             Description =
-                                $"This will **{definition.Operation.ToString().ToUpperInvariant()} " +
-                                $"{affectedRows} row(s)** in `{session.Plan.TableName}`."
+                                $"This will **{operation} {affectedRows} row(s)** in `{session.Plan.TableName}`."
                         }
                     }
                 }

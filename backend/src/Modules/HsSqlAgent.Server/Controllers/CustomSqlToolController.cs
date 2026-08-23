@@ -13,13 +13,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Models;
 using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Validation;
 
 namespace HsSqlAgent.Server.Controllers;
 
@@ -208,8 +208,23 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             var sql = CustomToolSqlTemplate.RenderForValidation(tool.SqlTemplate, tool.ParametersJson);
             if (IsDml(tool))
             {
-                var errors = ValidateDmlDefinition(SqlDefinitionParser.ParseDml(sql, dbType), policy);
-                return errors.Count == 0 ? null : new { error = "Validation failed.", errors };
+                var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
+                if (parsedDml.Statement is not (UpdateStatement or DeleteStatement))
+                {
+                    throw new NotSupportedException(
+                        "Published Custom Tool DML currently supports UPDATE and DELETE only. INSERT remains fail-closed until its production approval semantics are defined.");
+                }
+
+                _ = CoreDmlCompiler.CreateDefault().Compile(
+                    parsedDml,
+                    dbType,
+                    new SqlPlanValidationContext("custom-tool-definition-validation"),
+                    new DmlCompilationPolicy(
+                        policy?.RequireWhereForUpdate ?? true,
+                        policy?.RequireWhereForDelete ?? true,
+                        policy?.AllowFullTableUpdate ?? false,
+                        policy?.AllowFullTableDelete ?? false));
+                return null;
             }
 
             var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
@@ -220,7 +235,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 new SqlExecutionPlanPolicy(policy?.QueryMaxRows ?? 0));
             return null;
         }
-        catch (Exception ex) when (ex is SqlParseException or InvalidOperationException or JsonException)
+        catch (Exception ex) when (ex is SqlParseException or InvalidOperationException or JsonException or NotSupportedException)
         {
             return new { error = "SQL template validation failed.", detail = ex.Message };
         }
@@ -250,20 +265,6 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
 
     private static bool IsDml(CustomSqlTool tool)
         => string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase);
-
-    private static List<string> ValidateDmlDefinition(DmlDefinition? definition, SecurityPolicyModel? policy)
-    {
-        var errors = DefinitionValidator.Validate(definition);
-        if (definition == null || policy == null) return errors;
-        var hasWhere = definition.WhereConditions is { Count: > 0 };
-        if (definition.Operation == DmlOperation.Update && !hasWhere
-            && (policy.RequireWhereForUpdate || !policy.AllowFullTableUpdate))
-            errors.Add("Security policy denies UPDATE without WHERE.");
-        if (definition.Operation == DmlOperation.Delete && !hasWhere
-            && (policy.RequireWhereForDelete || !policy.AllowFullTableDelete))
-            errors.Add("Security policy denies DELETE without WHERE.");
-        return errors;
-    }
 
     [HttpPost("test-execute")]
     [HasPermission("/runtime/custom-tools", "edit")]
@@ -344,11 +345,8 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             }
             else
             {
-                var dmlDef = SqlDefinitionParser.ParseDml(sql, dbType);
-                var errors = DefinitionValidator.Validate(dmlDef);
-                if (errors.Count > 0)
-                    return BadRequest(new { error = "Validation failed.", errors });
-                if (dmlDef.Operation is not (DmlOperation.Update or DmlOperation.Delete))
+                var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
+                if (parsedDml.Statement is not (UpdateStatement or DeleteStatement))
                 {
                     throw new NotSupportedException(
                         "Custom Tool test execution supports typed UPDATE/DELETE preview only. INSERT remains fail-closed until its production approval semantics are defined.");
@@ -357,13 +355,13 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 var session = await new TypedDmlRuntime().PreviewAsync(
                     provider,
                     connectionString,
-                    dmlDef,
+                    parsedDml,
                     runtimePolicy,
                     allowedTables: null,
                     cancellationToken);
                 result = JsonSerializer.Serialize(new
                 {
-                    operation = dmlDef.Operation.ToString(),
+                    operation = session.Plan.Operation.ToString(),
                     table = session.Plan.TableName,
                     affectedRows = session.Preview.AffectedRows,
                     preview = session.Preview.Rows,
