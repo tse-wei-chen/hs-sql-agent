@@ -18,11 +18,12 @@ public class DmlApprovalChallengeStoreTests
             now,
             now.AddMinutes(5),
             Guid.NewGuid().ToString("N"));
+        var cancellationToken = TestContext.Current.CancellationToken;
 
-        await store.RegisterAsync(challenge);
+        await store.RegisterAsync(challenge, cancellationToken);
 
-        Assert.True(await store.TryConsumeAsync(challenge));
-        Assert.False(await store.TryConsumeAsync(challenge));
+        Assert.True(await store.TryConsumeAsync(challenge, cancellationToken));
+        Assert.False(await store.TryConsumeAsync(challenge, cancellationToken));
     }
 
     [Fact]
@@ -38,9 +39,12 @@ public class DmlApprovalChallengeStoreTests
             now,
             now.AddMinutes(5),
             Guid.NewGuid().ToString("N"));
-        await store.RegisterAsync(challenge);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await store.RegisterAsync(challenge, cancellationToken);
 
-        Assert.False(await store.TryConsumeAsync(challenge with { AffectedRows = 3 }));
+        Assert.False(await store.TryConsumeAsync(
+            challenge with { AffectedRows = 3 },
+            cancellationToken));
     }
 
     [Fact]
@@ -62,7 +66,9 @@ public class DmlApprovalChallengeStoreTests
         await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await store.RegisterAsync(challenge, cancellation.Token));
 
-        Assert.False(await store.TryConsumeAsync(challenge));
+        Assert.False(await store.TryConsumeAsync(
+            challenge,
+            TestContext.Current.CancellationToken));
     }
 
     [Fact]
