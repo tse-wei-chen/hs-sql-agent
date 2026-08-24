@@ -52,6 +52,21 @@ public class CoreCapabilityMatrixContractTests
     }
 
     [Fact]
+    public void Matrix_DocumentsDefinitionLocalSetTailAndScalarTailBoundary()
+    {
+        var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Postgres);
+        var definitionLocal = Assert.Single(
+            matrix.Capabilities,
+            item => item.Id == "select.cte_definition_local");
+        var remainingScopeGap = Assert.Single(
+            matrix.Capabilities,
+            item => item.Id == "select.cte_scope");
+
+        Assert.Contains("ORDER BY/LIMIT/OFFSET", definitionLocal.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Scalar/EXISTS", remainingScopeGap.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_DocumentsVersionDependentSqlServerRegexBoundary()
     {
         var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer);

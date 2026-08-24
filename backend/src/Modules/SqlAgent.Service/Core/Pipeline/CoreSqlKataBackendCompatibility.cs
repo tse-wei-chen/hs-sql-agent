@@ -198,8 +198,10 @@ internal static class CoreSqlKataBackendCompatibility
         SqlAgentToolType provider,
         bool allowNestedCteFragments) =>
         position is QueryPosition.Root or QueryPosition.InsertSelectSource
-        || position is QueryPosition.DerivedTable or QueryPosition.SetBranch
-            && CanLowerNestedCteFragment(provider, allowNestedCteFragments);
+        || (CanLowerNestedCteFragment(provider, allowNestedCteFragments)
+            && position is QueryPosition.DerivedTable
+                or QueryPosition.SetBranch
+                or QueryPosition.CteDefinition);
 
     private static bool CanLowerNestedCteFragment(
         SqlAgentToolType provider,

@@ -256,18 +256,26 @@ public class CoreCteBackendCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    public void Compile_CteDefinitionLocalSetTail_RemainsFailClosed(
+    public void Compile_CteDefinitionLocalSetTail_PreservesScopeTailAndBindings(
         SqlAgentToolType targetProvider)
     {
-        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+        var command = Compile(
             "WITH outer_rows AS (" +
-            "WITH inner_rows AS (SELECT id FROM users) " +
-            "SELECT id FROM inner_rows UNION SELECT id FROM archived ORDER BY id LIMIT 1" +
-            ") SELECT id FROM outer_rows",
-            targetProvider));
+            "WITH inner_rows AS (SELECT id FROM users WHERE tenant_id = 7) " +
+            "SELECT id FROM inner_rows UNION " +
+            "SELECT id FROM archived WHERE tenant_id = 9 ORDER BY id LIMIT 1" +
+            ") SELECT id FROM outer_rows WHERE id < 11",
+            targetProvider);
 
-        Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("outer ORDER BY/LIMIT/OFFSET", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS (WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(4, command.Parameters.Length);
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[1].Value));
+        Assert.Equal(1, Convert.ToInt32(command.Parameters[2].Value));
+        Assert.Equal(11, Convert.ToInt32(command.Parameters[3].Value));
     }
 
     [Theory]
