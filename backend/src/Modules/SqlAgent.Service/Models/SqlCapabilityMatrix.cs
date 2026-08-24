@@ -70,6 +70,8 @@ public static class SqlCapabilityMatrix
                     : "INTERVAL is rejected until an equivalent provider translation contract is implemented."),
             new("aggregate.string", "aggregate", SqlCapabilityStatus.Translated,
                 "Portable string aggregation canonicalizes STRING_AGG/GROUP_CONCAT/LISTAGG/LIST to one value expression plus a literal separator and lowers to provider-native syntax. MySQL targets use GROUP_CONCAT(value SEPARATOR separator); raw MySQL comma-separated GROUP_CONCAT arguments remain multiple value expressions and are never reinterpreted as a separator."),
+            new("aggregate.string.dynamic_separator", "aggregate", SqlCapabilityStatus.Rejected,
+                "Dynamic or per-row string-aggregate separators are rejected at the Core capability boundary; the portable aggregate currently requires a literal separator so provider delimiter evaluation rules cannot drift during lowering."),
             new("temporal.typed_literals", "temporal", SqlCapabilityStatus.Translated,
                 "DATE, TIME, and TIMESTAMP literals are parsed into typed values and bound as provider parameters."),
             new("temporal.standalone_time", "temporal",
