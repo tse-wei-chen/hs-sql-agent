@@ -5,6 +5,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
+using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.Strategies;
 using Testcontainers.MySql;
 using Xunit;
@@ -160,5 +161,29 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
 
         Assert.Contains("PostgreSQL-specific", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PostgresStringAggCustomSeparator_ExecutesOnMySql()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT STRING_AGG(name, '|') AS names FROM users");
+        definition.SourceDialect = SqlAgentToolType.Postgres;
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var names = document.RootElement[0]
+            .EnumerateObject()
+            .Single()
+            .Value
+            .GetString();
+        Assert.NotNull(names);
+        Assert.Equal(
+            new[] { "Alice", "Bob", "Charlie" },
+            names.Split('|').OrderBy(value => value, StringComparer.Ordinal).ToArray());
     }
 }
