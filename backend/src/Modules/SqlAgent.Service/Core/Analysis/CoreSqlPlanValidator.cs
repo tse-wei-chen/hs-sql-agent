@@ -305,6 +305,12 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
 
             if (name == "COUNT" && function.IsDistinct && IsWildcard(function.Arguments[0]))
                 throw new SqlCompilationException("COUNT(DISTINCT *) is not a valid Core aggregate shape.");
+
+            if (name == "CORE_STRING_AGG"
+                && function.Arguments[1] is not LiteralExpr { Value: string })
+            {
+                throw CapabilityError(provider, "aggregate.string.dynamic_separator");
+            }
         }
         else if (function.IsDistinct)
         {
