@@ -96,14 +96,106 @@ public class CoreDmlAssignmentExpressionTests
     }
 
     [Fact]
-    public void ParseUpdate_ArbitraryAssignmentExpression_RemainsFailClosed()
+    public void ParseUpdate_ArithmeticAssignment_IsStructuredExpression()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseDml(
-                "UPDATE orders SET required_date = required_date + 1 WHERE order_id = 11077",
-                SqlAgentToolType.Postgres));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE orders SET quantity = quantity + 1 WHERE order_id = 11077",
+            SqlAgentToolType.Postgres);
+        var update = Assert.IsType<UpdateStatement>(parsed.Statement);
+        var assignment = Assert.Single(update.Assignments);
+        var binary = Assert.IsType<BinaryExpr>(assignment.Value);
 
-        Assert.Contains("UPDATE assignment values support", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("+", binary.Operator);
+        Assert.IsType<ColumnExpr>(binary.Left);
+        Assert.Equal(1, Assert.IsType<LiteralExpr>(binary.Right).Value);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void CompileUpdate_ArithmeticAssignment_CompilesAcrossProviders(SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "UPDATE orders SET quantity = quantity + 1 WHERE order_id = 11077",
+            SqlAgentToolType.Postgres,
+            targetProvider);
+
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.Contains(" SET ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("+", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(
+            new object?[] { 1, 11077 },
+            command.Parameters.Select(parameter => parameter.Value).ToArray());
+    }
+
+    [Fact]
+    public void CompileUpdate_ScalarFunctionAssignment_UsesCanonicalExpressionLowering()
+    {
+        var command = Compile(
+            "UPDATE users SET name = LOWER(name) WHERE id = 7",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle);
+
+        Assert.Contains("LOWER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(7, Assert.Single(command.Parameters).Value);
+    }
+
+    [Fact]
+    public void CompileUpdate_CaseAssignment_KeepsBranchValuesParameterized()
+    {
+        var command = Compile(
+            "UPDATE orders SET status = CASE WHEN amount > 100 THEN 'large' ELSE 'small' END WHERE order_id = 7",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("large", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("small", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(
+            new object?[] { 100, "large", "small", 7 },
+            command.Parameters.Select(parameter => parameter.Value).ToArray());
+    }
+
+    [Fact]
+    public void CompileUpdate_NonDateCastAssignment_RemainsStructured()
+    {
+        var command = Compile(
+            "UPDATE users SET score = CAST(score AS DECIMAL(12,2)) WHERE id = 7",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("CAST", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DECIMAL(12,2)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(7, Assert.Single(command.Parameters).Value);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void CompileUpdate_DefiniteBooleanAssignment_FailsAtCapabilityBoundary(SqlAgentToolType targetProvider)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "UPDATE orders SET flagged = amount > 100 WHERE order_id = 7",
+            SqlAgentToolType.Postgres,
+            targetProvider));
+
+        Assert.Contains("dml.update.boolean_assignment", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CompileUpdate_AggregateAssignment_FailsBeforeLowering()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "UPDATE orders SET amount = SUM(amount) WHERE order_id = 7",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("Aggregate function", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UPDATE SET", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

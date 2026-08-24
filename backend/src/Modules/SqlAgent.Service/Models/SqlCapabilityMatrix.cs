@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.4";
+    public const string Version = "2026-08-24.5";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -138,6 +138,15 @@ public static class SqlCapabilityMatrix
                 "Unbound ?, :name, @name, $1, and {{name}} parameters are rejected; Custom Tool parameters are rendered first."),
             new("dml.basic", "dml", SqlCapabilityStatus.Translated,
                 "INSERT VALUES, UPDATE, and DELETE use the structured DML path."),
+            new("dml.update_expression", "dml", SqlCapabilityStatus.Translated,
+                "UPDATE SET accepts structured scalar Core expressions including column arithmetic, scalar functions, CASE, CAST, and scalar subqueries. Aggregate/window placement and provider-specific expression capabilities are validated before lowering; runtime values remain parameters."),
+            new("dml.update.boolean_assignment", "dml",
+                provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
+                    ? SqlCapabilityStatus.Rejected
+                    : SqlCapabilityStatus.Translated,
+                provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
+                    ? "Definitely boolean UPDATE assignment expressions are rejected because the current Core target profile does not model a portable scalar SQL boolean for this provider."
+                    : "Definitely boolean UPDATE assignment expressions use the provider's scalar boolean/value semantics."),
             new("dml.insert_select", "dml", SqlCapabilityStatus.Translated,
                 "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count; CTE-free source queries are lowered through SqlKata's structured insert-query path."),
             new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Rejected,

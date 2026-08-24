@@ -135,37 +135,17 @@ internal sealed class CoreDmlTextParser
     {
         var token = _reader.Peek();
         var expression = _expressions.ParseExpression();
-        return expression switch
-        {
-            LiteralExpr => expression,
-            FunctionCallExpr function when IsCurrentTemporalFunction(function) => function,
-            CastExpr cast => NormalizeDateCast(cast, token),
-            _ => throw CoreTokenReader.Error(
-                "UPDATE assignment values support scalar literals, DATE casts of string literals, " +
-                "and CURRENT_DATE/CURRENT_TIME/CURRENT_TIMESTAMP only.",
-                token)
-        };
+        return expression is CastExpr cast
+            ? NormalizeUpdateCast(cast, token)
+            : expression;
     }
 
-    private static bool IsCurrentTemporalFunction(FunctionCallExpr function)
-    {
-        if (function.IsDistinct || !function.Arguments.IsDefaultOrEmpty || function.Name.Parts.Length != 1)
-            return false;
-        if (function.Name.Parts[0].WasQuoted)
-            return false;
-
-        return function.Name.Parts[0].Value.ToUpperInvariant() is
-            "CURRENT_DATE" or "CURRENT_TIME" or "CURRENT_TIMESTAMP";
-    }
-
-    private static SqlExpr NormalizeDateCast(CastExpr cast, Token token)
+    private static SqlExpr NormalizeUpdateCast(CastExpr cast, Token token)
     {
         if (!cast.TypeName.Trim().Equals("DATE", StringComparison.OrdinalIgnoreCase)
             || cast.Expression is not LiteralExpr { Value: string literal })
         {
-            throw CoreTokenReader.Error(
-                "UPDATE assignment casts are restricted to string literals cast explicitly to DATE.",
-                token);
+            return cast;
         }
 
         if (!SqlTemporalLiteralParser.TryParseDate(literal, out var date))

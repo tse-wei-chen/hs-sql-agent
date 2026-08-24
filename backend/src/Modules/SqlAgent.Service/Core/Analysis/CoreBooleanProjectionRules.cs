@@ -9,7 +9,7 @@ namespace SqlAgent.Service.Core.Analysis;
 /// type inference. This is intentionally conservative: only shapes whose result type is explicit
 /// in the Core AST are classified, so scalar numeric/string CASE expressions are not rejected.
 /// Provider-unsupported functions are deliberately left to the function capability validator so
-/// the more specific unsupported-function diagnostic wins over the projection diagnostic.
+/// the more specific unsupported-function diagnostic wins over the projection/assignment diagnostic.
 /// </summary>
 internal static class CoreBooleanProjectionRules
 {
@@ -28,6 +28,18 @@ internal static class CoreBooleanProjectionRules
 
         throw new SqlCompilationException(
             $"SQL capability 'expression.boolean_select' is not supported by provider {provider} for this Core plan.");
+    }
+
+    public static void ValidateAssignment(SqlExpr expression, SqlAgentToolType provider)
+    {
+        if (provider is not (SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer)
+            || !IsDefinitelyBoolean(expression, provider))
+        {
+            return;
+        }
+
+        throw new SqlCompilationException(
+            $"SQL capability 'dml.update.boolean_assignment' is not supported by provider {provider} for this Core plan.");
     }
 
     private static bool IsDefinitelyBoolean(SqlExpr expression, SqlAgentToolType provider) => expression switch

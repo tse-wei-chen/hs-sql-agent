@@ -26,6 +26,10 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
             switch (validated.Statement)
             {
                 case UpdateStatement update:
+                    foreach (var assignment in update.Assignments)
+                        CoreBooleanProjectionRules.ValidateAssignment(
+                            assignment.Value,
+                            statement.TargetProvider);
                     CoreDmlVolatilePredicateValidator.Validate(update.Predicate);
                     break;
                 case DeleteStatement delete:
