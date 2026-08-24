@@ -345,27 +345,41 @@ internal sealed class CoreQueryTextParser
     {
         int? limit = null;
         int? offset = null;
+        var usedLimitClause = false;
         var usedCommaLimit = false;
         if (_reader.MatchWord("LIMIT"))
         {
-            var first = ParseNonNegativeInt("LIMIT");
-            if (_reader.Peek().Type == TokenType.Comma)
+            usedLimitClause = true;
+            if (_reader.MatchWord("ALL"))
             {
-                var comma = _reader.Advance();
-                if (_sourceDialect is not (SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                if (_sourceDialect != SqlAgentToolType.Postgres)
                 {
                     throw CoreTokenReader.Error(
-                        $"LIMIT offset,row_count raw source syntax is valid only for MySQL and SQLite, not {_sourceDialect}.",
-                        comma);
+                        $"LIMIT ALL raw source syntax is valid only for PostgreSQL, not {_sourceDialect}.",
+                        _reader.Peek(-1));
                 }
-
-                usedCommaLimit = true;
-                offset = first;
-                limit = ParseNonNegativeInt("LIMIT comma row count");
             }
             else
             {
-                limit = first;
+                var first = ParseNonNegativeInt("LIMIT");
+                if (_reader.Peek().Type == TokenType.Comma)
+                {
+                    var comma = _reader.Advance();
+                    if (_sourceDialect is not (SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                    {
+                        throw CoreTokenReader.Error(
+                            $"LIMIT offset,row_count raw source syntax is valid only for MySQL and SQLite, not {_sourceDialect}.",
+                            comma);
+                    }
+
+                    usedCommaLimit = true;
+                    offset = first;
+                    limit = ParseNonNegativeInt("LIMIT comma row count");
+                }
+                else
+                {
+                    limit = first;
+                }
             }
         }
 
@@ -380,7 +394,7 @@ internal sealed class CoreQueryTextParser
             }
 
             var offsetRequiresLimit = _sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite;
-            if (offsetRequiresLimit && limit is null)
+            if (offsetRequiresLimit && !usedLimitClause)
             {
                 throw CoreTokenReader.Error(
                     $"OFFSET without a preceding LIMIT is not valid raw source syntax for {_sourceDialect}.",
@@ -400,7 +414,7 @@ internal sealed class CoreQueryTextParser
 
             if (_reader.PeekWord("FETCH"))
             {
-                if (limit is not null)
+                if (usedLimitClause)
                 {
                     throw CoreTokenReader.Error(
                         "LIMIT and FETCH cannot be combined in the same raw query tail.",
@@ -411,7 +425,7 @@ internal sealed class CoreQueryTextParser
         }
         else if (_reader.PeekWord("FETCH"))
         {
-            if (limit is not null)
+            if (usedLimitClause)
             {
                 throw CoreTokenReader.Error(
                     "LIMIT and FETCH cannot be combined in the same raw query tail.",
