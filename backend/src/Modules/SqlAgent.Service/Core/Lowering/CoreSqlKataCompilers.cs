@@ -118,6 +118,125 @@ internal static class CoreSqlKataOrderByOrdinal
     }
 }
 
+/// <summary>
+/// SqlKata models GROUP_CONCAT as an ordinary function call, while MySQL's explicit delimiter is
+/// clause syntax: GROUP_CONCAT(expr SEPARATOR '...'). Core's canonical string aggregate always has
+/// exactly one value expression and one validated literal delimiter, so this adapter rewrites only
+/// that closed generated shape after SqlKata has compiled the column. Native multi-expression
+/// GROUP_CONCAT input is rejected by source normalization and is never reinterpreted as a delimiter.
+/// </summary>
+internal static class CoreMySqlStringAggregateSyntax
+{
+    private const string Prefix = "GROUP_CONCAT(";
+
+    public static string Rewrite(string sql)
+    {
+        var searchFrom = 0;
+        while (searchFrom < sql.Length)
+        {
+            var start = sql.IndexOf(Prefix, searchFrom, StringComparison.OrdinalIgnoreCase);
+            if (start < 0) break;
+
+            var openParen = start + Prefix.Length - 1;
+            if (!TryFindArguments(sql, openParen, out var separatorComma, out var closeParen))
+            {
+                searchFrom = openParen + 1;
+                continue;
+            }
+
+            var separator = sql[(separatorComma + 1)..closeParen].Trim();
+            if (!IsSqlStringLiteral(separator))
+            {
+                searchFrom = closeParen + 1;
+                continue;
+            }
+
+            var value = sql[(openParen + 1)..separatorComma].TrimEnd();
+            sql = sql[..(openParen + 1)]
+                + value
+                + " SEPARATOR "
+                + separator
+                + sql[closeParen..];
+            searchFrom = openParen + 1 + value.Length + " SEPARATOR ".Length + separator.Length + 1;
+        }
+
+        return sql;
+    }
+
+    private static bool TryFindArguments(
+        string sql,
+        int openParen,
+        out int separatorComma,
+        out int closeParen)
+    {
+        separatorComma = -1;
+        closeParen = -1;
+        var depth = 1;
+        char quote = '\0';
+
+        for (var i = openParen + 1; i < sql.Length; i++)
+        {
+            var current = sql[i];
+            if (quote != '\0')
+            {
+                if (current != quote) continue;
+                if (i + 1 < sql.Length && sql[i + 1] == quote)
+                {
+                    i++;
+                    continue;
+                }
+                quote = '\0';
+                continue;
+            }
+
+            if (current is '\'' or '`' or '"')
+            {
+                quote = current;
+                continue;
+            }
+
+            if (current == '(')
+            {
+                depth++;
+                continue;
+            }
+            if (current == ')')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    closeParen = i;
+                    return separatorComma >= 0;
+                }
+                continue;
+            }
+            if (current == ',' && depth == 1)
+            {
+                if (separatorComma >= 0)
+                    return false;
+                separatorComma = i;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSqlStringLiteral(string value)
+    {
+        if (value.Length < 2 || value[0] != '\'' || value[^1] != '\'')
+            return false;
+
+        for (var i = 1; i < value.Length - 1; i++)
+        {
+            if (value[i] != '\'') continue;
+            if (i + 1 >= value.Length - 1 || value[i + 1] != '\'')
+                return false;
+            i++;
+        }
+        return true;
+    }
+}
+
 internal sealed class CorePostgresCompiler : PostgresCompiler, ICoreSqlKataRawCompiler
 {
     public SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings) =>
@@ -145,10 +264,12 @@ internal sealed class CoreMySqlCompiler : MySqlCompiler, ICoreSqlKataRawCompiler
             rawSql,
             bindings));
 
-    public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
-        CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
-            ? ordinal
-            : base.CompileColumn(ctx, column);
+    public override string CompileColumn(SqlResult ctx, AbstractColumn column)
+    {
+        if (CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal))
+            return ordinal;
+        return CoreMySqlStringAggregateSyntax.Rewrite(base.CompileColumn(ctx, column));
+    }
 
     public override string CompileLimit(SqlResult ctx)
     {
