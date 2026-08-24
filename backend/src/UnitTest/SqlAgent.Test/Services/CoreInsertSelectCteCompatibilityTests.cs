@@ -68,7 +68,6 @@ public class CoreInsertSelectCteCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_InsertSelectWithDerivedLocalCte_UsesNestedCompilerAdapter(
         SqlAgentToolType targetProvider)
     {
@@ -86,6 +85,7 @@ public class CoreInsertSelectCteCompatibilityTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void Compile_InsertSelectWithDerivedLocalCte_FailsClosedWithoutDeclaredTargetGrammar(
@@ -103,7 +103,6 @@ public class CoreInsertSelectCteCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_InsertSelectWithSetBranchLocalCte_UsesNestedCompilerAdapter(
         SqlAgentToolType targetProvider)
     {
@@ -124,6 +123,7 @@ public class CoreInsertSelectCteCompatibilityTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void Compile_InsertSelectWithSetBranchLocalCte_FailsClosedWithoutDeclaredTargetGrammar(

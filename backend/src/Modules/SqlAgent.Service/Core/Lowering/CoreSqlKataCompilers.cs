@@ -368,9 +368,6 @@ internal sealed class CoreOracleCompiler : OracleCompiler, ICoreSqlKataRawCompil
             rawSql,
             bindings));
 
-    protected override SqlResult CompileSelectQuery(Query query) =>
-        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
-
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal

@@ -12,7 +12,6 @@ public class CoreCteBackendCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_CteInsideDerivedTable_UsesFullNestedCompilation(
         SqlAgentToolType targetProvider)
     {
@@ -32,6 +31,7 @@ public class CoreCteBackendCompatibilityTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void Compile_CteInsideDerivedTable_FailsClosedWithoutDeclaredTargetGrammar(
         SqlAgentToolType targetProvider)
@@ -48,7 +48,6 @@ public class CoreCteBackendCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_CteInsideJoinedDerivedTable_PreservesNestedThenOuterBindings(
         SqlAgentToolType targetProvider)
     {
@@ -70,7 +69,6 @@ public class CoreCteBackendCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_DerivedRootCteSetTail_PreservesNestedScopeAndTail(
         SqlAgentToolType targetProvider)
     {
@@ -91,7 +89,6 @@ public class CoreCteBackendCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_CteInsideSetBranch_UsesWrappedBranchAndOrderedBindings(
         SqlAgentToolType targetProvider)
     {
@@ -112,6 +109,7 @@ public class CoreCteBackendCompatibilityTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void Compile_CteInsideSetBranch_FailsClosedWithoutDeclaredTargetGrammar(
         SqlAgentToolType targetProvider)
@@ -128,7 +126,6 @@ public class CoreCteBackendCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_DerivedCteInsideScalarSubquery_UsesNestedCompilerAdapter(
         SqlAgentToolType targetProvider)
     {
@@ -147,6 +144,7 @@ public class CoreCteBackendCompatibilityTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void Compile_DerivedCteInsideScalarSubquery_FailsClosedWithoutDeclaredTargetGrammar(
         SqlAgentToolType targetProvider)
@@ -164,7 +162,6 @@ public class CoreCteBackendCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void Compile_SetBranchCteInsideScalarSubquery_UsesNestedCompilerAdapter(
         SqlAgentToolType targetProvider)
     {
@@ -184,6 +181,7 @@ public class CoreCteBackendCompatibilityTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void Compile_SetBranchCteInsideScalarSubquery_FailsClosedWithoutDeclaredTargetGrammar(
         SqlAgentToolType targetProvider)
@@ -212,6 +210,26 @@ public class CoreCteBackendCompatibilityTests
         Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 1);
         Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 7);
         Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 9);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_CteDefinitionLocalCte_FailsBeforeSqlKataCanHoistScope(
+        SqlAgentToolType targetProvider)
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+            "WITH outer_rows AS (" +
+            "WITH inner_rows AS (SELECT id FROM users) SELECT id FROM inner_rows" +
+            ") SELECT id FROM outer_rows",
+            targetProvider));
+
+        Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CTE-definition-local", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

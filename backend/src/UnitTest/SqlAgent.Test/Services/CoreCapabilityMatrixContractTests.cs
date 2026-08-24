@@ -30,7 +30,7 @@ public class CoreCapabilityMatrixContractTests
     [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Translated)]
     [InlineData(SqlAgentToolType.MySQL, SqlCapabilityStatus.Translated)]
     [InlineData(SqlAgentToolType.Sqlite, SqlCapabilityStatus.Translated)]
-    [InlineData(SqlAgentToolType.Oracle, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.Oracle, SqlCapabilityStatus.Rejected)]
     [InlineData(SqlAgentToolType.MsSqlServer, SqlCapabilityStatus.Rejected)]
     [InlineData(SqlAgentToolType.Firebird, SqlCapabilityStatus.Rejected)]
     public void Matrix_TracksNestedCteProviderBoundary(

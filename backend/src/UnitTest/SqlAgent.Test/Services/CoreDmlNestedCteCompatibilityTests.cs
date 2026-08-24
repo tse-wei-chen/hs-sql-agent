@@ -12,7 +12,6 @@ public class CoreDmlNestedCteCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void CompileUpdate_ScalarSubqueryWithDerivedCte_UsesNestedCompilerAdapter(
         SqlAgentToolType targetProvider)
     {
@@ -32,6 +31,7 @@ public class CoreDmlNestedCteCompatibilityTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void CompileUpdate_ScalarSubqueryWithDerivedCte_FailsClosedWithoutDeclaredTargetGrammar(
@@ -51,7 +51,6 @@ public class CoreDmlNestedCteCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     public void CompileDelete_ExistsWithDerivedCte_UsesNestedCompilerAdapter(
         SqlAgentToolType targetProvider)
     {
@@ -72,6 +71,7 @@ public class CoreDmlNestedCteCompatibilityTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void CompileDelete_ExistsWithDerivedCte_FailsClosedWithoutDeclaredTargetGrammar(

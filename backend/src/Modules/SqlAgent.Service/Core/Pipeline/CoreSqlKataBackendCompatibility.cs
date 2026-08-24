@@ -8,10 +8,10 @@ namespace SqlAgent.Service.Core.Pipeline;
 /// <summary>
 /// Guards query shapes whose CTE scope cannot be preserved by the available lowering path.
 /// Statement-root INSERT..SELECT CTEs have a dedicated provider-aware lowerer. Query-graph derived
-/// tables and set-operation branches can use fully compiled fragments on providers that accept WITH
-/// at the beginning of a general subquery. Core provider compilers apply the same query-graph
-/// rewrite to nested SELECT compilation, so scalar/EXISTS and DML subqueries share the same scope
-/// contract instead of bypassing it.
+/// tables and set-operation branches can use fully compiled fragments only on providers that accept
+/// WITH at the beginning of a parenthesized subquery. Core provider compilers apply the same
+/// query-graph rewrite to nested SELECT compilation, so scalar/EXISTS and DML subqueries share the
+/// same scope contract instead of bypassing it.
 /// </summary>
 internal static class CoreSqlKataBackendCompatibility
 {
@@ -165,22 +165,29 @@ internal static class CoreSqlKataBackendCompatibility
         if (ctes.IsDefaultOrEmpty)
             return;
 
-        switch (position)
+        if (position == QueryPosition.CteDefinition)
         {
-            case QueryPosition.DerivedTable
-                when !CanLowerNestedCteFragment(provider, allowNestedCteFragments):
-                throw CteScopeError(
-                    "select.cte_scope",
-                    allowNestedCteFragments
-                        ? $"provider {provider} has no declared portable WITH-in-derived-table lowering contract"
-                        : "a derived-table-local CTE is inside a nested compilation path where the Core CTE adapter cannot preserve it");
-            case QueryPosition.SetBranch
-                when !CanLowerNestedCteFragment(provider, allowNestedCteFragments):
-                throw CteScopeError(
-                    "select.cte_scope",
-                    allowNestedCteFragments
-                        ? $"provider {provider} has no declared portable wrapped set-branch CTE lowering contract"
-                        : "a set-operation-branch-local CTE is inside a nested compilation path where the Core CTE adapter cannot preserve it");
+            throw CteScopeError(
+                "select.cte_scope",
+                "a CTE-definition-local WITH clause would be recursively discovered and hoisted by SqlKata CteFinder, changing lexical scope");
+        }
+
+        if (position == QueryPosition.ScalarSubquery)
+        {
+            throw CteScopeError(
+                "select.cte_scope",
+                "a scalar/EXISTS subquery owns a statement-root WITH clause, but SqlKata CompileSelectQuery omits that nested root CTE definition");
+        }
+
+        if (position is QueryPosition.DerivedTable or QueryPosition.SetBranch
+            && !CanLowerNestedCteFragment(provider, allowNestedCteFragments))
+        {
+            var location = position == QueryPosition.DerivedTable
+                ? "derived-table"
+                : "set-operation-branch";
+            throw CteScopeError(
+                "select.cte_scope",
+                $"provider {provider} has no declared portable WITH-in-{location} lowering contract");
         }
     }
 
@@ -198,8 +205,7 @@ internal static class CoreSqlKataBackendCompatibility
         allowNestedCteFragments
         && provider is SqlAgentToolType.Postgres
             or SqlAgentToolType.MySQL
-            or SqlAgentToolType.Sqlite
-            or SqlAgentToolType.Oracle;
+            or SqlAgentToolType.Sqlite;
 
     private static SqlCompilationException CteScopeError(string capability, string detail) =>
         new($"SQL capability '{capability}' is not supported by the current SqlKata backend: {detail}.");
