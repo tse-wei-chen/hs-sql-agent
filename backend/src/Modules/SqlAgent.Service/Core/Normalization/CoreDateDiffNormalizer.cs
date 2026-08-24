@@ -7,10 +7,11 @@ using SqlAgent.Service.Enums;
 namespace SqlAgent.Service.Core.Normalization;
 
 /// <summary>
-/// Preserves the source-dialect semantics of DATEDIFF before the provider lowerers see the common
-/// CORE_DATE_DIFF node. SQL Server and Firebird three-argument DATEDIFF count boundaries at the
-/// requested date part, while MySQL's two-argument DATEDIFF ignores the time portion and returns a
-/// day difference. Only DAY has a declared lossless cross-dialect intersection today.
+/// Preserves native source-dialect DATEDIFF semantics when the parsed shape is native, while also
+/// accepting the three-argument DATEDIFF(unit, start, end) shape as the Core portable contract used
+/// by structured queries. SQL Server and Firebird three-argument DATEDIFF count boundaries at the
+/// requested date part, while MySQL's native two-argument DATEDIFF ignores the time portion and
+/// returns a day difference. Only DAY has a declared lossless cross-dialect intersection today.
 /// </summary>
 internal static class CoreDateDiffNormalizer
 {
@@ -18,20 +19,62 @@ internal static class CoreDateDiffNormalizer
         FunctionCallExpr original,
         ImmutableArray<SqlExpr> arguments,
         SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider) => sourceDialect switch
+        SqlAgentToolType targetProvider)
     {
-        SqlAgentToolType.MySQL => NormalizeMySqlDateDiff(
+        if (arguments.Length == 3)
+        {
+            return NormalizeThreeArgumentDateDiff(
+                original,
+                arguments,
+                sourceDialect,
+                targetProvider);
+        }
+
+        if (sourceDialect == SqlAgentToolType.MySQL)
+        {
+            return NormalizeMySqlDateDiff(
+                original,
+                arguments,
+                targetProvider);
+        }
+
+        throw new SqlCompilationException(
+            $"DATEDIFF is not a modeled {arguments.Length}-argument source function for dialect {sourceDialect}. " +
+            "Use the Core portable DATEDIFF(unit, start, end) shape.");
+    }
+
+    private static SqlExpr NormalizeThreeArgumentDateDiff(
+        FunctionCallExpr original,
+        ImmutableArray<SqlExpr> arguments,
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider)
+    {
+        var unit = DatePartUnit(arguments[0]);
+
+        if (sourceDialect is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Firebird
+            && sourceDialect == targetProvider)
+        {
+            // Preserve native SQL Server/Firebird behavior exactly when the three-argument shape is
+            // executed by its native provider, including provider-specific non-DAY boundary rules.
+            return Canonical(
+                original,
+                [new LiteralExpr(unit, original.Span), arguments[1], arguments[2]]);
+        }
+
+        if (unit != "DAY")
+        {
+            var capability = $"core_date_diff.unit.{unit.ToLowerInvariant()}";
+            throw new SqlCompilationException(
+                $"SQL capability '{capability}' is not modeled losslessly for DATEDIFF from " +
+                $"{sourceDialect} to {targetProvider}. DAY is the currently modeled portable intersection.");
+        }
+
+        return PortableDayDifference(
             original,
-            arguments,
-            targetProvider),
-        SqlAgentToolType.MsSqlServer or SqlAgentToolType.Firebird => NormalizeBoundaryDateDiff(
-            original,
-            arguments,
-            sourceDialect,
-            targetProvider),
-        _ => throw new SqlCompilationException(
-            $"DATEDIFF is not a modeled source function for dialect {sourceDialect}.")
-    };
+            start: arguments[1],
+            end: arguments[2],
+            targetProvider);
+    }
 
     private static SqlExpr NormalizeMySqlDateDiff(
         FunctionCallExpr original,
@@ -41,7 +84,8 @@ internal static class CoreDateDiffNormalizer
         if (arguments.Length != 2)
         {
             throw new SqlCompilationException(
-                $"MySQL DATEDIFF requires exactly 2 arguments; received {arguments.Length}.");
+                $"MySQL native DATEDIFF requires exactly 2 arguments; received {arguments.Length}. " +
+                "Use DATEDIFF(unit, start, end) for the Core portable form.");
         }
 
         // MySQL syntax is DATEDIFF(end, start), and only the date portions participate.
@@ -49,43 +93,6 @@ internal static class CoreDateDiffNormalizer
             original,
             start: arguments[1],
             end: arguments[0],
-            targetProvider);
-    }
-
-    private static SqlExpr NormalizeBoundaryDateDiff(
-        FunctionCallExpr original,
-        ImmutableArray<SqlExpr> arguments,
-        SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider)
-    {
-        if (arguments.Length != 3)
-        {
-            throw new SqlCompilationException(
-                $"{sourceDialect} DATEDIFF requires exactly 3 arguments; received {arguments.Length}.");
-        }
-
-        var unit = DatePartUnit(arguments[0]);
-        if (sourceDialect == targetProvider)
-        {
-            // Preserve native SQL Server/Firebird behavior exactly, including their provider-specific
-            // treatment of non-DAY boundaries and temporal data types.
-            return Canonical(
-                original,
-                [new LiteralExpr(unit, original.Span), arguments[1], arguments[2]]);
-        }
-
-        if (unit != "DAY")
-        {
-            throw new SqlCompilationException(
-                $"Cross-dialect DATEDIFF unit '{unit}' from {sourceDialect} to {targetProvider} is not translated: " +
-                "date-part boundary rules are not declared equivalent for this provider pair. " +
-                "DAY is the currently modeled lossless cross-dialect intersection.");
-        }
-
-        return PortableDayDifference(
-            original,
-            start: arguments[1],
-            end: arguments[2],
             targetProvider);
     }
 
