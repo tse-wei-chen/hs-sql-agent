@@ -55,6 +55,44 @@ internal static class CoreSqlKataPagination
 }
 
 /// <summary>
+/// Gives Core-owned statement renderers access to SqlKata's protected PrepareResult parameter
+/// pipeline without exposing it outside the Core compiler adapters. Callers must provide SQL that
+/// was rendered from closed Core AST nodes plus the matching positional bindings.
+/// </summary>
+internal interface ICoreSqlKataRawCompiler
+{
+    SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings);
+}
+
+internal static class CoreSqlKataRawCompiler
+{
+    public static SqlResult Prepare(
+        Compiler compiler,
+        string rawSql,
+        IReadOnlyList<object?> bindings)
+    {
+        if (compiler is not ICoreSqlKataRawCompiler coreCompiler)
+        {
+            throw new InvalidOperationException(
+                $"Compiler '{compiler.GetType().Name}' does not expose the Core raw parameterization contract.");
+        }
+
+        return coreCompiler.PrepareCoreRaw(rawSql, bindings);
+    }
+
+    public static SqlResult CreateResult(
+        string placeholder,
+        string escapeCharacter,
+        string rawSql,
+        IReadOnlyList<object?> bindings) =>
+        new(placeholder, escapeCharacter)
+        {
+            RawSql = rawSql,
+            Bindings = bindings.Select(value => value!).ToList()
+        };
+}
+
+/// <summary>
 /// A statement-level ORDER BY integer is an output position, not a scalar value. Core represents
 /// that distinction with an internal marker while the SqlKata query graph still carries an
 /// AbstractColumn. Intercept only that marker and emit canonical decimal digits; every ordinary
@@ -80,8 +118,15 @@ internal static class CoreSqlKataOrderByOrdinal
     }
 }
 
-internal sealed class CorePostgresCompiler : PostgresCompiler
+internal sealed class CorePostgresCompiler : PostgresCompiler, ICoreSqlKataRawCompiler
 {
+    public SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings) =>
+        PrepareResult(CoreSqlKataRawCompiler.CreateResult(
+            parameterPlaceholder,
+            EscapeCharacter,
+            rawSql,
+            bindings));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
@@ -91,8 +136,15 @@ internal sealed class CorePostgresCompiler : PostgresCompiler
         CoreSqlKataPagination.CompileAnsiLimitOffset(ctx, EngineCode, parameterPlaceholder);
 }
 
-internal sealed class CoreMySqlCompiler : MySqlCompiler
+internal sealed class CoreMySqlCompiler : MySqlCompiler, ICoreSqlKataRawCompiler
 {
+    public SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings) =>
+        PrepareResult(CoreSqlKataRawCompiler.CreateResult(
+            parameterPlaceholder,
+            EscapeCharacter,
+            rawSql,
+            bindings));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
@@ -123,8 +175,15 @@ internal sealed class CoreMySqlCompiler : MySqlCompiler
     }
 }
 
-internal sealed class CoreSqliteCompiler : SqliteCompiler
+internal sealed class CoreSqliteCompiler : SqliteCompiler, ICoreSqlKataRawCompiler
 {
+    public SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings) =>
+        PrepareResult(CoreSqlKataRawCompiler.CreateResult(
+            parameterPlaceholder,
+            EscapeCharacter,
+            rawSql,
+            bindings));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
@@ -155,8 +214,15 @@ internal sealed class CoreSqliteCompiler : SqliteCompiler
     }
 }
 
-internal sealed class CoreOracleCompiler : OracleCompiler
+internal sealed class CoreOracleCompiler : OracleCompiler, ICoreSqlKataRawCompiler
 {
+    public SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings) =>
+        PrepareResult(CoreSqlKataRawCompiler.CreateResult(
+            parameterPlaceholder,
+            EscapeCharacter,
+            rawSql,
+            bindings));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
@@ -190,8 +256,15 @@ internal sealed class CoreOracleCompiler : OracleCompiler
     }
 }
 
-internal sealed class CoreFirebirdCompiler : FirebirdCompiler
+internal sealed class CoreFirebirdCompiler : FirebirdCompiler, ICoreSqlKataRawCompiler
 {
+    public SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings) =>
+        PrepareResult(CoreSqlKataRawCompiler.CreateResult(
+            parameterPlaceholder,
+            EscapeCharacter,
+            rawSql,
+            bindings));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
@@ -222,8 +295,15 @@ internal sealed class CoreFirebirdCompiler : FirebirdCompiler
     }
 }
 
-internal sealed class CoreSqlServerCompiler : SqlServerCompiler
+internal sealed class CoreSqlServerCompiler : SqlServerCompiler, ICoreSqlKataRawCompiler
 {
+    public SqlResult PrepareCoreRaw(string rawSql, IReadOnlyList<object?> bindings) =>
+        PrepareResult(CoreSqlKataRawCompiler.CreateResult(
+            parameterPlaceholder,
+            EscapeCharacter,
+            rawSql,
+            bindings));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
