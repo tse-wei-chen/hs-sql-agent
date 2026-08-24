@@ -96,7 +96,8 @@ internal sealed class CoreTokenReader(Token[] tokens)
     }
 
     public static bool IsWord(Token token, string value) =>
-        (token.Type is TokenType.Keyword or TokenType.Identifier)
+        (token.Type == TokenType.Keyword
+            || (token.Type == TokenType.Identifier && !IsQuotedIdentifier(token)))
         && token.Value.Equals(value, StringComparison.OrdinalIgnoreCase);
 
     public static SourceSpan Span(Token token) => new(token.Pos, token.End);

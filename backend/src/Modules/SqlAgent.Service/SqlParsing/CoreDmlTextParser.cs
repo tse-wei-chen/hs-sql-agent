@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.SqlParsing;
@@ -7,11 +8,13 @@ namespace SqlAgent.Service.SqlParsing;
 internal sealed class CoreDmlTextParser
 {
     private readonly CoreTokenReader _reader;
+    private readonly SqlAgentToolType _sourceDialect;
     private readonly CoreExpressionTextParser _expressions;
 
-    public CoreDmlTextParser(CoreTokenReader reader)
+    public CoreDmlTextParser(CoreTokenReader reader, SqlAgentToolType sourceDialect)
     {
         _reader = reader;
+        _sourceDialect = sourceDialect;
         _expressions = new CoreExpressionTextParser(reader, ParseNestedQuery);
     }
 
@@ -64,7 +67,7 @@ internal sealed class CoreDmlTextParser
                 var values = ImmutableArray.CreateBuilder<SqlExpr>();
                 if (_reader.Peek().Type == TokenType.RParen)
                     throw CoreTokenReader.Error("INSERT VALUES row cannot be empty.", _reader.Peek());
-                do values.Add(ParseDmlLiteral());
+                do values.Add(_expressions.ParseExpression());
                 while (_reader.Match(TokenType.Comma));
                 _reader.Expect(TokenType.RParen, "')' after INSERT VALUES row");
                 if (values.Count != columns.Count)
@@ -135,37 +138,17 @@ internal sealed class CoreDmlTextParser
     {
         var token = _reader.Peek();
         var expression = _expressions.ParseExpression();
-        return expression switch
-        {
-            LiteralExpr => expression,
-            FunctionCallExpr function when IsCurrentTemporalFunction(function) => function,
-            CastExpr cast => NormalizeDateCast(cast, token),
-            _ => throw CoreTokenReader.Error(
-                "UPDATE assignment values support scalar literals, DATE casts of string literals, " +
-                "and CURRENT_DATE/CURRENT_TIME/CURRENT_TIMESTAMP only.",
-                token)
-        };
+        return expression is CastExpr cast
+            ? NormalizeUpdateCast(cast, token)
+            : expression;
     }
 
-    private static bool IsCurrentTemporalFunction(FunctionCallExpr function)
-    {
-        if (function.IsDistinct || !function.Arguments.IsDefaultOrEmpty || function.Name.Parts.Length != 1)
-            return false;
-        if (function.Name.Parts[0].WasQuoted)
-            return false;
-
-        return function.Name.Parts[0].Value.ToUpperInvariant() is
-            "CURRENT_DATE" or "CURRENT_TIME" or "CURRENT_TIMESTAMP";
-    }
-
-    private static SqlExpr NormalizeDateCast(CastExpr cast, Token token)
+    private static SqlExpr NormalizeUpdateCast(CastExpr cast, Token token)
     {
         if (!cast.TypeName.Trim().Equals("DATE", StringComparison.OrdinalIgnoreCase)
             || cast.Expression is not LiteralExpr { Value: string literal })
         {
-            throw CoreTokenReader.Error(
-                "UPDATE assignment casts are restricted to string literals cast explicitly to DATE.",
-                token);
+            return cast;
         }
 
         if (!SqlTemporalLiteralParser.TryParseDate(literal, out var date))
@@ -265,5 +248,5 @@ internal sealed class CoreDmlTextParser
     }
 
     private SqlStatement ParseNestedQuery() =>
-        new CoreQueryTextParser(_reader).ParseQueryExpression();
+        new CoreQueryTextParser(_reader, _sourceDialect).ParseQueryExpression();
 }

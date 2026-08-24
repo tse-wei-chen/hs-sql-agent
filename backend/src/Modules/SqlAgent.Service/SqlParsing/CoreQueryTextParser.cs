@@ -1,17 +1,20 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.SqlParsing;
 
 internal sealed class CoreQueryTextParser
 {
     private readonly CoreTokenReader _reader;
+    private readonly SqlAgentToolType _sourceDialect;
     private readonly CoreExpressionTextParser _expressions;
 
-    public CoreQueryTextParser(CoreTokenReader reader)
+    public CoreQueryTextParser(CoreTokenReader reader, SqlAgentToolType sourceDialect)
     {
         _reader = reader;
+        _sourceDialect = sourceDialect;
         _expressions = new CoreExpressionTextParser(reader, ParseQueryExpression);
     }
 
@@ -57,13 +60,13 @@ internal sealed class CoreQueryTextParser
         }
 
         var orderBy = ParseOrderByIfPresent();
-        var (limit, offset) = ParseLimitOffsetIfPresent();
+        var (limit, offset) = ParseLimitOffsetIfPresent(orderBy.Length > 0);
         if (topLimit is not null)
         {
             if (operations.Count > 0)
                 throw new SqlParseException("SQL Server TOP with set operations is not represented losslessly by the Core AST.");
-            if (limit is not null)
-                throw new SqlParseException("SQL Server TOP cannot be combined with LIMIT in the canonical query AST.");
+            if (limit is not null || offset is not null)
+                throw new SqlParseException("SQL Server TOP cannot be combined with OFFSET/FETCH in the same canonical query scope.");
             limit = topLimit;
         }
 
@@ -182,7 +185,7 @@ internal sealed class CoreQueryTextParser
             IdentifierPart? alias = null;
             if (_reader.MatchWord("AS"))
                 alias = CoreTokenReader.ToIdentifierPart(_reader.ExpectIdentifier("projection alias"));
-            else if (_reader.Peek().Type == TokenType.Identifier)
+            else if (CanConsumeImplicitAlias())
                 alias = CoreTokenReader.ToIdentifierPart(_reader.Advance());
             items.Add(new SelectItem(expression, alias, _reader.SpanFrom(start)));
         } while (_reader.Match(TokenType.Comma));
@@ -266,10 +269,17 @@ internal sealed class CoreQueryTextParser
     {
         if (_reader.MatchWord("AS"))
             return CoreTokenReader.ToIdentifierPart(_reader.ExpectIdentifier("table alias"));
-        if (_reader.Peek().Type == TokenType.Identifier)
+        if (CanConsumeImplicitAlias())
             return CoreTokenReader.ToIdentifierPart(_reader.Advance());
         return null;
     }
+
+    private bool CanConsumeImplicitAlias() =>
+        _reader.Peek().Type == TokenType.Identifier && !IsFetchClauseStart();
+
+    private bool IsFetchClauseStart() =>
+        _reader.PeekWord("FETCH")
+        && (_reader.PeekWord(1, "FIRST") || _reader.PeekWord(1, "NEXT"));
 
     private ImmutableArray<SqlExpr> ParseExpressionList()
     {
@@ -287,7 +297,35 @@ internal sealed class CoreQueryTextParser
         do
         {
             var start = _reader.Position;
+            var firstToken = _reader.Peek();
+            var expressionStart = _reader.Position;
             var expression = _expressions.ParseExpression();
+            var expressionEnd = _reader.Position;
+
+            // A bare unsigned integer in a statement-level ORDER BY denotes a 1-based output
+            // position in the SQL dialects supported by Core. Preserve that semantic distinction
+            // instead of parameterizing the integer as a scalar constant. Window ORDER BY is
+            // parsed separately in CoreExpressionTextParser and intentionally does not use this
+            // marker because it orders input rows, not SELECT-list outputs.
+            if (firstToken.Type == TokenType.Number
+                && expressionEnd == expressionStart + 1
+                && firstToken.Value.All(char.IsDigit))
+            {
+                if (!int.TryParse(
+                        firstToken.Value,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var ordinal))
+                {
+                    throw CoreTokenReader.Error(
+                        "ORDER BY output position exceeds the supported integer range.",
+                        firstToken);
+                }
+                expression = new LiteralExpr(
+                    new OrderByOrdinalValue(ordinal),
+                    expression.Span);
+            }
+
             var descending = false;
             if (_reader.MatchWord("DESC")) descending = true;
             else _reader.MatchWord("ASC");
@@ -303,14 +341,184 @@ internal sealed class CoreQueryTextParser
         return result.ToImmutable();
     }
 
-    private (int? Limit, int? Offset) ParseLimitOffsetIfPresent()
+    private (int? Limit, int? Offset) ParseLimitOffsetIfPresent(bool hasOrderBy)
     {
         int? limit = null;
         int? offset = null;
-        if (_reader.MatchWord("LIMIT")) limit = ParseNonNegativeInt("LIMIT");
-        if (_reader.MatchWord("OFFSET")) offset = ParseNonNegativeInt("OFFSET");
+        var usedCommaLimit = false;
+        if (_reader.MatchWord("LIMIT"))
+        {
+            var first = ParseNonNegativeInt("LIMIT");
+            if (_reader.Peek().Type == TokenType.Comma)
+            {
+                var comma = _reader.Advance();
+                if (_sourceDialect is not (SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                {
+                    throw CoreTokenReader.Error(
+                        $"LIMIT offset,row_count raw source syntax is valid only for MySQL and SQLite, not {_sourceDialect}.",
+                        comma);
+                }
+
+                usedCommaLimit = true;
+                offset = first;
+                limit = ParseNonNegativeInt("LIMIT comma row count");
+            }
+            else
+            {
+                limit = first;
+            }
+        }
+
+        if (_reader.PeekWord("OFFSET"))
+        {
+            var offsetToken = _reader.Peek();
+            if (usedCommaLimit)
+            {
+                throw CoreTokenReader.Error(
+                    "LIMIT offset,row_count cannot be combined with a separate OFFSET clause.",
+                    offsetToken);
+            }
+
+            var offsetRequiresLimit = _sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite;
+            if (offsetRequiresLimit && limit is null)
+            {
+                throw CoreTokenReader.Error(
+                    $"OFFSET without a preceding LIMIT is not valid raw source syntax for {_sourceDialect}.",
+                    offsetToken);
+            }
+            if (_sourceDialect == SqlAgentToolType.MsSqlServer && !hasOrderBy)
+            {
+                throw CoreTokenReader.Error(
+                    "SQL Server OFFSET/FETCH raw source syntax requires a statement-level ORDER BY clause.",
+                    offsetToken);
+            }
+
+            _reader.Advance();
+            offset = ParseNonNegativeInt("OFFSET");
+            if (UsesStandardOffsetFetch(_sourceDialect))
+                ParseOffsetRowKeyword();
+
+            if (_reader.PeekWord("FETCH"))
+            {
+                if (limit is not null)
+                {
+                    throw CoreTokenReader.Error(
+                        "LIMIT and FETCH cannot be combined in the same raw query tail.",
+                        _reader.Peek());
+                }
+                limit = ParseStandardFetchCount(hasPrecedingOffset: true);
+            }
+        }
+        else if (_reader.PeekWord("FETCH"))
+        {
+            if (limit is not null)
+            {
+                throw CoreTokenReader.Error(
+                    "LIMIT and FETCH cannot be combined in the same raw query tail.",
+                    _reader.Peek());
+            }
+            if (_sourceDialect == SqlAgentToolType.MsSqlServer)
+            {
+                throw CoreTokenReader.Error(
+                    "SQL Server FETCH requires a preceding OFFSET clause inside ORDER BY.",
+                    _reader.Peek());
+            }
+            if (_sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite)
+            {
+                throw CoreTokenReader.Error(
+                    $"FETCH FIRST/NEXT is not valid raw row-limiting syntax for {_sourceDialect}; use LIMIT instead.",
+                    _reader.Peek());
+            }
+            limit = ParseStandardFetchCount(hasPrecedingOffset: false);
+        }
+
         return (limit, offset);
     }
+
+    private void ParseOffsetRowKeyword()
+    {
+        if (_sourceDialect == SqlAgentToolType.Postgres)
+        {
+            if (_reader.MatchWord("ROW")) return;
+            _reader.MatchWord("ROWS");
+            return;
+        }
+
+        if (_reader.MatchWord("ROW") || _reader.MatchWord("ROWS")) return;
+        throw CoreTokenReader.Error(
+            $"{_sourceDialect} OFFSET requires ROW or ROWS after the offset count in the modeled raw Core grammar.",
+            _reader.Peek());
+    }
+
+    private int ParseStandardFetchCount(bool hasPrecedingOffset)
+    {
+        var fetchToken = _reader.Advance();
+        if (!CoreTokenReader.IsWord(fetchToken, "FETCH"))
+            throw CoreTokenReader.Error("Expected FETCH.", fetchToken);
+
+        if (_sourceDialect == SqlAgentToolType.MsSqlServer && !hasPrecedingOffset)
+        {
+            throw CoreTokenReader.Error(
+                "SQL Server FETCH requires a preceding OFFSET clause.",
+                fetchToken);
+        }
+        if (_sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite)
+        {
+            throw CoreTokenReader.Error(
+                $"FETCH FIRST/NEXT is not valid raw row-limiting syntax for {_sourceDialect}.",
+                fetchToken);
+        }
+
+        if (!(_reader.MatchWord("FIRST") || _reader.MatchWord("NEXT")))
+            throw CoreTokenReader.Error("FETCH requires FIRST or NEXT.", _reader.Peek());
+
+        int count;
+        if (_reader.Peek().Type == TokenType.Number)
+        {
+            count = ParseNonNegativeInt("FETCH");
+        }
+        else if (_sourceDialect == SqlAgentToolType.MsSqlServer)
+        {
+            throw CoreTokenReader.Error(
+                "SQL Server FETCH requires an explicit positive integer row count.",
+                _reader.Peek());
+        }
+        else
+        {
+            count = 1;
+        }
+
+        if (_sourceDialect == SqlAgentToolType.MsSqlServer && count == 0)
+        {
+            throw CoreTokenReader.Error(
+                "SQL Server FETCH row count must be greater than zero.",
+                _reader.Peek(-1));
+        }
+        if (_reader.PeekWord("PERCENT"))
+        {
+            throw CoreTokenReader.Error(
+                "FETCH PERCENT is not represented by the canonical Core row-limit model.",
+                _reader.Peek());
+        }
+
+        if (!(_reader.MatchWord("ROW") || _reader.MatchWord("ROWS")))
+            throw CoreTokenReader.Error("FETCH requires ROW or ROWS after the row count.", _reader.Peek());
+
+        if (_reader.PeekWord("WITH"))
+        {
+            throw CoreTokenReader.Error(
+                "FETCH WITH TIES is not represented by the canonical Core row-limit model.",
+                _reader.Peek());
+        }
+        _reader.ExpectWord("ONLY");
+        return count;
+    }
+
+    private static bool UsesStandardOffsetFetch(SqlAgentToolType sourceDialect) =>
+        sourceDialect is SqlAgentToolType.Postgres
+            or SqlAgentToolType.MsSqlServer
+            or SqlAgentToolType.Oracle
+            or SqlAgentToolType.Firebird;
 
     private int ParseNonNegativeInt(string description)
     {

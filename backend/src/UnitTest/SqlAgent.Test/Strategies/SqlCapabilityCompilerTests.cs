@@ -40,13 +40,20 @@ public class SqlCapabilityCompilerTests
     }
 
     [Fact]
-    public void WindowFrame_AndLag_CompileWithoutLegacyFunctionRegistryDependency()
+    public void WindowFrame_AndLag_RespectProviderCapabilities()
     {
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT LAG(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders");
 
         foreach (var provider in Providers)
         {
+            if (provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle)
+            {
+                var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
+                Assert.Contains("window.frame.lag", error.Message, StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+
             var command = Compile(definition, provider, provider);
             Assert.Contains("LAG(", command.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("ROWS BETWEEN 2 PRECEDING AND CURRENT ROW", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -54,21 +61,21 @@ public class SqlCapabilityCompilerTests
     }
 
     [Fact]
-    public void NullOrdering_FailsClosedOnlyForProvidersWithoutCapability()
+    public void NullOrdering_UsesDefaultEquivalentRewriteOnlyWhereNeeded()
     {
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT amount FROM orders ORDER BY amount DESC NULLS LAST");
 
         foreach (var provider in Providers)
         {
+            var command = Compile(definition, provider, provider);
             if (provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
             {
-                var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
-                Assert.Contains("ordering.nulls", error.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("NULLS LAST", command.Sql, StringComparison.OrdinalIgnoreCase);
             }
             else
             {
-                Assert.Contains("NULLS LAST", Compile(definition, provider, provider).Sql, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("NULLS LAST", command.Sql, StringComparison.OrdinalIgnoreCase);
             }
         }
     }
@@ -154,10 +161,10 @@ public class SqlCapabilityCompilerTests
 
         foreach (var provider in new[] { SqlAgentToolType.Postgres, SqlAgentToolType.Oracle, SqlAgentToolType.Sqlite })
         {
-            Assert.Contains("DATEDIFF unit MONTH", Assert.Throws<SqlCompilationException>(() =>
-                Compile(diff, SqlAgentToolType.MsSqlServer, provider)).Message);
-            Assert.Contains("DATEADD unit MONTH", Assert.Throws<SqlCompilationException>(() =>
-                Compile(add, SqlAgentToolType.MsSqlServer, provider)).Message);
+            Assert.Contains("core_date_diff.unit.month", Assert.Throws<SqlCompilationException>(() =>
+                Compile(diff, SqlAgentToolType.MsSqlServer, provider)).Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("core_date_add.unit.month", Assert.Throws<SqlCompilationException>(() =>
+                Compile(add, SqlAgentToolType.MsSqlServer, provider)).Message, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -183,25 +190,43 @@ public class SqlCapabilityCompilerTests
             "SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') FROM orders");
 
         Assert.Contains("portable date formatting", Assert.Throws<SqlCompilationException>(() =>
-            Compile(format, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message);
+            Compile(format, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message,
+            StringComparison.OrdinalIgnoreCase);
 
-        foreach (var provider in new[] { SqlAgentToolType.Sqlite, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird })
+        foreach (var provider in new[] { SqlAgentToolType.Sqlite, SqlAgentToolType.MsSqlServer })
         {
-            Assert.Contains("formatted date parsing", Assert.Throws<SqlCompilationException>(() =>
-                Compile(parse, SqlAgentToolType.MsSqlServer, provider)).Message);
+            Assert.Contains("function.date_parse", Assert.Throws<SqlCompilationException>(() =>
+                Compile(parse, SqlAgentToolType.MsSqlServer, provider)).Message,
+                StringComparison.OrdinalIgnoreCase);
         }
+
+        Assert.Contains("formatted date parsing", Assert.Throws<SqlCompilationException>(() =>
+            Compile(parse, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void CoalesceFamily_UsesTargetSemanticRegistry()
+    public void CoalesceFamily_PreservesStandardSemanticsAndRejectsProviderSpecificAliases()
     {
         var coalesce = SqlDefinitionParser.ParseQuery("SELECT COALESCE(customer_id, 0) FROM orders");
-        Assert.Contains("IFNULL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.MySQL).Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ISNULL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.MsSqlServer).Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("NVL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.Oracle).Sql, StringComparison.OrdinalIgnoreCase);
+        foreach (var provider in new[]
+                 {
+                     SqlAgentToolType.MySQL,
+                     SqlAgentToolType.MsSqlServer,
+                     SqlAgentToolType.Oracle
+                 })
+        {
+            var sql = Compile(coalesce, SqlAgentToolType.Postgres, provider).Sql;
+            Assert.Contains("COALESCE(", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("IFNULL(", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("ISNULL(", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("NVL(", sql, StringComparison.OrdinalIgnoreCase);
+        }
 
         var isNull = SqlDefinitionParser.ParseQuery("SELECT ISNULL(customer_id, 0) FROM orders");
-        Assert.Contains("COALESCE(", Compile(isNull, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres).Sql, StringComparison.OrdinalIgnoreCase);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(isNull, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres));
+        Assert.Contains("type-conversion rules", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -326,7 +351,7 @@ public class SqlCapabilityCompilerTests
                 Assert.Single(matrix.Capabilities, x => x.Id == "expression.interval").Status);
             Assert.Equal(
                 provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? SqlCapabilityStatus.Rejected
+                    ? SqlCapabilityStatus.Translated
                     : SqlCapabilityStatus.Supported,
                 Assert.Single(matrix.Capabilities, x => x.Id == "ordering.nulls").Status);
         }

@@ -45,7 +45,14 @@ public sealed class CoreDmlCompiler(
         ValidateMutationPolicy(parsed.Statement, policy);
 
         var bound = _binder.Bind(parsed);
+        if (parsed.EnforceSourceDialectSyntax)
+            CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect);
         var canonical = _normalizer.Normalize(bound, targetProvider);
+        canonical = canonical with
+        {
+            Statement = CoreNullOrderingRewriter.Rewrite(canonical.Statement, targetProvider)
+        };
+        CoreNoFromReferenceValidator.Validate(canonical.Statement, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
         var executable = new ExecutableSqlPlan(
             validated.Statement,
@@ -54,9 +61,21 @@ public sealed class CoreDmlCompiler(
             validated.TargetProvider,
             validated.PolicyVersion);
 
-        var command = validated.Statement is InsertStatement insert
-            ? new SqlKataInsertLowerer(targetProvider).Lower(executable, insert)
-            : new SqlKataDmlLowerer(targetProvider).Lower(executable);
+        CoreSqlKataBackendCompatibility.ValidateDml(validated.Statement, targetProvider);
+
+        var command = validated.Statement switch
+        {
+            InsertStatement insert when CoreInsertSelectCteLowerer.CanLower(insert) =>
+                CoreInsertSelectCteLowerer.Lower(executable, insert),
+            InsertStatement insert =>
+                new SqlKataInsertLowerer(targetProvider).Lower(executable, insert),
+            UpdateStatement update =>
+                new SqlKataUpdateLowerer(targetProvider).Lower(executable, update),
+            DeleteStatement =>
+                new SqlKataDmlLowerer(targetProvider).Lower(executable),
+            _ => throw new SqlCompilationException(
+                $"Statement '{validated.Statement.GetType().Name}' is not supported by the Core DML lowerer.")
+        };
         var expectedKind = parsed.Statement switch
         {
             InsertStatement => SqlStatementKind.Insert,

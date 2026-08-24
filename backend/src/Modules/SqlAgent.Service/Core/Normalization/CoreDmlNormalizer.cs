@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
@@ -8,7 +7,7 @@ using SqlAgent.Service.Enums;
 namespace SqlAgent.Service.Core.Normalization;
 
 /// <summary>
-/// DML normalizer that keeps INSERT structure explicit and delegates INSERT..SELECT query
+/// DML normalizer that keeps INSERT structure explicit and delegates INSERT value/query expression
 /// normalization to the common Core query normalizer.
 /// </summary>
 public sealed class CoreDmlNormalizer : ISqlNormalizer
@@ -23,12 +22,10 @@ public sealed class CoreDmlNormalizer : ISqlNormalizer
 
         InsertSource normalizedSource = insert.Source switch
         {
-            InsertValuesSource values => values with
-            {
-                Rows = values.Rows
-                    .Select(row => row.Select(NormalizeInsertValue).ToImmutableArray())
-                    .ToImmutableArray()
-            },
+            InsertValuesSource values => NormalizeValues(
+                statement,
+                values,
+                targetProvider),
             InsertQuerySource querySource => NormalizeQuerySource(
                 statement,
                 querySource,
@@ -44,6 +41,20 @@ public sealed class CoreDmlNormalizer : ISqlNormalizer
             targetProvider);
     }
 
+    private InsertValuesSource NormalizeValues(
+        BoundStatement parent,
+        InsertValuesSource values,
+        SqlAgentToolType targetProvider)
+    {
+        var carrier = CoreInsertValuesCarrier.CreateExpressionCarrier(values);
+        var normalized = _queryNormalizer.Normalize(
+            new BoundStatement(carrier, parent.Facts, parent.SourceDialect),
+            targetProvider);
+        return CoreInsertValuesCarrier.RestoreFromExpressionCarrier(
+            values,
+            normalized.Statement);
+    }
+
     private InsertQuerySource NormalizeQuerySource(
         BoundStatement parent,
         InsertQuerySource source,
@@ -54,11 +65,4 @@ public sealed class CoreDmlNormalizer : ISqlNormalizer
             targetProvider);
         return source with { Query = normalized.Statement };
     }
-
-    private static SqlExpr NormalizeInsertValue(SqlExpr expression) => expression switch
-    {
-        LiteralExpr literal => literal,
-        _ => throw new SqlCompilationException(
-            $"INSERT VALUES expression '{expression.GetType().Name}' is not canonical literal data.")
-    };
 }

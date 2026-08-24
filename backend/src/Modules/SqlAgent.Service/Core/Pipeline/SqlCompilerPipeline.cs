@@ -7,7 +7,8 @@ namespace SqlAgent.Service.Core.Pipeline;
 
 public sealed record ParsedStatement(
     SqlStatement Statement,
-    SqlAgentToolType SourceDialect);
+    SqlAgentToolType SourceDialect,
+    bool EnforceSourceDialectSyntax = false);
 
 public sealed record BoundStatement(
     SqlStatement Statement,
