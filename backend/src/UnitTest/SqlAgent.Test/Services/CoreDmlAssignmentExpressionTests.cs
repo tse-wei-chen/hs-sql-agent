@@ -81,6 +81,21 @@ public class CoreDmlAssignmentExpressionTests
     }
 
     [Fact]
+    public void CompileUpdate_MultipleLiteralAssignments_PreservesBindingOrder()
+    {
+        var command = Compile(
+            "UPDATE orders SET status = 'open', quantity = 2 WHERE order_id = 11077",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.DoesNotContain("open", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(
+            new object?[] { "open", 2, 11077 },
+            command.Parameters.Select(parameter => parameter.Value).ToArray());
+    }
+
+    [Fact]
     public void ParseUpdate_ArbitraryAssignmentExpression_RemainsFailClosed()
     {
         var error = Assert.Throws<SqlParseException>(() =>

@@ -59,9 +59,17 @@ public sealed class CoreDmlCompiler(
         if (validated.Statement is InsertStatement { Source: InsertQuerySource querySource })
             CoreSqlKataBackendCompatibility.ValidateInsertSelect(querySource.Query);
 
-        var command = validated.Statement is InsertStatement insert
-            ? new SqlKataInsertLowerer(targetProvider).Lower(executable, insert)
-            : new SqlKataDmlLowerer(targetProvider).Lower(executable);
+        var command = validated.Statement switch
+        {
+            InsertStatement insert =>
+                new SqlKataInsertLowerer(targetProvider).Lower(executable, insert),
+            UpdateStatement update =>
+                new SqlKataUpdateLowerer(targetProvider).Lower(executable, update),
+            DeleteStatement =>
+                new SqlKataDmlLowerer(targetProvider).Lower(executable),
+            _ => throw new SqlCompilationException(
+                $"Statement '{validated.Statement.GetType().Name}' is not supported by the Core DML lowerer.")
+        };
         var expectedKind = parsed.Statement switch
         {
             InsertStatement => SqlStatementKind.Insert,
