@@ -228,6 +228,11 @@ internal sealed class CoreOracleCompiler : OracleCompiler, ICoreSqlKataRawCompil
             ? ordinal
             : base.CompileColumn(ctx, column);
 
+    public override string CompileFrom(SqlResult ctx) =>
+        ctx.Query.HasComponent("from", EngineCode)
+            ? base.CompileFrom(ctx)
+            : "FROM DUAL";
+
     public override string CompileLimit(SqlResult ctx)
     {
         if (UseLegacyPagination)
