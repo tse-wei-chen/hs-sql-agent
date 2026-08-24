@@ -107,11 +107,15 @@ public class CoreCapabilityMatrixContractTests
         Assert.Contains("first integer to OFFSET", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("second to LIMIT", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("PostgreSQL comma-form LIMIT is rejected", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Raw bare OFFSET", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MySQL and SQLite accept OFFSET only after LIMIT", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("cannot be combined with a separate OFFSET", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("SQL Server TOP", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("SQL Server, Oracle, and Firebird", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PostgreSQL, Oracle, and Firebird", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OFFSET ... ROW(S)", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FETCH FIRST/NEXT", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQL Server raw OFFSET/FETCH requires statement-level ORDER BY", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FETCH requires a preceding OFFSET", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("TOP cannot share the same query scope", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FETCH PERCENT", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WITH TIES", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

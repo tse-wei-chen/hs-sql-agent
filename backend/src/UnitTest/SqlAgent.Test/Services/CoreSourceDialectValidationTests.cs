@@ -208,19 +208,19 @@ public class CoreSourceDialectValidationTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
-    [InlineData(SqlAgentToolType.Oracle)]
-    [InlineData(SqlAgentToolType.Firebird)]
-    public void Compile_NativeOffsetFetchShape_FailsClosedUntilRawGrammarModelsIt(SqlAgentToolType sourceDialect)
+    [InlineData(SqlAgentToolType.MsSqlServer, "SELECT id FROM users ORDER BY id OFFSET 5 ROWS")]
+    [InlineData(SqlAgentToolType.Oracle, "SELECT id FROM users OFFSET 5 ROWS")]
+    [InlineData(SqlAgentToolType.Firebird, "SELECT id FROM users OFFSET 5 ROWS")]
+    public void Compile_NativeOffsetShape_NormalizesForModeledRawDialects(
+        SqlAgentToolType sourceDialect,
+        string sql)
     {
-        var ex = Assert.Throws<SqlParseException>(() => CompileQuery(
-            "SELECT id FROM users ORDER BY id OFFSET 5 ROWS",
+        var command = CompileQuery(
+            sql,
             sourceDialect,
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("OFFSET", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(sourceDialect.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ROW/ROWS/FETCH", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OFFSET", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
