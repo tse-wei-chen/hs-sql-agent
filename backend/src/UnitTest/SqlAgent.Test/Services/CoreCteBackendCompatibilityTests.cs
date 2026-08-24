@@ -267,7 +267,7 @@ public class CoreCteBackendCompatibilityTests
             ") SELECT id FROM outer_rows WHERE id < 11",
             targetProvider);
 
-        Assert.Contains("AS (WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS (SELECT * FROM (WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
