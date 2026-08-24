@@ -44,6 +44,18 @@ public class CoreSourceDialectValidationTests
     }
 
     [Fact]
+    public void Compile_PostgresTwoArgumentDateDiff_IsRejectedAsRawSourceSyntax()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT DATEDIFF(completed_at, created_at) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("DATEDIFF", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect Postgres", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_MySqlFormat_IsNotMisreadAsSqlServerDateFormat()
     {
         var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
