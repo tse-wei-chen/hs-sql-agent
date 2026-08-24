@@ -122,6 +122,12 @@ internal static class CoreNoFromReferenceValidator
                 ValidateNoFromColumn(column.Name, allowCountWildcard);
                 return;
             case BoundColumnExpr column:
+                // A no-FROM subquery may legally correlate to an outer source. The binder records
+                // that distinction explicitly; only truly unbound scalar references are invalid.
+                // Wildcard projection remains non-portable even when an outer source exists, while
+                // COUNT(*) retains its well-defined singleton-row aggregate semantics.
+                if (!IsWildcard(column.Name) && column.Source is not null)
+                    return;
                 ValidateNoFromColumn(column.Name, allowCountWildcard);
                 return;
             case UnaryExpr unary:
