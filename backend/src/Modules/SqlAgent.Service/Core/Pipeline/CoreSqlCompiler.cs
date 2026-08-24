@@ -50,6 +50,10 @@ public sealed class CoreSqlCompiler(
         CoreNoFromReferenceValidator.Validate(canonical.Statement, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
         var executable = _policyRewriter.Rewrite(validated, executionPolicy);
+        executable = executable with
+        {
+            Statement = CoreRootCteSetTailRewriter.Rewrite(executable.Statement)
+        };
         CoreSqlKataBackendCompatibility.ValidateQuery(executable.Statement);
         return new SqlKataProviderLowerer(targetProvider).Lower(executable);
     }

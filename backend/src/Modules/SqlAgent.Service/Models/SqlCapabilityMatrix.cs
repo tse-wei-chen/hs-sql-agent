@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.7";
+    public const string Version = "2026-08-24.8";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -33,9 +33,9 @@ public static class SqlCapabilityMatrix
             new("select.singleton", "query", SqlCapabilityStatus.Translated,
                 "SELECT expressions without a FROM source preserve singleton-row semantics; Oracle lowers through DUAL and Firebird through RDB$DATABASE. Free column references and wildcard projection fail closed instead of resolving against a provider dummy table, while COUNT(*) and correlated outer references remain valid."),
             new("select.cte_set", "query", SqlCapabilityStatus.Translated,
-                "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally; CTE output aliases and set-result ordering are validated before lowering."),
+                "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally. Root CTE set queries that need an outer ORDER BY/LIMIT/OFFSET wrapper move only the root CTE definitions to that generated wrapper so SqlKata cannot drop their scope; this also covers execution-policy limits."),
             new("select.cte_scope", "query", SqlCapabilityStatus.Rejected,
-                "CTEs that would be compiled through SqlKata nested Select compilation and lose their definition fail closed: derived-table-local CTEs, set-operation-branch-local CTEs, and root CTE set queries that require an outer ORDER BY/LIMIT/OFFSET wrapper are rejected until explicit CTE hoisting is modeled."),
+                "Nested CTE scopes that would still be compiled through SqlKata nested Select compilation fail closed: derived-table-local CTEs and set-operation-branch-local CTEs remain rejected until explicit nested-scope lowering is modeled."),
             new("expression.arithmetic", "expression", SqlCapabilityStatus.Translated,
                 "+, -, *, and / are preserved by the AST/compiler."),
             new("expression.modulo", "expression",

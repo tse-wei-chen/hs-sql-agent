@@ -28,15 +28,65 @@ public class CoreCteBackendCompatibilityTests
         Assert.Contains("set-operation-branch-local", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_RootCteWithSetOuterOrderBy_FailsBeforeWrapperCanDropDefinition()
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_RootCteWithSetOuterOrderBy_PreservesCteOnOuterWrapper(
+        SqlAgentToolType targetProvider)
     {
-        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+        var command = Compile(
             "WITH active AS (SELECT id FROM users) " +
-            "SELECT id FROM active UNION SELECT id FROM archived ORDER BY id"));
+            "SELECT id FROM active UNION SELECT id FROM archived ORDER BY id",
+            targetProvider);
 
-        Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("outer ORDER BY/LIMIT/OFFSET", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_RootCteSetTail_PreservesProjectedAliasOrdering()
+    {
+        var command = Compile(
+            "WITH active AS (SELECT id FROM users) " +
+            "SELECT id AS key FROM active UNION SELECT id FROM archived ORDER BY key");
+
+        Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("key", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_RootCteSetTail_PreservesOutputOrdinalOrdering()
+    {
+        var command = Compile(
+            "WITH active AS (SELECT id FROM users) " +
+            "SELECT id FROM active UNION SELECT id FROM archived ORDER BY 1");
+
+        Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY 1", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_RootCteSetWithPolicyLimit_PreservesCteOnGeneratedWrapper()
+    {
+        var command = Compile(
+            "WITH active AS (SELECT id FROM users) " +
+            "SELECT id FROM active UNION SELECT id FROM archived",
+            SqlAgentToolType.Postgres,
+            queryMaxRows: 5);
+
+        Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -59,10 +109,13 @@ public class CoreCteBackendCompatibilityTests
         Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static CompiledSqlCommand Compile(string sql) =>
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType targetProvider = SqlAgentToolType.Postgres,
+        int queryMaxRows = 0) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres),
-            SqlAgentToolType.Postgres,
+            targetProvider,
             new SqlPlanValidationContext("policy-v1"),
-            new SqlExecutionPlanPolicy());
+            new SqlExecutionPlanPolicy(queryMaxRows));
 }
