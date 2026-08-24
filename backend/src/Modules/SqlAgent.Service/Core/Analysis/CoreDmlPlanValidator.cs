@@ -21,7 +21,19 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
     {
         ArgumentNullException.ThrowIfNull(statement);
         if (statement.Statement is not InsertStatement insert)
-            return _common.Validate(statement, context);
+        {
+            var validated = _common.Validate(statement, context);
+            switch (validated.Statement)
+            {
+                case UpdateStatement update:
+                    CoreDmlVolatilePredicateValidator.Validate(update.Predicate);
+                    break;
+                case DeleteStatement delete:
+                    CoreDmlVolatilePredicateValidator.Validate(delete.Predicate);
+                    break;
+            }
+            return validated;
+        }
 
         ValidateInsertShape(insert, statement.TargetProvider);
         var validationCarrier = insert.Source switch

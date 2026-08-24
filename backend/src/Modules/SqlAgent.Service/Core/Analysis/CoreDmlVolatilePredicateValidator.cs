@@ -1,11 +1,12 @@
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Compilation;
 
 namespace SqlAgent.Service.Core.Analysis;
 
 /// <summary>
 /// Rejects nondeterministic functions whose value can change between DML preview/revalidation and
 /// mutation. A changing predicate can select a different row identity set even when the affected
-/// row count remains unchanged, so it is not sufficient to rely on count revalidation alone.
+/// row count remains unchanged, so count revalidation alone is not sufficient.
 /// Current-temporal expressions are intentionally outside this validator; their approval-time
 /// freezing policy is handled separately from random-function determinism.
 /// </summary>
@@ -49,9 +50,6 @@ internal static class CoreDmlVolatilePredicateValidator
                     VisitStatement(operation.Query);
                 foreach (var item in query.OrderBy) Visit(item.Expression);
                 return;
-
-            default:
-                return;
         }
     }
 
@@ -83,7 +81,7 @@ internal static class CoreDmlVolatilePredicateValidator
                 var name = string.Join('.', function.Name.Parts.Select(part => part.Value));
                 if (RandomFunctions.Contains(name))
                 {
-                    throw new Core.Compilation.SqlCompilationException(
+                    throw new SqlCompilationException(
                         $"Nondeterministic function '{name}' is not allowed in UPDATE/DELETE predicates because the approved row set could change before mutation.");
                 }
                 foreach (var argument in function.Arguments) Visit(argument);

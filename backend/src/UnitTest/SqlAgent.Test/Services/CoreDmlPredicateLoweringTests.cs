@@ -73,6 +73,32 @@ public class CoreDmlPredicateLoweringTests
         Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("DELETE FROM orders WHERE RANDOM() < 0.5", SqlAgentToolType.Postgres)]
+    [InlineData("DELETE FROM orders WHERE RAND() < 0.5", SqlAgentToolType.MySQL)]
+    [InlineData("UPDATE orders SET status = 'x' WHERE RAND() < 0.5", SqlAgentToolType.MsSqlServer)]
+    public void Compile_DmlPredicate_RandomFunctionFailsBeforeMutation(
+        string sql,
+        SqlAgentToolType provider)
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => Compile(sql, provider, provider));
+
+        Assert.Contains("Nondeterministic function", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("approved row set", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_RandomFunction_ToOracle_FailsAtNormalizationInsteadOfEmittingRand()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+            "DELETE FROM orders WHERE RANDOM() < 0.5",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle));
+
+        Assert.Contains("Random", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Oracle", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType sourceDialect,
