@@ -134,7 +134,7 @@ public class CoreSemanticDriftGuardTests
     }
 
     [Fact]
-    public void Compile_MySqlGroupConcat_DefaultSeparator_UsesOneArgumentSyntax()
+    public void Compile_MySqlGroupConcat_DefaultSeparator_UsesNativeAggregateSyntax()
     {
         var command = Compile(
             "SELECT GROUP_CONCAT(name) FROM users",
@@ -142,6 +142,7 @@ public class CoreSemanticDriftGuardTests
             SqlAgentToolType.MySQL);
 
         Assert.Contains("GROUP_CONCAT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SEPARATOR ','", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(command.Parameters, parameter => Equals(parameter.Value, ","));
     }
 
@@ -166,18 +167,21 @@ public class CoreSemanticDriftGuardTests
             SqlAgentToolType.MySQL);
 
         Assert.Contains("GROUP_CONCAT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SEPARATOR ','", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(command.Parameters, parameter => Equals(parameter.Value, ","));
     }
 
     [Fact]
-    public void Compile_StringAggCustomSeparator_ToMySql_FailsBeforeLowering()
+    public void Compile_StringAggCustomSeparator_ToMySql_UsesSeparatorClause()
     {
-        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+        var command = Compile(
             "SELECT STRING_AGG(name, '|') FROM users",
             SqlAgentToolType.Postgres,
-            SqlAgentToolType.MySQL));
+            SqlAgentToolType.MySQL);
 
-        Assert.Contains("custom separator", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("GROUP_CONCAT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SEPARATOR '|'", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("CORE_STRING_AGG", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -188,7 +192,7 @@ public class CoreSemanticDriftGuardTests
             SqlAgentToolType.MySQL,
             SqlAgentToolType.MySQL));
 
-        Assert.Contains("Aggregate function 'GROUP_CONCAT'", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Aggregate function 'CORE_STRING_AGG'", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
