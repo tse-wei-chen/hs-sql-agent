@@ -53,5 +53,6 @@ public class CoreScalarSubqueryCteCompatibilityTests
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres),
             targetProvider,
-            new SqlPlanValidationContext("policy-v1"));
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy(0));
 }
