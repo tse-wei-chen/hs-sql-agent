@@ -48,6 +48,10 @@ public sealed class CoreDmlCompiler(
         if (parsed.EnforceSourceDialectSyntax)
             CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect);
         var canonical = _normalizer.Normalize(bound, targetProvider);
+        canonical = canonical with
+        {
+            Statement = CoreNullOrderingRewriter.Rewrite(canonical.Statement, targetProvider)
+        };
         CoreNoFromReferenceValidator.Validate(canonical.Statement, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
         var executable = new ExecutableSqlPlan(
