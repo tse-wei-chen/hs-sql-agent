@@ -1,4 +1,5 @@
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 
 namespace SqlAgent.Service.Core.Pipeline;
