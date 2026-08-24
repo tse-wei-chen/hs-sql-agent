@@ -108,6 +108,30 @@ public class CoreSourceDialectValidationTests
     }
 
     [Fact]
+    public void Compile_MySqlNullOrdering_IsRejectedAsRawSourceSyntax()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT amount FROM orders ORDER BY amount NULLS FIRST",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("NULLS FIRST", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_SqlServerNullOrdering_IsRejectedAsRawSourceSyntax()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT amount FROM orders ORDER BY amount DESC NULLS LAST",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("NULLS LAST", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MsSqlServer", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_Dml_UsesTheSameSourceDialectBoundary()
     {
         var ex = Assert.Throws<SqlCompilationException>(() =>
