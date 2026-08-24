@@ -344,6 +344,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             FilterExpr filter => RenderFilter(filter, compiler),
             WindowedExpr windowed => RenderWindowed(windowed, compiler),
             CastExpr cast => RenderCast(cast, compiler),
+            SimpleCaseExpr simpleCase => RenderSimpleCase(simpleCase, compiler),
             CaseExpr @case => RenderCase(@case, compiler),
             InExpr @in => RenderIn(@in, compiler),
             BetweenExpr between => RenderBetween(between, compiler),
@@ -800,6 +801,45 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         var inner = RenderExpression(cast.Expression, compiler);
         return inner with { Sql = $"CAST({inner.Sql} AS {cast.TypeName})" };
     }
+
+    private static RenderedExpression RenderSimpleCase(SimpleCaseExpr @case, Compiler compiler)
+    {
+        if (@case.Branches.IsDefaultOrEmpty)
+            throw new SqlCompilationException("Simple CASE requires at least one WHEN branch.");
+
+        var first = RequireSimpleCaseComparison(@case.Branches[0]);
+        var operand = RenderExpression(first.Left, compiler);
+        var bindings = ImmutableArray.CreateBuilder<object?>();
+        bindings.AddRange(operand.Bindings);
+        var parts = new List<string>();
+
+        foreach (var branch in @case.Branches)
+        {
+            var comparison = RequireSimpleCaseComparison(branch);
+            var match = RenderExpression(comparison.Right, compiler);
+            var value = RenderExpression(branch.Value, compiler);
+            parts.Add($"WHEN {match.Sql} THEN {value.Sql}");
+            bindings.AddRange(match.Bindings);
+            bindings.AddRange(value.Bindings);
+        }
+
+        if (@case.ElseExpression is not null)
+        {
+            var otherwise = RenderExpression(@case.ElseExpression, compiler);
+            parts.Add($"ELSE {otherwise.Sql}");
+            bindings.AddRange(otherwise.Bindings);
+        }
+
+        return new RenderedExpression(
+            $"CASE {operand.Sql} {string.Join(" ", parts)} END",
+            bindings.ToImmutable());
+    }
+
+    private static BinaryExpr RequireSimpleCaseComparison(CaseBranch branch) =>
+        branch.Condition is BinaryExpr { Operator: "=" } comparison
+            ? comparison
+            : throw new SqlCompilationException(
+                "Simple CASE branch lost its canonical equality shape before lowering.");
 
     private static RenderedExpression RenderCase(CaseExpr @case, Compiler compiler)
     {

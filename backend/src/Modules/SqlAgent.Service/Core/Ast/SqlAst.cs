@@ -107,10 +107,21 @@ public sealed record IntervalExpr(string Literal, SourceSpan Span) : SqlExpr(Spa
 
 public sealed record CaseBranch(SqlExpr Condition, SqlExpr Value);
 
-public sealed record CaseExpr(
+public record CaseExpr(
     ImmutableArray<CaseBranch> Branches,
     SqlExpr? ElseExpression,
     SourceSpan Span) : SqlExpr(Span);
+
+/// <summary>
+/// Marks SQL simple CASE without duplicating a separate operand tree. Each branch retains the
+/// canonical compatibility equality shape (operand = match) used by existing binders and
+/// validators; provider lowering recognizes this subtype and emits CASE operand WHEN match ... so
+/// the database evaluates the operand once instead of once per branch.
+/// </summary>
+public sealed record SimpleCaseExpr(
+    ImmutableArray<CaseBranch> Branches,
+    SqlExpr? ElseExpression,
+    SourceSpan Span) : CaseExpr(Branches, ElseExpression, Span);
 
 public sealed record InExpr(
     SqlExpr Value,
