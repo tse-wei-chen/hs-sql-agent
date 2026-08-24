@@ -66,6 +66,8 @@ public sealed class CoreDmlCompiler(
 
         var command = validated.Statement switch
         {
+            InsertStatement insert when CoreInsertSelectCteLowerer.CanLower(insert) =>
+                CoreInsertSelectCteLowerer.Lower(executable, insert),
             InsertStatement insert =>
                 new SqlKataInsertLowerer(targetProvider).Lower(executable, insert),
             UpdateStatement update =>

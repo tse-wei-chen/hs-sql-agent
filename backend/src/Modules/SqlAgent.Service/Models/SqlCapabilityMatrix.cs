@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.8";
+    public const string Version = "2026-08-24.9";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -154,9 +154,9 @@ public static class SqlCapabilityMatrix
                     ? "Definitely boolean UPDATE assignment expressions are rejected because the current Core target profile does not model a portable scalar SQL boolean for this provider."
                     : "Definitely boolean UPDATE assignment expressions use the provider's scalar boolean/value semantics."),
             new("dml.insert_select", "dml", SqlCapabilityStatus.Translated,
-                "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count; CTE-free source queries are lowered through SqlKata's structured insert-query path."),
-            new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Rejected,
-                "An INSERT ... SELECT source with a root CTE is rejected because SqlKata CompileInsertQueryClause delegates to nested CompileSelectQuery and would omit the CTE definition; explicit CTE hoisting is not modeled yet."),
+                "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count. CTE-free sources use SqlKata's structured insert-query path; statement-root CTE sources use the Core provider-aware CTE placement path."),
+            new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Translated,
+                "Statement-root CTEs in INSERT ... SELECT are lowered with provider-aware placement while preserving parameter bindings, including root CTE set queries with outer ORDER BY/LIMIT/OFFSET. Derived-table-local and set-operation-branch-local CTEs remain fail-closed under select.cte_scope."),
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
                 "RETURNING/OUTPUT, UPSERT/ON CONFLICT/ON DUPLICATE KEY, and MERGE are not yet in the portable DML grammar; INSERT ... SELECT is tracked separately and supported."),
             new("dml.returning_output", "dml", SqlCapabilityStatus.Rejected,

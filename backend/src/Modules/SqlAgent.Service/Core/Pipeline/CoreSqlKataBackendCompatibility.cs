@@ -5,10 +5,10 @@ using SqlAgent.Service.Core.Compilation;
 namespace SqlAgent.Service.Core.Pipeline;
 
 /// <summary>
-/// Guards query shapes whose CTE scope cannot be preserved by SqlKata's nested CompileSelectQuery
-/// paths. SqlKata only runs CTE discovery from a full Compile call; derived tables, set branches,
-/// and INSERT..SELECT sources are compiled as nested SELECTs and would otherwise silently omit
-/// local CTE definitions.
+/// Guards query shapes whose CTE scope cannot be preserved by the available lowering path.
+/// Statement-root INSERT..SELECT CTEs have a dedicated provider-aware lowerer; derived-table-local
+/// and set-branch-local CTEs still flow through SqlKata nested Select compilation and remain
+/// fail-closed.
 /// </summary>
 internal static class CoreSqlKataBackendCompatibility
 {
@@ -36,7 +36,9 @@ internal static class CoreSqlKataBackendCompatibility
 
             case QueryStatement query:
                 ValidateCtePlacement(query.Head.Ctes, position);
-                if (!query.Head.Ctes.IsDefaultOrEmpty && RequiresSetTailWrapper(query))
+                if (position != QueryPosition.InsertSelectSource
+                    && !query.Head.Ctes.IsDefaultOrEmpty
+                    && RequiresSetTailWrapper(query))
                 {
                     throw CteScopeError(
                         "select.cte_scope",
@@ -62,10 +64,6 @@ internal static class CoreSqlKataBackendCompatibility
 
         switch (position)
         {
-            case QueryPosition.InsertSelectSource:
-                throw CteScopeError(
-                    "dml.insert_select.cte_scope",
-                    "an INSERT..SELECT source is compiled through SqlKata CompileInsertQueryClause/CompileSelectQuery, which would omit its root CTE definition");
             case QueryPosition.DerivedTable:
                 throw CteScopeError(
                     "select.cte_scope",
