@@ -338,10 +338,38 @@ internal sealed class CoreQueryTextParser
     {
         int? limit = null;
         int? offset = null;
-        if (_reader.MatchWord("LIMIT")) limit = ParseNonNegativeInt("LIMIT");
+        var usedCommaLimit = false;
+        if (_reader.MatchWord("LIMIT"))
+        {
+            var first = ParseNonNegativeInt("LIMIT");
+            if (_reader.Peek().Type == TokenType.Comma)
+            {
+                var comma = _reader.Advance();
+                if (_sourceDialect is not (SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                {
+                    throw CoreTokenReader.Error(
+                        $"LIMIT offset,row_count raw source syntax is valid only for MySQL and SQLite, not {_sourceDialect}.",
+                        comma);
+                }
+
+                usedCommaLimit = true;
+                offset = first;
+                limit = ParseNonNegativeInt("LIMIT comma row count");
+            }
+            else
+            {
+                limit = first;
+            }
+        }
         if (_reader.PeekWord("OFFSET"))
         {
             var offsetToken = _reader.Peek();
+            if (usedCommaLimit)
+            {
+                throw CoreTokenReader.Error(
+                    "LIMIT offset,row_count cannot be combined with a separate OFFSET clause.",
+                    offsetToken);
+            }
             var offsetRequiresLimit = _sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite;
             if (offsetRequiresLimit && limit is null)
             {

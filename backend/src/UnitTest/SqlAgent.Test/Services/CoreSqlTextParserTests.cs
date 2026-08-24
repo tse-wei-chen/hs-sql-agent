@@ -120,6 +120,70 @@ public class CoreSqlTextParserTests
         Assert.IsType<LiteralExpr>(Assert.Single(Assert.IsType<SelectStatement>(parsed.Statement).Select).Expression);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void ParseQuery_CommaLimit_NormalizesOffsetAndRowCount(SqlAgentToolType sourceDialect)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM users LIMIT 5, 10",
+            sourceDialect);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+
+        Assert.Equal(10, select.Limit);
+        Assert.Equal(5, select.Offset);
+
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OFFSET", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParseQuery_CommaLimit_IsRejectedForPostgresRawSource()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT id FROM users LIMIT 5, 10",
+                SqlAgentToolType.Postgres));
+
+        Assert.Contains("offset,row_count", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MySQL and SQLite", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void ParseQuery_CommaLimit_CannotAlsoUseSeparateOffset(SqlAgentToolType sourceDialect)
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT id FROM users LIMIT 5, 10 OFFSET 2",
+                sourceDialect));
+
+        Assert.Contains("cannot be combined", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OFFSET", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void ParseDml_InsertSelectCommaLimit_UsesSameSourceDialect(SqlAgentToolType sourceDialect)
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO archived_users (id) SELECT id FROM users LIMIT 5, 10",
+            sourceDialect);
+        var insert = Assert.IsType<InsertStatement>(parsed.Statement);
+        var source = Assert.IsType<InsertQuerySource>(insert.Source);
+        var select = Assert.IsType<SelectStatement>(source.Query);
+
+        Assert.Equal(10, select.Limit);
+        Assert.Equal(5, select.Offset);
+    }
+
     [Fact]
     public void ParseQuery_ExtractYear_UsesPortableDatePartFamily()
     {
