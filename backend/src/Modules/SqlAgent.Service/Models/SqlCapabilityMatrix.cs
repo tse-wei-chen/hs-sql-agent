@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.9";
+    public const string Version = "2026-08-24.10";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -34,8 +34,17 @@ public static class SqlCapabilityMatrix
                 "SELECT expressions without a FROM source preserve singleton-row semantics; Oracle lowers through DUAL and Firebird through RDB$DATABASE. Free column references and wildcard projection fail closed instead of resolving against a provider dummy table, while COUNT(*) and correlated outer references remain valid."),
             new("select.cte_set", "query", SqlCapabilityStatus.Translated,
                 "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally. Root CTE set queries that need an outer ORDER BY/LIMIT/OFFSET wrapper move only the root CTE definitions to that generated wrapper so SqlKata cannot drop their scope; this also covers execution-policy limits."),
+            new("select.cte_derived", "query",
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle
+                    ? SqlCapabilityStatus.Translated
+                    : SqlCapabilityStatus.Rejected,
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle
+                    ? "Query-graph derived-table-local CTEs are compiled as complete target subqueries and reattached with ordered bindings, preserving lexical scope without CTE hoisting. This includes derived CTE set queries with an outer tail."
+                    : provider == SqlAgentToolType.MsSqlServer
+                        ? "SQL Server has no declared portable WITH-at-the-start-of-a-general-derived-subquery contract in the Core target profile, so derived-table-local CTEs fail closed."
+                        : "Firebird nested CTE placement is kept fail-closed until a target-profile contract is modeled and integration-tested."),
             new("select.cte_scope", "query", SqlCapabilityStatus.Rejected,
-                "Nested CTE scopes that would still be compiled through SqlKata nested Select compilation fail closed: derived-table-local CTEs and set-operation-branch-local CTEs remain rejected until explicit nested-scope lowering is modeled."),
+                "Set-operation-branch-local root CTEs remain fail-closed. Derived-table-local CTEs inside eagerly rendered scalar/EXISTS subqueries or nested INSERT source query graphs also remain rejected because those paths cannot use the query-graph derived CTE adapter."),
             new("expression.arithmetic", "expression", SqlCapabilityStatus.Translated,
                 "+, -, *, and / are preserved by the AST/compiler."),
             new("expression.modulo", "expression",
