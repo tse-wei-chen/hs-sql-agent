@@ -78,7 +78,10 @@ internal static class CoreSqlSemanticValidator
         }
 
         foreach (var item in select.Select)
+        {
+            CoreBooleanProjectionRules.Validate(item.Expression, provider);
             Visit(item.Expression, ClauseContext.Projection, insideSetFunction: false, withinWindow: false, provider);
+        }
         if (select.Where is not null)
             Visit(select.Where, ClauseContext.Predicate, insideSetFunction: false, withinWindow: false, provider);
         foreach (var expression in select.GroupBy)
