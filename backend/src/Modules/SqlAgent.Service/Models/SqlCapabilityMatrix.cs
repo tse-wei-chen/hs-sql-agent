@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.21";
+    public const string Version = "2026-08-24.22";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -121,7 +121,7 @@ public static class SqlCapabilityMatrix
             new("aggregate.string.dynamic_separator", "aggregate", SqlCapabilityStatus.Rejected,
                 "Dynamic or per-row string-aggregate separators are rejected at the Core capability boundary; the portable aggregate currently requires a literal separator so provider delimiter evaluation rules cannot drift during lowering."),
             new("temporal.typed_literals", "temporal", SqlCapabilityStatus.Translated,
-                "DATE, TIME, and TIMESTAMP literals are parsed into typed values and bound as provider parameters."),
+                "Structured Core DATE, TIME, and TIMESTAMP values are represented as typed temporal values and bound as provider parameters. Raw typed-literal spelling is source-profiled before AST canonicalization: PostgreSQL accepts the modeled basic and WITH/WITHOUT TIME ZONE forms; MySQL accepts the basic forms but not WITH/WITHOUT TIME ZONE qualifiers; SQLite rejects ANSI typed-literal spelling; Oracle accepts DATE and TIMESTAMP basic spelling but not standalone TIME or the Core TIMESTAMP WITH/WITHOUT TIME ZONE spelling; Firebird accepts basic DATE/TIME/TIMESTAMP spelling, with zone information carried inside the literal value rather than a WITH/WITHOUT TIME ZONE type qualifier; SQL Server rejects ANSI typed-literal spelling and uses string values with CAST/CONVERT instead."),
             new("temporal.standalone_time", "temporal",
                 provider == SqlAgentToolType.Oracle ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
                 provider == SqlAgentToolType.Oracle

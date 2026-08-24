@@ -71,6 +71,13 @@ public static class CoreSqlTextParser
                     $"Bare {token.Value.ToUpperInvariant()} is not valid T-SQL boolean-literal source syntax at position {token.Pos}; " +
                     "SQL Server bit constants use 0 or 1, and Core does not reinterpret bare TRUE/FALSE tokens as identifiers.");
             }
+            if (TryGetTypedTemporalLiteralStart(content, i, out var temporalType, out var hasZoneQualifier)
+                && !SupportsRawTypedTemporalLiteral(sourceDialect, temporalType, hasZoneQualifier))
+            {
+                throw new SqlParseException(
+                    $"{temporalType} typed temporal literal spelling is not valid for raw source dialect {sourceDialect} in the Core source profile at position {token.Pos}; " +
+                    "use source-native CAST/CONVERT/function syntax or a structured Core temporal value.");
+            }
             if (token.Type == TokenType.Semicolon && i != content.Length - 1)
             {
                 throw new SqlParseException(
@@ -78,6 +85,48 @@ public static class CoreSqlTextParser
             }
         }
     }
+
+    private static bool TryGetTypedTemporalLiteralStart(
+        Token[] tokens,
+        int index,
+        out string temporalType,
+        out bool hasZoneQualifier)
+    {
+        temporalType = string.Empty;
+        hasZoneQualifier = false;
+        if (index + 1 >= tokens.Length)
+            return false;
+
+        var token = tokens[index];
+        if (CoreTokenReader.IsWord(token, "DATE")) temporalType = "DATE";
+        else if (CoreTokenReader.IsWord(token, "TIME")) temporalType = "TIME";
+        else if (CoreTokenReader.IsWord(token, "TIMESTAMP")) temporalType = "TIMESTAMP";
+        else return false;
+
+        var next = tokens[index + 1];
+        if (next.Type == TokenType.String)
+            return true;
+
+        hasZoneQualifier = temporalType != "DATE"
+            && (CoreTokenReader.IsWord(next, "WITH")
+                || CoreTokenReader.IsWord(next, "WITHOUT"));
+        return hasZoneQualifier;
+    }
+
+    private static bool SupportsRawTypedTemporalLiteral(
+        SqlAgentToolType sourceDialect,
+        string temporalType,
+        bool hasZoneQualifier) =>
+        sourceDialect switch
+        {
+            SqlAgentToolType.Postgres => true,
+            SqlAgentToolType.MySQL => !hasZoneQualifier,
+            SqlAgentToolType.MsSqlServer => false,
+            SqlAgentToolType.Sqlite => false,
+            SqlAgentToolType.Oracle => temporalType != "TIME" && !hasZoneQualifier,
+            SqlAgentToolType.Firebird => !hasZoneQualifier,
+            _ => false
+        };
 
     private static int? NormalizeSqlServerTop(
         Token[] tokens,

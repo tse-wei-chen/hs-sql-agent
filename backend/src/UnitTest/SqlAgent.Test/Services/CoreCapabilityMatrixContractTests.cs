@@ -123,6 +123,23 @@ public class CoreCapabilityMatrixContractTests
     }
 
     [Fact]
+    public void Matrix_DocumentsTypedTemporalLiteralSourceProfiles()
+    {
+        var typed = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Postgres).Capabilities,
+            item => item.Id == "temporal.typed_literals");
+
+        Assert.Equal(SqlCapabilityStatus.Translated, typed.Status);
+        Assert.Contains("PostgreSQL accepts", typed.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MySQL accepts the basic forms", typed.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQLite rejects", typed.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Oracle accepts DATE and TIMESTAMP", typed.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Firebird accepts basic DATE/TIME/TIMESTAMP", typed.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("zone information carried inside the literal value", typed.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQL Server rejects", typed.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_DocumentsVersionDependentSqlServerRegexBoundary()
     {
         var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer);
