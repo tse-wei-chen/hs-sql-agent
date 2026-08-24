@@ -64,7 +64,7 @@ internal sealed class CoreDmlTextParser
                 var values = ImmutableArray.CreateBuilder<SqlExpr>();
                 if (_reader.Peek().Type == TokenType.RParen)
                     throw CoreTokenReader.Error("INSERT VALUES row cannot be empty.", _reader.Peek());
-                do values.Add(ParseDmlLiteral());
+                do values.Add(_expressions.ParseExpression());
                 while (_reader.Match(TokenType.Comma));
                 _reader.Expect(TokenType.RParen, "')' after INSERT VALUES row");
                 if (values.Count != columns.Count)

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
@@ -8,8 +7,8 @@ using SqlAgent.Service.Enums;
 namespace SqlAgent.Service.Core.Analysis;
 
 /// <summary>
-/// DML validator that reuses the common validator for authorization and query capabilities while
-/// preserving the canonical INSERT statement as the validated output.
+/// DML validator that reuses the common validator for authorization and expression capabilities
+/// while preserving the canonical INSERT statement as the validated output.
 /// </summary>
 public sealed class CoreDmlPlanValidator : ISqlPlanValidator
 {
@@ -39,11 +38,11 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
             return validated;
         }
 
-        ValidateInsertShape(insert, statement.TargetProvider);
+        ValidateInsertShape(insert);
         var validationCarrier = insert.Source switch
         {
             InsertQuerySource insertQuerySource => insertQuerySource.Query,
-            InsertValuesSource values => CreateValuesCarrier(values),
+            InsertValuesSource values => CoreInsertValuesCarrier.CreateValidationCarrier(values),
             _ => throw new SqlCompilationException(
                 $"Unsupported INSERT source during validation: {insert.Source.GetType().Name}")
         };
@@ -52,15 +51,33 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
             statement with { Statement = validationCarrier },
             context);
 
-        // The common validator may canonicalize query-only structures such as CTE column aliases.
-        // Preserve that validated query in INSERT ... SELECT rather than returning the stale source
-        // shape and re-introducing an unsupported lowerer form after validation.
-        var validatedInsert = insert.Source is InsertQuerySource originalQuerySource
-            ? insert with
+        var validatedInsert = insert.Source switch
+        {
+            InsertQuerySource originalQuerySource => insert with
             {
                 Source = originalQuerySource with { Query = validatedCarrier.Statement }
+            },
+            InsertValuesSource originalValues => insert with
+            {
+                Source = CoreInsertValuesCarrier.RestoreFromValidationCarrier(
+                    originalValues,
+                    validatedCarrier.Statement)
+            },
+            _ => throw new SqlCompilationException(
+                $"Unsupported INSERT source after validation: {insert.Source.GetType().Name}")
+        };
+
+        if (validatedInsert.Source is InsertValuesSource validatedValues)
+        {
+            foreach (var row in validatedValues.Rows)
+            foreach (var value in row)
+            {
+                CoreBooleanProjectionRules.ValidateInsertValue(
+                    value,
+                    statement.TargetProvider);
+                ValidateInsertValueScope(value);
             }
-            : insert;
+        }
 
         return new ValidatedSqlPlan(
             validatedInsert,
@@ -70,9 +87,7 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
             context.PolicyVersion);
     }
 
-    private static void ValidateInsertShape(
-        InsertStatement insert,
-        SqlAgentToolType provider)
+    private static void ValidateInsertShape(InsertStatement insert)
     {
         if (insert.Columns.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT requires at least one target column.");
@@ -88,12 +103,6 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
                 {
                     if (row.Length != insert.Columns.Length)
                         throw new SqlCompilationException("INSERT VALUES row width does not match target column count.");
-                    foreach (var value in row)
-                    {
-                        if (value is not LiteralExpr literal)
-                            throw new SqlCompilationException("INSERT VALUES currently accepts canonical literal values only.");
-                        CoreProviderCapabilityRules.ValidateLiteral(literal, provider);
-                    }
                 }
                 return;
 
@@ -119,6 +128,85 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
         }
     }
 
+    private static void ValidateInsertValueScope(SqlExpr expression)
+    {
+        switch (expression)
+        {
+            case LiteralExpr:
+            case IntervalExpr:
+                return;
+
+            case ColumnExpr column:
+                throw InsertColumnReferenceError(column.Name);
+            case BoundColumnExpr column:
+                throw InsertColumnReferenceError(column.Name);
+
+            case UnaryExpr unary:
+                ValidateInsertValueScope(unary.Operand);
+                return;
+            case BinaryExpr binary:
+                ValidateInsertValueScope(binary.Left);
+                ValidateInsertValueScope(binary.Right);
+                return;
+            case FunctionCallExpr function:
+                foreach (var argument in function.Arguments)
+                    ValidateInsertValueScope(argument);
+                return;
+            case FilterExpr filter:
+                ValidateInsertValueScope(filter.Expression);
+                ValidateInsertValueScope(filter.Predicate);
+                return;
+            case WindowedExpr windowed:
+                ValidateInsertValueScope(windowed.Expression);
+                foreach (var partition in windowed.Window.PartitionBy)
+                    ValidateInsertValueScope(partition);
+                foreach (var item in windowed.Window.OrderBy)
+                    ValidateInsertValueScope(item.Expression);
+                return;
+            case CastExpr cast:
+                ValidateInsertValueScope(cast.Expression);
+                return;
+            case CaseExpr @case:
+                foreach (var branch in @case.Branches)
+                {
+                    ValidateInsertValueScope(branch.Condition);
+                    ValidateInsertValueScope(branch.Value);
+                }
+                if (@case.ElseExpression is not null)
+                    ValidateInsertValueScope(@case.ElseExpression);
+                return;
+            case InExpr @in:
+                ValidateInsertValueScope(@in.Value);
+                foreach (var item in @in.Items)
+                    ValidateInsertValueScope(item);
+                return;
+            case BetweenExpr between:
+                ValidateInsertValueScope(between.Value);
+                ValidateInsertValueScope(between.Lower);
+                ValidateInsertValueScope(between.Upper);
+                return;
+            case IsNullExpr isNull:
+                ValidateInsertValueScope(isNull.Value);
+                return;
+
+            // A scalar/EXISTS subquery owns its own FROM scope and has already been bound and
+            // validated recursively by the common pipeline. Do not treat its internal columns as
+            // free references from the VALUES row.
+            case SubqueryExpr:
+            case ExistsExpr:
+                return;
+
+            default:
+                throw new SqlCompilationException(
+                    $"Unsupported INSERT VALUES expression during scope validation: {expression.GetType().Name}");
+        }
+    }
+
+    private static SqlCompilationException InsertColumnReferenceError(SqlIdentifier identifier) =>
+        new(
+            $"INSERT VALUES scalar expression cannot reference column '{IdentifierText(identifier)}' " +
+            "outside a scalar subquery; use INSERT ... SELECT when the inserted value depends on a source row.");
+
     private static int? ProjectionWidth(SqlStatement statement) => statement switch
     {
         SelectStatement select when select.Select.Any(item => IsProjectionWildcard(item.Expression)) => null,
@@ -139,21 +227,6 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
         && identifier.Parts[^1].Value == "*"
         && !identifier.Parts[^1].WasQuoted;
 
-    private static SelectStatement CreateValuesCarrier(InsertValuesSource values)
-    {
-        var first = values.Rows[0];
-        return new SelectStatement(
-            Ctes: ImmutableArray<CteDefinition>.Empty,
-            Distinct: false,
-            Select: first.Select((value, index) => new SelectItem(value, $"v{index}", value.Span)).ToImmutableArray(),
-            From: null,
-            Joins: ImmutableArray<JoinSource>.Empty,
-            Where: null,
-            GroupBy: ImmutableArray<SqlExpr>.Empty,
-            Having: null,
-            OrderBy: ImmutableArray<OrderByItem>.Empty,
-            Limit: null,
-            Offset: null,
-            Span: SourceSpan.Unknown);
-    }
+    private static string IdentifierText(SqlIdentifier identifier) =>
+        string.Join('.', identifier.Parts.Select(part => part.Value));
 }

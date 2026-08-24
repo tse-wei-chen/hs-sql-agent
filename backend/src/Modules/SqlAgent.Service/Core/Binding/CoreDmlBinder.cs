@@ -21,24 +21,14 @@ public sealed class CoreDmlBinder : ISqlBinder
 
         ValidateInsert(insert);
         var targetName = IdentifierText(insert.Target.Name);
-        var targetFacts = ImmutableHashSet.Create(StringComparer.OrdinalIgnoreCase, targetName);
 
         return insert.Source switch
         {
-            InsertValuesSource values => new BoundStatement(
-                insert with
-                {
-                    Source = values with
-                    {
-                        Rows = values.Rows.Select(row => row.Select(BindInsertValue).ToImmutableArray()).ToImmutableArray()
-                    }
-                },
-                new QueryFacts(
-                    targetFacts,
-                    ImmutableArray<QueryAliasFact>.Empty,
-                    ContainsSubquery: false,
-                    ContainsCte: false),
-                statement.SourceDialect),
+            InsertValuesSource values => BindInsertValues(
+                statement.SourceDialect,
+                insert,
+                values,
+                targetName),
 
             InsertQuerySource querySource => BindInsertQuery(
                 statement.SourceDialect,
@@ -49,6 +39,25 @@ public sealed class CoreDmlBinder : ISqlBinder
             _ => throw new InvalidOperationException(
                 $"Unsupported INSERT source while binding: {insert.Source.GetType().Name}")
         };
+    }
+
+    private BoundStatement BindInsertValues(
+        SqlAgentToolType sourceDialect,
+        InsertStatement insert,
+        InsertValuesSource values,
+        string targetName)
+    {
+        var carrier = CoreInsertValuesCarrier.CreateExpressionCarrier(values);
+        var boundCarrier = _queryBinder.Bind(new ParsedStatement(carrier, sourceDialect));
+        var boundValues = CoreInsertValuesCarrier.RestoreFromExpressionCarrier(
+            values,
+            boundCarrier.Statement);
+        var tables = boundCarrier.Facts.ReferencedTables.Add(targetName);
+
+        return new BoundStatement(
+            insert with { Source = boundValues },
+            boundCarrier.Facts with { ReferencedTables = tables },
+            sourceDialect);
     }
 
     private BoundStatement BindInsertQuery(
@@ -67,13 +76,6 @@ public sealed class CoreDmlBinder : ISqlBinder
             boundQuery.Facts with { ReferencedTables = tables, ContainsSubquery = true },
             sourceDialect);
     }
-
-    private static SqlExpr BindInsertValue(SqlExpr expression) => expression switch
-    {
-        LiteralExpr literal => literal,
-        _ => throw new InvalidOperationException(
-            $"INSERT VALUES currently accepts literal canonical expressions only, not {expression.GetType().Name}.")
-    };
 
     private static void ValidateInsert(InsertStatement insert)
     {

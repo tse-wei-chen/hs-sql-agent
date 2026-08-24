@@ -42,6 +42,18 @@ internal static class CoreBooleanProjectionRules
             $"SQL capability 'dml.update.boolean_assignment' is not supported by provider {provider} for this Core plan.");
     }
 
+    public static void ValidateInsertValue(SqlExpr expression, SqlAgentToolType provider)
+    {
+        if (provider is not (SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer)
+            || !IsDefinitelyBoolean(expression, provider))
+        {
+            return;
+        }
+
+        throw new SqlCompilationException(
+            $"SQL capability 'dml.insert.boolean_value' is not supported by provider {provider} for this Core plan.");
+    }
+
     private static bool IsDefinitelyBoolean(SqlExpr expression, SqlAgentToolType provider) => expression switch
     {
         LiteralExpr { Value: bool } => true,
