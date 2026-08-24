@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.5";
+    public const string Version = "2026-08-24.6";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -30,6 +30,8 @@ public static class SqlCapabilityMatrix
         {
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
+            new("select.singleton", "query", SqlCapabilityStatus.Translated,
+                "SELECT expressions without a FROM source preserve singleton-row semantics; Oracle lowers through DUAL and Firebird through RDB$DATABASE. Free column references and wildcard projection fail closed instead of resolving against a provider dummy table, while COUNT(*) and correlated outer references remain valid."),
             new("select.cte_set", "query", SqlCapabilityStatus.Translated,
                 "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally; CTE output aliases and set-result ordering are validated before lowering."),
             new("select.cte_scope", "query", SqlCapabilityStatus.Rejected,
@@ -66,6 +68,8 @@ public static class SqlCapabilityMatrix
                 provider == SqlAgentToolType.Postgres
                     ? "PostgreSQL INTERVAL 'literal' is preserved."
                     : "INTERVAL is rejected until an equivalent provider translation contract is implemented."),
+            new("aggregate.string", "aggregate", SqlCapabilityStatus.Translated,
+                "Portable string aggregation canonicalizes STRING_AGG/GROUP_CONCAT/LISTAGG/LIST to one value expression plus a literal separator and lowers to provider-native syntax. MySQL targets use GROUP_CONCAT(value SEPARATOR separator); raw MySQL comma-separated GROUP_CONCAT arguments remain multiple value expressions and are never reinterpreted as a separator."),
             new("temporal.typed_literals", "temporal", SqlCapabilityStatus.Translated,
                 "DATE, TIME, and TIMESTAMP literals are parsed into typed values and bound as provider parameters."),
             new("temporal.standalone_time", "temporal",
@@ -106,7 +110,7 @@ public static class SqlCapabilityMatrix
                         ? "Portable JSON extraction has no declared Firebird equivalent."
                         : "Constant JSON property-chain paths such as $.user.name are normalized and translated; root-only, array-index, wildcard, filter, quoted-property, recursive-descent, and dynamic paths fail closed."),
             new("json.path.simple", "json", SqlCapabilityStatus.Translated,
-                "Portable JSON paths are limited to constant property chains beginning at $, for example $.user.name; root-only, array-index, wildcard, filter, quoted-property, recursive-descent, and dynamic paths are rejected before lowering."),
+                "Portable JSON paths are limited to constant property chains beginning at $, for example $.user.name; root-only, array-index, wildcard, filter, quoted property names, recursive descent, and dynamic paths are rejected before lowering."),
             new("json.set", "json",
                 provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
                     ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
