@@ -5,6 +5,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Lowering;
 using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Core.Pipeline;
 
@@ -36,12 +37,14 @@ public sealed class CoreDmlCompiler(
         ParsedStatement parsed,
         SqlAgentToolType targetProvider,
         SqlPlanValidationContext validationContext,
-        DmlCompilationPolicy? policy = null)
+        DmlCompilationPolicy? policy = null,
+        SqlProviderCapabilityProfile? targetProfile = null)
     {
         ArgumentNullException.ThrowIfNull(parsed);
         ArgumentNullException.ThrowIfNull(validationContext);
         policy ??= new DmlCompilationPolicy();
 
+        CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile);
         ValidateMutationPolicy(parsed.Statement, policy);
 
         var bound = _binder.Bind(parsed);
@@ -54,16 +57,20 @@ public sealed class CoreDmlCompiler(
         };
         CoreNoFromReferenceValidator.Validate(canonical.Statement, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
-        var executable = new ExecutableSqlPlan(
+        var profiledStatement = CoreProviderProfileRewriter.Rewrite(
             validated.Statement,
+            targetProvider,
+            targetProfile);
+        var executable = new ExecutableSqlPlan(
+            profiledStatement,
             validated.Facts,
             validated.SourceDialect,
             validated.TargetProvider,
             validated.PolicyVersion);
 
-        CoreSqlKataBackendCompatibility.ValidateDml(validated.Statement, targetProvider);
+        CoreSqlKataBackendCompatibility.ValidateDml(profiledStatement, targetProvider);
 
-        var command = validated.Statement switch
+        var command = profiledStatement switch
         {
             InsertStatement insert when CoreInsertSelectCteLowerer.CanLower(insert) =>
                 CoreInsertSelectCteLowerer.Lower(executable, insert),
@@ -74,7 +81,7 @@ public sealed class CoreDmlCompiler(
             DeleteStatement =>
                 new SqlKataDmlLowerer(targetProvider).Lower(executable),
             _ => throw new SqlCompilationException(
-                $"Statement '{validated.Statement.GetType().Name}' is not supported by the Core DML lowerer.")
+                $"Statement '{profiledStatement.GetType().Name}' is not supported by the Core DML lowerer.")
         };
         var expectedKind = parsed.Statement switch
         {
