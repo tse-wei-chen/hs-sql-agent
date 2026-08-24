@@ -65,8 +65,9 @@ internal static class CoreDateDiffNormalizer
         {
             var capability = $"core_date_diff.unit.{unit.ToLowerInvariant()}";
             throw new SqlCompilationException(
-                $"SQL capability '{capability}' is not modeled losslessly for DATEDIFF from " +
-                $"{sourceDialect} to {targetProvider}. DAY is the currently modeled portable intersection.");
+                $"Cross-dialect DATEDIFF unit '{unit}' from {sourceDialect} to {targetProvider} is not translated: " +
+                $"SQL capability '{capability}' is not modeled losslessly. " +
+                "DAY is the currently modeled portable intersection.");
         }
 
         return PortableDayDifference(
