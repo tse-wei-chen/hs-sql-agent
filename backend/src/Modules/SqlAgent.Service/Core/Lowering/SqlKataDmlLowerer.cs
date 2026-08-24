@@ -22,7 +22,7 @@ namespace SqlAgent.Service.Core.Lowering;
 public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
 {
     private static readonly Regex SafeCastType = new(
-        @"^[A-Za-z_][A-Za-z0-9_.]*(?:\s+(?:PRECISION|VARYING|WITH|WITHOUT|TIME|ZONE|SIGNED|UNSIGNED))*(?:\([0-9]+(?:,[0-9]+)?\))?$",
+        @"^[A-Za-z_][A-Za-z0-9_.]*(?:\s+(?:PRECISION|VARYING|WITH|WITHOUT|TIME|ZONE|SIGNED|UNSIGNED))*(?:\((?:MAX|[0-9]+(?:,[0-9]+)?)\))?(?:\s+(?:PRECISION|VARYING|WITH|WITHOUT|TIME|ZONE|SIGNED|UNSIGNED))*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public CompiledSqlCommand Lower(ExecutableSqlPlan plan)

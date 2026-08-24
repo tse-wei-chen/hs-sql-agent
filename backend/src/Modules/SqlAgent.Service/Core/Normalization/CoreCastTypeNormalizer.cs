@@ -13,8 +13,10 @@ namespace SqlAgent.Service.Core.Normalization;
 internal static class CoreCastTypeNormalizer
 {
     private static readonly Regex TypePattern = new(
-        @"^(?<name>[A-Z_][A-Z0-9_.]*(?:\s+[A-Z_]+)*?)(?:\s*\(\s*(?<p>[0-9]+)(?:\s*,\s*(?<s>[0-9]+))?\s*\))?$",
+        @"^(?<name>[A-Z_][A-Z0-9_.]*(?:\s+[A-Z_]+)*?)(?:\s*\(\s*(?<p>MAX|[0-9]+)(?:\s*,\s*(?<s>[0-9]+))?\s*\))?(?<suffix>(?:\s+[A-Z_]+)*)$",
         RegexOptions.CultureInvariant);
+
+    private const int MaxLengthSentinel = -1;
 
     public static string Normalize(
         string typeName,
@@ -29,17 +31,24 @@ internal static class CoreCastTypeNormalizer
         if (!match.Success)
             throw new SqlCompilationException($"CAST type '{typeName}' is not a safe modeled type shape.");
 
+        var name = CombineTypeName(match.Groups["name"].Value, match.Groups["suffix"].Value);
+        var precision = ParsePrecision(match.Groups["p"]);
+        var scale = ParseOptionalInt(match.Groups["s"]);
+        ValidateMaxShape(name, precision, scale, sourceDialect);
+
         // Do not shrink native SQL coverage just because a vendor extension has no portable
-        // semantic mapping yet. Lowering still applies the existing safe CAST-type grammar.
+        // semantic mapping yet. Lowering still applies the safe CAST-type grammar.
         if (sourceDialect == targetProvider)
             return normalized;
 
-        var spec = Classify(
-            match.Groups["name"].Value,
-            ParseOptionalInt(match.Groups["p"]),
-            ParseOptionalInt(match.Groups["s"]),
-            sourceDialect);
+        var spec = Classify(name, precision, scale, sourceDialect);
         return Render(spec, targetProvider, normalized);
+    }
+
+    private static string CombineTypeName(string name, string suffix)
+    {
+        var tail = suffix.Trim();
+        return string.IsNullOrEmpty(tail) ? name.Trim() : $"{name.Trim()} {tail}";
     }
 
     private static TypeSpec Classify(string name, int? p, int? s, SqlAgentToolType source)
@@ -90,8 +99,31 @@ internal static class CoreCastTypeNormalizer
                 $"CAST type '{name}' from source dialect {source} has no cross-dialect Core semantic mapping yet.")
         };
 
+        if (p == MaxLengthSentinel)
+        {
+            return kind switch
+            {
+                TypeKind.VariableString => new TypeSpec(TypeKind.Text, null, null),
+                TypeKind.VariableBinary => new TypeSpec(TypeKind.BinaryLargeObject, null, null),
+                _ => throw new SqlCompilationException(
+                    $"CAST type '{name}(MAX)' is not a modeled large-value type.")
+            };
+        }
+
         ValidateArguments(kind, p, s, name);
         return new TypeSpec(kind, p, s);
+    }
+
+    private static void ValidateMaxShape(string name, int? p, int? s, SqlAgentToolType source)
+    {
+        if (p != MaxLengthSentinel) return;
+        if (source != SqlAgentToolType.MsSqlServer)
+            throw new SqlCompilationException("CAST type length MAX is supported only for SQL Server source syntax.");
+        if (s is not null)
+            throw new SqlCompilationException("CAST type MAX does not accept a scale.");
+        if (name is not ("VARCHAR" or "NVARCHAR" or "VARBINARY"))
+            throw new SqlCompilationException(
+                $"SQL Server CAST type '{name}' does not support the MAX length marker in the Core model.");
     }
 
     private static void ValidateArguments(TypeKind kind, int? p, int? s, string name)
@@ -214,7 +246,7 @@ internal static class CoreCastTypeNormalizer
             SqlAgentToolType.Sqlite => "TEXT",
             SqlAgentToolType.Oracle => "JSON",
             SqlAgentToolType.MsSqlServer => throw new SqlCompilationException(
-                "JSON has no dedicated SQL Server CAST target; unbounded NVARCHAR(MAX) CAST support is not modeled yet."),
+                "JSON has no version-independent dedicated SQL Server CAST target in the current Core capability profile."),
             SqlAgentToolType.Firebird => throw new SqlCompilationException(
                 "JSON has no dedicated Firebird CAST target in the current Core model."),
             _ => Unsupported(target, source)
@@ -295,8 +327,7 @@ internal static class CoreCastTypeNormalizer
         SqlAgentToolType.MySQL => "CHAR",
         SqlAgentToolType.Sqlite => "TEXT",
         SqlAgentToolType.Oracle => "CLOB",
-        SqlAgentToolType.MsSqlServer => throw new SqlCompilationException(
-            "Unbounded text CAST requires NVARCHAR(MAX), which is not modeled by the current Core CAST grammar yet."),
+        SqlAgentToolType.MsSqlServer => "NVARCHAR(MAX)",
         SqlAgentToolType.Firebird => throw new SqlCompilationException(
             "Text BLOB subtype CAST is not represented by the current Core CAST grammar for Firebird."),
         _ => Unsupported(target, source)
@@ -336,8 +367,7 @@ internal static class CoreCastTypeNormalizer
         SqlAgentToolType.MySQL => "BINARY",
         SqlAgentToolType.Sqlite => "BLOB",
         SqlAgentToolType.Oracle or SqlAgentToolType.Firebird => "BLOB",
-        SqlAgentToolType.MsSqlServer => throw new SqlCompilationException(
-            "Unbounded binary CAST requires VARBINARY(MAX), which is not modeled by the current Core CAST grammar yet."),
+        SqlAgentToolType.MsSqlServer => "VARBINARY(MAX)",
         _ => Unsupported(target, source)
     };
 
@@ -345,13 +375,14 @@ internal static class CoreCastTypeNormalizer
     {
         if (withZone)
         {
-            if (type.Precision is not null)
-                throw new SqlCompilationException(
-                    "Precision on TIME WITH TIME ZONE requires the next CAST grammar expansion before it can be lowered losslessly.");
             return target switch
             {
-                SqlAgentToolType.Postgres => "TIME WITH TIME ZONE",
-                SqlAgentToolType.Firebird => "TIME WITH TIME ZONE",
+                SqlAgentToolType.Postgres => TemporalWithZone(
+                    "TIME",
+                    BoundedPrecision(type.Precision, 6, target)),
+                SqlAgentToolType.Firebird => FirebirdTemporal(
+                    "TIME WITH TIME ZONE",
+                    type.Precision),
                 _ => throw new SqlCompilationException(
                     $"TIME WITH TIME ZONE CAST '{source}' has no lossless target mapping for {target}.")
             };
@@ -359,12 +390,12 @@ internal static class CoreCastTypeNormalizer
 
         return target switch
         {
-            SqlAgentToolType.Postgres => Temporal("TIME", type.Precision),
+            SqlAgentToolType.Postgres => Temporal("TIME", BoundedPrecision(type.Precision, 6, target)),
             SqlAgentToolType.MySQL => Temporal("TIME", BoundedPrecision(type.Precision, 6, target)),
             SqlAgentToolType.Sqlite => "TEXT",
             SqlAgentToolType.MsSqlServer => Temporal("TIME", BoundedPrecision(type.Precision, 7, target)),
             SqlAgentToolType.Oracle => throw new SqlCompilationException("Oracle has no standalone TIME data type."),
-            SqlAgentToolType.Firebird => Temporal("TIME", BoundedPrecision(type.Precision, 4, target)),
+            SqlAgentToolType.Firebird => FirebirdTemporal("TIME", type.Precision),
             _ => Unsupported(target, source)
         };
     }
@@ -373,30 +404,35 @@ internal static class CoreCastTypeNormalizer
     {
         if (withZone)
         {
-            if (type.Precision is not null)
-                throw new SqlCompilationException(
-                    "Precision on TIMESTAMP WITH TIME ZONE requires the next CAST grammar expansion before it can be lowered losslessly.");
             return target switch
             {
-                SqlAgentToolType.Postgres => "TIMESTAMP WITH TIME ZONE",
+                SqlAgentToolType.Postgres => TemporalWithZone(
+                    "TIMESTAMP",
+                    BoundedPrecision(type.Precision, 6, target)),
                 SqlAgentToolType.MySQL => throw new SqlCompilationException(
                     "MySQL CAST has no target type that preserves an explicit UTC offset."),
                 SqlAgentToolType.Sqlite => "TEXT",
-                SqlAgentToolType.MsSqlServer => "DATETIMEOFFSET",
-                SqlAgentToolType.Oracle => "TIMESTAMP WITH TIME ZONE",
-                SqlAgentToolType.Firebird => "TIMESTAMP WITH TIME ZONE",
+                SqlAgentToolType.MsSqlServer => Temporal(
+                    "DATETIMEOFFSET",
+                    BoundedPrecision(type.Precision, 7, target)),
+                SqlAgentToolType.Oracle => TemporalWithZone(
+                    "TIMESTAMP",
+                    BoundedPrecision(type.Precision, 9, target)),
+                SqlAgentToolType.Firebird => FirebirdTemporal(
+                    "TIMESTAMP WITH TIME ZONE",
+                    type.Precision),
                 _ => Unsupported(target, source)
             };
         }
 
         return target switch
         {
-            SqlAgentToolType.Postgres => Temporal("TIMESTAMP", type.Precision),
+            SqlAgentToolType.Postgres => Temporal("TIMESTAMP", BoundedPrecision(type.Precision, 6, target)),
             SqlAgentToolType.MySQL => Temporal("DATETIME", BoundedPrecision(type.Precision, 6, target)),
             SqlAgentToolType.Sqlite => "TEXT",
             SqlAgentToolType.MsSqlServer => Temporal("DATETIME2", BoundedPrecision(type.Precision, 7, target)),
             SqlAgentToolType.Oracle => Temporal("TIMESTAMP", BoundedPrecision(type.Precision, 9, target)),
-            SqlAgentToolType.Firebird => Temporal("TIMESTAMP", BoundedPrecision(type.Precision, 4, target)),
+            SqlAgentToolType.Firebird => FirebirdTemporal("TIMESTAMP", type.Precision),
             _ => Unsupported(target, source)
         };
     }
@@ -410,8 +446,32 @@ internal static class CoreCastTypeNormalizer
         return precision;
     }
 
+    private static string FirebirdTemporal(string name, int? precision)
+    {
+        if (precision is > 4)
+            throw new SqlCompilationException(
+                $"Temporal precision {precision} exceeds Firebird's four fractional-second digits for a lossless CAST.");
+        // Firebird TIME/TIMESTAMP data type syntax has fixed storage precision and does not accept
+        // a type-level (p) precision argument.
+        return name;
+    }
+
     private static string Temporal(string name, int? precision) =>
         precision is null ? name : $"{name}({precision.Value.ToString(CultureInfo.InvariantCulture)})";
+
+    private static string TemporalWithZone(string name, int? precision) =>
+        precision is null
+            ? $"{name} WITH TIME ZONE"
+            : $"{name}({precision.Value.ToString(CultureInfo.InvariantCulture)}) WITH TIME ZONE";
+
+    private static int? ParsePrecision(Group group)
+    {
+        if (!group.Success) return null;
+        if (group.Value.Equals("MAX", StringComparison.OrdinalIgnoreCase)) return MaxLengthSentinel;
+        return int.TryParse(group.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : throw new SqlCompilationException($"CAST type argument '{group.Value}' is outside the supported integer range.");
+    }
 
     private static int? ParseOptionalInt(Group group) =>
         !group.Success

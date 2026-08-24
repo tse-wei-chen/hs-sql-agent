@@ -492,12 +492,26 @@ internal sealed class CoreExpressionTextParser(
         if (_reader.Match(TokenType.LParen))
         {
             var suffix = new StringBuilder("(");
-            var first = _reader.Expect(TokenType.Number, "cast type precision");
-            if (!int.TryParse(first.Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
-                throw CoreTokenReader.Error("Cast type precision must be an integer.", first);
-            suffix.Append(first.Value);
+            var first = _reader.Peek();
+            var isMax = (first.Type is TokenType.Identifier or TokenType.Keyword)
+                        && first.Value.Equals("MAX", StringComparison.OrdinalIgnoreCase);
+            if (isMax)
+            {
+                _reader.Advance();
+                suffix.Append("MAX");
+            }
+            else
+            {
+                first = _reader.Expect(TokenType.Number, "cast type precision or MAX");
+                if (!int.TryParse(first.Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                    throw CoreTokenReader.Error("Cast type precision must be an integer or MAX.", first);
+                suffix.Append(first.Value);
+            }
+
             if (_reader.Match(TokenType.Comma))
             {
+                if (isMax)
+                    throw CoreTokenReader.Error("Cast type MAX does not accept a scale.", _reader.Peek(-1));
                 var second = _reader.Expect(TokenType.Number, "cast type scale");
                 if (!int.TryParse(second.Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
                     throw CoreTokenReader.Error("Cast type scale must be an integer.", second);
@@ -507,6 +521,13 @@ internal sealed class CoreExpressionTextParser(
             suffix.Append(')');
             parts[^1] += suffix;
         }
+
+        // Standard temporal types put WITH/WITHOUT TIME ZONE after the precision, e.g.
+        // TIMESTAMP(6) WITH TIME ZONE. Retain support for qualifier-before-precision spellings too.
+        while ((_reader.Peek().Type is TokenType.Identifier or TokenType.Keyword)
+               && IsCastTypeQualifier(_reader.Peek().Value))
+            parts.Add(_reader.Advance().Value);
+
         return string.Join(' ', parts);
     }
 
