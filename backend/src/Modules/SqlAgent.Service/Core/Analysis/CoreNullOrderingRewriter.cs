@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 
