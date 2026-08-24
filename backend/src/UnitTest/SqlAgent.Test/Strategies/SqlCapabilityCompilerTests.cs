@@ -61,21 +61,21 @@ public class SqlCapabilityCompilerTests
     }
 
     [Fact]
-    public void NullOrdering_FailsClosedOnlyForProvidersWithoutCapability()
+    public void NullOrdering_UsesDefaultEquivalentRewriteOnlyWhereNeeded()
     {
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT amount FROM orders ORDER BY amount DESC NULLS LAST");
 
         foreach (var provider in Providers)
         {
+            var command = Compile(definition, provider, provider);
             if (provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
             {
-                var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
-                Assert.Contains("ordering.nulls", error.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("NULLS LAST", command.Sql, StringComparison.OrdinalIgnoreCase);
             }
             else
             {
-                Assert.Contains("NULLS LAST", Compile(definition, provider, provider).Sql, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("NULLS LAST", command.Sql, StringComparison.OrdinalIgnoreCase);
             }
         }
     }
@@ -351,7 +351,7 @@ public class SqlCapabilityCompilerTests
                 Assert.Single(matrix.Capabilities, x => x.Id == "expression.interval").Status);
             Assert.Equal(
                 provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? SqlCapabilityStatus.Rejected
+                    ? SqlCapabilityStatus.Translated
                     : SqlCapabilityStatus.Supported,
                 Assert.Single(matrix.Capabilities, x => x.Id == "ordering.nulls").Status);
         }

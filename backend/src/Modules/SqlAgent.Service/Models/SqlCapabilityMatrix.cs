@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.6";
+    public const string Version = "2026-08-24.7";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -135,10 +135,10 @@ public static class SqlCapabilityMatrix
                 "Statement-level ORDER BY output positions are represented as typed ordinals and emitted as ordinals rather than parameterized numeric literals."),
             new("ordering.nulls", "ordering",
                 provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? SqlCapabilityStatus.Rejected
+                    ? SqlCapabilityStatus.Translated
                     : SqlCapabilityStatus.Supported,
                 provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? "NULLS FIRST/LAST is rejected until an equivalent ordering rewrite is implemented."
+                    ? "Structured ASC NULLS FIRST and DESC NULLS LAST are canonicalized to the provider's identical native default ordering and the unsupported modifier is omitted. ASC NULLS LAST and DESC NULLS FIRST remain fail-closed because no single-evaluation rewrite is modeled; raw MySQL/SQL Server source syntax with NULLS modifiers is rejected at the source-dialect boundary."
                     : "NULLS FIRST/LAST is emitted natively."),
             new("parameter.unbound", "parameter", SqlCapabilityStatus.Rejected,
                 "Unbound ?, :name, @name, $1, and {{name}} parameters are rejected; Custom Tool parameters are rendered first."),
