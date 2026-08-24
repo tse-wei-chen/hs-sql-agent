@@ -87,15 +87,41 @@ public class CoreCteBackendCompatibilityTests
         Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_CteInsideSetBranch_RemainsFailClosed()
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_CteInsideSetBranch_UsesWrappedBranchAndOrderedBindings(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "SELECT id FROM users WHERE tenant_id = 1 UNION " +
+            "(WITH archived_rows AS (SELECT id FROM archived WHERE tenant_id = 7) " +
+            "SELECT id FROM archived_rows WHERE id > 9)",
+            targetProvider);
+
+        Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set_branch", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, command.Parameters.Length);
+        Assert.Equal(1, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[1].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[2].Value));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_CteInsideSetBranch_FailsClosedWithoutDeclaredTargetGrammar(
+        SqlAgentToolType targetProvider)
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "SELECT id FROM users UNION " +
-            "(WITH archived_rows AS (SELECT id FROM archived) SELECT id FROM archived_rows)"));
+            "(WITH archived_rows AS (SELECT id FROM archived) SELECT id FROM archived_rows)",
+            targetProvider));
 
         Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("set-operation-branch-local", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -104,6 +130,17 @@ public class CoreCteBackendCompatibilityTests
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "SELECT (SELECT d.id FROM " +
             "(WITH active AS (SELECT id FROM archived) SELECT id FROM active) AS d LIMIT 1) AS value " +
+            "FROM users"));
+
+        Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_SetBranchCteInsideScalarSubquery_RemainsFailClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT (SELECT id FROM archived UNION " +
+            "(WITH active AS (SELECT id FROM users) SELECT id FROM active) LIMIT 1) AS value " +
             "FROM users"));
 
         Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);

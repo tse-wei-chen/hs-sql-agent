@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.10";
+    public const string Version = "2026-08-24.11";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -43,8 +43,17 @@ public static class SqlCapabilityMatrix
                     : provider == SqlAgentToolType.MsSqlServer
                         ? "SQL Server has no declared portable WITH-at-the-start-of-a-general-derived-subquery contract in the Core target profile, so derived-table-local CTEs fail closed."
                         : "Firebird nested CTE placement is kept fail-closed until a target-profile contract is modeled and integration-tested."),
+            new("select.cte_set_branch", "query",
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle
+                    ? SqlCapabilityStatus.Translated
+                    : SqlCapabilityStatus.Rejected,
+                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle
+                    ? "Set-operation branches with a statement-root CTE are fully compiled as target fragments and wrapped behind a CTE-free derived SELECT before UNION/INTERSECT/EXCEPT lowering, preserving branch scope, tail clauses, and ordered bindings."
+                    : provider == SqlAgentToolType.MsSqlServer
+                        ? "SQL Server has no declared portable nested-WITH branch wrapper contract in the Core target profile, so set-branch-local CTEs fail closed."
+                        : "Firebird nested CTE placement is kept fail-closed for set branches until a target-profile contract is modeled and integration-tested."),
             new("select.cte_scope", "query", SqlCapabilityStatus.Rejected,
-                "Set-operation-branch-local root CTEs remain fail-closed. Derived-table-local CTEs inside eagerly rendered scalar/EXISTS subqueries or nested INSERT source query graphs also remain rejected because those paths cannot use the query-graph derived CTE adapter."),
+                "Nested CTE fragments inside eagerly rendered scalar/EXISTS subqueries or nested INSERT source query graphs remain fail-closed because those paths cannot use the query-graph CTE adapter. Provider-specific nested-WITH restrictions are declared separately by select.cte_derived and select.cte_set_branch."),
             new("expression.arithmetic", "expression", SqlCapabilityStatus.Translated,
                 "+, -, *, and / are preserved by the AST/compiler."),
             new("expression.modulo", "expression",

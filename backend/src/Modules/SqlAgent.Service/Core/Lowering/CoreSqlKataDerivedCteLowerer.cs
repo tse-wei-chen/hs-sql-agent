@@ -12,19 +12,21 @@ using SqlKata.Compilers;
 namespace SqlAgent.Service.Core.Lowering;
 
 /// <summary>
-/// Query lowerer for provider/query-graph positions where a derived table owns a statement-root
-/// CTE. SqlKata normally compiles a QueryFromClause through CompileSelectQuery and omits that
-/// nested query's WITH components. This adapter compiles only those derived query nodes through a
-/// full target compiler invocation, converts compiler-owned parameter names back to positional
-/// bindings, and replaces the nested source with a RawFromClause. CTE-free derived tables keep the
-/// ordinary structured SqlKata path.
+/// Query lowerer for nested query-graph positions that own statement-root CTEs. SqlKata normally
+/// compiles derived QueryFromClause and set Combine branches through CompileSelectQuery, which
+/// omits nested WITH components. This adapter fully compiles those nested CTE query fragments,
+/// converts compiler-owned parameter names back to positional bindings, and reattaches them behind
+/// a plain derived SELECT wrapper. CTE-free nested queries keep the ordinary structured SqlKata
+/// path.
 /// </summary>
 internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : IProviderLowerer
 {
+    private const string SetBranchAlias = "_set_branch";
+
     public SqlAgentToolType Provider { get; } = provider;
 
     public static bool CanLower(SqlStatement statement) =>
-        ContainsDerivedCte(statement);
+        ContainsNestedCteFragment(statement);
 
     public CompiledSqlCommand Lower(ExecutableSqlPlan plan)
     {
@@ -37,7 +39,7 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
 
         var compiler = SqlKataProviderLowerer.CreateCompiler(Provider);
         var query = SqlKataProviderLowerer.BuildQuery(plan.Statement, compiler);
-        RewriteDerivedCteSources(query, compiler);
+        RewriteNestedCteSources(query, compiler);
         var result = compiler.Compile(query);
         var parameters = result.NamedBindings
             .OrderBy(pair => ParameterOrdinal(pair.Key))
@@ -56,22 +58,24 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
         };
     }
 
-    private static bool ContainsDerivedCte(SqlStatement statement) => statement switch
+    private static bool ContainsNestedCteFragment(SqlStatement statement) => statement switch
     {
         SelectStatement select =>
-            SourceContainsDerivedCte(select.From)
-            || select.Joins.Any(join => SourceContainsDerivedCte(join.Source))
-            || select.Ctes.Any(cte => ContainsDerivedCte(cte.Query)),
+            SourceContainsNestedCte(select.From)
+            || select.Joins.Any(join => SourceContainsNestedCte(join.Source))
+            || select.Ctes.Any(cte => ContainsNestedCteFragment(cte.Query)),
         QueryStatement query =>
-            ContainsDerivedCte(query.Head)
-            || query.SetOperations.Any(operation => ContainsDerivedCte(operation.Query)),
+            ContainsNestedCteFragment(query.Head)
+            || query.SetOperations.Any(operation =>
+                HasRootCtes(operation.Query)
+                || ContainsNestedCteFragment(operation.Query)),
         _ => false
     };
 
-    private static bool SourceContainsDerivedCte(TableSource? source) => source switch
+    private static bool SourceContainsNestedCte(TableSource? source) => source switch
     {
         DerivedTableSource derived =>
-            HasRootCtes(derived.Query) || ContainsDerivedCte(derived.Query),
+            HasRootCtes(derived.Query) || ContainsNestedCteFragment(derived.Query),
         _ => false
     };
 
@@ -82,10 +86,10 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
         _ => false
     };
 
-    private static void RewriteDerivedCteSources(Query query, Compiler compiler)
+    private static void RewriteNestedCteSources(Query query, Compiler compiler)
     {
         foreach (var cte in query.GetComponents<QueryFromClause>("cte").ToArray())
-            RewriteDerivedCteSources(cte.Query, compiler);
+            RewriteNestedCteSources(cte.Query, compiler);
 
         RewriteFromClause(query.Clauses, compiler);
 
@@ -93,7 +97,14 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
             RewriteFromClause(join.Join.Clauses, compiler);
 
         foreach (var combine in query.GetComponents<Combine>("combine").ToArray())
-            RewriteDerivedCteSources(combine.Query, compiler);
+        {
+            RewriteNestedCteSources(combine.Query, compiler);
+            if (!combine.Query.HasComponent("cte"))
+                continue;
+
+            var rendered = CompileFragment(combine.Query, compiler);
+            combine.Query = CreateFragmentWrapper(rendered, SetBranchAlias, compiler);
+        }
     }
 
     private static void RewriteFromClause(List<AbstractClause> clauses, Compiler compiler)
@@ -103,7 +114,7 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
             if (clauses[index] is not QueryFromClause from || from.Component != "from")
                 continue;
 
-            RewriteDerivedCteSources(from.Query, compiler);
+            RewriteNestedCteSources(from.Query, compiler);
             if (!from.Query.HasComponent("cte"))
                 continue;
 
@@ -111,19 +122,49 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
                 throw new SqlCompilationException("A derived table with a CTE requires an alias.");
 
             var rendered = CompileFragment(from.Query, compiler);
-            var alias = compiler.WrapValue(from.Alias);
-            var expression = compiler is OracleCompiler
-                ? $"({rendered.Sql}) {alias}"
-                : $"({rendered.Sql}) AS {alias}";
-            clauses[index] = new RawFromClause
-            {
-                Component = from.Component,
-                Engine = from.Engine,
-                Alias = from.Alias,
-                Expression = expression,
-                Bindings = rendered.Bindings.ToArray()
-            };
+            clauses[index] = CreateRawFromClause(
+                rendered,
+                from.Alias,
+                from.Component,
+                from.Engine,
+                compiler);
         }
+    }
+
+    private static Query CreateFragmentWrapper(
+        RenderedFragment rendered,
+        string alias,
+        Compiler compiler) =>
+        new Query()
+            .FromRaw(
+                RenderDerivedExpression(rendered.Sql, alias, compiler),
+                rendered.Bindings.ToArray())
+            .Select("*");
+
+    private static RawFromClause CreateRawFromClause(
+        RenderedFragment rendered,
+        string alias,
+        string component,
+        string? engine,
+        Compiler compiler) =>
+        new()
+        {
+            Component = component,
+            Engine = engine,
+            Alias = alias,
+            Expression = RenderDerivedExpression(rendered.Sql, alias, compiler),
+            Bindings = rendered.Bindings.ToArray()
+        };
+
+    private static string RenderDerivedExpression(
+        string sql,
+        string alias,
+        Compiler compiler)
+    {
+        var renderedAlias = compiler.WrapValue(alias);
+        return compiler is OracleCompiler
+            ? $"({sql}) {renderedAlias}"
+            : $"({sql}) AS {renderedAlias}";
     }
 
     private static RenderedFragment CompileFragment(Query query, Compiler compiler)

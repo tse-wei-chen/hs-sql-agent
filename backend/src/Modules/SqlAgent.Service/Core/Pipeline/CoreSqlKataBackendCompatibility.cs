@@ -8,9 +8,9 @@ namespace SqlAgent.Service.Core.Pipeline;
 /// <summary>
 /// Guards query shapes whose CTE scope cannot be preserved by the available lowering path.
 /// Statement-root INSERT..SELECT CTEs have a dedicated provider-aware lowerer. Query-graph derived
-/// tables can also use a full-compile raw source on providers that accept WITH at the beginning of
-/// a general subquery. Eager scalar-subquery and INSERT-source nested derived CTEs remain
-/// fail-closed because those paths are rendered before the query-graph adapter can intervene.
+/// tables and set-operation branches can use fully compiled fragments on providers that accept WITH
+/// at the beginning of a general subquery. Eager scalar-subquery and INSERT-source nested CTEs
+/// remain fail-closed because those paths are rendered before the query-graph adapter can intervene.
 /// </summary>
 internal static class CoreSqlKataBackendCompatibility
 {
@@ -126,16 +126,19 @@ internal static class CoreSqlKataBackendCompatibility
         switch (position)
         {
             case QueryPosition.DerivedTable
-                when !CanLowerDerivedCte(provider, allowDerivedCteFragments):
+                when !CanLowerNestedCteFragment(provider, allowDerivedCteFragments):
                 throw CteScopeError(
                     "select.cte_scope",
                     allowDerivedCteFragments
                         ? $"provider {provider} has no declared portable WITH-in-derived-table lowering contract"
                         : "a derived-table-local CTE is inside an eager scalar/DML nested compilation path where the query-graph CTE adapter cannot preserve it");
-            case QueryPosition.SetBranch:
+            case QueryPosition.SetBranch
+                when !CanLowerNestedCteFragment(provider, allowDerivedCteFragments):
                 throw CteScopeError(
                     "select.cte_scope",
-                    "a set-operation-branch-local root CTE is still compiled through SqlKata CompileSelectQuery and has no lossless portable branch rewrite yet");
+                    allowDerivedCteFragments
+                        ? $"provider {provider} has no declared portable wrapped set-branch CTE lowering contract"
+                        : "a set-operation-branch-local CTE is inside an eager scalar/DML nested compilation path where the query-graph CTE adapter cannot preserve it");
         }
     }
 
@@ -144,10 +147,10 @@ internal static class CoreSqlKataBackendCompatibility
         SqlAgentToolType provider,
         bool allowDerivedCteFragments) =>
         position is QueryPosition.Root or QueryPosition.InsertSelectSource
-        || position == QueryPosition.DerivedTable
-            && CanLowerDerivedCte(provider, allowDerivedCteFragments);
+        || position is QueryPosition.DerivedTable or QueryPosition.SetBranch
+            && CanLowerNestedCteFragment(provider, allowDerivedCteFragments);
 
-    private static bool CanLowerDerivedCte(
+    private static bool CanLowerNestedCteFragment(
         SqlAgentToolType provider,
         bool allowDerivedCteFragments) =>
         allowDerivedCteFragments
