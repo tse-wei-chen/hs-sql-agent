@@ -1,7 +1,9 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Pipeline;
+using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Analysis;
 
@@ -21,7 +23,7 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
         if (statement.Statement is not InsertStatement insert)
             return _common.Validate(statement, context);
 
-        ValidateInsertShape(insert);
+        ValidateInsertShape(insert, statement.TargetProvider);
         var validationCarrier = insert.Source switch
         {
             InsertQuerySource insertQuerySource => insertQuerySource.Query,
@@ -52,25 +54,74 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
             context.PolicyVersion);
     }
 
-    private static void ValidateInsertShape(InsertStatement insert)
+    private static void ValidateInsertShape(
+        InsertStatement insert,
+        SqlAgentToolType provider)
     {
         if (insert.Columns.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT requires at least one target column.");
         if (insert.Columns.Any(column => column.Parts.Length != 1))
             throw new SqlCompilationException("INSERT target columns must be unqualified.");
-        if (insert.Source is InsertValuesSource values)
+
+        switch (insert.Source)
         {
-            if (values.Rows.IsDefaultOrEmpty)
-                throw new SqlCompilationException("INSERT VALUES requires at least one row.");
-            foreach (var row in values.Rows)
-            {
-                if (row.Length != insert.Columns.Length)
-                    throw new SqlCompilationException("INSERT VALUES row width does not match target column count.");
-                if (row.Any(value => value is not LiteralExpr))
-                    throw new SqlCompilationException("INSERT VALUES currently accepts canonical literal values only.");
-            }
+            case InsertValuesSource values:
+                if (values.Rows.IsDefaultOrEmpty)
+                    throw new SqlCompilationException("INSERT VALUES requires at least one row.");
+                foreach (var row in values.Rows)
+                {
+                    if (row.Length != insert.Columns.Length)
+                        throw new SqlCompilationException("INSERT VALUES row width does not match target column count.");
+                    foreach (var value in row)
+                    {
+                        if (value is not LiteralExpr literal)
+                            throw new SqlCompilationException("INSERT VALUES currently accepts canonical literal values only.");
+                        CoreProviderCapabilityRules.ValidateLiteral(literal, provider);
+                    }
+                }
+                return;
+
+            case InsertQuerySource querySource:
+                var sourceWidth = ProjectionWidth(querySource.Query);
+                if (sourceWidth is null)
+                {
+                    throw new SqlCompilationException(
+                        "INSERT ... SELECT requires a statically known source projection width; " +
+                        "wildcard projections are rejected at the Core validation boundary.");
+                }
+                if (sourceWidth.Value != insert.Columns.Length)
+                {
+                    throw new SqlCompilationException(
+                        $"INSERT ... SELECT projection width {sourceWidth.Value} does not match " +
+                        $"target column count {insert.Columns.Length}.");
+                }
+                return;
+
+            default:
+                throw new SqlCompilationException(
+                    $"Unsupported INSERT source during shape validation: {insert.Source.GetType().Name}");
         }
     }
+
+    private static int? ProjectionWidth(SqlStatement statement) => statement switch
+    {
+        SelectStatement select when select.Select.Any(item => IsProjectionWildcard(item.Expression)) => null,
+        SelectStatement select => select.Select.Length,
+        QueryStatement query => ProjectionWidth(query.Head),
+        _ => null
+    };
+
+    private static bool IsProjectionWildcard(SqlExpr expression) => expression switch
+    {
+        ColumnExpr column => IsWildcard(column.Name),
+        BoundColumnExpr column => IsWildcard(column.Name),
+        _ => false
+    };
+
+    private static bool IsWildcard(SqlIdentifier identifier) =>
+        !identifier.Parts.IsDefaultOrEmpty
+        && identifier.Parts[^1].Value == "*"
+        && !identifier.Parts[^1].WasQuoted;
 
     private static SelectStatement CreateValuesCarrier(InsertValuesSource values)
     {

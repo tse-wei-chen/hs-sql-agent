@@ -144,7 +144,9 @@ internal static class CoreSqlSemanticValidator
     {
         switch (expression)
         {
-            case LiteralExpr:
+            case LiteralExpr literal:
+                CoreProviderCapabilityRules.ValidateLiteral(literal, provider);
+                return;
             case ColumnExpr:
             case BoundColumnExpr:
             case IntervalExpr:
@@ -169,6 +171,7 @@ internal static class CoreSqlSemanticValidator
                 return;
 
             case WindowedExpr windowed:
+                CoreProviderCapabilityRules.ValidateWindow(windowed, provider);
                 if (context is not (ClauseContext.Projection or ClauseContext.OrderBy))
                 {
                     throw new SqlCompilationException(
@@ -236,6 +239,7 @@ internal static class CoreSqlSemanticValidator
         SqlAgentToolType provider)
     {
         var name = IdentifierText(function.Name).ToUpperInvariant();
+        CoreProviderCapabilityRules.ValidateFunction(function, provider);
         var isAggregate = AggregateFunctions.Contains(name);
         var isWindowFunction = WindowFunctions.Contains(name);
 

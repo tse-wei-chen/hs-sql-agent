@@ -5,6 +5,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 using SqlKata;
 using SqlKata.Compilers;
 
@@ -44,7 +45,7 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
         var result = compiler.Compile(query);
         var parameters = result.NamedBindings
             .OrderBy(pair => ParameterOrdinal(pair.Key))
-            .Select(pair => new SqlParameterValue(pair.Key, pair.Value))
+            .Select(pair => new SqlParameterValue(pair.Key, NormalizeLiteral(pair.Value)))
             .ToImmutableArray();
         var command = new CompiledSqlCommand(
             result.Sql,
@@ -97,18 +98,31 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
 
     private static object? NormalizeLiteral(object? value)
     {
-        if (value is not JsonElement json) return value;
-        return json.ValueKind switch
+        if (value is JsonElement json)
         {
-            JsonValueKind.Null or JsonValueKind.Undefined => null,
-            JsonValueKind.String => json.GetString(),
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Number when json.TryGetInt64(out var integer) => integer,
-            JsonValueKind.Number when json.TryGetDecimal(out var number) => number,
-            JsonValueKind.Number => json.GetDouble(),
-            _ => throw new SqlCompilationException(
-                $"INSERT literal JSON kind '{json.ValueKind}' is not a scalar SQL value.")
+            return json.ValueKind switch
+            {
+                JsonValueKind.Null or JsonValueKind.Undefined => null,
+                JsonValueKind.String => json.GetString(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number when json.TryGetInt64(out var integer) => integer,
+                JsonValueKind.Number when json.TryGetDecimal(out var number) => number,
+                JsonValueKind.Number => json.GetDouble(),
+                _ => throw new SqlCompilationException(
+                    $"INSERT literal JSON kind '{json.ValueKind}' is not a scalar SQL value.")
+            };
+        }
+
+        return value switch
+        {
+            SqlDateValue date => date.Value.ToDateTime(TimeOnly.MinValue),
+            SqlTimeValue time => time.Value.ToTimeSpan(),
+            SqlLocalDateTimeValue local => DateTime.SpecifyKind(local.Value, DateTimeKind.Unspecified),
+            SqlOffsetDateTimeValue offset => offset.Value,
+            DateOnly date => date.ToDateTime(TimeOnly.MinValue),
+            TimeOnly time => time.ToTimeSpan(),
+            _ => value
         };
     }
 
