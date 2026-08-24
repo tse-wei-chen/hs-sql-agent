@@ -37,6 +37,11 @@ internal static class CoreSqlSemanticValidator
                 foreach (var operation in query.SetOperations)
                     Validate(operation.Query, provider);
                 ValidateSetOperationWidths(query);
+                ValidateOrderingSemantics(
+                    query.OrderBy,
+                    query.Head,
+                    provider,
+                    setOperationScope: true);
                 foreach (var item in query.OrderBy)
                     Visit(item.Expression, ClauseContext.OrderBy, insideSetFunction: false, withinWindow: false, provider);
                 return;
@@ -80,8 +85,207 @@ internal static class CoreSqlSemanticValidator
             Visit(expression, ClauseContext.GroupBy, insideSetFunction: false, withinWindow: false, provider);
         if (select.Having is not null)
             Visit(select.Having, ClauseContext.Having, insideSetFunction: false, withinWindow: false, provider);
+
+        ValidateOrderingSemantics(
+            select.OrderBy,
+            select,
+            provider,
+            setOperationScope: false);
         foreach (var item in select.OrderBy)
             Visit(item.Expression, ClauseContext.OrderBy, insideSetFunction: false, withinWindow: false, provider);
+    }
+
+    private static void ValidateOrderingSemantics(
+        IEnumerable<OrderByItem> orderBy,
+        SelectStatement projection,
+        SqlAgentToolType provider,
+        bool setOperationScope)
+    {
+        var width = ProjectionWidth(projection);
+        var outputNames = setOperationScope ? ProjectionOutputNames(projection) : null;
+
+        foreach (var item in orderBy)
+        {
+            if (TryOrderByOrdinal(item.Expression, out var position))
+            {
+                if (position <= 0)
+                {
+                    throw new SqlCompilationException(
+                        $"ORDER BY output position must be positive; received {position}.");
+                }
+                if (width is not null && position > width.Value)
+                {
+                    throw new SqlCompilationException(
+                        $"ORDER BY output position {position} exceeds projection width {width.Value}.");
+                }
+                continue;
+            }
+
+            if (setOperationScope)
+                ValidateSetOrderingReferences(item.Expression, outputNames, provider);
+        }
+    }
+
+    private static IReadOnlyList<IdentifierPart>? ProjectionOutputNames(SelectStatement select)
+    {
+        if (select.Select.Any(item => IsProjectionWildcard(item.Expression)))
+            return null;
+
+        var result = new List<IdentifierPart>(select.Select.Length);
+        foreach (var item in select.Select)
+        {
+            if (item.Alias is not null)
+            {
+                result.Add(item.Alias);
+                continue;
+            }
+
+            var identifier = item.Expression switch
+            {
+                BoundColumnExpr column => column.Name,
+                ColumnExpr column => column.Name,
+                _ => null
+            };
+            if (identifier is null || identifier.Parts.IsDefaultOrEmpty || IsWildcard(identifier))
+                return null;
+            result.Add(identifier.Parts[^1]);
+        }
+        return result;
+    }
+
+    private static void ValidateSetOrderingReferences(
+        SqlExpr expression,
+        IReadOnlyList<IdentifierPart>? outputNames,
+        SqlAgentToolType provider)
+    {
+        switch (expression)
+        {
+            case LiteralExpr:
+            case IntervalExpr:
+                return;
+            case ColumnExpr column:
+                ValidateSetOutputReference(column.Name, outputNames, provider);
+                return;
+            case BoundColumnExpr column:
+                ValidateSetOutputReference(column.Name, outputNames, provider);
+                return;
+            case UnaryExpr unary:
+                ValidateSetOrderingReferences(unary.Operand, outputNames, provider);
+                return;
+            case BinaryExpr binary:
+                ValidateSetOrderingReferences(binary.Left, outputNames, provider);
+                ValidateSetOrderingReferences(binary.Right, outputNames, provider);
+                return;
+            case FunctionCallExpr function:
+                foreach (var argument in function.Arguments)
+                    ValidateSetOrderingReferences(argument, outputNames, provider);
+                return;
+            case FilterExpr filter:
+                ValidateSetOrderingReferences(filter.Expression, outputNames, provider);
+                ValidateSetOrderingReferences(filter.Predicate, outputNames, provider);
+                return;
+            case WindowedExpr windowed:
+                ValidateSetOrderingReferences(windowed.Expression, outputNames, provider);
+                foreach (var partition in windowed.Window.PartitionBy)
+                    ValidateSetOrderingReferences(partition, outputNames, provider);
+                foreach (var item in windowed.Window.OrderBy)
+                    ValidateSetOrderingReferences(item.Expression, outputNames, provider);
+                return;
+            case CastExpr cast:
+                ValidateSetOrderingReferences(cast.Expression, outputNames, provider);
+                return;
+            case CaseExpr @case:
+                foreach (var branch in @case.Branches)
+                {
+                    ValidateSetOrderingReferences(branch.Condition, outputNames, provider);
+                    ValidateSetOrderingReferences(branch.Value, outputNames, provider);
+                }
+                if (@case.ElseExpression is not null)
+                    ValidateSetOrderingReferences(@case.ElseExpression, outputNames, provider);
+                return;
+            case InExpr @in:
+                ValidateSetOrderingReferences(@in.Value, outputNames, provider);
+                foreach (var value in @in.Items)
+                    ValidateSetOrderingReferences(value, outputNames, provider);
+                return;
+            case BetweenExpr between:
+                ValidateSetOrderingReferences(between.Value, outputNames, provider);
+                ValidateSetOrderingReferences(between.Lower, outputNames, provider);
+                ValidateSetOrderingReferences(between.Upper, outputNames, provider);
+                return;
+            case IsNullExpr isNull:
+                ValidateSetOrderingReferences(isNull.Value, outputNames, provider);
+                return;
+            case SubqueryExpr:
+            case ExistsExpr:
+                // A subquery has its own scope. Its internal identifiers are validated when the
+                // subquery itself is visited and must not be mistaken for set-result references.
+                return;
+            default:
+                throw new SqlCompilationException(
+                    $"Unsupported set-operation ORDER BY expression '{expression.GetType().Name}'.");
+        }
+    }
+
+    private static void ValidateSetOutputReference(
+        SqlIdentifier identifier,
+        IReadOnlyList<IdentifierPart>? outputNames,
+        SqlAgentToolType provider)
+    {
+        if (identifier.Parts.Length != 1 || IsWildcard(identifier))
+        {
+            throw new SqlCompilationException(
+                $"Set-operation ORDER BY can reference combined output columns only; " +
+                $"branch-qualified reference '{IdentifierText(identifier)}' is not valid after combination.");
+        }
+
+        if (outputNames is null) return;
+
+        var reference = identifier.Parts[0];
+        var matches = outputNames
+            .Count(candidate => IdentifiersEquivalent(candidate, reference, provider));
+        if (matches == 0)
+        {
+            throw new SqlCompilationException(
+                $"Set-operation ORDER BY reference '{reference.Value}' is not present in the combined output projection.");
+        }
+        if (matches > 1)
+        {
+            throw new SqlCompilationException(
+                $"Set-operation ORDER BY reference '{reference.Value}' is ambiguous in the combined output projection; use an output position.");
+        }
+    }
+
+    private static bool IdentifiersEquivalent(
+        IdentifierPart left,
+        IdentifierPart right,
+        SqlAgentToolType provider)
+    {
+        if (provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite)
+            return string.Equals(left.Value, right.Value, StringComparison.OrdinalIgnoreCase);
+
+        static string NormalizeDelimitedAware(IdentifierPart part, SqlAgentToolType target) =>
+            part.WasQuoted
+                ? part.Value
+                : target == SqlAgentToolType.Postgres
+                    ? part.Value.ToLowerInvariant()
+                    : part.Value.ToUpperInvariant();
+
+        return string.Equals(
+            NormalizeDelimitedAware(left, provider),
+            NormalizeDelimitedAware(right, provider),
+            StringComparison.Ordinal);
+    }
+
+    private static bool TryOrderByOrdinal(SqlExpr expression, out int position)
+    {
+        if (expression is LiteralExpr { Value: OrderByOrdinalValue ordinal })
+        {
+            position = ordinal.Position;
+            return true;
+        }
+        position = default;
+        return false;
     }
 
     private static void ValidateJoinShape(JoinSource join, SqlAgentToolType provider)
@@ -144,6 +348,13 @@ internal static class CoreSqlSemanticValidator
     {
         switch (expression)
         {
+            case LiteralExpr { Value: OrderByOrdinalValue ordinal }:
+                if (context != ClauseContext.OrderBy)
+                {
+                    throw new SqlCompilationException(
+                        $"ORDER BY output position {ordinal.Position} is not a scalar SQL value and cannot appear in '{ContextName(context)}'.");
+                }
+                return;
             case LiteralExpr literal:
                 CoreProviderCapabilityRules.ValidateLiteral(literal, provider);
                 return;

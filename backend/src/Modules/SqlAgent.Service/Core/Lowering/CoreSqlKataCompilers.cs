@@ -1,3 +1,5 @@
+using System.Globalization;
+using SqlAgent.Service.Core.Ast;
 using SqlKata;
 using SqlKata.Compilers;
 
@@ -52,14 +54,50 @@ internal static class CoreSqlKataPagination
     }
 }
 
+/// <summary>
+/// A statement-level ORDER BY integer is an output position, not a scalar value. Core represents
+/// that distinction with an internal marker while the SqlKata query graph still carries an
+/// AbstractColumn. Intercept only that marker and emit canonical decimal digits; every ordinary
+/// literal continues through SqlKata's parameter binding path.
+/// </summary>
+internal static class CoreSqlKataOrderByOrdinal
+{
+    public static bool TryCompile(AbstractColumn column, out string sql)
+    {
+        if (column is RawColumn raw
+            && raw.Expression == "?"
+            && raw.Bindings is { Length: 1 }
+            && raw.Bindings[0] is OrderByOrdinalValue ordinal)
+        {
+            if (ordinal.Position <= 0)
+                throw new InvalidOperationException("ORDER BY output position must be positive before lowering.");
+            sql = ordinal.Position.ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        sql = string.Empty;
+        return false;
+    }
+}
+
 internal sealed class CorePostgresCompiler : PostgresCompiler
 {
+    public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
+        CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
+            ? ordinal
+            : base.CompileColumn(ctx, column);
+
     public override string CompileLimit(SqlResult ctx) =>
         CoreSqlKataPagination.CompileAnsiLimitOffset(ctx, EngineCode, parameterPlaceholder);
 }
 
 internal sealed class CoreMySqlCompiler : MySqlCompiler
 {
+    public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
+        CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
+            ? ordinal
+            : base.CompileColumn(ctx, column);
+
     public override string CompileLimit(SqlResult ctx)
     {
         var limit = CoreSqlKataPagination.Limit(ctx, EngineCode);
@@ -87,6 +125,11 @@ internal sealed class CoreMySqlCompiler : MySqlCompiler
 
 internal sealed class CoreSqliteCompiler : SqliteCompiler
 {
+    public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
+        CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
+            ? ordinal
+            : base.CompileColumn(ctx, column);
+
     public override string CompileLimit(SqlResult ctx)
     {
         var limit = CoreSqlKataPagination.Limit(ctx, EngineCode);
@@ -114,6 +157,11 @@ internal sealed class CoreSqliteCompiler : SqliteCompiler
 
 internal sealed class CoreOracleCompiler : OracleCompiler
 {
+    public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
+        CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
+            ? ordinal
+            : base.CompileColumn(ctx, column);
+
     public override string CompileLimit(SqlResult ctx)
     {
         if (UseLegacyPagination)
@@ -144,6 +192,11 @@ internal sealed class CoreOracleCompiler : OracleCompiler
 
 internal sealed class CoreFirebirdCompiler : FirebirdCompiler
 {
+    public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
+        CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
+            ? ordinal
+            : base.CompileColumn(ctx, column);
+
     public override string WrapValue(string value)
     {
         if (value == "*") return value;
@@ -171,6 +224,11 @@ internal sealed class CoreFirebirdCompiler : FirebirdCompiler
 
 internal sealed class CoreSqlServerCompiler : SqlServerCompiler
 {
+    public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
+        CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
+            ? ordinal
+            : base.CompileColumn(ctx, column);
+
     protected override string CompileColumns(SqlResult ctx)
     {
         var zeroLimit = CoreSqlKataPagination.Limit(ctx, EngineCode) is { Limit: 0 };

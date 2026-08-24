@@ -287,7 +287,35 @@ internal sealed class CoreQueryTextParser
         do
         {
             var start = _reader.Position;
+            var firstToken = _reader.Peek();
+            var expressionStart = _reader.Position;
             var expression = _expressions.ParseExpression();
+            var expressionEnd = _reader.Position;
+
+            // A bare unsigned integer in a statement-level ORDER BY denotes a 1-based output
+            // position in the SQL dialects supported by Core. Preserve that semantic distinction
+            // instead of parameterizing the integer as a scalar constant. Window ORDER BY is
+            // parsed separately in CoreExpressionTextParser and intentionally does not use this
+            // marker because it orders input rows, not SELECT-list outputs.
+            if (firstToken.Type == TokenType.Number
+                && expressionEnd == expressionStart + 1
+                && firstToken.Value.All(char.IsDigit))
+            {
+                if (!int.TryParse(
+                        firstToken.Value,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var ordinal))
+                {
+                    throw CoreTokenReader.Error(
+                        "ORDER BY output position exceeds the supported integer range.",
+                        firstToken);
+                }
+                expression = new LiteralExpr(
+                    new OrderByOrdinalValue(ordinal),
+                    expression.Span);
+            }
+
             var descending = false;
             if (_reader.MatchWord("DESC")) descending = true;
             else _reader.MatchWord("ASC");

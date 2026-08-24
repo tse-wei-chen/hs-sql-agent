@@ -64,6 +64,13 @@ public sealed record OrderByItem(
     NullOrderingKind NullOrdering,
     SourceSpan Span) : SqlNode(Span);
 
+/// <summary>
+/// Internal semantic marker for statement-level ORDER BY output positions (for example ORDER BY 2).
+/// It is deliberately not a public SQL value type: the parser manufactures it only for a bare
+/// unsigned integer in a query tail, and validation guarantees that it cannot escape ORDER BY.
+/// </summary>
+internal sealed record OrderByOrdinalValue(int Position);
+
 public enum NullOrderingKind
 {
     Default,
