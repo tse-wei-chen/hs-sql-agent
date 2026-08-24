@@ -29,14 +29,18 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
 
         if (insert.Columns.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT requires at least one target column.");
-        var columns = insert.Columns.Select(IdentifierText).ToArray();
-        if (columns.Any(column => column.Contains('.', StringComparison.Ordinal)))
-            throw new SqlCompilationException("INSERT target columns must be unqualified.");
 
         var compiler = SqlKataProviderLowerer.CreateCompiler(provider);
+        var columns = insert.Columns
+            .Select(column => CoreIdentifierSqlRenderer.NormalizeSinglePart(
+                column,
+                compiler,
+                "INSERT target column"))
+            .ToArray();
+
         Query query = insert.Source switch
         {
-            InsertValuesSource values => LowerValues(insert, columns, values),
+            InsertValuesSource values => LowerValues(insert, columns, values, compiler),
             InsertQuerySource querySource => LowerQuerySource(insert, columns, querySource, compiler),
             _ => throw new SqlCompilationException(
                 $"Unsupported INSERT source during lowering: {insert.Source.GetType().Name}")
@@ -62,7 +66,8 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
     private static Query LowerValues(
         InsertStatement insert,
         string[] columns,
-        InsertValuesSource values)
+        InsertValuesSource values,
+        Compiler compiler)
     {
         if (values.Rows.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT VALUES requires at least one row.");
@@ -83,7 +88,7 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
             }).ToArray();
         }).ToArray();
 
-        return new Query(IdentifierText(insert.Target.Name)).AsInsert(columns, rows);
+        return NewTargetQuery(insert.Target.Name, compiler).AsInsert(columns, rows);
     }
 
     private static Query LowerQuerySource(
@@ -93,8 +98,11 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
         Compiler compiler)
     {
         var sourceQuery = SqlKataProviderLowerer.BuildQuery(source.Query, compiler);
-        return new Query(IdentifierText(insert.Target.Name)).AsInsert(columns, sourceQuery);
+        return NewTargetQuery(insert.Target.Name, compiler).AsInsert(columns, sourceQuery);
     }
+
+    private static Query NewTargetQuery(SqlIdentifier identifier, Compiler compiler) =>
+        new Query().FromRaw(CoreIdentifierSqlRenderer.Render(identifier, compiler, allowWildcard: false));
 
     private static object? NormalizeLiteral(object? value)
     {
@@ -125,9 +133,6 @@ public sealed class SqlKataInsertLowerer(SqlAgentToolType provider)
             _ => value
         };
     }
-
-    private static string IdentifierText(SqlIdentifier identifier) =>
-        string.Join('.', identifier.Parts.Select(part => part.Value));
 
     private static int ParameterOrdinal(string name)
     {

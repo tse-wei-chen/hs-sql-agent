@@ -57,16 +57,17 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
         if (update.Assignments.IsDefaultOrEmpty)
             throw new SqlCompilationException("UPDATE requires at least one assignment.");
 
-        var query = new Query(IdentifierText(update.Target.Name));
+        var query = NewTargetQuery(update.Target.Name, compiler);
         ApplyPredicate(query, update.Predicate, compiler);
 
         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var assignment in update.Assignments)
         {
-            if (assignment.Column.Parts.Length != 1)
-                throw new SqlCompilationException("UPDATE assignment columns must be unqualified canonical identifiers.");
             values.Add(
-                assignment.Column.Parts[0].Value,
+                CoreIdentifierSqlRenderer.NormalizeSinglePart(
+                    assignment.Column,
+                    compiler,
+                    "UPDATE assignment column"),
                 LowerAssignmentValue(assignment.Value, compiler, IdentifierText(assignment.Column)));
         }
         return query.AsUpdate(values);
@@ -101,10 +102,13 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
 
     private static Query LowerDelete(DeleteStatement delete, Compiler compiler)
     {
-        var query = new Query(IdentifierText(delete.Target.Name));
+        var query = NewTargetQuery(delete.Target.Name, compiler);
         ApplyPredicate(query, delete.Predicate, compiler);
         return query.AsDelete();
     }
+
+    private static Query NewTargetQuery(SqlIdentifier identifier, Compiler compiler) =>
+        new Query().FromRaw(CoreIdentifierSqlRenderer.Render(identifier, compiler, allowWildcard: false));
 
     private static void ApplyPredicate(Query query, SqlExpr? predicate, Compiler compiler)
     {
@@ -558,17 +562,10 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
             .Select(pair => NormalizeLiteral(pair.Value))
             .ToImmutableArray();
 
-    private static RenderedExpression RenderIdentifier(SqlIdentifier identifier, Compiler compiler)
-    {
-        if (identifier.Parts.IsDefaultOrEmpty)
-            throw new SqlCompilationException("SQL identifier has no parts.");
-        foreach (var part in identifier.Parts)
-        {
-            if (!Regex.IsMatch(part.Value, @"^[A-Za-z_][A-Za-z0-9_$]*$", RegexOptions.CultureInvariant))
-                throw new SqlCompilationException($"Unsafe SQL identifier part '{part.Value}'.");
-        }
-        return new RenderedExpression(compiler.Wrap(IdentifierText(identifier)), ImmutableArray<object?>.Empty);
-    }
+    private static RenderedExpression RenderIdentifier(SqlIdentifier identifier, Compiler compiler) =>
+        new(
+            CoreIdentifierSqlRenderer.Render(identifier, compiler, allowWildcard: true),
+            ImmutableArray<object?>.Empty);
 
     private static object? NormalizeLiteral(object? value)
     {
