@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.2";
+    public const string Version = "2026-08-24.3";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -31,7 +31,9 @@ public static class SqlCapabilityMatrix
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
             new("select.cte_set", "query", SqlCapabilityStatus.Translated,
-                "CTEs and UNION/INTERSECT/EXCEPT are represented structurally; CTE output aliases and set-result ordering are validated before lowering."),
+                "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally; CTE output aliases and set-result ordering are validated before lowering."),
+            new("select.cte_scope", "query", SqlCapabilityStatus.Rejected,
+                "CTEs that would be compiled through SqlKata nested Select compilation and lose their definition fail closed: derived-table-local CTEs, set-operation-branch-local CTEs, and root CTE set queries that require an outer ORDER BY/LIMIT/OFFSET wrapper are rejected until explicit CTE hoisting is modeled."),
             new("expression.arithmetic", "expression", SqlCapabilityStatus.Translated,
                 "+, -, *, and / are preserved by the AST/compiler."),
             new("expression.modulo", "expression",

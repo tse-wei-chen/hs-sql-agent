@@ -46,29 +46,39 @@ public sealed class CoreSqlCompiler(
         var canonical = _normalizer.Normalize(bound, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
         var executable = _policyRewriter.Rewrite(validated, executionPolicy);
-        ValidateSqlKataBackendCompatibility(executable.Statement);
+        ValidateSqlKataBackendCompatibility(executable.Statement, BackendQueryPosition.Root);
         return new SqlKataProviderLowerer(targetProvider).Lower(executable);
     }
 
-    private static void ValidateSqlKataBackendCompatibility(SqlStatement statement)
+    private static void ValidateSqlKataBackendCompatibility(
+        SqlStatement statement,
+        BackendQueryPosition position)
     {
         switch (statement)
         {
             case SelectStatement select:
+                ValidateCtePlacement(select.Ctes, position);
                 foreach (var cte in select.Ctes)
-                    ValidateSqlKataBackendCompatibility(cte.Query);
+                    ValidateSqlKataBackendCompatibility(cte.Query, BackendQueryPosition.CteDefinition);
                 if (select.From is DerivedTableSource derived)
-                    ValidateSqlKataBackendCompatibility(derived.Query);
+                    ValidateSqlKataBackendCompatibility(derived.Query, BackendQueryPosition.DerivedTable);
                 foreach (var join in select.Joins)
                     if (join.Source is DerivedTableSource joinedDerived)
-                        ValidateSqlKataBackendCompatibility(joinedDerived.Query);
+                        ValidateSqlKataBackendCompatibility(joinedDerived.Query, BackendQueryPosition.DerivedTable);
                 ValidateSubqueryExpressions(select);
                 return;
 
             case QueryStatement query:
-                ValidateSqlKataBackendCompatibility(query.Head);
+                ValidateCtePlacement(query.Head.Ctes, position);
+                if (!query.Head.Ctes.IsDefaultOrEmpty && RequiresSetTailWrapper(query))
+                {
+                    throw CteScopeError(
+                        "a set-operation query with a root CTE and outer ORDER BY/LIMIT/OFFSET is wrapped as a derived table, " +
+                        "which would drop the CTE definition");
+                }
+                ValidateSqlKataBackendCompatibility(query.Head, position);
                 foreach (var operation in query.SetOperations)
-                    ValidateSqlKataBackendCompatibility(operation.Query);
+                    ValidateSqlKataBackendCompatibility(operation.Query, BackendQueryPosition.SetBranch);
                 return;
 
             default:
@@ -76,6 +86,33 @@ public sealed class CoreSqlCompiler(
                     $"Unsupported statement for SqlKata backend: {statement.GetType().Name}");
         }
     }
+
+    private static void ValidateCtePlacement(
+        System.Collections.Immutable.ImmutableArray<CteDefinition> ctes,
+        BackendQueryPosition position)
+    {
+        if (ctes.IsDefaultOrEmpty)
+            return;
+
+        var detail = position switch
+        {
+            BackendQueryPosition.DerivedTable =>
+                "a derived-table-local CTE would be compiled through SqlKata CompileSelectQuery without its CTE definition",
+            BackendQueryPosition.SetBranch =>
+                "a set-operation-branch-local CTE would be compiled through SqlKata CompileSelectQuery without its CTE definition",
+            _ => null
+        };
+        if (detail is not null)
+            throw CteScopeError(detail);
+    }
+
+    private static SqlCompilationException CteScopeError(string detail) =>
+        new($"SQL capability 'select.cte_scope' is not supported by the current SqlKata backend: {detail}.");
+
+    private static bool RequiresSetTailWrapper(QueryStatement query) =>
+        !query.OrderBy.IsDefaultOrEmpty
+        || query.Limit is not null
+        || query.Offset is > 0;
 
     private static void ValidateSubqueryExpressions(SelectStatement select)
     {
@@ -93,10 +130,10 @@ public sealed class CoreSqlCompiler(
         switch (expression)
         {
             case SubqueryExpr subquery:
-                ValidateSqlKataBackendCompatibility(subquery.Query);
+                ValidateSqlKataBackendCompatibility(subquery.Query, BackendQueryPosition.ScalarSubquery);
                 return;
             case ExistsExpr exists:
-                ValidateSqlKataBackendCompatibility(exists.Query);
+                ValidateSqlKataBackendCompatibility(exists.Query, BackendQueryPosition.ScalarSubquery);
                 return;
             case UnaryExpr unary:
                 VisitExpression(unary.Operand);
@@ -146,5 +183,14 @@ public sealed class CoreSqlCompiler(
                 throw new SqlCompilationException(
                     $"Unsupported expression for SqlKata backend compatibility check: {expression.GetType().Name}");
         }
+    }
+
+    private enum BackendQueryPosition
+    {
+        Root,
+        CteDefinition,
+        DerivedTable,
+        SetBranch,
+        ScalarSubquery
     }
 }
