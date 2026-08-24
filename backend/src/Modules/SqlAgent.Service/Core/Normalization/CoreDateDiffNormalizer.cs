@@ -8,10 +8,11 @@ namespace SqlAgent.Service.Core.Normalization;
 
 /// <summary>
 /// Preserves native source-dialect DATEDIFF semantics when the parsed shape is native, while also
-/// accepting the three-argument DATEDIFF(unit, start, end) shape as the Core portable contract used
-/// by structured queries. SQL Server and Firebird three-argument DATEDIFF count boundaries at the
-/// requested date part, while MySQL's native two-argument DATEDIFF ignores the time portion and
-/// returns a day difference. Only DAY has a declared lossless cross-dialect intersection today.
+/// accepting the portable DATEDIFF shapes used by structured queries. The two-argument portable
+/// shape is DATEDIFF(end, start), matching MySQL native DATEDIFF and returning an integral calendar
+/// day difference. The three-argument portable shape is DATEDIFF(unit, start, end). SQL Server and
+/// Firebird native three-argument DATEDIFF count boundaries at the requested date part. Only DAY has
+/// a declared lossless cross-dialect intersection today.
 /// </summary>
 internal static class CoreDateDiffNormalizer
 {
@@ -19,29 +20,14 @@ internal static class CoreDateDiffNormalizer
         FunctionCallExpr original,
         ImmutableArray<SqlExpr> arguments,
         SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider)
+        SqlAgentToolType targetProvider) => arguments.Length switch
     {
-        if (arguments.Length == 3)
-        {
-            return NormalizeThreeArgumentDateDiff(
-                original,
-                arguments,
-                sourceDialect,
-                targetProvider);
-        }
-
-        if (sourceDialect == SqlAgentToolType.MySQL)
-        {
-            return NormalizeMySqlDateDiff(
-                original,
-                arguments,
-                targetProvider);
-        }
-
-        throw new SqlCompilationException(
-            $"DATEDIFF is not a modeled {arguments.Length}-argument source function for dialect {sourceDialect}. " +
-            "Use the Core portable DATEDIFF(unit, start, end) shape.");
-    }
+        2 => NormalizeTwoArgumentDateDiff(original, arguments, targetProvider),
+        3 => NormalizeThreeArgumentDateDiff(original, arguments, sourceDialect, targetProvider),
+        _ => throw new SqlCompilationException(
+            $"DATEDIFF requires either the portable 2-argument (end, start) shape or the " +
+            $"3-argument (unit, start, end) shape; received {arguments.Length} arguments.")
+    };
 
     private static SqlExpr NormalizeThreeArgumentDateDiff(
         FunctionCallExpr original,
@@ -77,19 +63,15 @@ internal static class CoreDateDiffNormalizer
             targetProvider);
     }
 
-    private static SqlExpr NormalizeMySqlDateDiff(
+    private static SqlExpr NormalizeTwoArgumentDateDiff(
         FunctionCallExpr original,
         ImmutableArray<SqlExpr> arguments,
         SqlAgentToolType targetProvider)
     {
-        if (arguments.Length != 2)
-        {
-            throw new SqlCompilationException(
-                $"MySQL native DATEDIFF requires exactly 2 arguments; received {arguments.Length}. " +
-                "Use DATEDIFF(unit, start, end) for the Core portable form.");
-        }
-
-        // MySQL syntax is DATEDIFF(end, start), and only the date portions participate.
+        // Structured Core queries historically expose DATEDIFF(end, start) as a portable day
+        // difference. This is also exactly MySQL's native DATEDIFF argument order and date-only
+        // semantics. Parser-native SQL from other dialects is rejected earlier by
+        // CoreSourceDialectValidator when source-syntax enforcement is enabled.
         return PortableDayDifference(
             original,
             start: arguments[1],
