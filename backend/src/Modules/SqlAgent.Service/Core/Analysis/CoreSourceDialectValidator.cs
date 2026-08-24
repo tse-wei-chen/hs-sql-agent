@@ -36,14 +36,14 @@ internal static class CoreSourceDialectValidator
                 if (select.Where is not null) VisitExpr(select.Where, sourceDialect);
                 foreach (var item in select.GroupBy) VisitExpr(item, sourceDialect);
                 if (select.Having is not null) VisitExpr(select.Having, sourceDialect);
-                foreach (var item in select.OrderBy) VisitExpr(item.Expression, sourceDialect);
+                foreach (var item in select.OrderBy) VisitOrderBy(item, sourceDialect);
                 return;
 
             case QueryStatement query:
                 VisitStatement(query.Head, sourceDialect);
                 foreach (var operation in query.SetOperations)
                     VisitStatement(operation.Query, sourceDialect);
-                foreach (var item in query.OrderBy) VisitExpr(item.Expression, sourceDialect);
+                foreach (var item in query.OrderBy) VisitOrderBy(item, sourceDialect);
                 return;
 
             case UpdateStatement update:
@@ -84,6 +84,19 @@ internal static class CoreSourceDialectValidator
             VisitStatement(derived.Query, sourceDialect);
     }
 
+    private static void VisitOrderBy(OrderByItem item, SqlAgentToolType sourceDialect)
+    {
+        if (item.NullOrdering != NullOrderingKind.Default
+            && sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
+        {
+            var modifier = item.NullOrdering == NullOrderingKind.First ? "NULLS FIRST" : "NULLS LAST";
+            throw new SqlCompilationException(
+                $"ORDER BY modifier '{modifier}' is not valid for declared source dialect {sourceDialect} in the Core source capability profile.");
+        }
+
+        VisitExpr(item.Expression, sourceDialect);
+    }
+
     private static void VisitExpr(SqlExpr expression, SqlAgentToolType sourceDialect)
     {
         switch (expression)
@@ -119,7 +132,7 @@ internal static class CoreSourceDialectValidator
                 foreach (var item in windowed.Window.PartitionBy)
                     VisitExpr(item, sourceDialect);
                 foreach (var item in windowed.Window.OrderBy)
-                    VisitExpr(item.Expression, sourceDialect);
+                    VisitOrderBy(item, sourceDialect);
                 return;
 
             case CastExpr cast:
