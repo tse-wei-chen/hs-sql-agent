@@ -248,7 +248,7 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         NormalizationContext context) => sourceName switch
     {
         "DATEADD" => CanonicalDateAdd(original, arguments),
-        "DATEDIFF" => CanonicalDateDiff(original, arguments),
+        "DATEDIFF" => CanonicalDateDiff(original, arguments, context),
         "YEAR" or "MONTH" or "DAY" => CanonicalDatePart(original, sourceName, arguments),
         "DATE_FORMAT" or "FORMAT" => CanonicalDateFormat(original, arguments, context),
         "TO_DATE" => CanonicalDateParse(original, arguments, context),
@@ -278,16 +278,15 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             [new LiteralExpr(unit, original.Span), arguments[1], arguments[2]]);
     }
 
-    private static SqlExpr CanonicalDateDiff(FunctionCallExpr original, ImmutableArray<SqlExpr> arguments)
-    {
-        if (arguments.Length == 2)
-            return CanonicalFunction(original, "CORE_DATE_DIFF",
-                [new LiteralExpr("DAY", original.Span), arguments[1], arguments[0]]);
-        if (arguments.Length != 3) throw new SqlCompilationException("DATEDIFF requires 2 or 3 arguments.");
-        var unit = DatePartUnit(arguments[0]);
-        return CanonicalFunction(original, "CORE_DATE_DIFF",
-            [new LiteralExpr(unit, original.Span), arguments[1], arguments[2]]);
-    }
+    private static SqlExpr CanonicalDateDiff(
+        FunctionCallExpr original,
+        ImmutableArray<SqlExpr> arguments,
+        NormalizationContext context) =>
+        CoreDateDiffNormalizer.Normalize(
+            original,
+            arguments,
+            context.SourceDialect,
+            context.TargetProvider);
 
     private static SqlExpr CanonicalDatePart(FunctionCallExpr original, string part, ImmutableArray<SqlExpr> arguments)
     {
