@@ -45,12 +45,30 @@ public sealed class CoreDmlCompiler(
         policy ??= new DmlCompilationPolicy();
 
         CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile);
+        CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile);
         ValidateMutationPolicy(parsed.Statement, policy);
 
         var bound = _binder.Bind(parsed);
         if (parsed.EnforceSourceDialectSyntax)
+        {
             CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect);
+            bound = bound with
+            {
+                Statement = CoreSourceProfileRewriter.Prepare(
+                    bound.Statement,
+                    bound.SourceDialect,
+                    parsed.SourceProfile)
+            };
+        }
+
         var canonical = _normalizer.Normalize(bound, targetProvider);
+        if (parsed.EnforceSourceDialectSyntax)
+        {
+            canonical = canonical with
+            {
+                Statement = CoreSourceProfileRewriter.Restore(canonical.Statement)
+            };
+        }
         canonical = canonical with
         {
             Statement = CoreNullOrderingRewriter.Rewrite(canonical.Statement, targetProvider)

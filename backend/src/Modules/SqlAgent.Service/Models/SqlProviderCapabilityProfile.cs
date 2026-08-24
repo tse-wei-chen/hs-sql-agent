@@ -3,8 +3,9 @@ using SqlAgent.Service.Enums;
 namespace SqlAgent.Service.Models;
 
 /// <summary>
-/// Declared runtime capability profile for a target SQL provider. The compiler treats this as
-/// trusted deployment metadata: provider/version/session-dependent capabilities remain fail-closed
+/// Declared runtime capability profile for one SQL provider. The same immutable profile shape can
+/// describe either the parsed source session or the compilation target, depending on the compiler
+/// argument that receives it. Provider/version/session-dependent capabilities remain fail-closed
 /// unless the required profile value is explicitly present.
 /// </summary>
 public sealed record SqlProviderCapabilityProfile(

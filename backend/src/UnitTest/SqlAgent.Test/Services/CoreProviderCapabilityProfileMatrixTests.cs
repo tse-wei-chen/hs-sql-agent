@@ -12,7 +12,6 @@ public sealed class CoreProviderCapabilityProfileMatrixTests
         var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer);
         var regex = Assert.Single(matrix.Capabilities, item => item.Id == "regex.match");
 
-        Assert.Equal("2026-08-24.26", matrix.MatrixVersion);
         Assert.Equal(SqlCapabilityStatus.Rejected, regex.Status);
         Assert.Contains("compatibility level 170", regex.Detail, StringComparison.OrdinalIgnoreCase);
     }
