@@ -93,6 +93,21 @@ internal static class CoreSqlKataRawCompiler
 }
 
 /// <summary>
+/// Ensures every nested SELECT compiled by a provider that accepts WITH in a general subquery gets
+/// the same Core query-graph CTE rewrite. This is deliberately below the query/DML lowerer split so
+/// scalar/EXISTS subqueries and INSERT/UPDATE/DELETE expression paths cannot silently bypass it.
+/// </summary>
+internal static class CoreSqlKataNestedCteCompilation
+{
+    public static Query Rewrite(Query query, Compiler compiler)
+    {
+        var rewritten = query.Clone();
+        CoreSqlKataDerivedCteLowerer.RewriteQueryGraph(rewritten, compiler);
+        return rewritten;
+    }
+}
+
+/// <summary>
 /// A statement-level ORDER BY integer is an output position, not a scalar value. Core represents
 /// that distinction with an internal marker while the SqlKata query graph still carries an
 /// AbstractColumn. Intercept only that marker and emit canonical decimal digits; every ordinary
@@ -246,6 +261,9 @@ internal sealed class CorePostgresCompiler : PostgresCompiler, ICoreSqlKataRawCo
             rawSql,
             bindings));
 
+    protected override SqlResult CompileSelectQuery(Query query) =>
+        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
@@ -263,6 +281,9 @@ internal sealed class CoreMySqlCompiler : MySqlCompiler, ICoreSqlKataRawCompiler
             EscapeCharacter,
             rawSql,
             bindings));
+
+    protected override SqlResult CompileSelectQuery(Query query) =>
+        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
 
     public override string CompileColumn(SqlResult ctx, AbstractColumn column)
     {
@@ -305,6 +326,9 @@ internal sealed class CoreSqliteCompiler : SqliteCompiler, ICoreSqlKataRawCompil
             rawSql,
             bindings));
 
+    protected override SqlResult CompileSelectQuery(Query query) =>
+        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
             ? ordinal
@@ -343,6 +367,9 @@ internal sealed class CoreOracleCompiler : OracleCompiler, ICoreSqlKataRawCompil
             EscapeCharacter,
             rawSql,
             bindings));
+
+    protected override SqlResult CompileSelectQuery(Query query) =>
+        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
 
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)

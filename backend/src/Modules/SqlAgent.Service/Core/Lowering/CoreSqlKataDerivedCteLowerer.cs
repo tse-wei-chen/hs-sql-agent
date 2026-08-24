@@ -28,6 +28,9 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
     public static bool CanLower(SqlStatement statement) =>
         ContainsNestedCteFragment(statement);
 
+    internal static void RewriteQueryGraph(Query query, Compiler compiler) =>
+        RewriteNestedCteSources(query, compiler);
+
     public CompiledSqlCommand Lower(ExecutableSqlPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -39,7 +42,7 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
 
         var compiler = SqlKataProviderLowerer.CreateCompiler(Provider);
         var query = SqlKataProviderLowerer.BuildQuery(plan.Statement, compiler);
-        RewriteNestedCteSources(query, compiler);
+        RewriteQueryGraph(query, compiler);
         var result = compiler.Compile(query);
         var parameters = result.NamedBindings
             .OrderBy(pair => ParameterOrdinal(pair.Key))
@@ -98,6 +101,9 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
 
         foreach (var combine in query.GetComponents<Combine>("combine").ToArray())
         {
+            // SqlKata's Combine.Clone keeps the original Query reference. Detach it before any
+            // rewrite so compiler-time normalization cannot mutate a caller-owned query graph.
+            combine.Query = combine.Query.Clone();
             RewriteNestedCteSources(combine.Query, compiler);
             if (!combine.Query.HasComponent("cte"))
                 continue;

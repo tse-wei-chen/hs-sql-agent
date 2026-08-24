@@ -638,16 +638,8 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
     private static RenderedExpression Combine(string sql, RenderedExpression left, RenderedExpression right) =>
         new(sql, left.Bindings.Concat(right.Bindings).ToImmutableArray());
 
-    private static Compiler CreateCompiler(SqlAgentToolType provider) => provider switch
-    {
-        SqlAgentToolType.Sqlite => new SqliteCompiler(),
-        SqlAgentToolType.Postgres => new PostgresCompiler(),
-        SqlAgentToolType.MySQL => new MySqlCompiler(),
-        SqlAgentToolType.MsSqlServer => new SqlServerCompiler(),
-        SqlAgentToolType.Oracle => new OracleCompiler(),
-        SqlAgentToolType.Firebird => new FirebirdCompiler(),
-        _ => throw new SqlCompilationException($"Unsupported target provider '{provider}'.")
-    };
+    private static Compiler CreateCompiler(SqlAgentToolType provider) =>
+        SqlKataProviderLowerer.CreateCompiler(provider);
 
     private static int ParameterOrdinal(string name)
     {

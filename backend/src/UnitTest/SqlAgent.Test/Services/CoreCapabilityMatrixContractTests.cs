@@ -26,6 +26,27 @@ public class CoreCapabilityMatrixContractTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.MySQL, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.Sqlite, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.Oracle, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.MsSqlServer, SqlCapabilityStatus.Rejected)]
+    [InlineData(SqlAgentToolType.Firebird, SqlCapabilityStatus.Rejected)]
+    public void Matrix_TracksNestedCteProviderBoundary(
+        SqlAgentToolType provider,
+        SqlCapabilityStatus expected)
+    {
+        var matrix = SqlCapabilityMatrix.ForProvider(provider);
+
+        Assert.Equal(expected,
+            Assert.Single(matrix.Capabilities, item => item.Id == "select.cte_derived").Status);
+        Assert.Equal(expected,
+            Assert.Single(matrix.Capabilities, item => item.Id == "select.cte_set_branch").Status);
+        Assert.Equal(expected,
+            Assert.Single(matrix.Capabilities, item => item.Id == "dml.nested_cte_scope").Status);
+    }
+
     [Fact]
     public void Matrix_DocumentsVersionDependentSqlServerRegexBoundary()
     {

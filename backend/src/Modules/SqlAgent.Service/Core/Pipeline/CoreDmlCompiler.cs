@@ -61,8 +61,7 @@ public sealed class CoreDmlCompiler(
             validated.TargetProvider,
             validated.PolicyVersion);
 
-        if (validated.Statement is InsertStatement { Source: InsertQuerySource querySource })
-            CoreSqlKataBackendCompatibility.ValidateInsertSelect(querySource.Query, targetProvider);
+        CoreSqlKataBackendCompatibility.ValidateDml(validated.Statement, targetProvider);
 
         var command = validated.Statement switch
         {

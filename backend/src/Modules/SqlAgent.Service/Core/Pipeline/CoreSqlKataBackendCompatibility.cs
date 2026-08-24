@@ -9,8 +9,9 @@ namespace SqlAgent.Service.Core.Pipeline;
 /// Guards query shapes whose CTE scope cannot be preserved by the available lowering path.
 /// Statement-root INSERT..SELECT CTEs have a dedicated provider-aware lowerer. Query-graph derived
 /// tables and set-operation branches can use fully compiled fragments on providers that accept WITH
-/// at the beginning of a general subquery. Eager scalar-subquery and INSERT-source nested CTEs
-/// remain fail-closed because those paths are rendered before the query-graph adapter can intervene.
+/// at the beginning of a general subquery. Core provider compilers apply the same query-graph
+/// rewrite to nested SELECT compilation, so scalar/EXISTS and DML subqueries share the same scope
+/// contract instead of bypassing it.
 /// </summary>
 internal static class CoreSqlKataBackendCompatibility
 {
@@ -21,7 +22,7 @@ internal static class CoreSqlKataBackendCompatibility
             statement,
             QueryPosition.Root,
             provider,
-            allowDerivedCteFragments: true);
+            allowNestedCteFragments: true);
 
     public static void ValidateInsertSelect(
         SqlStatement statement,
@@ -30,13 +31,51 @@ internal static class CoreSqlKataBackendCompatibility
             statement,
             QueryPosition.InsertSelectSource,
             provider,
-            allowDerivedCteFragments: false);
+            allowNestedCteFragments: true);
+
+    public static void ValidateDml(
+        SqlStatement statement,
+        SqlAgentToolType provider)
+    {
+        switch (statement)
+        {
+            case InsertStatement { Source: InsertQuerySource querySource }:
+                ValidateStatement(
+                    querySource.Query,
+                    QueryPosition.InsertSelectSource,
+                    provider,
+                    allowNestedCteFragments: true);
+                return;
+
+            case InsertStatement { Source: InsertValuesSource values }:
+                foreach (var row in values.Rows)
+                foreach (var value in row)
+                    VisitExpression(value, provider, allowNestedCteFragments: true);
+                return;
+
+            case UpdateStatement update:
+                foreach (var assignment in update.Assignments)
+                    VisitExpression(assignment.Value, provider, allowNestedCteFragments: true);
+                if (update.Predicate is not null)
+                    VisitExpression(update.Predicate, provider, allowNestedCteFragments: true);
+                return;
+
+            case DeleteStatement delete:
+                if (delete.Predicate is not null)
+                    VisitExpression(delete.Predicate, provider, allowNestedCteFragments: true);
+                return;
+
+            default:
+                throw new SqlCompilationException(
+                    $"Unsupported statement for SqlKata DML compatibility validation: {statement.GetType().Name}");
+        }
+    }
 
     private static void ValidateStatement(
         SqlStatement statement,
         QueryPosition position,
         SqlAgentToolType provider,
-        bool allowDerivedCteFragments)
+        bool allowNestedCteFragments)
     {
         switch (statement)
         {
@@ -45,14 +84,14 @@ internal static class CoreSqlKataBackendCompatibility
                     select.Ctes,
                     position,
                     provider,
-                    allowDerivedCteFragments);
+                    allowNestedCteFragments);
                 foreach (var cte in select.Ctes)
                 {
                     ValidateStatement(
                         cte.Query,
                         QueryPosition.CteDefinition,
                         provider,
-                        allowDerivedCteFragments);
+                        allowNestedCteFragments);
                 }
                 if (select.From is DerivedTableSource derived)
                 {
@@ -60,7 +99,7 @@ internal static class CoreSqlKataBackendCompatibility
                         derived.Query,
                         QueryPosition.DerivedTable,
                         provider,
-                        allowDerivedCteFragments);
+                        allowNestedCteFragments);
                 }
                 foreach (var join in select.Joins)
                 {
@@ -70,10 +109,13 @@ internal static class CoreSqlKataBackendCompatibility
                             joinedDerived.Query,
                             QueryPosition.DerivedTable,
                             provider,
-                            allowDerivedCteFragments);
+                            allowNestedCteFragments);
                     }
                 }
-                VisitSubqueryExpressions(select, provider);
+                VisitSubqueryExpressions(
+                    select,
+                    provider,
+                    allowNestedCteFragments);
                 return;
 
             case QueryStatement query:
@@ -81,13 +123,13 @@ internal static class CoreSqlKataBackendCompatibility
                     query.Head.Ctes,
                     position,
                     provider,
-                    allowDerivedCteFragments);
+                    allowNestedCteFragments);
                 if (!query.Head.Ctes.IsDefaultOrEmpty
                     && RequiresSetTailWrapper(query)
                     && !CanPreserveSetTailCte(
                         position,
                         provider,
-                        allowDerivedCteFragments))
+                        allowNestedCteFragments))
                 {
                     throw CteScopeError(
                         "select.cte_scope",
@@ -97,14 +139,14 @@ internal static class CoreSqlKataBackendCompatibility
                     query.Head,
                     position,
                     provider,
-                    allowDerivedCteFragments);
+                    allowNestedCteFragments);
                 foreach (var operation in query.SetOperations)
                 {
                     ValidateStatement(
                         operation.Query,
                         QueryPosition.SetBranch,
                         provider,
-                        allowDerivedCteFragments);
+                        allowNestedCteFragments);
                 }
                 return;
 
@@ -118,7 +160,7 @@ internal static class CoreSqlKataBackendCompatibility
         System.Collections.Immutable.ImmutableArray<CteDefinition> ctes,
         QueryPosition position,
         SqlAgentToolType provider,
-        bool allowDerivedCteFragments)
+        bool allowNestedCteFragments)
     {
         if (ctes.IsDefaultOrEmpty)
             return;
@@ -126,34 +168,34 @@ internal static class CoreSqlKataBackendCompatibility
         switch (position)
         {
             case QueryPosition.DerivedTable
-                when !CanLowerNestedCteFragment(provider, allowDerivedCteFragments):
+                when !CanLowerNestedCteFragment(provider, allowNestedCteFragments):
                 throw CteScopeError(
                     "select.cte_scope",
-                    allowDerivedCteFragments
+                    allowNestedCteFragments
                         ? $"provider {provider} has no declared portable WITH-in-derived-table lowering contract"
-                        : "a derived-table-local CTE is inside an eager scalar/DML nested compilation path where the query-graph CTE adapter cannot preserve it");
+                        : "a derived-table-local CTE is inside a nested compilation path where the Core CTE adapter cannot preserve it");
             case QueryPosition.SetBranch
-                when !CanLowerNestedCteFragment(provider, allowDerivedCteFragments):
+                when !CanLowerNestedCteFragment(provider, allowNestedCteFragments):
                 throw CteScopeError(
                     "select.cte_scope",
-                    allowDerivedCteFragments
+                    allowNestedCteFragments
                         ? $"provider {provider} has no declared portable wrapped set-branch CTE lowering contract"
-                        : "a set-operation-branch-local CTE is inside an eager scalar/DML nested compilation path where the query-graph CTE adapter cannot preserve it");
+                        : "a set-operation-branch-local CTE is inside a nested compilation path where the Core CTE adapter cannot preserve it");
         }
     }
 
     private static bool CanPreserveSetTailCte(
         QueryPosition position,
         SqlAgentToolType provider,
-        bool allowDerivedCteFragments) =>
+        bool allowNestedCteFragments) =>
         position is QueryPosition.Root or QueryPosition.InsertSelectSource
         || position is QueryPosition.DerivedTable or QueryPosition.SetBranch
-            && CanLowerNestedCteFragment(provider, allowDerivedCteFragments);
+            && CanLowerNestedCteFragment(provider, allowNestedCteFragments);
 
     private static bool CanLowerNestedCteFragment(
         SqlAgentToolType provider,
-        bool allowDerivedCteFragments) =>
-        allowDerivedCteFragments
+        bool allowNestedCteFragments) =>
+        allowNestedCteFragments
         && provider is SqlAgentToolType.Postgres
             or SqlAgentToolType.MySQL
             or SqlAgentToolType.Sqlite
@@ -169,23 +211,30 @@ internal static class CoreSqlKataBackendCompatibility
 
     private static void VisitSubqueryExpressions(
         SelectStatement select,
-        SqlAgentToolType provider)
+        SqlAgentToolType provider,
+        bool allowNestedCteFragments)
     {
-        foreach (var item in select.Select) VisitExpression(item.Expression, provider);
-        if (select.Where is not null) VisitExpression(select.Where, provider);
-        foreach (var expression in select.GroupBy) VisitExpression(expression, provider);
-        if (select.Having is not null) VisitExpression(select.Having, provider);
-        foreach (var item in select.OrderBy) VisitExpression(item.Expression, provider);
+        foreach (var item in select.Select)
+            VisitExpression(item.Expression, provider, allowNestedCteFragments);
+        if (select.Where is not null)
+            VisitExpression(select.Where, provider, allowNestedCteFragments);
+        foreach (var expression in select.GroupBy)
+            VisitExpression(expression, provider, allowNestedCteFragments);
+        if (select.Having is not null)
+            VisitExpression(select.Having, provider, allowNestedCteFragments);
+        foreach (var item in select.OrderBy)
+            VisitExpression(item.Expression, provider, allowNestedCteFragments);
         foreach (var join in select.Joins)
         {
             if (join.Predicate is not null)
-                VisitExpression(join.Predicate, provider);
+                VisitExpression(join.Predicate, provider, allowNestedCteFragments);
         }
     }
 
     private static void VisitExpression(
         SqlExpr expression,
-        SqlAgentToolType provider)
+        SqlAgentToolType provider,
+        bool allowNestedCteFragments)
     {
         switch (expression)
         {
@@ -194,61 +243,61 @@ internal static class CoreSqlKataBackendCompatibility
                     subquery.Query,
                     QueryPosition.ScalarSubquery,
                     provider,
-                    allowDerivedCteFragments: false);
+                    allowNestedCteFragments);
                 return;
             case ExistsExpr exists:
                 ValidateStatement(
                     exists.Query,
                     QueryPosition.ScalarSubquery,
                     provider,
-                    allowDerivedCteFragments: false);
+                    allowNestedCteFragments);
                 return;
             case UnaryExpr unary:
-                VisitExpression(unary.Operand, provider);
+                VisitExpression(unary.Operand, provider, allowNestedCteFragments);
                 return;
             case BinaryExpr binary:
-                VisitExpression(binary.Left, provider);
-                VisitExpression(binary.Right, provider);
+                VisitExpression(binary.Left, provider, allowNestedCteFragments);
+                VisitExpression(binary.Right, provider, allowNestedCteFragments);
                 return;
             case FunctionCallExpr function:
                 foreach (var argument in function.Arguments)
-                    VisitExpression(argument, provider);
+                    VisitExpression(argument, provider, allowNestedCteFragments);
                 return;
             case FilterExpr filter:
-                VisitExpression(filter.Expression, provider);
-                VisitExpression(filter.Predicate, provider);
+                VisitExpression(filter.Expression, provider, allowNestedCteFragments);
+                VisitExpression(filter.Predicate, provider, allowNestedCteFragments);
                 return;
             case WindowedExpr windowed:
-                VisitExpression(windowed.Expression, provider);
+                VisitExpression(windowed.Expression, provider, allowNestedCteFragments);
                 foreach (var partition in windowed.Window.PartitionBy)
-                    VisitExpression(partition, provider);
+                    VisitExpression(partition, provider, allowNestedCteFragments);
                 foreach (var item in windowed.Window.OrderBy)
-                    VisitExpression(item.Expression, provider);
+                    VisitExpression(item.Expression, provider, allowNestedCteFragments);
                 return;
             case CastExpr cast:
-                VisitExpression(cast.Expression, provider);
+                VisitExpression(cast.Expression, provider, allowNestedCteFragments);
                 return;
             case CaseExpr @case:
                 foreach (var branch in @case.Branches)
                 {
-                    VisitExpression(branch.Condition, provider);
-                    VisitExpression(branch.Value, provider);
+                    VisitExpression(branch.Condition, provider, allowNestedCteFragments);
+                    VisitExpression(branch.Value, provider, allowNestedCteFragments);
                 }
                 if (@case.ElseExpression is not null)
-                    VisitExpression(@case.ElseExpression, provider);
+                    VisitExpression(@case.ElseExpression, provider, allowNestedCteFragments);
                 return;
             case InExpr @in:
-                VisitExpression(@in.Value, provider);
+                VisitExpression(@in.Value, provider, allowNestedCteFragments);
                 foreach (var item in @in.Items)
-                    VisitExpression(item, provider);
+                    VisitExpression(item, provider, allowNestedCteFragments);
                 return;
             case BetweenExpr between:
-                VisitExpression(between.Value, provider);
-                VisitExpression(between.Lower, provider);
-                VisitExpression(between.Upper, provider);
+                VisitExpression(between.Value, provider, allowNestedCteFragments);
+                VisitExpression(between.Lower, provider, allowNestedCteFragments);
+                VisitExpression(between.Upper, provider, allowNestedCteFragments);
                 return;
             case IsNullExpr isNull:
-                VisitExpression(isNull.Value, provider);
+                VisitExpression(isNull.Value, provider, allowNestedCteFragments);
                 return;
             case LiteralExpr or ColumnExpr or BoundColumnExpr or IntervalExpr:
                 return;

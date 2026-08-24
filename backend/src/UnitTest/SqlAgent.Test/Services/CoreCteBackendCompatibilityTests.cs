@@ -124,26 +124,93 @@ public class CoreCteBackendCompatibilityTests
         Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_DerivedCteInsideScalarSubquery_RemainsFailClosed()
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_DerivedCteInsideScalarSubquery_UsesNestedCompilerAdapter(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "SELECT (SELECT MAX(d.id) FROM " +
+            "(WITH active AS (SELECT id FROM archived WHERE tenant_id = 7) " +
+            "SELECT id FROM active) AS d) AS value " +
+            "FROM users WHERE id > 9",
+            targetProvider);
+
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[1].Value));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_DerivedCteInsideScalarSubquery_FailsClosedWithoutDeclaredTargetGrammar(
+        SqlAgentToolType targetProvider)
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
-            "SELECT (SELECT d.id FROM " +
-            "(WITH active AS (SELECT id FROM archived) SELECT id FROM active) AS d LIMIT 1) AS value " +
-            "FROM users"));
+            "SELECT (SELECT MAX(d.id) FROM " +
+            "(WITH active AS (SELECT id FROM archived) SELECT id FROM active) AS d) AS value " +
+            "FROM users",
+            targetProvider));
+
+        Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_SetBranchCteInsideScalarSubquery_UsesNestedCompilerAdapter(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "SELECT (SELECT MAX(x.id) FROM (" +
+            "SELECT id FROM archived UNION " +
+            "(WITH active AS (SELECT id FROM users WHERE tenant_id = 7) SELECT id FROM active)" +
+            ") AS x) AS value FROM users WHERE id > 9",
+            targetProvider);
+
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set_branch", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[1].Value));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_SetBranchCteInsideScalarSubquery_FailsClosedWithoutDeclaredTargetGrammar(
+        SqlAgentToolType targetProvider)
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT (SELECT MAX(x.id) FROM (" +
+            "SELECT id FROM archived UNION " +
+            "(WITH active AS (SELECT id FROM users) SELECT id FROM active)" +
+            ") AS x) AS value FROM users",
+            targetProvider));
 
         Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Compile_SetBranchCteInsideScalarSubquery_RemainsFailClosed()
+    public void Compile_DerivedCteInsideExists_UsesNestedCompilerAdapter()
     {
-        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
-            "SELECT (SELECT id FROM archived UNION " +
-            "(WITH active AS (SELECT id FROM users) SELECT id FROM active) LIMIT 1) AS value " +
-            "FROM users"));
+        var command = Compile(
+            "SELECT u.id FROM users AS u WHERE EXISTS (" +
+            "SELECT 1 FROM (WITH active AS (SELECT id FROM archived WHERE tenant_id = 7) " +
+            "SELECT id FROM active) AS d WHERE d.id = u.id) AND u.id > 9");
 
-        Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EXISTS", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[1].Value));
     }
 
     [Theory]

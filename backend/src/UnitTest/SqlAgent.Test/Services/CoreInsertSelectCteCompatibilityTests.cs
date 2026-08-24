@@ -64,27 +64,78 @@ public class CoreInsertSelectCteCompatibilityTests
         Assert.Contains("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_InsertSelectWithDerivedLocalCte_FailsBeforeSqlKataCanDropDefinition()
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_InsertSelectWithDerivedLocalCte_UsesNestedCompilerAdapter(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "INSERT INTO archived (id) " +
+            "SELECT d.id FROM (WITH active AS (SELECT id FROM users WHERE tenant_id = 7) " +
+            "SELECT id FROM active WHERE id > 9) AS d",
+            targetProvider);
+
+        Assert.Equal(SqlStatementKind.Insert, command.Kind);
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[1].Value));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_InsertSelectWithDerivedLocalCte_FailsClosedWithoutDeclaredTargetGrammar(
+        SqlAgentToolType targetProvider)
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "INSERT INTO archived (id) " +
-            "SELECT d.id FROM (WITH active AS (SELECT id FROM users) SELECT id FROM active) AS d"));
+            "SELECT d.id FROM (WITH active AS (SELECT id FROM users) SELECT id FROM active) AS d",
+            targetProvider));
 
         Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("derived-table-local", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_InsertSelectWithSetBranchLocalCte_FailsBeforeSqlKataCanDropDefinition()
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_InsertSelectWithSetBranchLocalCte_UsesNestedCompilerAdapter(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "INSERT INTO archived (id) " +
+            "SELECT id FROM users WHERE tenant_id = 1 UNION " +
+            "(WITH active AS (SELECT id FROM archived WHERE tenant_id = 7) " +
+            "SELECT id FROM active WHERE id > 9)",
+            targetProvider);
+
+        Assert.Equal(SqlStatementKind.Insert, command.Kind);
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("_set_branch", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, command.Parameters.Length);
+        Assert.Equal(1, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[1].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[2].Value));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_InsertSelectWithSetBranchLocalCte_FailsClosedWithoutDeclaredTargetGrammar(
+        SqlAgentToolType targetProvider)
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "INSERT INTO archived (id) " +
             "SELECT id FROM users UNION " +
-            "(WITH active AS (SELECT id FROM archived) SELECT id FROM active)"));
+            "(WITH active AS (SELECT id FROM archived) SELECT id FROM active)",
+            targetProvider));
 
         Assert.Contains("select.cte_scope", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("set-operation-branch-local", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
