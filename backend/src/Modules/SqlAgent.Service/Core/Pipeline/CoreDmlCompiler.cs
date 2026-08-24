@@ -56,6 +56,9 @@ public sealed class CoreDmlCompiler(
             validated.TargetProvider,
             validated.PolicyVersion);
 
+        if (validated.Statement is InsertStatement { Source: InsertQuerySource querySource })
+            CoreSqlKataBackendCompatibility.ValidateInsertSelect(querySource.Query);
+
         var command = validated.Statement is InsertStatement insert
             ? new SqlKataInsertLowerer(targetProvider).Lower(executable, insert)
             : new SqlKataDmlLowerer(targetProvider).Lower(executable);

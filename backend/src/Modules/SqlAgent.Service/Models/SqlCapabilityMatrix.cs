@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.3";
+    public const string Version = "2026-08-24.4";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -139,7 +139,9 @@ public static class SqlCapabilityMatrix
             new("dml.basic", "dml", SqlCapabilityStatus.Translated,
                 "INSERT VALUES, UPDATE, and DELETE use the structured DML path."),
             new("dml.insert_select", "dml", SqlCapabilityStatus.Translated,
-                "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count."),
+                "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count; CTE-free source queries are lowered through SqlKata's structured insert-query path."),
+            new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Rejected,
+                "An INSERT ... SELECT source with a root CTE is rejected because SqlKata CompileInsertQueryClause delegates to nested CompileSelectQuery and would omit the CTE definition; explicit CTE hoisting is not modeled yet."),
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
                 "RETURNING/OUTPUT, UPSERT/ON CONFLICT/ON DUPLICATE KEY, and MERGE are not yet in the portable DML grammar; INSERT ... SELECT is tracked separately and supported."),
             new("dml.returning_output", "dml", SqlCapabilityStatus.Rejected,
