@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.1";
+    public const string Version = "2026-08-24.2";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -102,15 +102,15 @@ public static class SqlCapabilityMatrix
                     ? "Ambiguous JSON_EXTRACT is rejected because the scalar/object result type is unknown; use an explicit JSON_VALUE or JSON_QUERY contract."
                     : provider == SqlAgentToolType.Firebird
                         ? "Portable JSON extraction has no declared Firebird equivalent."
-                        : "Simple JSON paths containing only root, property, and array-index segments are normalized and translated."),
+                        : "Constant JSON property-chain paths such as $.user.name are normalized and translated; root-only, array-index, wildcard, filter, quoted-property, recursive-descent, and dynamic paths fail closed."),
             new("json.path.simple", "json", SqlCapabilityStatus.Translated,
-                "Only constant paths composed of $, .property, and [array-index] segments are accepted; recursive descent, wildcards, filters, quoted names, and dynamic paths are rejected."),
+                "Portable JSON paths are limited to constant property chains beginning at $, for example $.user.name; root-only, array-index, wildcard, filter, quoted-property, recursive-descent, and dynamic paths are rejected before lowering."),
             new("json.set", "json",
                 provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
                     ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
                 provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
                     ? "Portable JSON mutation has no declared equivalent for this provider."
-                    : "Portable JSON mutation is rendered with provider-native functions."),
+                    : "Portable JSON mutation is rendered with provider-native functions after constant property-chain path validation."),
             new("regex.match", "regex",
                 provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
                     ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,

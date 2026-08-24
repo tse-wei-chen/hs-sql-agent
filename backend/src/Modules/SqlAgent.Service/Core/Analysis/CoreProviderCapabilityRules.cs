@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
@@ -23,6 +24,10 @@ internal static class CoreProviderCapabilityRules
         "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST",
         "LAG", "LEAD", "NTILE"
     };
+
+    private static readonly Regex PortableJsonPropertyPath = new(
+        @"^\$\.[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$",
+        RegexOptions.CultureInvariant);
 
     public static void ValidateLiteral(LiteralExpr literal, SqlAgentToolType provider)
     {
@@ -83,6 +88,9 @@ internal static class CoreProviderCapabilityRules
                 ValidateDateMathUnit(function, provider, name);
                 break;
         }
+
+        if (name is "CORE_JSON_EXTRACT" or "CORE_JSON_SET")
+            ValidateJsonPath(function, provider, name);
 
         ValidateLiteralWindowArgument(name, function, provider);
     }
@@ -158,6 +166,30 @@ internal static class CoreProviderCapabilityRules
                 provider,
                 $"{functionName.ToLowerInvariant()}.unit.quarter",
                 $"{surfaceName} unit QUARTER is not supported by Firebird.");
+        }
+    }
+
+    private static void ValidateJsonPath(
+        FunctionCallExpr function,
+        SqlAgentToolType provider,
+        string functionName)
+    {
+        if (function.Arguments.Length < 2
+            || function.Arguments[1] is not LiteralExpr { Value: string path })
+        {
+            throw CapabilityError(
+                provider,
+                "json.path.constant",
+                $"{functionName} requires a constant JSON path in the portable Core model.");
+        }
+
+        if (!PortableJsonPropertyPath.IsMatch(path))
+        {
+            throw CapabilityError(
+                provider,
+                "json.path.property_chain",
+                $"JSON path '{path}' is outside the portable Core property-chain subset. " +
+                "Only paths such as '$.user.name' are supported; root-only paths, array indexes, wildcards, filters, quoted property names, and recursive descent fail closed.");
         }
     }
 
