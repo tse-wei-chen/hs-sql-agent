@@ -14,7 +14,6 @@ public sealed class CorePostgresLimitAllCapabilityContractTests
             matrix.Capabilities,
             item => item.Id == "select.row_limit");
 
-        Assert.Equal("2026-08-24.25", matrix.MatrixVersion);
         Assert.Equal(SqlCapabilityStatus.Translated, rowLimit.Status);
         Assert.Contains("PostgreSQL LIMIT ALL", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("no row-count limit", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);

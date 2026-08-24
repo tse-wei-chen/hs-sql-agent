@@ -4,6 +4,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Lowering;
 using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Core.Pipeline;
 
@@ -33,11 +34,14 @@ public sealed class CoreSqlCompiler(
         ParsedStatement parsed,
         SqlAgentToolType targetProvider,
         SqlPlanValidationContext validationContext,
-        SqlExecutionPlanPolicy executionPolicy)
+        SqlExecutionPlanPolicy executionPolicy,
+        SqlProviderCapabilityProfile? targetProfile = null)
     {
         ArgumentNullException.ThrowIfNull(parsed);
         ArgumentNullException.ThrowIfNull(validationContext);
         ArgumentNullException.ThrowIfNull(executionPolicy);
+
+        CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile);
 
         var bound = _binder.Bind(parsed);
         if (parsed.EnforceSourceDialectSyntax)
@@ -50,6 +54,13 @@ public sealed class CoreSqlCompiler(
         CoreNoFromReferenceValidator.Validate(canonical.Statement, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
         var executable = _policyRewriter.Rewrite(validated, executionPolicy);
+        executable = executable with
+        {
+            Statement = CoreProviderProfileRewriter.Rewrite(
+                executable.Statement,
+                targetProvider,
+                targetProfile)
+        };
         executable = executable with
         {
             Statement = CoreRootCteSetTailRewriter.Rewrite(executable.Statement)

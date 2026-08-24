@@ -22,12 +22,26 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.25";
+    public const string Version = "2026-08-24.26";
 
-    public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
+    public static ProviderSqlCapabilities ForProvider(
+        SqlAgentToolType provider,
+        SqlProviderCapabilityProfile? targetProfile = null)
     {
+        if (targetProfile is not null && targetProfile.Provider != provider)
+        {
+            throw new ArgumentException(
+                $"Target capability profile declares provider {targetProfile.Provider}, but matrix provider is {provider}.",
+                nameof(targetProfile));
+        }
+
+        var sqlServerRegexEnabled = provider == SqlAgentToolType.MsSqlServer
+            && targetProfile is { CompatibilityLevel: >= 170 };
+
         var capabilities = new List<SqlCapability>
         {
+            new("provider.target_profile", "provider", SqlCapabilityStatus.Supported,
+                "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared profile-dependent capabilities remain fail-closed; this matrix version first uses the profile to gate SQL Server REGEXP_LIKE at compatibility level 170+. Source-dialect session-sensitive grammar remains a separate future profile boundary."),
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
             new("select.row_limit", "query", SqlCapabilityStatus.Translated,
@@ -169,12 +183,16 @@ public static class SqlCapabilityMatrix
                     : "Portable JSON mutation is rendered with provider-native functions after constant property-chain path validation."),
             new("regex.match", "regex",
                 provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
-                    ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
+                    || sqlServerRegexEnabled
+                    ? SqlCapabilityStatus.Translated
+                    : SqlCapabilityStatus.Rejected,
                 provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
                     ? "REGEXP_LIKE semantics are rendered using the provider's declared regex syntax."
-                    : provider == SqlAgentToolType.MsSqlServer
-                        ? "SQL Server 2025 REGEXP_LIKE requires compatibility level 170, but server-version/compatibility-level capability profiles are not part of the Core plan yet."
-                        : "Regex matching is rejected because no reliable native equivalent is declared."),
+                    : provider == SqlAgentToolType.MsSqlServer && sqlServerRegexEnabled
+                        ? "SQL Server REGEXP_LIKE is enabled by the declared target capability profile at compatibility level 170 or above and is emitted natively."
+                        : provider == SqlAgentToolType.MsSqlServer
+                            ? "SQL Server REGEXP_LIKE requires a declared target capability profile with compatibility level 170 or above; absent or lower compatibility profiles remain fail-closed."
+                            : "Regex matching is rejected because no reliable native equivalent is declared."),
             new("window.basic", "window", SqlCapabilityStatus.Translated,
                 "OVER with PARTITION BY and ORDER BY is represented structurally; provider-specific function/order requirements are validated before lowering."),
             new("window.frame", "window", SqlCapabilityStatus.Translated,

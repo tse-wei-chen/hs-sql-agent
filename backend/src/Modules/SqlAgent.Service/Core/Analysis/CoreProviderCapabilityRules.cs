@@ -79,8 +79,10 @@ internal static class CoreProviderCapabilityRules
                     or SqlAgentToolType.MsSqlServer):
                 throw CapabilityError(provider, "function.json_set");
 
-            case "CORE_REGEX_MATCH" when provider is not (
-                SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle):
+            // SQL Server 2025 can expose REGEXP_LIKE at compatibility level 170+. The provider-wide
+            // semantic pass therefore lets SQL Server reach the target-profile stage, which still
+            // fails closed unless that runtime contract is declared explicitly.
+            case "CORE_REGEX_MATCH" when provider is SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird:
                 throw CapabilityError(provider, "function.regex_match");
 
             case "CORE_DATE_ADD":
