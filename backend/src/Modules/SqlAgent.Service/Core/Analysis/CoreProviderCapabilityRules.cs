@@ -1,5 +1,4 @@
 using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -28,12 +27,20 @@ internal static class CoreProviderCapabilityRules
     public static void ValidateLiteral(LiteralExpr literal, SqlAgentToolType provider)
     {
         if (provider == SqlAgentToolType.Oracle && literal.Value is SqlTimeValue)
-            throw CapabilityError(provider, "literal.time");
+        {
+            throw CapabilityError(
+                provider,
+                "literal.time",
+                "Oracle has no standalone TIME data type.");
+        }
 
         if (provider == SqlAgentToolType.MySQL
             && literal.Value is SqlOffsetDateTimeValue or DateTimeOffset)
         {
-            throw CapabilityError(provider, "literal.timestamp_offset");
+            throw CapabilityError(
+                provider,
+                "literal.timestamp_offset",
+                "MySQL has no native timestamp type that preserves a UTC offset.");
         }
     }
 
@@ -46,11 +53,17 @@ internal static class CoreProviderCapabilityRules
                 throw CapabilityError(provider, "function.nth_value");
 
             case "CORE_DATE_FORMAT" when provider == SqlAgentToolType.Firebird:
-                throw CapabilityError(provider, "function.date_format");
+                throw CapabilityError(
+                    provider,
+                    "function.date_format",
+                    "portable date formatting is not supported by Firebird.");
 
             case "CORE_DATE_PARSE" when provider is not (
                 SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle):
-                throw CapabilityError(provider, "function.date_parse");
+                throw CapabilityError(
+                    provider,
+                    "function.date_parse",
+                    "formatted date parsing is not supported by this provider.");
 
             case "CORE_JSON_EXTRACT" when provider is not (
                 SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite):
@@ -86,10 +99,15 @@ internal static class CoreProviderCapabilityRules
                 $"DISTINCT window aggregate '{name}' is not a portable Core capability and is rejected before lowering.");
         }
 
-        if (windowed.Window.Frame is not null && FrameInsensitiveWindowFunctions.Contains(name))
+        // PostgreSQL accepts frame syntax for functions that use the whole partition. MySQL and
+        // Firebird explicitly accept and ignore it for ranking/LAG/LEAD-style functions. SQL Server
+        // and Oracle do not expose the window-frame clause for these function families, so reject
+        // only those target providers instead of imposing a false cross-provider restriction.
+        if (windowed.Window.Frame is not null
+            && FrameInsensitiveWindowFunctions.Contains(name)
+            && provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle)
         {
-            throw new SqlCompilationException(
-                $"Window function '{name}' does not accept an explicit window frame in the Core pipeline.");
+            throw CapabilityError(provider, $"window.frame.{name.ToLowerInvariant()}");
         }
 
         if (provider == SqlAgentToolType.MsSqlServer && ModeledWindowFunctions.Contains(name)
@@ -119,17 +137,28 @@ internal static class CoreProviderCapabilityRules
         }
 
         var unit = rawUnit.Trim().ToUpperInvariant();
+        var surfaceName = functionName == "CORE_DATE_ADD" ? "DATEADD" : "DATEDIFF";
         if (provider is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite)
         {
             if (unit != "DAY")
-                throw CapabilityError(provider, $"{functionName.ToLowerInvariant()}.unit.{unit.ToLowerInvariant()}");
+            {
+                throw CapabilityError(
+                    provider,
+                    $"{functionName.ToLowerInvariant()}.unit.{unit.ToLowerInvariant()}",
+                    $"{surfaceName} unit {unit} is not supported by {provider}.");
+            }
             return;
         }
 
         // Firebird supports YEAR/MONTH/WEEK/DAY/HOUR/MINUTE/SECOND for the canonical units
         // represented by Core, but not QUARTER.
         if (provider == SqlAgentToolType.Firebird && unit == "QUARTER")
-            throw CapabilityError(provider, $"{functionName.ToLowerInvariant()}.unit.quarter");
+        {
+            throw CapabilityError(
+                provider,
+                $"{functionName.ToLowerInvariant()}.unit.quarter",
+                $"{surfaceName} unit QUARTER is not supported by Firebird.");
+        }
     }
 
     private static void ValidateLiteralWindowArgument(
@@ -195,6 +224,11 @@ internal static class CoreProviderCapabilityRules
 
     private static SqlCompilationException CapabilityError(
         SqlAgentToolType provider,
-        string capability) =>
-        new($"SQL capability '{capability}' is not supported by provider {provider} for this Core plan.");
+        string capability,
+        string? detail = null)
+    {
+        var prefix = string.IsNullOrWhiteSpace(detail) ? string.Empty : detail.Trim() + " ";
+        return new SqlCompilationException(
+            $"{prefix}SQL capability '{capability}' is not supported by provider {provider} for this Core plan.");
+    }
 }

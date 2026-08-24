@@ -42,14 +42,14 @@ public class CoreProviderCapabilityValidationTests
     }
 
     [Fact]
-    public void Compile_RankingFunctionWithExplicitFrame_FailsClosed()
+    public void Compile_SqlServerRankingFunctionWithExplicitFrame_FailsClosed()
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "SELECT ROW_NUMBER() OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM orders",
             SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.MsSqlServer));
 
-        Assert.Contains("does not accept an explicit window frame", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("window.frame.row_number", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -40,13 +40,20 @@ public class SqlCapabilityCompilerTests
     }
 
     [Fact]
-    public void WindowFrame_AndLag_CompileWithoutLegacyFunctionRegistryDependency()
+    public void WindowFrame_AndLag_RespectProviderCapabilities()
     {
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT LAG(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders");
 
         foreach (var provider in Providers)
         {
+            if (provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle)
+            {
+                var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
+                Assert.Contains("window.frame.lag", error.Message, StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+
             var command = Compile(definition, provider, provider);
             Assert.Contains("LAG(", command.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("ROWS BETWEEN 2 PRECEDING AND CURRENT ROW", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -154,10 +161,10 @@ public class SqlCapabilityCompilerTests
 
         foreach (var provider in new[] { SqlAgentToolType.Postgres, SqlAgentToolType.Oracle, SqlAgentToolType.Sqlite })
         {
-            Assert.Contains("DATEDIFF unit MONTH", Assert.Throws<SqlCompilationException>(() =>
-                Compile(diff, SqlAgentToolType.MsSqlServer, provider)).Message);
-            Assert.Contains("DATEADD unit MONTH", Assert.Throws<SqlCompilationException>(() =>
-                Compile(add, SqlAgentToolType.MsSqlServer, provider)).Message);
+            Assert.Contains("core_date_diff.unit.month", Assert.Throws<SqlCompilationException>(() =>
+                Compile(diff, SqlAgentToolType.MsSqlServer, provider)).Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("core_date_add.unit.month", Assert.Throws<SqlCompilationException>(() =>
+                Compile(add, SqlAgentToolType.MsSqlServer, provider)).Message, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -183,12 +190,14 @@ public class SqlCapabilityCompilerTests
             "SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') FROM orders");
 
         Assert.Contains("portable date formatting", Assert.Throws<SqlCompilationException>(() =>
-            Compile(format, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message);
+            Compile(format, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message,
+            StringComparison.OrdinalIgnoreCase);
 
         foreach (var provider in new[] { SqlAgentToolType.Sqlite, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird })
         {
-            Assert.Contains("formatted date parsing", Assert.Throws<SqlCompilationException>(() =>
-                Compile(parse, SqlAgentToolType.MsSqlServer, provider)).Message);
+            Assert.Contains("function.date_parse", Assert.Throws<SqlCompilationException>(() =>
+                Compile(parse, SqlAgentToolType.MsSqlServer, provider)).Message,
+                StringComparison.OrdinalIgnoreCase);
         }
     }
 
