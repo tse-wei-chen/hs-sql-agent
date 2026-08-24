@@ -193,12 +193,16 @@ public class SqlCapabilityCompilerTests
             Compile(format, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message,
             StringComparison.OrdinalIgnoreCase);
 
-        foreach (var provider in new[] { SqlAgentToolType.Sqlite, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird })
+        foreach (var provider in new[] { SqlAgentToolType.Sqlite, SqlAgentToolType.MsSqlServer })
         {
             Assert.Contains("function.date_parse", Assert.Throws<SqlCompilationException>(() =>
                 Compile(parse, SqlAgentToolType.MsSqlServer, provider)).Message,
                 StringComparison.OrdinalIgnoreCase);
         }
+
+        Assert.Contains("formatted date parsing", Assert.Throws<SqlCompilationException>(() =>
+            Compile(parse, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Firebird)).Message,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
