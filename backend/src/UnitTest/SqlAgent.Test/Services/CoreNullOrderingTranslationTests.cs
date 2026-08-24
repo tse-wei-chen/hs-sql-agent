@@ -79,6 +79,25 @@ public class CoreNullOrderingTranslationTests
     }
 
     [Fact]
+    public void Compile_UpdateScalarSubqueryDefaultEquivalentNullOrdering_UsesSharedDmlRewrite()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users SET manager_id = (SELECT id FROM managers ORDER BY id ASC NULLS FIRST LIMIT 1) WHERE id = 7",
+            SqlAgentToolType.Postgres);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MySQL,
+            new SqlPlanValidationContext("policy-v1"),
+            new DmlCompilationPolicy());
+
+        Assert.Contains("UPDATE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("NULLS FIRST", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_InsertSelectNonDefaultNullOrdering_RemainsFailClosed()
     {
         var parsed = CoreSqlTextParser.ParseDml(
