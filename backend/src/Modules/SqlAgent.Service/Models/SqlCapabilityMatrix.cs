@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.20";
+    public const string Version = "2026-08-24.21";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -107,6 +107,8 @@ public static class SqlCapabilityMatrix
                 provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
                     ? "Boolean/comparison expressions in the SELECT list are rejected; predicates remain supported."
                     : "Boolean/comparison expressions can be projected in the SELECT list."),
+            new("expression.boolean_literal_source", "expression", SqlCapabilityStatus.Translated,
+                "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available."),
             new("expression.cast", "expression", SqlCapabilityStatus.Translated,
                 "Standard CAST input is normalized through a source-aware Core type model before provider-specific CAST spelling is emitted. Raw PostgreSQL :: cast spelling is accepted only when the declared source dialect is PostgreSQL; non-PostgreSQL raw sources fail before AST canonicalization. Unknown cross-dialect vendor types fail closed."),
             new("expression.interval", "expression",

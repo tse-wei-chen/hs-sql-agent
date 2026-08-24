@@ -110,6 +110,19 @@ public class CoreCapabilityMatrixContractTests
     }
 
     [Fact]
+    public void Matrix_DocumentsSqlServerBooleanLiteralSourceBoundary()
+    {
+        var booleanLiteral = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Postgres).Capabilities,
+            item => item.Id == "expression.boolean_literal_source");
+
+        Assert.Equal(SqlCapabilityStatus.Translated, booleanLiteral.Status);
+        Assert.Contains("Raw SQL Server source", booleanLiteral.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("TRUE/FALSE", booleanLiteral.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("0/1", booleanLiteral.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_DocumentsVersionDependentSqlServerRegexBoundary()
     {
         var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer);

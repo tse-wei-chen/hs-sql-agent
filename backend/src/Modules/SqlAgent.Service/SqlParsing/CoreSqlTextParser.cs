@@ -62,6 +62,15 @@ public static class CoreSqlTextParser
                     $"LIMIT is not valid raw source syntax for dialect {sourceDialect} at position {token.Pos}; " +
                     "use the source provider's native row-limiting form or a structured Core row limit.");
             }
+            if (token.Type == TokenType.Keyword
+                && sourceDialect == SqlAgentToolType.MsSqlServer
+                && (token.Value.Equals("TRUE", StringComparison.OrdinalIgnoreCase)
+                    || token.Value.Equals("FALSE", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new SqlParseException(
+                    $"Bare {token.Value.ToUpperInvariant()} is not valid T-SQL boolean-literal source syntax at position {token.Pos}; " +
+                    "SQL Server bit constants use 0 or 1, and Core does not reinterpret bare TRUE/FALSE tokens as identifiers.");
+            }
             if (token.Type == TokenType.Semicolon && i != content.Length - 1)
             {
                 throw new SqlParseException(
