@@ -17,7 +17,9 @@ public static class CoreSqlTextParser
         ValidateStatementTokens(tokens, sourceDialect);
         var topLimit = NormalizeSqlServerTop(tokens, sourceDialect, out var normalizedTokens);
         normalizedTokens = CommaFromNormalizer.Normalize(normalizedTokens);
-        var statement = new CoreQueryTextParser(new CoreTokenReader(normalizedTokens)).ParseComplete(topLimit);
+        var statement = new CoreQueryTextParser(
+            new CoreTokenReader(normalizedTokens),
+            sourceDialect).ParseComplete(topLimit);
         return new ParsedStatement(statement, sourceDialect, EnforceSourceDialectSyntax: true);
     }
 
@@ -26,7 +28,9 @@ public static class CoreSqlTextParser
         ArgumentNullException.ThrowIfNull(sql);
         var tokens = new SqlTokenizer(sql, sourceDialect).Tokenize();
         ValidateStatementTokens(tokens, sourceDialect);
-        var statement = new CoreDmlTextParser(new CoreTokenReader(tokens)).ParseComplete();
+        var statement = new CoreDmlTextParser(
+            new CoreTokenReader(tokens),
+            sourceDialect).ParseComplete();
         return new ParsedStatement(statement, sourceDialect, EnforceSourceDialectSyntax: true);
     }
 

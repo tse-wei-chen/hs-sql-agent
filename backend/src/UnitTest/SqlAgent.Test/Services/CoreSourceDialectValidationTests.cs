@@ -168,6 +168,62 @@ public class CoreSourceDialectValidationTests
     }
 
     [Fact]
+    public void Compile_PostgresBareOffset_RemainsValidRawSourceSyntax()
+    {
+        var command = CompileQuery(
+            "SELECT id FROM users OFFSET 5",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("OFFSET", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_BareOffset_RequiresLimitForMySqlAndSqlite(SqlAgentToolType sourceDialect)
+    {
+        var ex = Assert.Throws<SqlParseException>(() => CompileQuery(
+            "SELECT id FROM users OFFSET 5",
+            sourceDialect,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("OFFSET", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("preceding LIMIT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(sourceDialect.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_LimitOffset_RemainsValidForMySqlAndSqliteRawSource(SqlAgentToolType sourceDialect)
+    {
+        var command = CompileQuery(
+            "SELECT id FROM users LIMIT 10 OFFSET 5",
+            sourceDialect,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OFFSET", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_NativeOffsetFetchShape_FailsClosedUntilRawGrammarModelsIt(SqlAgentToolType sourceDialect)
+    {
+        var ex = Assert.Throws<SqlParseException>(() => CompileQuery(
+            "SELECT id FROM users ORDER BY id OFFSET 5 ROWS",
+            sourceDialect,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("OFFSET", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(sourceDialect.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ROW/ROWS/FETCH", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_SqlServerTop_RemainsPortableAfterLimitSourceGuard()
     {
         var command = CompileQuery(
@@ -256,6 +312,19 @@ public class CoreSourceDialectValidationTests
 
         Assert.Contains("LIMIT", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Oracle", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParseDml_InsertSelectBareOffset_PropagatesSourceDialect()
+    {
+        var ex = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(
+                "INSERT INTO archived_users (id) SELECT id FROM users OFFSET 5",
+                SqlAgentToolType.MySQL));
+
+        Assert.Contains("OFFSET", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("preceding LIMIT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CompiledSqlCommand CompileQuery(

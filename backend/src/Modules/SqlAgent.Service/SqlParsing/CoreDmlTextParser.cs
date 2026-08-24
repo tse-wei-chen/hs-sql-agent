@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.SqlParsing;
@@ -7,11 +8,13 @@ namespace SqlAgent.Service.SqlParsing;
 internal sealed class CoreDmlTextParser
 {
     private readonly CoreTokenReader _reader;
+    private readonly SqlAgentToolType _sourceDialect;
     private readonly CoreExpressionTextParser _expressions;
 
-    public CoreDmlTextParser(CoreTokenReader reader)
+    public CoreDmlTextParser(CoreTokenReader reader, SqlAgentToolType sourceDialect)
     {
         _reader = reader;
+        _sourceDialect = sourceDialect;
         _expressions = new CoreExpressionTextParser(reader, ParseNestedQuery);
     }
 
@@ -245,5 +248,5 @@ internal sealed class CoreDmlTextParser
     }
 
     private SqlStatement ParseNestedQuery() =>
-        new CoreQueryTextParser(_reader).ParseQueryExpression();
+        new CoreQueryTextParser(_reader, _sourceDialect).ParseQueryExpression();
 }

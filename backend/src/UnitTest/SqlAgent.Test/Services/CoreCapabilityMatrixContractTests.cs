@@ -103,8 +103,10 @@ public class CoreCapabilityMatrixContractTests
 
         Assert.Equal(SqlCapabilityStatus.Translated, rowLimit.Status);
         Assert.Contains("PostgreSQL, MySQL, and SQLite", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Raw bare OFFSET", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MySQL and SQLite accept OFFSET only after LIMIT", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("SQL Server TOP", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Oracle and Firebird", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQL Server, Oracle, and Firebird", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -1,17 +1,20 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.SqlParsing;
 
 internal sealed class CoreQueryTextParser
 {
     private readonly CoreTokenReader _reader;
+    private readonly SqlAgentToolType _sourceDialect;
     private readonly CoreExpressionTextParser _expressions;
 
-    public CoreQueryTextParser(CoreTokenReader reader)
+    public CoreQueryTextParser(CoreTokenReader reader, SqlAgentToolType sourceDialect)
     {
         _reader = reader;
+        _sourceDialect = sourceDialect;
         _expressions = new CoreExpressionTextParser(reader, ParseQueryExpression);
     }
 
@@ -336,7 +339,26 @@ internal sealed class CoreQueryTextParser
         int? limit = null;
         int? offset = null;
         if (_reader.MatchWord("LIMIT")) limit = ParseNonNegativeInt("LIMIT");
-        if (_reader.MatchWord("OFFSET")) offset = ParseNonNegativeInt("OFFSET");
+        if (_reader.PeekWord("OFFSET"))
+        {
+            var offsetToken = _reader.Peek();
+            var offsetRequiresLimit = _sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite;
+            if (offsetRequiresLimit && limit is null)
+            {
+                throw CoreTokenReader.Error(
+                    $"OFFSET without a preceding LIMIT is not valid raw source syntax for {_sourceDialect}.",
+                    offsetToken);
+            }
+            if (_sourceDialect is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+            {
+                throw CoreTokenReader.Error(
+                    $"{_sourceDialect} native OFFSET row-limiting syntax requires provider-specific ROW/ROWS/FETCH grammar that the raw Core query parser does not model; use a structured Core row limit/offset instead.",
+                    offsetToken);
+            }
+
+            _reader.Advance();
+            offset = ParseNonNegativeInt("OFFSET");
+        }
         return (limit, offset);
     }
 
