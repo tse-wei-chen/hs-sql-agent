@@ -275,6 +275,11 @@ internal sealed class CoreFirebirdCompiler : FirebirdCompiler, ICoreSqlKataRawCo
             ? ordinal
             : base.CompileColumn(ctx, column);
 
+    public override string CompileFrom(SqlResult ctx) =>
+        ctx.Query.HasComponent("from", EngineCode)
+            ? base.CompileFrom(ctx)
+            : "FROM RDB$DATABASE";
+
     public override string WrapValue(string value)
     {
         if (value == "*") return value;
