@@ -152,7 +152,10 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             CastExpr cast => cast with
             {
                 Expression = NormalizeExpr(cast.Expression, context),
-                TypeName = cast.TypeName.Trim()
+                TypeName = CoreCastTypeNormalizer.Normalize(
+                    cast.TypeName,
+                    context.SourceDialect,
+                    context.TargetProvider)
             },
             CaseExpr @case => @case with
             {
