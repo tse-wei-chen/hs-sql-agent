@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.17";
+    public const string Version = "2026-08-24.18";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -106,7 +106,7 @@ public static class SqlCapabilityMatrix
                     ? "Boolean/comparison expressions in the SELECT list are rejected; predicates remain supported."
                     : "Boolean/comparison expressions can be projected in the SELECT list."),
             new("expression.cast", "expression", SqlCapabilityStatus.Translated,
-                "CAST and PostgreSQL :: input are normalized through a source-aware Core type model before provider-specific CAST spelling is emitted; unknown cross-dialect vendor types fail closed."),
+                "Standard CAST input is normalized through a source-aware Core type model before provider-specific CAST spelling is emitted. Raw PostgreSQL :: cast spelling is accepted only when the declared source dialect is PostgreSQL; non-PostgreSQL raw sources fail before AST canonicalization. Unknown cross-dialect vendor types fail closed."),
             new("expression.interval", "expression",
                 provider == SqlAgentToolType.Postgres ? SqlCapabilityStatus.Supported : SqlCapabilityStatus.Rejected,
                 provider == SqlAgentToolType.Postgres

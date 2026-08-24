@@ -83,6 +83,18 @@ public class CoreCapabilityMatrixContractTests
     }
 
     [Fact]
+    public void Matrix_DocumentsPostgresDoubleColonCastSourceBoundary()
+    {
+        var cast = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Postgres).Capabilities,
+            item => item.Id == "expression.cast");
+
+        Assert.Equal(SqlCapabilityStatus.Translated, cast.Status);
+        Assert.Contains("Raw PostgreSQL ::", cast.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("declared source dialect is PostgreSQL", cast.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_DocumentsVersionDependentSqlServerRegexBoundary()
     {
         var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer);

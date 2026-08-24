@@ -83,6 +83,61 @@ public sealed class CoreCastGrammarExpansionTests
     }
 
     [Fact]
+    public void Compile_PostgresDoubleColonCast_RemainsValidRawSourceSyntax()
+    {
+        var command = CompileQuery(
+            "SELECT 'abc'::VARCHAR(20)",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("VARCHAR(20)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("::", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_DoubleColonCast_FailsClosedForNonPostgresRawSource(SqlAgentToolType sourceDialect)
+    {
+        var error = Assert.Throws<SqlParseException>(() => CompileQuery(
+            "SELECT 'abc'::VARCHAR(20)",
+            sourceDialect,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("::", error.Message, StringComparison.Ordinal);
+        Assert.Contains(sourceDialect.ToString(), error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CAST", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_MySqlStandardCast_RemainsPortable()
+    {
+        var command = CompileQuery(
+            "SELECT CAST(1 AS SIGNED)",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("BIGINT", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_DmlDoubleColonCast_UsesTheSameRawSourceBoundary()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(
+                "UPDATE users SET status = status::VARCHAR(20)",
+                SqlAgentToolType.MySQL));
+
+        Assert.Contains("::", error.Message, StringComparison.Ordinal);
+        Assert.Contains("MySQL", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_DmlPredicateSupportsSqlServerMaxCastGrammar()
     {
         var command = CoreDmlCompiler.CreateDefault().Compile(

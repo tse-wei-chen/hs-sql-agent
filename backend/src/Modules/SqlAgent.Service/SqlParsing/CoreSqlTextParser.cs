@@ -14,7 +14,7 @@ public static class CoreSqlTextParser
     {
         ArgumentNullException.ThrowIfNull(sql);
         var tokens = new SqlTokenizer(sql, sourceDialect).Tokenize();
-        ValidateStatementTokens(tokens);
+        ValidateStatementTokens(tokens, sourceDialect);
         var topLimit = NormalizeSqlServerTop(tokens, sourceDialect, out var normalizedTokens);
         normalizedTokens = CommaFromNormalizer.Normalize(normalizedTokens);
         var statement = new CoreQueryTextParser(new CoreTokenReader(normalizedTokens)).ParseComplete(topLimit);
@@ -25,12 +25,12 @@ public static class CoreSqlTextParser
     {
         ArgumentNullException.ThrowIfNull(sql);
         var tokens = new SqlTokenizer(sql, sourceDialect).Tokenize();
-        ValidateStatementTokens(tokens);
+        ValidateStatementTokens(tokens, sourceDialect);
         var statement = new CoreDmlTextParser(new CoreTokenReader(tokens)).ParseComplete();
         return new ParsedStatement(statement, sourceDialect, EnforceSourceDialectSyntax: true);
     }
 
-    private static void ValidateStatementTokens(Token[] tokens)
+    private static void ValidateStatementTokens(Token[] tokens, SqlAgentToolType sourceDialect)
     {
         var content = tokens.Where(token => token.Type != TokenType.EOF).ToArray();
         for (var i = 0; i < content.Length; i++)
@@ -41,6 +41,14 @@ public static class CoreSqlTextParser
                 throw new SqlParseException(
                     $"Unbound SQL parameter '{token.Value}' at position {token.Pos}. " +
                     "Runtime SQL parameters are not accepted; use a declared Custom Tool parameter.");
+            }
+            if (token.Type == TokenType.Operator
+                && token.Value == "::"
+                && sourceDialect != SqlAgentToolType.Postgres)
+            {
+                throw new SqlParseException(
+                    $"PostgreSQL '::' cast syntax is not valid for source dialect {sourceDialect} at position {token.Pos}; " +
+                    "use CAST(expression AS type) for portable raw SQL.");
             }
             if (token.Type == TokenType.Semicolon && i != content.Length - 1)
             {
