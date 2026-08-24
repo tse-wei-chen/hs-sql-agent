@@ -10,8 +10,8 @@ namespace SqlAgent.Service.Core.Pipeline;
 /// Statement-root INSERT..SELECT CTEs have a dedicated provider-aware lowerer. Query-graph derived
 /// tables and set-operation branches can use fully compiled fragments only on providers that accept
 /// WITH at the beginning of a parenthesized subquery. Core provider compilers apply the same
-/// query-graph rewrite to nested SELECT compilation, so scalar/EXISTS and DML subqueries share the
-/// same scope contract instead of bypassing it.
+/// query-graph rewrite to nested SELECT compilation, while scalar/EXISTS expressions render their
+/// subquery as a complete compiler fragment so root WITH definitions can be retained where legal.
 /// </summary>
 internal static class CoreSqlKataBackendCompatibility
 {
@@ -172,11 +172,12 @@ internal static class CoreSqlKataBackendCompatibility
                 "a CTE-definition-local WITH clause would be recursively discovered and hoisted by SqlKata CteFinder, changing lexical scope");
         }
 
-        if (position == QueryPosition.ScalarSubquery)
+        if (position == QueryPosition.ScalarSubquery
+            && !CanLowerNestedCteFragment(provider, allowNestedCteFragments))
         {
             throw CteScopeError(
                 "select.cte_scope",
-                "a scalar/EXISTS subquery owns a statement-root WITH clause, but SqlKata CompileSelectQuery omits that nested root CTE definition");
+                $"provider {provider} has no declared portable WITH-at-the-root-of-a-scalar/EXISTS-subquery contract");
         }
 
         if (position is QueryPosition.DerivedTable or QueryPosition.SetBranch
