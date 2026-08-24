@@ -206,15 +206,27 @@ public class SqlCapabilityCompilerTests
     }
 
     [Fact]
-    public void CoalesceFamily_UsesTargetSemanticRegistry()
+    public void CoalesceFamily_PreservesStandardSemanticsAndRejectsProviderSpecificAliases()
     {
         var coalesce = SqlDefinitionParser.ParseQuery("SELECT COALESCE(customer_id, 0) FROM orders");
-        Assert.Contains("IFNULL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.MySQL).Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ISNULL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.MsSqlServer).Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("NVL(", Compile(coalesce, SqlAgentToolType.Postgres, SqlAgentToolType.Oracle).Sql, StringComparison.OrdinalIgnoreCase);
+        foreach (var provider in new[]
+                 {
+                     SqlAgentToolType.MySQL,
+                     SqlAgentToolType.MsSqlServer,
+                     SqlAgentToolType.Oracle
+                 })
+        {
+            var sql = Compile(coalesce, SqlAgentToolType.Postgres, provider).Sql;
+            Assert.Contains("COALESCE(", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("IFNULL(", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("ISNULL(", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("NVL(", sql, StringComparison.OrdinalIgnoreCase);
+        }
 
         var isNull = SqlDefinitionParser.ParseQuery("SELECT ISNULL(customer_id, 0) FROM orders");
-        Assert.Contains("COALESCE(", Compile(isNull, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres).Sql, StringComparison.OrdinalIgnoreCase);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(isNull, SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres));
+        Assert.Contains("type-conversion rules", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -158,7 +158,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             Fixture.ConnectionString,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("operator.ilike", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PostgreSQL-specific", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -96,7 +96,7 @@ public class CoreDmlPredicateLoweringTests
             SqlAgentToolType.Oracle));
 
         Assert.Contains("Random", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Oracle", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not translated across dialects", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CompiledSqlCommand Compile(
