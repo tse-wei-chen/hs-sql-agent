@@ -3,7 +3,7 @@
   {"dialect":"Oracle","name":"CEIL","semantic":"Ceiling","minArguments":1,"maxArguments":1,"translationKind":"Semantic"},
   {"dialect":"Oracle","name":"NVL","aliases":["COALESCE"],"semantic":"Coalesce","minArguments":2,"maxArguments":2,"translationKind":"Semantic"},
   {"dialect":"Oracle","name":"COALESCE","semantic":"Coalesce","minArguments":3,"translationKind":"Semantic"},
-  {"dialect":"Oracle","name":"CURRENT_TIMESTAMP","aliases":["SYSDATE"],"semantic":"CurrentTimestamp","minArguments":0,"maxArguments":0,"translationKind":"Template","template":"@CurrentTimestamp"},
+  {"dialect":"Oracle","name":"CURRENT_TIMESTAMP","semantic":"CurrentTimestamp","minArguments":0,"maxArguments":0,"translationKind":"Template","template":"@CurrentTimestamp"},
   {"dialect":"Oracle","name":"LISTAGG","semantic":"StringAggregate","minArguments":1,"maxArguments":1,"translationKind":"Template","template":"LISTAGG($1, ',')"},
   {"dialect":"Oracle","name":"LISTAGG","semantic":"StringAggregate","minArguments":2,"maxArguments":2,"translationKind":"Semantic"}
 ]

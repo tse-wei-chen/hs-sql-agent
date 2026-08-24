@@ -15,7 +15,7 @@ internal static class CoreSqlSemanticValidator
 {
     private static readonly HashSet<string> AggregateFunctions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "AVG", "COUNT", "MAX", "MIN", "SUM", "CORE_STRING_AGG"
+        "AVG", "COUNT", "MAX", "MIN", "SUM", "CORE_STRING_AGG", "GROUP_CONCAT"
     };
 
     private static readonly HashSet<string> WindowFunctions = new(StringComparer.OrdinalIgnoreCase)
@@ -109,15 +109,9 @@ internal static class CoreSqlSemanticValidator
             if (TryOrderByOrdinal(item.Expression, out var position))
             {
                 if (position <= 0)
-                {
-                    throw new SqlCompilationException(
-                        $"ORDER BY output position must be positive; received {position}.");
-                }
+                    throw new SqlCompilationException($"ORDER BY output position must be positive; received {position}.");
                 if (width is not null && position > width.Value)
-                {
-                    throw new SqlCompilationException(
-                        $"ORDER BY output position {position} exceeds projection width {width.Value}.");
-                }
+                    throw new SqlCompilationException($"ORDER BY output position {position} exceeds projection width {width.Value}.");
                 continue;
             }
 
@@ -218,8 +212,6 @@ internal static class CoreSqlSemanticValidator
                 return;
             case SubqueryExpr:
             case ExistsExpr:
-                // A subquery has its own scope. Its internal identifiers are validated when the
-                // subquery itself is visited and must not be mistaken for set-result references.
                 return;
             default:
                 throw new SqlCompilationException(
@@ -233,27 +225,20 @@ internal static class CoreSqlSemanticValidator
         SqlAgentToolType provider)
     {
         if (identifier.Parts.Length != 1 || IsWildcard(identifier))
-        {
             throw new SqlCompilationException(
                 $"Set-operation ORDER BY can reference combined output columns only; " +
                 $"branch-qualified reference '{IdentifierText(identifier)}' is not valid after combination.");
-        }
 
         if (outputNames is null) return;
 
         var reference = identifier.Parts[0];
-        var matches = outputNames
-            .Count(candidate => IdentifiersEquivalent(candidate, reference, provider));
+        var matches = outputNames.Count(candidate => IdentifiersEquivalent(candidate, reference, provider));
         if (matches == 0)
-        {
             throw new SqlCompilationException(
                 $"Set-operation ORDER BY reference '{reference.Value}' is not present in the combined output projection.");
-        }
         if (matches > 1)
-        {
             throw new SqlCompilationException(
                 $"Set-operation ORDER BY reference '{reference.Value}' is ambiguous in the combined output projection; use an output position.");
-        }
     }
 
     private static bool IdentifiersEquivalent(
@@ -301,10 +286,8 @@ internal static class CoreSqlSemanticValidator
         }
 
         if (provider == SqlAgentToolType.MySQL && join.Kind == "FULL")
-        {
             throw new SqlCompilationException(
                 "SQL capability 'join.full' is not supported by provider MySQL for this Core plan.");
-        }
     }
 
     private static void ValidateSetOperationWidths(QueryStatement query)
@@ -316,11 +299,9 @@ internal static class CoreSqlSemanticValidator
         {
             var actualWidth = ProjectionWidth(operation.Query);
             if (actualWidth is not null && actualWidth.Value != expectedWidth.Value)
-            {
                 throw new SqlCompilationException(
                     $"Set operation '{operation.Kind}' projection width {actualWidth.Value} " +
                     $"does not match head projection width {expectedWidth.Value}.");
-            }
         }
     }
 
@@ -350,10 +331,8 @@ internal static class CoreSqlSemanticValidator
         {
             case LiteralExpr { Value: OrderByOrdinalValue ordinal }:
                 if (context != ClauseContext.OrderBy)
-                {
                     throw new SqlCompilationException(
                         $"ORDER BY output position {ordinal.Position} is not a scalar SQL value and cannot appear in '{ContextName(context)}'.");
-                }
                 return;
             case LiteralExpr literal:
                 CoreProviderCapabilityRules.ValidateLiteral(literal, provider);
@@ -362,46 +341,36 @@ internal static class CoreSqlSemanticValidator
             case BoundColumnExpr:
             case IntervalExpr:
                 return;
-
             case UnaryExpr unary:
                 Visit(unary.Operand, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case BinaryExpr binary:
                 Visit(binary.Left, context, insideSetFunction, withinWindow, provider);
                 Visit(binary.Right, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case FunctionCallExpr function:
                 VisitFunction(function, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case FilterExpr filter:
                 Visit(filter.Expression, context, insideSetFunction, withinWindow, provider);
                 Visit(filter.Predicate, ClauseContext.Predicate, insideSetFunction: false, withinWindow: false, provider);
                 return;
-
             case WindowedExpr windowed:
                 CoreProviderCapabilityRules.ValidateWindow(windowed, provider);
                 if (context is not (ClauseContext.Projection or ClauseContext.OrderBy))
-                {
                     throw new SqlCompilationException(
                         $"Window expressions are not allowed in SQL clause '{ContextName(context)}'.");
-                }
                 if (insideSetFunction)
                     throw new SqlCompilationException("Window functions cannot be nested inside aggregate or window functions.");
-
                 Visit(windowed.Expression, context, insideSetFunction: false, withinWindow: true, provider);
                 foreach (var partition in windowed.Window.PartitionBy)
                     Visit(partition, ClauseContext.WindowSpecification, insideSetFunction: false, withinWindow: false, provider);
                 foreach (var item in windowed.Window.OrderBy)
                     Visit(item.Expression, ClauseContext.WindowSpecification, insideSetFunction: false, withinWindow: false, provider);
                 return;
-
             case CastExpr cast:
                 Visit(cast.Expression, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case CaseExpr @case:
                 foreach (var branch in @case.Branches)
                 {
@@ -411,31 +380,25 @@ internal static class CoreSqlSemanticValidator
                 if (@case.ElseExpression is not null)
                     Visit(@case.ElseExpression, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case InExpr @in:
                 Visit(@in.Value, context, insideSetFunction, withinWindow, provider);
                 foreach (var item in @in.Items)
                     Visit(item, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case BetweenExpr between:
                 Visit(between.Value, context, insideSetFunction, withinWindow, provider);
                 Visit(between.Lower, context, insideSetFunction, withinWindow, provider);
                 Visit(between.Upper, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case IsNullExpr isNull:
                 Visit(isNull.Value, context, insideSetFunction, withinWindow, provider);
                 return;
-
             case SubqueryExpr subquery:
                 Validate(subquery.Query, provider);
                 return;
-
             case ExistsExpr exists:
                 Validate(exists.Query, provider);
                 return;
-
             default:
                 throw new SqlCompilationException(
                     $"Unsupported expression during Core semantic validation: {expression.GetType().Name}");
@@ -456,17 +419,12 @@ internal static class CoreSqlSemanticValidator
 
         if (isAggregate)
         {
-            if (!withinWindow && context is not (
-                    ClauseContext.Projection or ClauseContext.Having or ClauseContext.OrderBy))
-            {
+            if (!withinWindow && context is not (ClauseContext.Projection or ClauseContext.Having or ClauseContext.OrderBy))
                 throw new SqlCompilationException(
                     $"Aggregate function '{name}' is not allowed in SQL clause '{ContextName(context)}'.");
-            }
             if (withinWindow && context is not (ClauseContext.Projection or ClauseContext.OrderBy))
-            {
                 throw new SqlCompilationException(
                     $"Windowed aggregate function '{name}' is not allowed in SQL clause '{ContextName(context)}'.");
-            }
             if (insideSetFunction)
                 throw new SqlCompilationException($"Aggregate function '{name}' cannot be nested inside another aggregate or window function.");
         }
@@ -474,10 +432,8 @@ internal static class CoreSqlSemanticValidator
         if (isWindowFunction)
         {
             if (context is not (ClauseContext.Projection or ClauseContext.OrderBy))
-            {
                 throw new SqlCompilationException(
                     $"Window function '{name}' is not allowed in SQL clause '{ContextName(context)}'.");
-            }
             if (insideSetFunction)
                 throw new SqlCompilationException($"Window function '{name}' cannot be nested inside another aggregate or window function.");
         }

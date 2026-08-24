@@ -9,11 +9,6 @@ using SqlAgent.Service.SqlTranslation.Functions;
 
 namespace SqlAgent.Service.Core.Normalization;
 
-/// <summary>
-/// Canonicalizes the bound Core AST with explicit source/target dialect context. No ambient state
-/// is used. Cross-dialect function families are reduced to a small set of canonical semantic
-/// function names; provider syntax is selected only by the provider lowerer.
-/// </summary>
 public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISqlNormalizer
 {
     private static readonly DateFormatTranslator DateFormats = new();
@@ -119,69 +114,63 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             OrderBy = NormalizeOrderBy(window.OrderBy, context)
         };
 
-    private SqlExpr NormalizeExpr(SqlExpr expression, NormalizationContext context)
+    private SqlExpr NormalizeExpr(SqlExpr expression, NormalizationContext context) => expression switch
     {
-        return expression switch
+        LiteralExpr literal => literal,
+        IntervalExpr interval => interval,
+        BoundColumnExpr column => column,
+        ColumnExpr column => column,
+        UnaryExpr unary => unary with
         {
-            LiteralExpr literal => literal,
-            IntervalExpr interval => interval,
-            BoundColumnExpr column => column,
-            ColumnExpr column => column,
-            UnaryExpr unary => unary with
-            {
-                Operator = NormalizeOperator(unary.Operator),
-                Operand = NormalizeExpr(unary.Operand, context)
-            },
-            BinaryExpr binary => binary with
-            {
-                Left = NormalizeExpr(binary.Left, context),
-                Operator = NormalizeOperator(binary.Operator),
-                Right = NormalizeExpr(binary.Right, context)
-            },
-            FunctionCallExpr function => NormalizeFunction(function, context),
-            FilterExpr filter => filter with
-            {
-                Expression = NormalizeExpr(filter.Expression, context),
-                Predicate = NormalizeExpr(filter.Predicate, context)
-            },
-            WindowedExpr windowed => windowed with
-            {
-                Expression = NormalizeExpr(windowed.Expression, context),
-                Window = NormalizeWindow(windowed.Window, context)
-            },
-            CastExpr cast => cast with
-            {
-                Expression = NormalizeExpr(cast.Expression, context),
-                TypeName = CoreCastTypeNormalizer.Normalize(
-                    cast.TypeName,
-                    context.SourceDialect,
-                    context.TargetProvider)
-            },
-            CaseExpr @case => @case with
-            {
-                Branches = @case.Branches.Select(branch => new CaseBranch(
-                    NormalizeExpr(branch.Condition, context),
-                    NormalizeExpr(branch.Value, context))).ToImmutableArray(),
-                ElseExpression = @case.ElseExpression is null ? null : NormalizeExpr(@case.ElseExpression, context)
-            },
-            InExpr @in => @in with
-            {
-                Value = NormalizeExpr(@in.Value, context),
-                Items = @in.Items.Select(item => NormalizeExpr(item, context)).ToImmutableArray()
-            },
-            BetweenExpr between => between with
-            {
-                Value = NormalizeExpr(between.Value, context),
-                Lower = NormalizeExpr(between.Lower, context),
-                Upper = NormalizeExpr(between.Upper, context)
-            },
-            IsNullExpr isNull => isNull with { Value = NormalizeExpr(isNull.Value, context) },
-            SubqueryExpr subquery => subquery with { Query = NormalizeStatement(subquery.Query, context) },
-            ExistsExpr exists => exists with { Query = NormalizeStatement(exists.Query, context) },
-            _ => throw new SqlCompilationException(
-                $"Unsupported expression during normalization: {expression.GetType().Name}")
-        };
-    }
+            Operator = NormalizeOperator(unary.Operator, context),
+            Operand = NormalizeExpr(unary.Operand, context)
+        },
+        BinaryExpr binary => binary with
+        {
+            Left = NormalizeExpr(binary.Left, context),
+            Operator = NormalizeOperator(binary.Operator, context),
+            Right = NormalizeExpr(binary.Right, context)
+        },
+        FunctionCallExpr function => NormalizeFunction(function, context),
+        FilterExpr filter => filter with
+        {
+            Expression = NormalizeExpr(filter.Expression, context),
+            Predicate = NormalizeExpr(filter.Predicate, context)
+        },
+        WindowedExpr windowed => windowed with
+        {
+            Expression = NormalizeExpr(windowed.Expression, context),
+            Window = NormalizeWindow(windowed.Window, context)
+        },
+        CastExpr cast => cast with
+        {
+            Expression = NormalizeExpr(cast.Expression, context),
+            TypeName = CoreCastTypeNormalizer.Normalize(cast.TypeName, context.SourceDialect, context.TargetProvider)
+        },
+        CaseExpr @case => @case with
+        {
+            Branches = @case.Branches.Select(branch => new CaseBranch(
+                NormalizeExpr(branch.Condition, context),
+                NormalizeExpr(branch.Value, context))).ToImmutableArray(),
+            ElseExpression = @case.ElseExpression is null ? null : NormalizeExpr(@case.ElseExpression, context)
+        },
+        InExpr @in => @in with
+        {
+            Value = NormalizeExpr(@in.Value, context),
+            Items = @in.Items.Select(item => NormalizeExpr(item, context)).ToImmutableArray()
+        },
+        BetweenExpr between => between with
+        {
+            Value = NormalizeExpr(between.Value, context),
+            Lower = NormalizeExpr(between.Lower, context),
+            Upper = NormalizeExpr(between.Upper, context)
+        },
+        IsNullExpr isNull => isNull with { Value = NormalizeExpr(isNull.Value, context) },
+        SubqueryExpr subquery => subquery with { Query = NormalizeStatement(subquery.Query, context) },
+        ExistsExpr exists => exists with { Query = NormalizeStatement(exists.Query, context) },
+        _ => throw new SqlCompilationException(
+            $"Unsupported expression during normalization: {expression.GetType().Name}")
+    };
 
     private SqlExpr NormalizeFunction(FunctionCallExpr function, NormalizationContext context)
     {
@@ -191,6 +180,13 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         var specialized = NormalizePortableFamily(function, sourceName, arguments, context);
         if (specialized is not null)
             return specialized;
+
+        if (sourceName == "COALESCE")
+        {
+            if (arguments.Length < 2)
+                throw new SqlCompilationException("COALESCE requires at least 2 arguments.");
+            return function with { Name = Identifier("COALESCE"), Arguments = arguments };
+        }
 
         if (PortableFunctions.Contains(sourceName))
             return function with { Name = Identifier(sourceName), Arguments = arguments };
@@ -203,6 +199,28 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         }
         if (sourceDefinition.Semantic is null)
             throw new SqlCompilationException($"Function '{sourceName}' has no portable semantic mapping from {context.SourceDialect}.");
+
+        if (context.SourceDialect != context.TargetProvider)
+        {
+            switch (sourceDefinition.Semantic.Value)
+            {
+                case SemanticFunction.Random:
+                    throw new SqlCompilationException(
+                        $"Random function '{sourceName}' is not translated across dialects because providers differ in value range and evaluation frequency.");
+                case SemanticFunction.StringLength when context.SourceDialect == SqlAgentToolType.MsSqlServer:
+                    return NormalizeSqlServerLen(function, arguments, context.TargetProvider);
+                case SemanticFunction.StringLength when context.TargetProvider == SqlAgentToolType.MsSqlServer:
+                    throw new SqlCompilationException(
+                        "Portable string length cannot be translated losslessly to SQL Server LEN because LEN excludes trailing spaces.");
+                case SemanticFunction.Repeat when context.SourceDialect == SqlAgentToolType.MsSqlServer
+                    || context.TargetProvider == SqlAgentToolType.MsSqlServer:
+                    throw new SqlCompilationException(
+                        "REPLICATE/REPEAT is not translated across SQL Server because SQL Server REPLICATE can truncate non-MAX inputs.");
+                case SemanticFunction.Coalesce when !sourceName.Equals("COALESCE", StringComparison.OrdinalIgnoreCase):
+                    throw new SqlCompilationException(
+                        $"Provider-specific null function '{sourceName}' is not translated across dialects because its type-conversion rules differ from COALESCE.");
+            }
+        }
 
         var targetDefinition = _functionRegistry.Find(context.TargetProvider, sourceDefinition.Semantic.Value, arguments.Length);
         if (targetDefinition is null)
@@ -227,39 +245,34 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         FunctionCallExpr original,
         string sourceName,
         ImmutableArray<SqlExpr> arguments,
-        NormalizationContext context)
+        NormalizationContext context) => sourceName switch
     {
-        return sourceName switch
-        {
-            "DATEADD" => CanonicalDateAdd(original, arguments),
-            "DATEDIFF" => CanonicalDateDiff(original, arguments),
-            "YEAR" or "MONTH" or "DAY" => CanonicalDatePart(original, sourceName, arguments),
-            "DATE_FORMAT" or "FORMAT" => CanonicalDateFormat(original, arguments, context),
-            "TO_DATE" => CanonicalDateParse(original, arguments, context),
-            "CHARINDEX" or "LOCATE" or "STRPOS" or "INSTR" => CanonicalPosition(original, sourceName, arguments),
-            "JSON_EXTRACT" => CanonicalFunction(original, "CORE_JSON_EXTRACT", arguments),
-            "JSON_SET" => CanonicalFunction(original, "CORE_JSON_SET", arguments),
-            "REGEXP_LIKE" => CanonicalFunction(original, "CORE_REGEX_MATCH", arguments),
-            "CURRENT_DATE" => arguments.Length == 0
-                ? CanonicalFunction(original, "CORE_CURRENT_DATE", arguments)
-                : throw new SqlCompilationException("CURRENT_DATE does not accept arguments."),
-            "CURRENT_TIME" => arguments.Length == 0
-                ? CanonicalFunction(original, "CORE_CURRENT_TIME", arguments)
-                : throw new SqlCompilationException("CURRENT_TIME does not accept arguments."),
-            "GETDATE" or "NOW" or "SYSDATE" or "CURRENT_TIMESTAMP" =>
-                arguments.Length == 0
-                    ? CanonicalFunction(original, "CORE_CURRENT_TIMESTAMP", arguments)
-                    : throw new SqlCompilationException($"{sourceName} does not accept arguments."),
-            "STRING_AGG" or "GROUP_CONCAT" or "LISTAGG" or "LIST" =>
-                CanonicalStringAggregate(original, arguments),
-            _ => null
-        };
-    }
+        "DATEADD" => CanonicalDateAdd(original, arguments),
+        "DATEDIFF" => CanonicalDateDiff(original, arguments),
+        "YEAR" or "MONTH" or "DAY" => CanonicalDatePart(original, sourceName, arguments),
+        "DATE_FORMAT" or "FORMAT" => CanonicalDateFormat(original, arguments, context),
+        "TO_DATE" => CanonicalDateParse(original, arguments, context),
+        "CHARINDEX" or "LOCATE" or "STRPOS" or "INSTR" => CanonicalPosition(original, sourceName, arguments),
+        "JSON_EXTRACT" => CanonicalFunction(original, "CORE_JSON_EXTRACT", arguments),
+        "JSON_SET" => CanonicalFunction(original, "CORE_JSON_SET", arguments),
+        "REGEXP_LIKE" => CanonicalFunction(original, "CORE_REGEX_MATCH", arguments),
+        "CURRENT_DATE" => arguments.Length == 0
+            ? CanonicalFunction(original, "CORE_CURRENT_DATE", arguments)
+            : throw new SqlCompilationException("CURRENT_DATE does not accept arguments."),
+        "CURRENT_TIME" => arguments.Length == 0
+            ? CanonicalFunction(original, "CORE_CURRENT_TIME", arguments)
+            : throw new SqlCompilationException("CURRENT_TIME does not accept arguments."),
+        "GETDATE" or "NOW" or "CURRENT_TIMESTAMP" => arguments.Length == 0
+            ? CanonicalFunction(original, "CORE_CURRENT_TIMESTAMP", arguments)
+            : throw new SqlCompilationException($"{sourceName} does not accept arguments."),
+        "STRING_AGG" or "GROUP_CONCAT" or "LISTAGG" or "LIST" =>
+            CanonicalStringAggregate(original, sourceName, arguments, context),
+        _ => null
+    };
 
     private static SqlExpr CanonicalDateAdd(FunctionCallExpr original, ImmutableArray<SqlExpr> arguments)
     {
-        if (arguments.Length != 3)
-            throw new SqlCompilationException("DATEADD requires exactly 3 arguments.");
+        if (arguments.Length != 3) throw new SqlCompilationException("DATEADD requires exactly 3 arguments.");
         var unit = DatePartUnit(arguments[0]);
         return CanonicalFunction(original, "CORE_DATE_ADD",
             [new LiteralExpr(unit, original.Span), arguments[1], arguments[2]]);
@@ -270,20 +283,15 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         if (arguments.Length == 2)
             return CanonicalFunction(original, "CORE_DATE_DIFF",
                 [new LiteralExpr("DAY", original.Span), arguments[1], arguments[0]]);
-        if (arguments.Length != 3)
-            throw new SqlCompilationException("DATEDIFF requires 2 or 3 arguments.");
+        if (arguments.Length != 3) throw new SqlCompilationException("DATEDIFF requires 2 or 3 arguments.");
         var unit = DatePartUnit(arguments[0]);
         return CanonicalFunction(original, "CORE_DATE_DIFF",
             [new LiteralExpr(unit, original.Span), arguments[1], arguments[2]]);
     }
 
-    private static SqlExpr CanonicalDatePart(
-        FunctionCallExpr original,
-        string part,
-        ImmutableArray<SqlExpr> arguments)
+    private static SqlExpr CanonicalDatePart(FunctionCallExpr original, string part, ImmutableArray<SqlExpr> arguments)
     {
-        if (arguments.Length != 1)
-            throw new SqlCompilationException($"{part} requires exactly 1 argument.");
+        if (arguments.Length != 1) throw new SqlCompilationException($"{part} requires exactly 1 argument.");
         return CanonicalFunction(original, "CORE_DATE_PART",
             [new LiteralExpr(part, original.Span), arguments[0]]);
     }
@@ -293,21 +301,18 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         ImmutableArray<SqlExpr> arguments,
         NormalizationContext context)
     {
-        if (arguments.Length != 2)
-            throw new SqlCompilationException("DATE_FORMAT/FORMAT requires exactly 2 arguments.");
+        if (arguments.Length != 2) throw new SqlCompilationException("DATE_FORMAT/FORMAT requires exactly 2 arguments.");
         var sourceFormat = LiteralString(arguments[1], "DATE_FORMAT format");
-        string translated;
         try
         {
-            translated = DateFormats.Translate(sourceFormat, context.SourceDialect, context.TargetProvider);
+            return CanonicalFunction(original, "CORE_DATE_FORMAT",
+                [arguments[0], new LiteralExpr(DateFormats.Translate(sourceFormat, context.SourceDialect, context.TargetProvider), original.Span)]);
         }
         catch (Exception ex) when (ex is FormatException or NotSupportedException)
         {
             throw new SqlCompilationException(
                 $"portable date formatting from {context.SourceDialect} to {context.TargetProvider} is not supported: {ex.Message}", ex);
         }
-        return CanonicalFunction(original, "CORE_DATE_FORMAT",
-            [arguments[0], new LiteralExpr(translated, original.Span)]);
     }
 
     private static SqlExpr CanonicalDateParse(
@@ -315,21 +320,18 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         ImmutableArray<SqlExpr> arguments,
         NormalizationContext context)
     {
-        if (arguments.Length != 2)
-            throw new SqlCompilationException("TO_DATE requires exactly 2 arguments.");
+        if (arguments.Length != 2) throw new SqlCompilationException("TO_DATE requires exactly 2 arguments.");
         var sourceFormat = LiteralString(arguments[1], "TO_DATE format");
-        string translated;
         try
         {
-            translated = DateFormats.Translate(sourceFormat, context.SourceDialect, context.TargetProvider);
+            return CanonicalFunction(original, "CORE_DATE_PARSE",
+                [arguments[0], new LiteralExpr(DateFormats.Translate(sourceFormat, context.SourceDialect, context.TargetProvider), original.Span)]);
         }
         catch (Exception ex) when (ex is FormatException or NotSupportedException)
         {
             throw new SqlCompilationException(
                 $"formatted date parsing from {context.SourceDialect} to {context.TargetProvider} is not supported: {ex.Message}", ex);
         }
-        return CanonicalFunction(original, "CORE_DATE_PARSE",
-            [arguments[0], new LiteralExpr(translated, original.Span)]);
     }
 
     private static SqlExpr CanonicalPosition(
@@ -337,36 +339,82 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         string sourceName,
         ImmutableArray<SqlExpr> arguments)
     {
-        if (arguments.Length != 2)
-            throw new SqlCompilationException($"{sourceName} requires exactly 2 arguments.");
+        if (arguments.Length != 2) throw new SqlCompilationException($"{sourceName} requires exactly 2 arguments.");
         var haystackFirst = sourceName is "STRPOS" or "INSTR";
         return CanonicalFunction(original, "CORE_POSITION",
-            haystackFirst
-                ? [arguments[0], arguments[1]]
-                : [arguments[1], arguments[0]]);
+            haystackFirst ? [arguments[0], arguments[1]] : [arguments[1], arguments[0]]);
     }
 
     private static SqlExpr CanonicalStringAggregate(
         FunctionCallExpr original,
-        ImmutableArray<SqlExpr> arguments)
+        string sourceName,
+        ImmutableArray<SqlExpr> arguments,
+        NormalizationContext context)
     {
         if (arguments.Length is < 1 or > 2)
             throw new SqlCompilationException("String aggregate requires 1 or 2 arguments.");
+
+        if (sourceName == "GROUP_CONCAT" && context.SourceDialect == SqlAgentToolType.MySQL && arguments.Length != 1)
+        {
+            throw new SqlCompilationException(
+                "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. " +
+                "The MySQL SEPARATOR clause is not represented by the Core expression grammar yet.");
+        }
+
         var normalized = arguments.Length == 1
             ? ImmutableArray.Create(arguments[0], (SqlExpr)new LiteralExpr(",", original.Span))
             : arguments;
+
+        if (context.TargetProvider == SqlAgentToolType.MySQL)
+        {
+            if (normalized[1] is LiteralExpr { Value: string separator } && separator == ",")
+            {
+                return original with
+                {
+                    Name = Identifier("GROUP_CONCAT"),
+                    Arguments = ImmutableArray.Create(normalized[0])
+                };
+            }
+            throw new SqlCompilationException(
+                "String aggregation with a custom separator cannot be lowered losslessly to MySQL until GROUP_CONCAT SEPARATOR syntax is modeled explicitly.");
+        }
+
         return CanonicalFunction(original, "CORE_STRING_AGG", normalized);
+    }
+
+    private static SqlExpr NormalizeSqlServerLen(
+        FunctionCallExpr original,
+        ImmutableArray<SqlExpr> arguments,
+        SqlAgentToolType targetProvider)
+    {
+        if (arguments.Length != 1) throw new SqlCompilationException("SQL Server LEN requires exactly 1 argument.");
+        var targetLength = targetProvider switch
+        {
+            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite => "LENGTH",
+            SqlAgentToolType.MySQL or SqlAgentToolType.Firebird => "CHAR_LENGTH",
+            _ => throw new SqlCompilationException(
+                $"SQL Server LEN has no Core cross-dialect lowering for target provider {targetProvider}.")
+        };
+        var trimmed = new FunctionCallExpr(
+            Identifier("RTRIM"),
+            ImmutableArray.Create(arguments[0]),
+            IsDistinct: false,
+            original.Span);
+        return original with
+        {
+            Name = Identifier(targetLength),
+            Arguments = ImmutableArray.Create<SqlExpr>(trimmed)
+        };
     }
 
     private static FunctionCallExpr CanonicalFunction(
         FunctionCallExpr original,
         string name,
-        IEnumerable<SqlExpr> arguments) =>
-        original with
-        {
-            Name = Identifier(name),
-            Arguments = arguments.ToImmutableArray()
-        };
+        IEnumerable<SqlExpr> arguments) => original with
+    {
+        Name = Identifier(name),
+        Arguments = arguments.ToImmutableArray()
+    };
 
     private static string DatePartUnit(SqlExpr expression)
     {
@@ -397,10 +445,10 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             ? value
             : throw new SqlCompilationException($"{label} must be a string literal.");
 
-    private static string NormalizeOperator(string value)
+    private static string NormalizeOperator(string value, NormalizationContext context)
     {
         var normalized = string.Join(' ', value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToUpperInvariant();
-        return normalized switch
+        normalized = normalized switch
         {
             "!=" => "<>",
             "NOTIN" => "NOT IN",
@@ -408,6 +456,17 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             "NOTEXISTS" => "NOT EXISTS",
             _ => normalized
         };
+
+        if (normalized == "ILIKE" && context.SourceDialect != SqlAgentToolType.Postgres)
+            throw new SqlCompilationException($"ILIKE is PostgreSQL-specific and is not valid for source dialect {context.SourceDialect}.");
+        if (normalized == "||" && context.SourceDialect == SqlAgentToolType.MySQL)
+            throw new SqlCompilationException(
+                "MySQL '||' semantics depend on PIPES_AS_CONCAT sql_mode; Core rejects the operator because session sql_mode is not part of the compilation plan.");
+        if (normalized == "%" && context.SourceDialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+            throw new SqlCompilationException(
+                $"Operator '%' is not valid portable source syntax for {context.SourceDialect}; use the provider's MOD function instead.");
+
+        return normalized;
     }
 
     private static SqlIdentifier Identifier(string name) =>

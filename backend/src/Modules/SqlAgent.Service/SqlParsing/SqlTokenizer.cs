@@ -52,7 +52,7 @@ public class SqlTokenizer
         "RANK", "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
         "NTH_VALUE", "NTILE", "CUME_DIST", "PERCENT_RANK",
         "DATE_TRUNC", "EXTRACT", "DATEADD", "DATEDIFF", "DATEPART",
-        "NOW", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+        "NOW", "SYSDATE", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
         "FORMAT", "LEFT", "RIGHT", "REPLICATE", "CHARINDEX", "PATINDEX",
         "DATE_FORMAT", "STR_TO_DATE", "TO_DATE", "TO_CHAR",
         "STUFF", "STRING_SPLIT", "JSON_VALUE", "JSON_QUERY",
@@ -127,18 +127,29 @@ public class SqlTokenizer
 
             if (c == '"')
             {
+                if (_provider == SqlAgentToolType.MySQL)
+                {
+                    throw Error(
+                        "MySQL double-quote semantics depend on ANSI_QUOTES sql_mode; Core rejects this delimiter because session sql_mode is not part of the compilation plan.",
+                        _pos,
+                        1);
+                }
                 tokens.Add(ReadDelimited(TokenType.Identifier, '"', "quoted identifier"));
                 continue;
             }
 
             if (c == '`')
             {
+                if (_provider is not (null or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                    throw Error("Backtick-quoted identifiers are not valid for the configured provider.", _pos, 1);
                 tokens.Add(ReadDelimited(TokenType.Identifier, '`', "quoted identifier"));
                 continue;
             }
 
             if (c == '[')
             {
+                if (_provider is not (null or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite))
+                    throw Error("Bracket-quoted identifiers are not valid for the configured provider.", _pos, 1);
                 tokens.Add(ReadBracketIdentifier());
                 continue;
             }

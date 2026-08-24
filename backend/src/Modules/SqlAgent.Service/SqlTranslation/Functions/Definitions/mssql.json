@@ -5,7 +5,7 @@
   {"dialect":"MsSqlServer","name":"COALESCE","semantic":"Coalesce","minArguments":3,"translationKind":"Semantic"},
   {"dialect":"MsSqlServer","name":"RAND","semantic":"Random","minArguments":0,"maxArguments":0,"translationKind":"Semantic"},
   {"dialect":"MsSqlServer","name":"REPLICATE","semantic":"Repeat","minArguments":2,"maxArguments":2,"translationKind":"Semantic"},
-  {"dialect":"MsSqlServer","name":"GETDATE","aliases":["SYSDATE"],"semantic":"CurrentTimestamp","minArguments":0,"maxArguments":0,"translationKind":"Template","template":"@CurrentTimestamp"},
+  {"dialect":"MsSqlServer","name":"GETDATE","semantic":"CurrentTimestamp","minArguments":0,"maxArguments":0,"translationKind":"Template","template":"@CurrentTimestamp"},
   {"dialect":"MsSqlServer","name":"STRING_AGG","semantic":"StringAggregate","minArguments":1,"maxArguments":1,"translationKind":"Template","template":"STRING_AGG($1, ',')"},
   {"dialect":"MsSqlServer","name":"STRING_AGG","semantic":"StringAggregate","minArguments":2,"maxArguments":2,"translationKind":"Semantic"}
 ]

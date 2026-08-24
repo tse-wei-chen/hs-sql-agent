@@ -423,7 +423,17 @@ internal sealed class CoreExpressionTextParser(
     private SqlExpr ParseCase(int start)
     {
         SqlExpr? caseValue = null;
-        if (!_reader.PeekWord("WHEN")) caseValue = ParseExpression();
+        if (!_reader.PeekWord("WHEN"))
+        {
+            caseValue = ParseExpression();
+            if (!IsRepeatableSimpleCaseOperand(caseValue))
+            {
+                throw CoreTokenReader.Error(
+                    "Simple CASE operands containing functions, subqueries, or other non-repeatable expressions are rejected because the current Core AST lowers simple CASE through repeated equality predicates.",
+                    _reader.Peek());
+            }
+        }
+
         var branches = ImmutableArray.CreateBuilder<CaseBranch>();
         while (_reader.MatchWord("WHEN"))
         {
@@ -441,6 +451,15 @@ internal sealed class CoreExpressionTextParser(
         _reader.ExpectWord("END");
         return new CaseExpr(branches.ToImmutable(), otherwise, _reader.SpanFrom(start));
     }
+
+    private static bool IsRepeatableSimpleCaseOperand(SqlExpr expression) => expression switch
+    {
+        LiteralExpr or ColumnExpr => true,
+        CastExpr cast => IsRepeatableSimpleCaseOperand(cast.Expression),
+        BinaryExpr binary when binary.Operator is "+" or "-" or "*" or "/" or "%" or "||" =>
+            IsRepeatableSimpleCaseOperand(binary.Left) && IsRepeatableSimpleCaseOperand(binary.Right),
+        _ => false
+    };
 
     private SqlExpr ParseCast(int start)
     {
