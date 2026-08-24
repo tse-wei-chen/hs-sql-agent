@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.18";
+    public const string Version = "2026-08-24.19";
 
     public static ProviderSqlCapabilities ForProvider(SqlAgentToolType provider)
     {
@@ -30,6 +30,8 @@ public static class SqlCapabilityMatrix
         {
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
+            new("select.row_limit", "query", SqlCapabilityStatus.Translated,
+                "Structured Core row-count limits are translated to provider-native target syntax. Raw LIMIT spelling is accepted only for PostgreSQL, MySQL, and SQLite source dialects; SQL Server TOP with a non-negative integer is normalized separately, while Oracle and Firebird native row-limiting spellings are not claimed by the raw Core grammar."),
             new("select.singleton", "query", SqlCapabilityStatus.Translated,
                 "SELECT expressions without a FROM source preserve singleton-row semantics; Oracle lowers through DUAL and Firebird through RDB$DATABASE. Free column references and wildcard projection fail closed instead of resolving against a provider dummy table, while COUNT(*) and correlated outer references remain valid."),
             new("select.cte_set", "query", SqlCapabilityStatus.Translated,

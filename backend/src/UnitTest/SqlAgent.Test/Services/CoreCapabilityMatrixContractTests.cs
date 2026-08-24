@@ -95,6 +95,19 @@ public class CoreCapabilityMatrixContractTests
     }
 
     [Fact]
+    public void Matrix_DocumentsRowLimitSourceBoundary()
+    {
+        var rowLimit = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Postgres).Capabilities,
+            item => item.Id == "select.row_limit");
+
+        Assert.Equal(SqlCapabilityStatus.Translated, rowLimit.Status);
+        Assert.Contains("PostgreSQL, MySQL, and SQLite", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQL Server TOP", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Oracle and Firebird", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_DocumentsVersionDependentSqlServerRegexBoundary()
     {
         var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer);

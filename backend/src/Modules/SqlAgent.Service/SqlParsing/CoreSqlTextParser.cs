@@ -50,6 +50,14 @@ public static class CoreSqlTextParser
                     $"PostgreSQL '::' cast syntax is not valid for source dialect {sourceDialect} at position {token.Pos}; " +
                     "use CAST(expression AS type) for portable raw SQL.");
             }
+            if (token.Type == TokenType.Keyword
+                && token.Value.Equals("LIMIT", StringComparison.OrdinalIgnoreCase)
+                && sourceDialect is not (SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+            {
+                throw new SqlParseException(
+                    $"LIMIT is not valid raw source syntax for dialect {sourceDialect} at position {token.Pos}; " +
+                    "use the source provider's native row-limiting form or a structured Core row limit.");
+            }
             if (token.Type == TokenType.Semicolon && i != content.Length - 1)
             {
                 throw new SqlParseException(

@@ -137,6 +137,59 @@ public class CoreSourceDialectValidationTests
         Assert.Contains("PostgreSQL", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_Limit_RemainsValidForDeclaredRawSourceDialects(SqlAgentToolType sourceDialect)
+    {
+        var command = CompileQuery(
+            "SELECT id FROM users LIMIT 5",
+            sourceDialect,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_Limit_IsRejectedForRawSourcesWithoutLimitSpelling(SqlAgentToolType sourceDialect)
+    {
+        var ex = Assert.Throws<SqlParseException>(() => CompileQuery(
+            "SELECT id FROM users LIMIT 5",
+            sourceDialect,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("LIMIT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(sourceDialect.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("row-limiting", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_SqlServerTop_RemainsPortableAfterLimitSourceGuard()
+    {
+        var command = CompileQuery(
+            "SELECT TOP 5 id FROM users",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TOP", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_QuotedLimitIdentifier_DoesNotTriggerRawLimitGuard()
+    {
+        var command = CompileQuery(
+            "SELECT [LIMIT] FROM users",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer);
+
+        Assert.NotEmpty(command.Sql);
+    }
+
     [Fact]
     public void Compile_MySqlNullOrdering_IsRejectedAsRawSourceSyntax()
     {
@@ -191,6 +244,18 @@ public class CoreSourceDialectValidationTests
 
         Assert.Contains("INTERVAL", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("source dialect MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParseDml_InsertSelectLimit_UsesTheSameRawSourceBoundary()
+    {
+        var ex = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(
+                "INSERT INTO archived_users (id) SELECT id FROM users LIMIT 5",
+                SqlAgentToolType.Oracle));
+
+        Assert.Contains("LIMIT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Oracle", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CompiledSqlCommand CompileQuery(
