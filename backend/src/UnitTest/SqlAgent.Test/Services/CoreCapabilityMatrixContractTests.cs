@@ -67,6 +67,22 @@ public class CoreCapabilityMatrixContractTests
     }
 
     [Fact]
+    public void Matrix_DocumentsPostgresStyleIntervalSourceBoundary()
+    {
+        var postgres = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Postgres).Capabilities,
+            item => item.Id == "expression.interval");
+        var mysql = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MySQL).Capabilities,
+            item => item.Id == "expression.interval");
+
+        Assert.Equal(SqlCapabilityStatus.Supported, postgres.Status);
+        Assert.Contains("declared source dialect is PostgreSQL", postgres.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlCapabilityStatus.Rejected, mysql.Status);
+        Assert.Contains("MySQL INTERVAL expr unit", mysql.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_DocumentsVersionDependentSqlServerRegexBoundary()
     {
         var matrix = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer);

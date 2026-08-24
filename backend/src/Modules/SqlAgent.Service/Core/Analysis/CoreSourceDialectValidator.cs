@@ -104,7 +104,15 @@ internal static class CoreSourceDialectValidator
             case LiteralExpr:
             case ColumnExpr:
             case BoundColumnExpr:
+                return;
+
             case IntervalExpr:
+                if (sourceDialect != SqlAgentToolType.Postgres)
+                {
+                    throw new SqlCompilationException(
+                        $"INTERVAL 'literal' is not valid for declared source dialect {sourceDialect} in the Core source capability profile. " +
+                        "Core models this interval-literal shape as PostgreSQL source syntax; other dialect interval forms require their own structured translation contract.");
+                }
                 return;
 
             case UnaryExpr unary:

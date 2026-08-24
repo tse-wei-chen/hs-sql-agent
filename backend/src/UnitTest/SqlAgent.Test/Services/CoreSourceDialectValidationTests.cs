@@ -108,6 +108,36 @@ public class CoreSourceDialectValidationTests
     }
 
     [Fact]
+    public void Compile_PostgresIntervalLiteral_RemainsValidRawSourceSyntax()
+    {
+        var command = CompileQuery(
+            "SELECT INTERVAL '1 day'",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("INTERVAL '1 day'", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_PostgresStyleIntervalLiteral_IsRejectedForOtherRawSourceDialects(
+        SqlAgentToolType sourceDialect)
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT INTERVAL '1 day'",
+            sourceDialect,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("INTERVAL", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"source dialect {sourceDialect}", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PostgreSQL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_MySqlNullOrdering_IsRejectedAsRawSourceSyntax()
     {
         var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
@@ -145,6 +175,22 @@ public class CoreSourceDialectValidationTests
 
         Assert.Contains("DATE_FORMAT", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("source dialect MsSqlServer", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_DmlRejectsPostgresStyleIntervalForMySqlSource()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseDml(
+                    "UPDATE orders SET expires_at = created_at + INTERVAL '1 day' WHERE id = 9",
+                    SqlAgentToolType.MySQL),
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("policy-v1"),
+                new DmlCompilationPolicy()));
+
+        Assert.Contains("INTERVAL", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CompiledSqlCommand CompileQuery(
