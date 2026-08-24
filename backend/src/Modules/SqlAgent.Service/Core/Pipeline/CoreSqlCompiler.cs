@@ -41,7 +41,8 @@ public sealed class CoreSqlCompiler(
         ArgumentNullException.ThrowIfNull(executionPolicy);
 
         var bound = _binder.Bind(parsed);
-        CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect);
+        if (parsed.EnforceSourceDialectSyntax)
+            CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect);
         var canonical = _normalizer.Normalize(bound, targetProvider);
         var validated = _validator.Validate(canonical, validationContext);
         var executable = _policyRewriter.Rewrite(validated, executionPolicy);
