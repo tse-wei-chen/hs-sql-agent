@@ -21,15 +21,15 @@ public class CoreSemanticDriftGuardTests
     }
 
     [Fact]
-    public void Parse_SimpleCase_WithFunctionOperand_FailsInsteadOfRepeatingEvaluation()
+    public void Compile_SimpleCase_WithFunctionOperand_PreservesSingleEvaluationShape()
     {
-        var ex = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(
-                "SELECT CASE RANDOM() WHEN 0 THEN 1 ELSE 0 END FROM orders",
-                SqlAgentToolType.Postgres));
+        var command = Compile(
+            "SELECT CASE RANDOM() WHEN 0 THEN 1 WHEN 1 THEN 2 ELSE 0 END FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("Simple CASE operands", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("repeated equality", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CASE RANDOM()", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, CountOccurrences(command.Sql, "RANDOM()", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -262,6 +262,18 @@ public class CoreSemanticDriftGuardTests
 
         Assert.Contains("SYSDATE", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("not registered", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CountOccurrences(string value, string token, StringComparison comparison)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = value.IndexOf(token, index, comparison)) >= 0)
+        {
+            count++;
+            index += token.Length;
+        }
+        return count;
     }
 
     private static CompiledSqlCommand Compile(
