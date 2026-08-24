@@ -357,26 +357,12 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         {
             throw new SqlCompilationException(
                 "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. " +
-                "The MySQL SEPARATOR clause is not represented by the Core expression grammar yet.");
+                "Use portable STRING_AGG(value, separator) when an explicit separator is required.");
         }
 
         var normalized = arguments.Length == 1
             ? ImmutableArray.Create(arguments[0], (SqlExpr)new LiteralExpr(",", original.Span))
             : arguments;
-
-        if (context.TargetProvider == SqlAgentToolType.MySQL)
-        {
-            if (normalized[1] is LiteralExpr { Value: string separator } && separator == ",")
-            {
-                return original with
-                {
-                    Name = Identifier("GROUP_CONCAT"),
-                    Arguments = ImmutableArray.Create(normalized[0])
-                };
-            }
-            throw new SqlCompilationException(
-                "String aggregation with a custom separator cannot be lowered losslessly to MySQL until GROUP_CONCAT SEPARATOR syntax is modeled explicitly.");
-        }
 
         return CanonicalFunction(original, "CORE_STRING_AGG", normalized);
     }
