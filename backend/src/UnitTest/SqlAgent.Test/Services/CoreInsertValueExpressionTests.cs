@@ -110,7 +110,7 @@ public class CoreInsertValueExpressionTests
             SqlAgentToolType.Postgres));
 
         Assert.Contains("Aggregate function", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("assignment", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UPDATE SET", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

@@ -95,6 +95,21 @@ public class CoreDmlAssignmentExpressionTests
             command.Parameters.Select(parameter => parameter.Value).ToArray());
     }
 
+    [Fact]
+    public void ParseUpdate_ArithmeticAssignment_IsStructuredExpression()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE orders SET quantity = quantity + 1 WHERE order_id = 11077",
+            SqlAgentToolType.Postgres);
+        var update = Assert.IsType<UpdateStatement>(parsed.Statement);
+        var assignment = Assert.Single(update.Assignments);
+        var binary = Assert.IsType<BinaryExpr>(assignment.Value);
+
+        Assert.Equal("+", binary.Operator);
+        Assert.IsType<ColumnExpr>(binary.Left);
+        Assert.Equal(1, Assert.IsType<LiteralExpr>(binary.Right).Value);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
@@ -102,69 +117,85 @@ public class CoreDmlAssignmentExpressionTests
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void CompileUpdate_ArithmeticAssignment_IsStructuredAndParameterized(SqlAgentToolType provider)
+    public void CompileUpdate_ArithmeticAssignment_CompilesAcrossProviders(SqlAgentToolType targetProvider)
     {
         var command = Compile(
             "UPDATE orders SET quantity = quantity + 1 WHERE order_id = 11077",
-            provider,
-            provider);
+            SqlAgentToolType.Postgres,
+            targetProvider);
 
         Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.Contains(" SET ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("+", command.Sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("11077", command.Sql, StringComparison.Ordinal);
-        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 1));
-        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 11077));
+        Assert.Equal(
+            new object?[] { 1, 11077 },
+            command.Parameters.Select(parameter => parameter.Value).ToArray());
     }
 
     [Fact]
-    public void CompileUpdate_ScalarFunctionCaseAndCast_AreSupported()
+    public void CompileUpdate_ScalarFunctionAssignment_UsesCanonicalExpressionLowering()
     {
-        var function = Compile(
-            "UPDATE users SET name = LOWER(name) WHERE id = 1",
+        var command = Compile(
+            "UPDATE users SET name = LOWER(name) WHERE id = 7",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle);
+
+        Assert.Contains("LOWER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(7, Assert.Single(command.Parameters).Value);
+    }
+
+    [Fact]
+    public void CompileUpdate_CaseAssignment_KeepsBranchValuesParameterized()
+    {
+        var command = Compile(
+            "UPDATE orders SET status = CASE WHEN amount > 100 THEN 'large' ELSE 'small' END WHERE order_id = 7",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres);
-        Assert.Contains("LOWER", function.Sql, StringComparison.OrdinalIgnoreCase);
 
-        var @case = Compile(
-            "UPDATE users SET status = CASE WHEN score >= 10 THEN 'high' ELSE 'low' END WHERE id = 1",
+        Assert.Contains("CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("large", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("small", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(
+            new object?[] { 100, "large", "small", 7 },
+            command.Parameters.Select(parameter => parameter.Value).ToArray());
+    }
+
+    [Fact]
+    public void CompileUpdate_NonDateCastAssignment_RemainsStructured()
+    {
+        var command = Compile(
+            "UPDATE users SET score = CAST(score AS DECIMAL(12,2)) WHERE id = 7",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres);
-        Assert.Contains("CASE", @case.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(@case.Parameters, parameter => Equals(parameter.Value, "high"));
-        Assert.Contains(@case.Parameters, parameter => Equals(parameter.Value, "low"));
 
-        var cast = Compile(
-            "UPDATE users SET score = CAST('12' AS INTEGER) WHERE id = 1",
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.MySQL);
-        Assert.Contains("CAST", cast.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("SIGNED", cast.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(cast.Parameters, parameter => Equals(parameter.Value, "12"));
+        Assert.Contains("CAST", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DECIMAL(12,2)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(7, Assert.Single(command.Parameters).Value);
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
-    public void CompileUpdate_DefiniteBooleanAssignment_FailsAtCapabilityBoundary(SqlAgentToolType provider)
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void CompileUpdate_DefiniteBooleanAssignment_FailsAtCapabilityBoundary(SqlAgentToolType targetProvider)
     {
         var error = Assert.Throws<SqlCompilationException>(() => Compile(
-            "UPDATE users SET flag = score > 10 WHERE id = 1",
-            provider,
-            provider));
+            "UPDATE orders SET flagged = amount > 100 WHERE order_id = 7",
+            SqlAgentToolType.Postgres,
+            targetProvider));
 
         Assert.Contains("dml.update.boolean_assignment", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void CompileUpdate_AggregateAssignment_RemainsSemanticallyRejected()
+    public void CompileUpdate_AggregateAssignment_FailsBeforeLowering()
     {
         var error = Assert.Throws<SqlCompilationException>(() => Compile(
-            "UPDATE users SET score = SUM(score) WHERE id = 1",
+            "UPDATE orders SET amount = SUM(amount) WHERE order_id = 7",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres));
 
         Assert.Contains("Aggregate function", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("assignment", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UPDATE SET", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
