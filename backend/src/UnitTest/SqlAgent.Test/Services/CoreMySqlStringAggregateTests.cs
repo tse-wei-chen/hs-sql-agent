@@ -46,6 +46,18 @@ public class CoreMySqlStringAggregateTests
     }
 
     [Fact]
+    public void Compile_StringAggregateDynamicSeparator_FailsAtCapabilityBoundary()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT STRING_AGG(name, separator_column) FROM users",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL));
+
+        Assert.Contains("aggregate.string.dynamic_separator", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_MySqlNativeMultiExpressionGroupConcat_IsNotReinterpretedAsSeparator()
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
