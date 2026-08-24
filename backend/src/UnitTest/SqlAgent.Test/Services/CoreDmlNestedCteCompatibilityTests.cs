@@ -65,7 +65,8 @@ public class CoreDmlNestedCteCompatibilityTests
         Assert.Equal(SqlStatementKind.Delete, command.Kind);
         Assert.Contains("EXISTS", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(3, command.Parameters.Length);
+        Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 1);
         Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 7);
         Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 9);
     }

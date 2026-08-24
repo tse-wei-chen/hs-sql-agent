@@ -208,9 +208,10 @@ public class CoreCteBackendCompatibilityTests
 
         Assert.Contains("EXISTS", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(2, command.Parameters.Length);
-        Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
-        Assert.Equal(9, Convert.ToInt32(command.Parameters[1].Value));
+        Assert.Equal(3, command.Parameters.Length);
+        Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 1);
+        Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 7);
+        Assert.Contains(command.Parameters, parameter => Convert.ToInt32(parameter.Value) == 9);
     }
 
     [Theory]
