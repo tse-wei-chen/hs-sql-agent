@@ -46,6 +46,8 @@ public class CoreCapabilityMatrixContractTests
         Assert.Equal(expected,
             Assert.Single(matrix.Capabilities, item => item.Id == "select.cte_scalar_root").Status);
         Assert.Equal(expected,
+            Assert.Single(matrix.Capabilities, item => item.Id == "select.cte_definition_local").Status);
+        Assert.Equal(expected,
             Assert.Single(matrix.Capabilities, item => item.Id == "dml.nested_cte_scope").Status);
     }
 

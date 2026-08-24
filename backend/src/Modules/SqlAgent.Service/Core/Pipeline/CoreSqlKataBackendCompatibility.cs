@@ -165,11 +165,12 @@ internal static class CoreSqlKataBackendCompatibility
         if (ctes.IsDefaultOrEmpty)
             return;
 
-        if (position == QueryPosition.CteDefinition)
+        if (position == QueryPosition.CteDefinition
+            && !CanLowerNestedCteFragment(provider, allowNestedCteFragments))
         {
             throw CteScopeError(
                 "select.cte_scope",
-                "a CTE-definition-local WITH clause would be recursively discovered and hoisted by SqlKata CteFinder, changing lexical scope");
+                $"provider {provider} has no declared portable nested-WITH-inside-a-CTE-definition contract");
         }
 
         if (position == QueryPosition.ScalarSubquery

@@ -14,10 +14,10 @@ namespace SqlAgent.Service.Core.Lowering;
 /// <summary>
 /// Query lowerer for nested query-graph positions that own statement-root CTEs. SqlKata normally
 /// compiles derived QueryFromClause and set Combine branches through CompileSelectQuery, which
-/// omits nested WITH components. This adapter fully compiles those nested CTE query fragments,
-/// converts compiler-owned parameter names back to positional bindings, and reattaches them behind
-/// a plain derived SELECT wrapper. CTE-free nested queries keep the ordinary structured SqlKata
-/// path.
+/// omits nested WITH components, and CteFinder recursively hoists QueryFromClause CTE definitions.
+/// This adapter fully compiles scope-owning fragments, converts compiler-owned parameter names back
+/// to positional bindings, and reattaches them as raw Core-generated fragments. CTE-free nested
+/// queries keep the ordinary structured SqlKata path.
 /// </summary>
 internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : IProviderLowerer
 {
@@ -66,7 +66,8 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
         SelectStatement select =>
             SourceContainsNestedCte(select.From)
             || select.Joins.Any(join => SourceContainsNestedCte(join.Source))
-            || select.Ctes.Any(cte => ContainsNestedCteFragment(cte.Query)),
+            || select.Ctes.Any(cte =>
+                HasRootCtes(cte.Query) || ContainsNestedCteFragment(cte.Query)),
         QueryStatement query =>
             ContainsNestedCteFragment(query.Head)
             || query.SetOperations.Any(operation =>
@@ -91,9 +92,7 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
 
     private static void RewriteNestedCteSources(Query query, Compiler compiler)
     {
-        foreach (var cte in query.GetComponents<QueryFromClause>("cte").ToArray())
-            RewriteNestedCteSources(cte.Query, compiler);
-
+        RewriteCteClauses(query.Clauses, compiler);
         RewriteFromClause(query.Clauses, compiler);
 
         foreach (var join in query.GetComponents<BaseJoin>("join").ToArray())
@@ -113,6 +112,36 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
         }
     }
 
+    private static void RewriteCteClauses(List<AbstractClause> clauses, Compiler compiler)
+    {
+        for (var index = 0; index < clauses.Count; index++)
+        {
+            if (clauses[index] is not QueryFromClause cte || cte.Component != "cte")
+                continue;
+
+            var body = cte.Query.Clone();
+            RewriteNestedCteSources(body, compiler);
+            if (!body.HasComponent("cte"))
+            {
+                cte.Query = body;
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(cte.Alias))
+                throw new SqlCompilationException("A CTE definition requires an alias before lowering.");
+
+            var rendered = CompileFragment(body, compiler);
+            clauses[index] = new RawFromClause
+            {
+                Component = cte.Component,
+                Engine = cte.Engine,
+                Alias = cte.Alias,
+                Expression = rendered.Sql,
+                Bindings = rendered.Bindings.ToArray()
+            };
+        }
+    }
+
     private static void RewriteFromClause(List<AbstractClause> clauses, Compiler compiler)
     {
         for (var index = 0; index < clauses.Count; index++)
@@ -120,14 +149,18 @@ internal sealed class CoreSqlKataDerivedCteLowerer(SqlAgentToolType provider) : 
             if (clauses[index] is not QueryFromClause from || from.Component != "from")
                 continue;
 
-            RewriteNestedCteSources(from.Query, compiler);
-            if (!from.Query.HasComponent("cte"))
+            var body = from.Query.Clone();
+            RewriteNestedCteSources(body, compiler);
+            if (!body.HasComponent("cte"))
+            {
+                from.Query = body;
                 continue;
+            }
 
             if (string.IsNullOrWhiteSpace(from.Alias))
                 throw new SqlCompilationException("A derived table with a CTE requires an alias.");
 
-            var rendered = CompileFragment(from.Query, compiler);
+            var rendered = CompileFragment(body, compiler);
             clauses[index] = CreateRawFromClause(
                 rendered,
                 from.Alias,
