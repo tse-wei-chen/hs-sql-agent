@@ -23,16 +23,17 @@ public sealed class ProviderUniqueKeyMetadataNativeTests
 
         try
         {
-            await ExecuteAsync(connection, $@"
-                CREATE TABLE \"{table}\" (
+            await ExecuteAsync(connection, $"""
+                CREATE TABLE "{table}" (
                     id bigint PRIMARY KEY,
                     tenant_id bigint NOT NULL,
                     email text NOT NULL,
                     nickname text NULL
                 );
-                CREATE UNIQUE INDEX \"{composite}\" ON \"{table}\" (tenant_id, email);
-                CREATE UNIQUE INDEX \"{partial}\" ON \"{table}\" (email) WHERE nickname IS NOT NULL;
-                CREATE UNIQUE INDEX \"{expression}\" ON \"{table}\" ((lower(nickname)));",
+                CREATE UNIQUE INDEX "{composite}" ON "{table}" (tenant_id, email);
+                CREATE UNIQUE INDEX "{partial}" ON "{table}" (email) WHERE nickname IS NOT NULL;
+                CREATE UNIQUE INDEX "{expression}" ON "{table}" ((lower(nickname)));
+                """,
                 TestContext.Current.CancellationToken);
 
             var keys = await provider.GetUniqueKeysAsync(
@@ -59,7 +60,10 @@ public sealed class ProviderUniqueKeyMetadataNativeTests
         }
         finally
         {
-            await ExecuteAsync(connection, $"DROP TABLE IF EXISTS \"{table}\" CASCADE", TestContext.Current.CancellationToken);
+            await ExecuteAsync(
+                connection,
+                $"""DROP TABLE IF EXISTS "{table}" CASCADE""",
+                TestContext.Current.CancellationToken);
         }
     }
 
@@ -79,7 +83,7 @@ public sealed class ProviderUniqueKeyMetadataNativeTests
 
         try
         {
-            await ExecuteAsync(connection, $@"
+            await ExecuteAsync(connection, $"""
                 CREATE TABLE `{table}` (
                     id bigint NOT NULL,
                     tenant_id bigint NOT NULL,
@@ -88,7 +92,8 @@ public sealed class ProviderUniqueKeyMetadataNativeTests
                     PRIMARY KEY (id),
                     UNIQUE KEY `{composite}` (tenant_id, email),
                     UNIQUE KEY `{prefix}` (nickname(16))
-                )",
+                )
+                """,
                 TestContext.Current.CancellationToken);
 
             var keys = await provider.GetUniqueKeysAsync(
@@ -113,7 +118,10 @@ public sealed class ProviderUniqueKeyMetadataNativeTests
         }
         finally
         {
-            await ExecuteAsync(connection, $"DROP TABLE IF EXISTS `{table}`", TestContext.Current.CancellationToken);
+            await ExecuteAsync(
+                connection,
+                $"""DROP TABLE IF EXISTS `{table}`""",
+                TestContext.Current.CancellationToken);
         }
     }
 
