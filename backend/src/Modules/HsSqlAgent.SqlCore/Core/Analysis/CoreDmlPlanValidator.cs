@@ -4,7 +4,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// DML validator that reuses the common validator for authorization and expression capabilities

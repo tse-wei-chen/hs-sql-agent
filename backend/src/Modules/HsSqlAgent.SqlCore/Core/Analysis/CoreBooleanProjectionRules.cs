@@ -2,7 +2,7 @@ using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Classifies expression shapes that are definitely boolean-valued without attempting full SQL

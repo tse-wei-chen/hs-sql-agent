@@ -3,7 +3,7 @@ using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Validates provider-specific source syntax while the bound AST still carries the original

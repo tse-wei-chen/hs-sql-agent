@@ -3,7 +3,7 @@ using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Canonicalizes a modeled CTE column-alias list into explicit aliases on the CTE output

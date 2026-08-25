@@ -1,7 +1,7 @@
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Compilation;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Rejects nondeterministic functions whose value can change between DML preview/revalidation and

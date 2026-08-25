@@ -4,7 +4,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Provider-specific capability checks for already-normalized Core expressions. Keeping these

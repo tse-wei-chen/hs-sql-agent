@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Preserves root CTE scope when a set-operation query needs an outer ORDER BY/LIMIT/OFFSET

@@ -1,7 +1,7 @@
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
 
-namespace SqlAgent.Service.Core.Analysis;
+namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Applies execution policy to an already validated plan. Rewrites are structural and immutable,
