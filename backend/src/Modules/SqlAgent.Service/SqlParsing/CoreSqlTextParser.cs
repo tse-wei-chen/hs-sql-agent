@@ -19,7 +19,10 @@ public static class CoreSqlTextParser
         ArgumentNullException.ThrowIfNull(sql);
         ValidateSourceProfile(sourceDialect, sourceProfile);
         var tokens = ApplySourceProfileTokens(
-            new SqlTokenizer(sql, sourceDialect).Tokenize(),
+            new SqlTokenizer(
+                sql,
+                sourceDialect,
+                mysqlAnsiQuotes: SupportsMySqlAnsiQuotes(sourceDialect, sourceProfile)).Tokenize(),
             sourceDialect,
             sourceProfile);
         ValidateStatementTokens(tokens, sourceDialect);
@@ -43,7 +46,10 @@ public static class CoreSqlTextParser
         ArgumentNullException.ThrowIfNull(sql);
         ValidateSourceProfile(sourceDialect, sourceProfile);
         var tokens = ApplySourceProfileTokens(
-            new SqlTokenizer(sql, sourceDialect).Tokenize(),
+            new SqlTokenizer(
+                sql,
+                sourceDialect,
+                mysqlAnsiQuotes: SupportsMySqlAnsiQuotes(sourceDialect, sourceProfile)).Tokenize(),
             sourceDialect,
             sourceProfile);
         ValidateStatementTokens(tokens, sourceDialect);
@@ -77,6 +83,14 @@ public static class CoreSqlTextParser
                 "Provider compatibility level must be non-negative.");
         }
     }
+
+    private static bool SupportsMySqlAnsiQuotes(
+        SqlAgentToolType sourceDialect,
+        SqlProviderCapabilityProfile? sourceProfile) =>
+        sourceDialect == SqlAgentToolType.MySQL
+        && sourceProfile is { Provider: SqlAgentToolType.MySQL }
+        && (sourceProfile.HasSessionMode("ANSI_QUOTES")
+            || sourceProfile.HasSessionMode("ANSI"));
 
     private static Token[] ApplySourceProfileTokens(
         Token[] tokens,
