@@ -29,7 +29,7 @@ public sealed class CoreUniqueKeyMetadataCapabilityMatrixTests
     }
 
     [Fact]
-    public void MySqlUpsert_RemainsFailClosedUntilSoleUniqueConflictSourceIsAssured()
+    public void MySqlUpsert_DeclaresConditionalAssuredPathWhileDefaultRemainsFailClosed()
     {
         var capability = Assert.Single(
             SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MySQL).Capabilities,
@@ -37,8 +37,12 @@ public sealed class CoreUniqueKeyMetadataCapabilityMatrixTests
 
         Assert.Equal(SqlCapabilityStatus.Rejected, capability.Status);
         Assert.Contains("inventories", capability.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("sole enforced", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("8.0.19", capability.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("statement-level assurance", capability.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("fail-closed", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("sole enforced", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("proposed-row alias", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("deprecated VALUES(column)", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("default capability remains Rejected", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("typed approval", capability.Detail, StringComparison.OrdinalIgnoreCase);
     }
 }
