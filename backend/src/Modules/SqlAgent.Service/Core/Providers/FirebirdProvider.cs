@@ -101,4 +101,78 @@ public class FirebirdProvider : SqlProviderBase
 			");
         }
     }
+
+    public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+        string connectionString,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var connection = CreateConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            const string partialCatalogSql = @"
+                SELECT COUNT(*)
+                FROM RDB$RELATION_FIELDS
+                WHERE RDB$RELATION_NAME = 'RDB$INDICES'
+                  AND RDB$FIELD_NAME = 'RDB$CONDITION_SOURCE'";
+            var supportsPartialIndexMetadata = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+                partialCatalogSql,
+                cancellationToken: cancellationToken)) > 0;
+            var partialProjection = supportsPartialIndexMetadata
+                ? "CASE WHEN i.RDB$CONDITION_SOURCE IS NULL THEN 0 ELSE 1 END"
+                : "0";
+            var sql = $@"
+                SELECT
+                    TRIM(i.RDB$INDEX_NAME) AS INDEX_NAME,
+                    CASE WHEN rc.RDB$CONSTRAINT_TYPE = 'PRIMARY KEY' THEN 1 ELSE 0 END AS IS_PRIMARY_KEY,
+                    CASE WHEN COALESCE(i.RDB$INDEX_INACTIVE, 0) = 0 THEN 1 ELSE 0 END AS IS_ENFORCED,
+                    {partialProjection} AS IS_PARTIAL,
+                    CASE WHEN i.RDB$EXPRESSION_SOURCE IS NULL THEN 0 ELSE 1 END AS HAS_EXPRESSIONS,
+                    CASE WHEN seg.RDB$FIELD_POSITION IS NULL THEN NULL ELSE seg.RDB$FIELD_POSITION + 1 END AS KEY_ORDINAL,
+                    TRIM(seg.RDB$FIELD_NAME) AS COLUMN_NAME
+                FROM RDB$INDICES i
+                LEFT JOIN RDB$RELATION_CONSTRAINTS rc
+                  ON rc.RDB$INDEX_NAME = i.RDB$INDEX_NAME
+                 AND rc.RDB$CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE')
+                LEFT JOIN RDB$INDEX_SEGMENTS seg
+                  ON seg.RDB$INDEX_NAME = i.RDB$INDEX_NAME
+                WHERE i.RDB$RELATION_NAME = UPPER(@tableName)
+                  AND i.RDB$UNIQUE_FLAG = 1
+                ORDER BY i.RDB$INDEX_NAME, seg.RDB$FIELD_POSITION";
+            var rows = (await connection.QueryAsync(new CommandDefinition(
+                sql,
+                new { tableName },
+                cancellationToken: cancellationToken))).ToArray();
+
+            return [.. rows
+                .GroupBy(row => ((string)row.INDEX_NAME).TrimEnd(), StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var ordered = group
+                        .OrderBy(row => row.KEY_ORDINAL is null ? int.MaxValue : Convert.ToInt32(row.KEY_ORDINAL))
+                        .ToArray();
+                    var first = ordered[0];
+                    return new DatabaseUniqueKeyMetadata(
+                        schemaName,
+                        tableName,
+                        group.Key,
+                        Convert.ToInt32(first.IS_PRIMARY_KEY) != 0,
+                        ordered.Where(row => row.COLUMN_NAME is not null)
+                            .Select(row => ((string)row.COLUMN_NAME).TrimEnd())
+                            .ToArray(),
+                        IsPartial: Convert.ToInt32(first.IS_PARTIAL) != 0,
+                        HasExpressions: Convert.ToInt32(first.HAS_EXPRESSIONS) != 0 || ordered.Any(row => row.COLUMN_NAME is null),
+                        IsEnforced: Convert.ToInt32(first.IS_ENFORCED) != 0);
+                })];
+        }
+        catch (Exception ex)
+        {
+            throw new Exception(@$"
+				Error getting unique keys: {ex.Message},
+				please try again !!
+			");
+        }
+    }
 }

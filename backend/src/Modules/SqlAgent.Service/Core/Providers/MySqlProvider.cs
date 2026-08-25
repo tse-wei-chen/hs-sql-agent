@@ -109,4 +109,56 @@ public class MySqlProvider : SqlProviderBase
 			");
         }
     }
+
+    public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+        string connectionString,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var connection = CreateConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            const string sql = @"
+                SELECT INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME, SUB_PART
+                FROM INFORMATION_SCHEMA.STATISTICS
+                WHERE TABLE_SCHEMA = @schemaName
+                  AND TABLE_NAME = @tableName
+                  AND NON_UNIQUE = 0
+                ORDER BY INDEX_NAME, SEQ_IN_INDEX";
+            var rows = (await connection.QueryAsync(new CommandDefinition(
+                sql,
+                new { schemaName, tableName },
+                cancellationToken: cancellationToken))).ToArray();
+
+            return [.. rows
+                .GroupBy(row => (string)row.INDEX_NAME, StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var ordered = group
+                        .OrderBy(row => Convert.ToInt32(row.SEQ_IN_INDEX))
+                        .ToArray();
+                    var columns = ordered
+                        .Where(row => row.COLUMN_NAME is not null)
+                        .Select(row => (string)row.COLUMN_NAME)
+                        .ToArray();
+                    return new DatabaseUniqueKeyMetadata(
+                        schemaName,
+                        tableName,
+                        group.Key,
+                        string.Equals(group.Key, "PRIMARY", StringComparison.OrdinalIgnoreCase),
+                        columns,
+                        HasExpressions: ordered.Any(row => row.COLUMN_NAME is null),
+                        HasPrefixKeyParts: ordered.Any(row => row.SUB_PART is not null));
+                })];
+        }
+        catch (Exception ex)
+        {
+            throw new Exception(@$"
+				Error getting unique keys: {ex.Message},
+				please try again !!
+			");
+        }
+    }
 }

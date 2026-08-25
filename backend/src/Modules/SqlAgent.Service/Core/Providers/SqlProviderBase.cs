@@ -44,6 +44,12 @@ public abstract class SqlProviderBase : ISqlProvider, IDbConnectionFactory, IPro
         string tableName,
         CancellationToken cancellationToken = default);
 
+    public abstract Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+        string connectionString,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default);
+
     DbConnection IDbConnectionFactory.Create(string connectionString) =>
         CreateConnection(connectionString);
 
@@ -79,4 +85,11 @@ public abstract class SqlProviderBase : ISqlProvider, IDbConnectionFactory, IPro
                 column.PrimaryKeyOrdinal))
             .ToArray();
     }
+
+    async Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> IProviderMetadataReader.GetUniqueKeysAsync(
+        string connectionString,
+        string schema,
+        string table,
+        CancellationToken cancellationToken) =>
+        await GetUniqueKeysAsync(connectionString, schema, table, cancellationToken);
 }

@@ -112,4 +112,74 @@ public class MsSqlServerProvider : SqlProviderBase
 			");
         }
     }
+
+    public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+        string connectionString,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var connection = CreateConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            const string sql = @"
+                SELECT
+                    i.name AS INDEX_NAME,
+                    i.is_primary_key AS IS_PRIMARY_KEY,
+                    i.has_filter AS IS_PARTIAL,
+                    i.is_disabled AS IS_DISABLED,
+                    i.is_hypothetical AS IS_HYPOTHETICAL,
+                    ic.key_ordinal AS KEY_ORDINAL,
+                    c.name AS COLUMN_NAME,
+                    c.is_computed AS IS_COMPUTED
+                FROM sys.tables t
+                JOIN sys.schemas s ON s.schema_id = t.schema_id
+                JOIN sys.indexes i ON i.object_id = t.object_id AND i.is_unique = 1
+                LEFT JOIN sys.index_columns ic
+                  ON ic.object_id = i.object_id
+                 AND ic.index_id = i.index_id
+                 AND ic.key_ordinal > 0
+                LEFT JOIN sys.columns c
+                  ON c.object_id = ic.object_id
+                 AND c.column_id = ic.column_id
+                WHERE s.name = @schemaName
+                  AND t.name = @tableName
+                ORDER BY i.name, ic.key_ordinal";
+            var rows = (await connection.QueryAsync(new CommandDefinition(
+                sql,
+                new { schemaName, tableName },
+                cancellationToken: cancellationToken))).ToArray();
+
+            return [.. rows
+                .GroupBy(row => (string)row.INDEX_NAME, StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var ordered = group
+                        .OrderBy(row => row.KEY_ORDINAL is null ? int.MaxValue : Convert.ToInt32(row.KEY_ORDINAL))
+                        .ToArray();
+                    var columns = ordered
+                        .Where(row => row.COLUMN_NAME is not null)
+                        .Select(row => (string)row.COLUMN_NAME)
+                        .ToArray();
+                    var first = ordered[0];
+                    return new DatabaseUniqueKeyMetadata(
+                        schemaName,
+                        tableName,
+                        group.Key,
+                        (bool)first.IS_PRIMARY_KEY,
+                        columns,
+                        IsPartial: (bool)first.IS_PARTIAL,
+                        HasExpressions: ordered.Any(row => row.IS_COMPUTED is not null && (bool)row.IS_COMPUTED),
+                        IsEnforced: !(bool)first.IS_DISABLED && !(bool)first.IS_HYPOTHETICAL);
+                })];
+        }
+        catch (Exception ex)
+        {
+            throw new Exception(@$"
+				Error getting unique keys: {ex.Message},
+				please try again !!
+			");
+        }
+    }
 }
