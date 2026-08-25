@@ -71,6 +71,7 @@
 		<ProjectReference Include="..\Auth.Service\Auth.Service.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\HsSqlAgent.PostgresMigrations\HsSqlAgent.PostgresMigrations.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\HsSqlAgent.SqliteMigrations\HsSqlAgent.SqliteMigrations.csproj" PrivateAssets="All" />
+		<ProjectReference Include="..\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\SqlAgent.Service\SqlAgent.Service.csproj" PrivateAssets="All" />
 	</ItemGroup>
 

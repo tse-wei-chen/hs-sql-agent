@@ -92,6 +92,8 @@ jobs:
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+      - name: Pack HsSqlAgent.SqlCore
+        run: dotnet pack backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj --configuration Release --output artifacts/sqlcore
 
   frontend-test:
     runs-on: ubuntu-latest

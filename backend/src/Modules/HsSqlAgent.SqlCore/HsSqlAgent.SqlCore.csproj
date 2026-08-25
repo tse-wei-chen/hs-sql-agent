@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>HsSqlAgent.SqlCore</AssemblyName>
+    <RootNamespace>HsSqlAgent.SqlCore</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>HsSqlAgent.SqlCore</PackageId>
+    <VersionPrefix>1.10.9</VersionPrefix>
+    <Authors>tse-wei-chen</Authors>
+    <Company>hs-sql-agent</Company>
+    <Description>Provider-driver-free SQL parser, AST, validation, normalization and cross-database compiler core for HsSqlAgent.</Description>
+    <PackageTags>sql;compiler;parser;ast;database;dialect;validation</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SqlKata.Service/QueryBuilder/QueryBuilder.csproj" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../SqlAgent.Service/Core/Analysis/**/*.cs" Link="Core/Analysis/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Ast/**/*.cs" Link="Core/Ast/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Binding/**/*.cs" Link="Core/Binding/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Compilation/**/*.cs" Link="Core/Compilation/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Lowering/**/*.cs" Link="Core/Lowering/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Mapping/**/*.cs" Link="Core/Mapping/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Normalization/**/*.cs" Link="Core/Normalization/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Pipeline/**/*.cs" Link="Core/Pipeline/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Core/Execution/DmlFingerprintService.cs" Link="Core/Execution/DmlFingerprintService.cs" />
+    <Compile Include="../SqlAgent.Service/Enums/**/*.cs" Link="Enums/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/Models/**/*.cs" Link="Models/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/SqlParsing/**/*.cs" Link="SqlParsing/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SqlAgent.Service/SqlTranslation/**/*.cs" Link="SqlTranslation/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="../SqlAgent.Service/SqlTranslation/Functions/Definitions/*.json"
+                      Link="SqlTranslation/Functions/Definitions/%(Filename)%(Extension)" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- The compiler currently uses a small forked SqlKata build. Keep that implementation detail
+       inside the package until the fork can be upstreamed or assigned an explicit package identity. -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)"
+                            Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

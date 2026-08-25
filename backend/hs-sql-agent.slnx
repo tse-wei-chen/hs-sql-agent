@@ -4,6 +4,7 @@
     <Project Path="src/Infrastructure/Infrastructure.csproj" />
     <Project Path="src/Modules/Admin.Service/Admin.Service.csproj" />
     <Project Path="src/Modules/Auth.Service/Auth.Service.csproj" /> 
+    <Project Path="src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" />
     <Project Path="src/Modules/SqlAgent.Service/SqlAgent.Service.csproj" />
     <Project Path="src/Modules/HsSqlAgent.Server/HsSqlAgent.Server.csproj" />
     <Project Path="src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj" />

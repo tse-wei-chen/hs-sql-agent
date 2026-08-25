@@ -22,11 +22,29 @@
 		<PackageReference Include="Oracle.ManagedDataAccess.Core" />
 		<PackageReference Include="FirebirdSql.Data.FirebirdClient" />
 	</ItemGroup>
+
 	<ItemGroup>
-		<ProjectReference Include="../SqlKata.Service/QueryBuilder/QueryBuilder.csproj" />
-		<ProjectReference Include="../SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj" />
+		<ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" />
 	</ItemGroup>
+
+	<!-- SQL compiler source is owned by HsSqlAgent.SqlCore. Keep the source files in their existing
+	     paths during the assembly extraction so namespace/path churn is not mixed with the package
+	     boundary change. SqlAgent.Service compiles only runtime/provider/application code. -->
 	<ItemGroup>
-		<EmbeddedResource Include="SqlTranslation/Functions/Definitions/*.json" />
+		<Compile Remove="Core/Analysis/**/*.cs" />
+		<Compile Remove="Core/Ast/**/*.cs" />
+		<Compile Remove="Core/Binding/**/*.cs" />
+		<Compile Remove="Core/Compilation/**/*.cs" />
+		<Compile Remove="Core/Lowering/**/*.cs" />
+		<Compile Remove="Core/Mapping/**/*.cs" />
+		<Compile Remove="Core/Normalization/**/*.cs" />
+		<Compile Remove="Core/Pipeline/**/*.cs" />
+		<Compile Remove="Core/Execution/DmlFingerprintService.cs" />
+		<Compile Remove="Enums/**/*.cs" />
+		<Compile Remove="Models/**/*.cs" />
+		<Compile Remove="SqlParsing/**/*.cs" />
+		<Compile Remove="SqlTranslation/**/*.cs" />
+		<EmbeddedResource Remove="SqlTranslation/Functions/Definitions/*.json" />
 	</ItemGroup>
+
 </Project>
