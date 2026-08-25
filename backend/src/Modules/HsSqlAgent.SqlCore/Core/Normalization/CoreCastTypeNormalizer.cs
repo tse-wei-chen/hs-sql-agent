@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Normalization;
+namespace HsSqlAgent.SqlCore.Core.Normalization;
 
 /// <summary>
 /// Gives CAST types source-dialect semantics before selecting a target-dialect CAST spelling.

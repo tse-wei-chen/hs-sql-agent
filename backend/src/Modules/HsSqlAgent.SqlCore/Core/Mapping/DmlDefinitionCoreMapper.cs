@@ -3,7 +3,7 @@ using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Core.Mapping;
+namespace HsSqlAgent.SqlCore.Core.Mapping;
 
 /// <summary>
 /// Maps structured DML contracts into the same independent Core AST used by query compilation.

@@ -4,7 +4,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Core.Mapping;
+namespace HsSqlAgent.SqlCore.Core.Mapping;
 
 /// <summary>
 /// Strangler adapter from the public QueryDefinition contract into the independent Core AST.

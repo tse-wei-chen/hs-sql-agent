@@ -4,7 +4,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Normalization;
+namespace HsSqlAgent.SqlCore.Core.Normalization;
 
 /// <summary>
 /// DML normalizer that keeps INSERT structure explicit and delegates INSERT value/query expression

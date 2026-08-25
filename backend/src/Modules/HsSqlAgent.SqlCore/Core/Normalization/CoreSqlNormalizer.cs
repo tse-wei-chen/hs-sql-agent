@@ -7,7 +7,7 @@ using SqlAgent.Service.Enums;
 using SqlAgent.Service.SqlTranslation.DateFormats;
 using SqlAgent.Service.SqlTranslation.Functions;
 
-namespace SqlAgent.Service.Core.Normalization;
+namespace HsSqlAgent.SqlCore.Core.Normalization;
 
 public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISqlNormalizer
 {
