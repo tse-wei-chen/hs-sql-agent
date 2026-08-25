@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-25.31";
+    public const string Version = "2026-08-25.32";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -44,13 +44,17 @@ public static class SqlCapabilityMatrix
             || provider == SqlAgentToolType.Firebird
                 && targetProfile?.ServerVersion is { } firebirdVersion
                 && firebirdVersion.CompareTo(new Version(5, 0)) >= 0;
+        var dmlConflictUpsertEnabled = provider == SqlAgentToolType.Postgres
+            || provider == SqlAgentToolType.Sqlite
+                && targetProfile?.ServerVersion is { } sqliteUpsertVersion
+                && sqliteUpsertVersion.CompareTo(new Version(3, 24)) >= 0;
 
         var capabilities = new List<SqlCapability>
         {
             new("provider.target_profile", "provider", SqlCapabilityStatus.Supported,
-                "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+, SQLite DML RETURNING requires ServerVersion 3.35+, and portable multi-row Firebird DSQL RETURNING requires ServerVersion 5.0+.") ,
+                "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+, SQLite deterministic ON CONFLICT UPSERT requires ServerVersion 3.24+, SQLite DML RETURNING requires ServerVersion 3.35+, and portable multi-row Firebird DSQL RETURNING requires ServerVersion 5.0+.") ,
             new("provider.source_profile", "provider", SqlCapabilityStatus.Supported,
-                "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent and version-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Raw SQLite RETURNING requires source ServerVersion 3.35+ and portable multi-row Firebird DSQL RETURNING requires source ServerVersion 5.0+. Absent or unrelated modes and versions remain fail-closed rather than guessing runtime semantics."),
+                "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent and version-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Raw SQLite ON CONFLICT UPSERT requires source ServerVersion 3.24+, raw SQLite RETURNING requires source ServerVersion 3.35+, and portable multi-row Firebird DSQL RETURNING requires source ServerVersion 5.0+. Absent or unrelated modes and versions remain fail-closed rather than guessing runtime semantics."),
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
             new("select.row_limit", "query", SqlCapabilityStatus.Translated,
@@ -244,7 +248,7 @@ public static class SqlCapabilityMatrix
                         ? "Oracle nested parenthesized or nested-definition WITH forms fail closed in DML because the target grammar rejects them; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."
                         : "Nested WITH fragments in DML fail closed because this provider has no declared portable general-subquery or nested-CTE-definition contract; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."),
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
-                "Portable column-only DML RETURNING is tracked separately by dml.returning_output. UPSERT/ON CONFLICT/ON DUPLICATE KEY and MERGE remain outside the portable DML grammar; INSERT ... SELECT is tracked separately and supported."),
+                "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. General MERGE, MySQL any-unique-key ON DUPLICATE KEY behavior, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract."),
             new("dml.returning_output", "dml",
                 dmlReturningEnabled ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
                 dmlReturningEnabled
@@ -262,8 +266,17 @@ public static class SqlCapabilityMatrix
                                 : provider == SqlAgentToolType.Oracle
                                     ? "Oracle DML RETURNING requires RETURNING INTO host or bind variables, which are outside the Core result-row execution contract."
                                     : "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."),
-            new("dml.upsert_merge", "dml", SqlCapabilityStatus.Rejected,
-                "UPSERT dialect forms and MERGE are not yet represented by the portable DML AST.")
+            new("dml.upsert_merge", "dml",
+                dmlConflictUpsertEnabled ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
+                dmlConflictUpsertEnabled
+                    ? provider == SqlAgentToolType.Postgres
+                        ? "PostgreSQL supports the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and closed assignments of the form target = EXCLUDED.source. Arbitrary expressions, predicates, named constraints, partial-index predicates, INSERT ... SELECT upsert, and typed approval execution remain fail-closed."
+                        : "SQLite ServerVersion 3.24+ target profiles support the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and target = EXCLUDED.source assignments. The target version must be explicit; richer SQLite UPSERT grammar and typed approval execution remain fail-closed."
+                    : provider == SqlAgentToolType.Sqlite
+                        ? "SQLite UPSERT remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.24 or newer."
+                        : provider == SqlAgentToolType.MySQL
+                            ? "MySQL ON DUPLICATE KEY UPDATE can fire on any UNIQUE or PRIMARY KEY and has no explicit conflict target. Core does not translate the deterministic conflict-column contract without unique-index metadata, so this capability remains fail-closed."
+                            : "This provider requires MERGE-style source and match semantics. Core has not yet modeled the source-row cardinality and match guarantees needed for a portable MERGE contract, so upsert remains fail-closed.")
         };
 
         return new ProviderSqlCapabilities(Version, provider, capabilities);
