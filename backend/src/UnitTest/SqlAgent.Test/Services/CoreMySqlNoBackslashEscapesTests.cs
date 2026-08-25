@@ -108,7 +108,7 @@ public sealed class CoreMySqlNoBackslashEscapesTests
     }
 
     [Fact]
-    public void Parse_NoBackslashEscapesLike_RemainsFailClosedUntilEscapeIsModeled()
+    public void Parse_NoBackslashEscapesLike_WithoutExplicitEscape_RemainsFailClosed()
     {
         var error = Assert.Throws<SqlParseException>(() =>
             CoreSqlTextParser.ParseQuery(
@@ -119,7 +119,6 @@ public sealed class CoreMySqlNoBackslashEscapesTests
         Assert.Contains("LIKE", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("NO_BACKSLASH_ESCAPES", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ESCAPE", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

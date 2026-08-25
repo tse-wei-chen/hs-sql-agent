@@ -8,12 +8,14 @@ namespace SqlAgent.Service.SqlParsing;
 
 internal sealed class CoreExpressionTextParser(
     CoreTokenReader reader,
-    Func<SqlStatement> parseSubquery)
+    Func<SqlStatement> parseSubquery,
+    bool requireExplicitLikeEscape = false)
 {
     internal const string MySqlPipesConcatToken = "__CORE_MYSQL_PIPES_CONCAT_TOKEN__";
 
     private readonly CoreTokenReader _reader = reader;
     private readonly Func<SqlStatement> _parseSubquery = parseSubquery;
+    private readonly bool _requireExplicitLikeEscape = requireExplicitLikeEscape;
 
     public SqlExpr ParseExpression() => ParseOr();
 
@@ -109,7 +111,40 @@ internal sealed class CoreExpressionTextParser(
         {
             var op = _reader.Peek(-1).Value.ToUpperInvariant();
             var right = ParseAdditive();
-            var binary = new BinaryExpr(left, op, right, _reader.SpanFrom(start));
+            string? likeEscape = null;
+            if (_reader.MatchWord("ESCAPE"))
+            {
+                var escapeToken = _reader.Peek();
+                if (escapeToken.Type != TokenType.String)
+                {
+                    throw CoreTokenReader.Error(
+                        "LIKE ESCAPE requires a single-character string literal in the portable Core grammar.",
+                        escapeToken);
+                }
+
+                _reader.Advance();
+                likeEscape = DecodeString(escapeToken.Value);
+                if (likeEscape.Length != 1 || char.IsControl(likeEscape[0]))
+                {
+                    throw CoreTokenReader.Error(
+                        "LIKE ESCAPE requires exactly one non-control character.",
+                        escapeToken);
+                }
+            }
+
+            if (_requireExplicitLikeEscape && op == "LIKE" && likeEscape is null)
+            {
+                throw CoreTokenReader.Error(
+                    "MySQL LIKE under NO_BACKSLASH_ESCAPES requires an explicit single-character ESCAPE clause so Core does not guess pattern escape semantics.",
+                    _reader.Peek(-1));
+            }
+
+            var binary = new BinaryExpr(
+                left,
+                op,
+                right,
+                _reader.SpanFrom(start),
+                LikeEscape: likeEscape);
             return negatedModifier
                 ? new UnaryExpr("NOT", binary, _reader.SpanFrom(start))
                 : binary;
