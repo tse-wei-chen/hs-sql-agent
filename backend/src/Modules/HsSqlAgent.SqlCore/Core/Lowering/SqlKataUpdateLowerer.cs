@@ -1,13 +1,13 @@
 using System.Collections.Immutable;
 using System.Text;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Execution;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
 using SqlKata.Compilers;
 
-namespace SqlAgent.Service.Core.Lowering;
+namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Core-owned UPDATE lowering. SqlKata's stock AsUpdate path treats every assignment value as a

@@ -1,9 +1,9 @@
 using System.Globalization;
-using SqlAgent.Service.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Ast;
 using SqlKata;
 using SqlKata.Compilers;
 
-namespace SqlAgent.Service.Core.Lowering;
+namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Core-owned SqlKata compilers preserve the semantic distinction between an absent LIMIT clause

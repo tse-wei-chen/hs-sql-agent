@@ -1,7 +1,7 @@
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Binding;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Binding;
 
-namespace SqlAgent.Service.Core.Lowering;
+namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Defines the portable direct-tail subset for a set-operation query. Core normally places a set

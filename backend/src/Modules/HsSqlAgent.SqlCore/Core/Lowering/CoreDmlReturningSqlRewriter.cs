@@ -1,11 +1,11 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Execution;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
-namespace SqlAgent.Service.Core.Lowering;
+namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Adds the portable DML result-row clause after the provider-specific mutation has been lowered.

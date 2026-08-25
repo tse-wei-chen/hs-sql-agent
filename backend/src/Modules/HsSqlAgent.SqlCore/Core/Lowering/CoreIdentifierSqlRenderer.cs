@@ -1,9 +1,9 @@
 using System.Text.RegularExpressions;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using SqlKata.Compilers;
 
-namespace SqlAgent.Service.Core.Lowering;
+namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Renders structured Core identifiers without flattening quoted parts. This is shared by DML

@@ -1,12 +1,12 @@
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Execution;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using SqlKata.Compilers;
 
-namespace SqlAgent.Service.Core.Lowering;
+namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Lowers the deterministic explicit-target INSERT conflict contract after the ordinary INSERT has

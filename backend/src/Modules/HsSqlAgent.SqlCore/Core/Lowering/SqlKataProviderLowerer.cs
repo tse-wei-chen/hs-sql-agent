@@ -2,16 +2,16 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Binding;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Binding;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using SqlKata;
 using SqlKata.Compilers;
 
-namespace SqlAgent.Service.Core.Lowering;
+namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Lowers the provider-neutral Core AST into the existing SqlKata backend. Statement structure is
@@ -1113,7 +1113,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             SqlStatementKind.Select,
             string.Empty,
             plan.TargetProvider);
-        return Core.Execution.DmlFingerprintService.ComputePlanFingerprint(
+        return HsSqlAgent.SqlCore.Core.Execution.DmlFingerprintService.ComputePlanFingerprint(
             command,
             plan.PolicyVersion);
     }
