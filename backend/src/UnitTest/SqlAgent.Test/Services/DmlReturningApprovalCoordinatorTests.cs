@@ -111,7 +111,7 @@ public sealed class DmlReturningApprovalCoordinatorTests
     }
 
     private static ValidatedDmlPlan CreateInsertPlan(
-        SqlAgent.Service.Core.Compilation.CompiledSqlCommand command,
+        HsSqlAgent.SqlCore.Core.Compilation.CompiledSqlCommand command,
         int expectedRows)
     {
         const string policyVersion = "policy-returning-v1";

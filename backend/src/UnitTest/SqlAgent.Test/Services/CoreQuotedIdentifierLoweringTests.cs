@@ -225,7 +225,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
             StringComparison.OrdinalIgnoreCase);
     }
 
-    private static SqlAgent.Service.Core.Compilation.CompiledSqlCommand Compile(
+    private static HsSqlAgent.SqlCore.Core.Compilation.CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(

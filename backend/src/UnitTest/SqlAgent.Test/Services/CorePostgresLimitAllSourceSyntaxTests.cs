@@ -92,7 +92,7 @@ public sealed class CorePostgresLimitAllSourceSyntaxTests
         Assert.Equal(5, select.Offset);
     }
 
-    private static SqlAgent.Service.Core.Compilation.CompiledSqlCommand Compile(
+    private static HsSqlAgent.SqlCore.Core.Compilation.CompiledSqlCommand Compile(
         ParsedStatement parsed,
         SqlAgentToolType targetProvider) =>
         CoreSqlCompiler.CreateDefault().Compile(
