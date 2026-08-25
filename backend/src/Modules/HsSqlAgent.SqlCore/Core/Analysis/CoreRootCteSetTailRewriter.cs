@@ -1,5 +1,5 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Ast;
 
 namespace HsSqlAgent.SqlCore.Core.Analysis;
 

@@ -1,6 +1,6 @@
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.SqlCore.Core.Analysis;
 
