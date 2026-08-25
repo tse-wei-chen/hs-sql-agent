@@ -108,6 +108,158 @@ internal static class CoreSqlKataNestedCteCompilation
 }
 
 /// <summary>
+/// Renders a standalone scalar/EXISTS root-CTE set query without the generated FROM wrapper that
+/// would sever correlation to the surrounding query. The set body and tail are still rendered by
+/// the provider compiler independently, so identifier quoting, NULL ordering, ordinal rendering,
+/// and provider pagination remain on the ordinary Core compiler paths. A nested derived-table
+/// wrapper has a Parent and therefore stays on the existing lowering path.
+/// </summary>
+internal static class CoreSqlKataCorrelatedSetTailCompilation
+{
+    private const string GeneratedSetAlias = "_set";
+    private const string TailMarker = "__core_set_tail_marker__";
+    private const string TailPrefix = "SELECT " + TailMarker;
+
+    public static bool TryRender(
+        Query query,
+        Compiler compiler,
+        out CoreSqlKataRawFragment fragment)
+    {
+        fragment = default!;
+        if (!TryGetScopeSafeGeneratedWrapper(query, compiler, out var inner))
+            return false;
+
+        var bodyResult = compiler.Compile(inner.Clone());
+        var bodySql = ToPositionalSql(bodyResult.Sql, bodyResult.NamedBindings);
+        var bodyBindings = OrderedValues(bodyResult.NamedBindings);
+
+        var tailQuery = query.Clone()
+            .ClearComponent("from", compiler.EngineCode)
+            .ClearComponent("select", compiler.EngineCode);
+        tailQuery.AddComponent("select", new RawColumn
+        {
+            Expression = TailMarker,
+            Bindings = []
+        });
+
+        var tailResult = compiler.Compile(tailQuery);
+        var tailSql = ToPositionalSql(tailResult.Sql, tailResult.NamedBindings);
+        if (!tailSql.StartsWith(TailPrefix, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Core set-tail renderer expected compiler output to begin with '{TailPrefix}'.");
+        }
+
+        fragment = new CoreSqlKataRawFragment(
+            bodySql + tailSql[TailPrefix.Length..],
+            bodyBindings.Concat(OrderedValues(tailResult.NamedBindings)).ToArray());
+        return true;
+    }
+
+    private static bool TryGetScopeSafeGeneratedWrapper(
+        Query query,
+        Compiler compiler,
+        out Query inner)
+    {
+        inner = null!;
+        if (query.Parent is not null
+            || !string.Equals(query.Method, "select", StringComparison.OrdinalIgnoreCase)
+            || query.IsDistinct
+            || query.HasComponent("cte", compiler.EngineCode)
+            || query.HasComponent("combine", compiler.EngineCode)
+            || query.HasComponent("join", compiler.EngineCode)
+            || query.HasComponent("where", compiler.EngineCode)
+            || query.HasComponent("group", compiler.EngineCode)
+            || query.HasComponent("having", compiler.EngineCode)
+            || query.HasComponent("aggregate", compiler.EngineCode)
+            || !(query.HasComponent("order", compiler.EngineCode)
+                || query.HasComponent("limit", compiler.EngineCode)
+                || query.HasComponent("offset", compiler.EngineCode))
+            || !HasScopeSafeOrder(query, compiler))
+        {
+            return false;
+        }
+
+        var columns = query.GetComponents<AbstractColumn>("select", compiler.EngineCode);
+        if (columns.Count != 1 || columns[0] is not Column { Name: "*" })
+            return false;
+
+        var sources = query.GetComponents<AbstractFrom>("from", compiler.EngineCode);
+        if (sources.Count != 1
+            || sources[0] is not QueryFromClause source
+            || !string.Equals(source.Alias, GeneratedSetAlias, StringComparison.Ordinal)
+            || !source.Query.HasComponent("cte", compiler.EngineCode)
+            || !source.Query.HasComponent("combine", compiler.EngineCode))
+        {
+            return false;
+        }
+
+        inner = source.Query;
+        return true;
+    }
+
+    private static bool HasScopeSafeOrder(Query query, Compiler compiler)
+    {
+        foreach (var order in query.GetComponents<AbstractOrderBy>("order", compiler.EngineCode))
+        {
+            if (order is not OrderByColumn { ColumnExpr: RawColumn raw })
+                return false;
+
+            if (raw.Expression == "?"
+                && raw.Bindings is { Length: 1 }
+                && raw.Bindings[0] is OrderByOrdinalValue)
+            {
+                continue;
+            }
+
+            if (raw.Bindings is not { Length: 0 }
+                || !IsSingleWrappedOutputName(raw.Expression, compiler))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsSingleWrappedOutputName(string expression, Compiler compiler)
+    {
+        if (string.IsNullOrEmpty(expression)) return false;
+        var (opening, closing) = compiler is MySqlCompiler
+            ? ('`', '`')
+            : ('"', '"');
+        return expression.Length >= 2
+            && expression[0] == opening
+            && expression[^1] == closing;
+    }
+
+    private static string ToPositionalSql(
+        string sql,
+        IReadOnlyDictionary<string, object> bindings)
+    {
+        foreach (var pair in bindings.OrderByDescending(pair => ParameterOrdinal(pair.Key)))
+            sql = sql.Replace(pair.Key, "?", StringComparison.Ordinal);
+        return sql;
+    }
+
+    private static IReadOnlyList<object?> OrderedValues(
+        IReadOnlyDictionary<string, object> bindings) =>
+        bindings.OrderBy(pair => ParameterOrdinal(pair.Key))
+            .Select(pair => (object?)pair.Value)
+            .ToArray();
+
+    private static int ParameterOrdinal(string name)
+    {
+        var digits = new string(name.Reverse().TakeWhile(char.IsDigit).Reverse().ToArray());
+        return int.TryParse(digits, out var ordinal) ? ordinal : int.MaxValue;
+    }
+}
+
+internal sealed record CoreSqlKataRawFragment(
+    string Sql,
+    IReadOnlyList<object?> Bindings);
+
+/// <summary>
 /// A statement-level ORDER BY integer is an output position, not a scalar value. Core represents
 /// that distinction with an internal marker while the SqlKata query graph still carries an
 /// AbstractColumn. Intercept only that marker and emit canonical decimal digits; every ordinary
@@ -261,8 +413,18 @@ internal sealed class CorePostgresCompiler : PostgresCompiler, ICoreSqlKataRawCo
             rawSql,
             bindings));
 
-    protected override SqlResult CompileSelectQuery(Query query) =>
-        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+    protected override SqlResult CompileSelectQuery(Query query)
+    {
+        if (CoreSqlKataCorrelatedSetTailCompilation.TryRender(query, this, out var direct))
+        {
+            return CoreSqlKataRawCompiler.CreateResult(
+                parameterPlaceholder,
+                EscapeCharacter,
+                direct.Sql,
+                direct.Bindings);
+        }
+        return base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+    }
 
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)
@@ -282,8 +444,18 @@ internal sealed class CoreMySqlCompiler : MySqlCompiler, ICoreSqlKataRawCompiler
             rawSql,
             bindings));
 
-    protected override SqlResult CompileSelectQuery(Query query) =>
-        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+    protected override SqlResult CompileSelectQuery(Query query)
+    {
+        if (CoreSqlKataCorrelatedSetTailCompilation.TryRender(query, this, out var direct))
+        {
+            return CoreSqlKataRawCompiler.CreateResult(
+                parameterPlaceholder,
+                EscapeCharacter,
+                direct.Sql,
+                direct.Bindings);
+        }
+        return base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+    }
 
     public override string CompileColumn(SqlResult ctx, AbstractColumn column)
     {
@@ -326,8 +498,18 @@ internal sealed class CoreSqliteCompiler : SqliteCompiler, ICoreSqlKataRawCompil
             rawSql,
             bindings));
 
-    protected override SqlResult CompileSelectQuery(Query query) =>
-        base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+    protected override SqlResult CompileSelectQuery(Query query)
+    {
+        if (CoreSqlKataCorrelatedSetTailCompilation.TryRender(query, this, out var direct))
+        {
+            return CoreSqlKataRawCompiler.CreateResult(
+                parameterPlaceholder,
+                EscapeCharacter,
+                direct.Sql,
+                direct.Bindings);
+        }
+        return base.CompileSelectQuery(CoreSqlKataNestedCteCompilation.Rewrite(query, this));
+    }
 
     public override string CompileColumn(SqlResult ctx, AbstractColumn column) =>
         CoreSqlKataOrderByOrdinal.TryCompile(column, out var ordinal)

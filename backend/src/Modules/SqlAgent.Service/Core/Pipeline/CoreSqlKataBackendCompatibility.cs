@@ -1,6 +1,7 @@
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
+using SqlAgent.Service.Core.Lowering;
 using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Pipeline;
@@ -127,13 +128,15 @@ internal static class CoreSqlKataBackendCompatibility
                 if (!query.Head.Ctes.IsDefaultOrEmpty
                     && RequiresSetTailWrapper(query)
                     && !CanPreserveSetTailCte(
+                        query,
                         position,
                         provider,
                         allowNestedCteFragments))
                 {
-                    throw CteScopeError(
-                        "select.cte_scope",
-                        "a set-operation query with a root CTE and outer ORDER BY/LIMIT/OFFSET would enter a nested Select compilation path that cannot preserve its CTE definition");
+                    var detail = position == QueryPosition.ScalarSubquery
+                        ? "a scalar/EXISTS root CTE set query needs a scope-preserving direct set tail; Core currently permits that path only when ORDER BY references a combined output name or output ordinal"
+                        : "a set-operation query with a root CTE and outer ORDER BY/LIMIT/OFFSET would enter a nested Select compilation path that cannot preserve its CTE definition";
+                    throw CteScopeError("select.cte_scope", detail);
                 }
                 ValidateStatement(
                     query.Head,
@@ -194,6 +197,7 @@ internal static class CoreSqlKataBackendCompatibility
     }
 
     private static bool CanPreserveSetTailCte(
+        QueryStatement query,
         QueryPosition position,
         SqlAgentToolType provider,
         bool allowNestedCteFragments) =>
@@ -201,7 +205,10 @@ internal static class CoreSqlKataBackendCompatibility
         || (CanLowerNestedCteFragment(provider, allowNestedCteFragments)
             && position is QueryPosition.DerivedTable
                 or QueryPosition.SetBranch
-                or QueryPosition.CteDefinition);
+                or QueryPosition.CteDefinition)
+        || (position == QueryPosition.ScalarSubquery
+            && CanLowerNestedCteFragment(provider, allowNestedCteFragments)
+            && CoreSqlKataSetTailScope.CanRenderDirectTail(query));
 
     private static bool CanLowerNestedCteFragment(
         SqlAgentToolType provider,
