@@ -1,11 +1,11 @@
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 using SqlAgent.Service.SqlTranslation.Context;
 using SqlAgent.Service.SqlTranslation.Templates.Ast;
 using SqlAgent.Service.SqlTranslation.Templates.Modifiers;
 using SqlAgent.Service.SqlTranslation.Templates.Parsing;
 using SqlAgent.Service.SqlTranslation.Templates.Resolution;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 /// <summary>
 /// Facade for parsing and resolving lightweight function templates.

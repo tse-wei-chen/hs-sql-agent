@@ -1,7 +1,7 @@
 using System.Globalization;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 public static class SqlTemporalLiteralParser
 {

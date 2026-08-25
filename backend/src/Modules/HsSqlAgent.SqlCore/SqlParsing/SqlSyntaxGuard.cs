@@ -1,4 +1,4 @@
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 /// <summary>
 /// Fail-closed checks for syntax shapes that the legacy DTO parser cannot preserve safely yet.

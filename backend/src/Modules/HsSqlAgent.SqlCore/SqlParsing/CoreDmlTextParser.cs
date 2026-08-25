@@ -1,9 +1,9 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 internal sealed class CoreDmlTextParser
 {

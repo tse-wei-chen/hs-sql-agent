@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Ast;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 internal sealed class CoreTokenReader(Token[] tokens)
 {

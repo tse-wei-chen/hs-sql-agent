@@ -1,10 +1,10 @@
 using System.Globalization;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 /// <summary>
 /// Parser-native entry point for raw SQL. It produces the independent Core AST directly, preserving

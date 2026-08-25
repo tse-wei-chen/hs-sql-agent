@@ -1,10 +1,10 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Models;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 internal sealed class CoreExpressionTextParser(
     CoreTokenReader reader,

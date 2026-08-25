@@ -1,4 +1,4 @@
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 /// <summary>
 /// Normalizes SQL's legacy comma-separated FROM syntax into explicit CROSS JOIN tokens before

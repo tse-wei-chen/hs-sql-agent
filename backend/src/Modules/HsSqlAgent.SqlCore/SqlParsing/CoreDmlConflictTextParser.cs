@@ -1,8 +1,8 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Enums;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 /// <summary>
 /// Extracts the deliberately small portable INSERT conflict grammar before the ordinary DML parser
