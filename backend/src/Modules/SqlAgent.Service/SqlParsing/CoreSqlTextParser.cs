@@ -1,4 +1,5 @@
 using System.Globalization;
+using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
@@ -56,11 +57,24 @@ public static class CoreSqlTextParser
             sourceDialect,
             sourceProfile);
         ValidateStatementTokens(tokens, sourceDialect);
+        var conflictExtraction = CoreDmlConflictTextParser.Extract(
+            tokens,
+            sourceDialect,
+            sourceProfile?.ServerVersion);
         var statement = new CoreDmlTextParser(
-            new CoreTokenReader(tokens),
+            new CoreTokenReader(conflictExtraction.Tokens),
             sourceDialect,
             requireExplicitLikeEscape: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile),
             sourceServerVersion: sourceProfile?.ServerVersion).ParseComplete();
+        if (conflictExtraction.Conflict is not null)
+        {
+            if (statement is not InsertStatement { Source: InsertValuesSource } insert)
+            {
+                throw new SqlParseException(
+                    "Portable ON CONFLICT is currently limited to INSERT VALUES so source-row cardinality remains deterministic.");
+            }
+            statement = insert with { Conflict = conflictExtraction.Conflict };
+        }
         return new ParsedStatement(
             statement,
             sourceDialect,
