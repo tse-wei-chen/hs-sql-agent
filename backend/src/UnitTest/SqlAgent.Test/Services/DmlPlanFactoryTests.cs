@@ -164,5 +164,12 @@ public class DmlPlanFactoryTests
             string table,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(columns);
+
+        public Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+            string connectionString,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DatabaseUniqueKeyMetadata>>([]);
     }
 }
