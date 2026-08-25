@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-25.30";
+    public const string Version = "2026-08-25.31";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -37,13 +37,20 @@ public static class SqlCapabilityMatrix
 
         var sqlServerRegexEnabled = provider == SqlAgentToolType.MsSqlServer
             && targetProfile is { CompatibilityLevel: >= 170 };
+        var dmlReturningEnabled = provider == SqlAgentToolType.Postgres
+            || provider == SqlAgentToolType.Sqlite
+                && targetProfile?.ServerVersion is { } sqliteVersion
+                && sqliteVersion.CompareTo(new Version(3, 35)) >= 0
+            || provider == SqlAgentToolType.Firebird
+                && targetProfile?.ServerVersion is { } firebirdVersion
+                && firebirdVersion.CompareTo(new Version(5, 0)) >= 0;
 
         var capabilities = new List<SqlCapability>
         {
             new("provider.target_profile", "provider", SqlCapabilityStatus.Supported,
-                "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+.") ,
+                "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+, SQLite DML RETURNING requires ServerVersion 3.35+, and portable multi-row Firebird DSQL RETURNING requires ServerVersion 5.0+.") ,
             new("provider.source_profile", "provider", SqlCapabilityStatus.Supported,
-                "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Absent or unrelated modes remain fail-closed rather than guessing session sql_mode."),
+                "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent and version-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Raw SQLite RETURNING requires source ServerVersion 3.35+ and portable multi-row Firebird DSQL RETURNING requires source ServerVersion 5.0+. Absent or unrelated modes and versions remain fail-closed rather than guessing runtime semantics."),
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
             new("select.row_limit", "query", SqlCapabilityStatus.Translated,
@@ -237,9 +244,24 @@ public static class SqlCapabilityMatrix
                         ? "Oracle nested parenthesized or nested-definition WITH forms fail closed in DML because the target grammar rejects them; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."
                         : "Nested WITH fragments in DML fail closed because this provider has no declared portable general-subquery or nested-CTE-definition contract; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."),
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
-                "RETURNING/OUTPUT, UPSERT/ON CONFLICT/ON DUPLICATE KEY, and MERGE are not yet in the portable DML grammar; INSERT ... SELECT is tracked separately and supported."),
-            new("dml.returning_output", "dml", SqlCapabilityStatus.Rejected,
-                "RETURNING and OUTPUT result clauses are not yet represented by the portable DML AST."),
+                "Portable column-only DML RETURNING is tracked separately by dml.returning_output. UPSERT/ON CONFLICT/ON DUPLICATE KEY and MERGE remain outside the portable DML grammar; INSERT ... SELECT is tracked separately and supported."),
+            new("dml.returning_output", "dml",
+                dmlReturningEnabled ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
+                dmlReturningEnabled
+                    ? provider == SqlAgentToolType.Postgres
+                        ? "INSERT/UPDATE/DELETE may return unqualified target columns or a lone wildcard through native RETURNING. Result-producing mutations are marked structurally, materialized through the DML execution boundary, and the returned-row count must still match the approved affected-row count before commit."
+                        : provider == SqlAgentToolType.Sqlite
+                            ? "SQLite ServerVersion 3.35+ target profiles may return unqualified target columns or a lone wildcard through native RETURNING. The explicit target version is required; returned-row count remains part of approval revalidation before commit."
+                            : "Firebird ServerVersion 5.0+ target profiles may use the portable multi-row DSQL RETURNING contract for unqualified target columns or a lone wildcard. The explicit target version is required; returned-row count remains part of approval revalidation before commit."
+                    : provider == SqlAgentToolType.Sqlite
+                        ? "SQLite DML RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.35 or newer."
+                        : provider == SqlAgentToolType.Firebird
+                            ? "Portable multi-row Firebird DSQL RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 5.0 or newer."
+                            : provider == SqlAgentToolType.MsSqlServer
+                                ? "SQL Server OUTPUT without INTO is trigger-sensitive. Core does not yet carry target-table trigger capability metadata, so result rows remain fail-closed instead of assuming OUTPUT can be returned directly to the client."
+                                : provider == SqlAgentToolType.Oracle
+                                    ? "Oracle DML RETURNING requires RETURNING INTO host or bind variables, which are outside the Core result-row execution contract."
+                                    : "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."),
             new("dml.upsert_merge", "dml", SqlCapabilityStatus.Rejected,
                 "UPSERT dialect forms and MERGE are not yet represented by the portable DML AST.")
         };
