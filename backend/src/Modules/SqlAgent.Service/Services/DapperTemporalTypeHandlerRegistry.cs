@@ -226,7 +226,7 @@ internal static class DapperTemporalTypeHandlerRegistry
 
     internal static object CreateFirebirdZonedDateTime(
         IDbDataParameter parameter,
-        SqlOffsetDateTimeValue value)
+        DateTimeOffset value)
     {
         var type = parameter.GetType().Assembly.GetType(
             FirebirdZonedDateTimeType,
@@ -234,7 +234,7 @@ internal static class DapperTemporalTypeHandlerRegistry
             ignoreCase: false)!;
         return Activator.CreateInstance(
                    type,
-                   value.Value.UtcDateTime,
+                   value.UtcDateTime,
                    "UTC")
                ?? throw new InvalidOperationException(
                    "Firebird zoned timestamp value could not be constructed.");
