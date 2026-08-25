@@ -2,9 +2,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using SqlAgent.Service.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Compilation;
 
-namespace SqlAgent.Service.Core.Execution;
+namespace HsSqlAgent.SqlCore.Core.Execution;
 
 public static class DmlFingerprintService
 {
