@@ -113,6 +113,15 @@ public sealed class CoreDmlCompiler(
             throw new SqlCompilationException(
                 $"Core DML lowerer produced {command.Kind} for expected {expectedKind} statement.");
 
+        if (profiledStatement is InsertStatement insertStatement)
+        {
+            command = CoreDmlConflictSqlRewriter.Apply(
+                command,
+                insertStatement,
+                targetProfile,
+                validated.PolicyVersion);
+        }
+
         return CoreDmlReturningSqlRewriter.Apply(
             command,
             profiledStatement,

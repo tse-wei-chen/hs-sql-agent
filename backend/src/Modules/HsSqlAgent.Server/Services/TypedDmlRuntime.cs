@@ -12,8 +12,8 @@ namespace HsSqlAgent.Server.Services;
 /// Server-side typed DML boundary. The MCP layer supplies a parser-native Core statement, current
 /// security policy and table authorization; this service owns immutable plan construction, preview
 /// and commit revalidation against an explicit provider and never depends on transport DTOs or
-/// legacy strategies. INSERT VALUES uses exact-payload approval; INSERT ... SELECT remains
-/// fail-closed until source-rowset approval semantics are defined.
+/// legacy strategies. Plain INSERT VALUES uses exact-payload approval; INSERT ... SELECT and INSERT
+/// conflict/upsert remain fail-closed until their source/existing-row approval semantics are defined.
 /// </summary>
 public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
@@ -117,12 +117,18 @@ public sealed class TypedDmlRuntime(
     internal static bool SupportsStatement(SqlStatement statement) =>
         statement is UpdateStatement
             or DeleteStatement
-            or InsertStatement { Source: InsertValuesSource };
+            or InsertStatement { Source: InsertValuesSource, Conflict: null };
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {
         ArgumentNullException.ThrowIfNull(statement);
         if (SupportsStatement(statement)) return;
+
+        if (statement is InsertStatement { Conflict: not null })
+        {
+            throw new NotSupportedException(
+                "The typed DML approval runtime does not execute INSERT upsert/conflict clauses yet. A conflict can update or skip an existing row, so immutable INSERT payload approval is insufficient; existing-row impact must be previewed and revalidated first.");
+        }
 
         if (statement is InsertStatement)
         {

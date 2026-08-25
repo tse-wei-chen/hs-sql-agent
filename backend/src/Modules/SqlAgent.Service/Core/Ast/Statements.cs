@@ -136,11 +136,38 @@ public sealed record InsertQuerySource(
     SqlStatement Query,
     SourceSpan Span) : InsertSource(Span);
 
+public enum InsertConflictActionKind
+{
+    DoNothing,
+    UpdateProposedValues
+}
+
+/// <summary>
+/// One deterministic portable upsert assignment. The right-hand side is a column from the row
+/// proposed for insertion (PostgreSQL/SQLite EXCLUDED), not an arbitrary SQL expression.
+/// </summary>
+public sealed record InsertConflictAssignment(
+    SqlIdentifier Column,
+    SqlIdentifier ProposedColumn,
+    SourceSpan Span) : SqlNode(Span);
+
+/// <summary>
+/// Portable explicit-target INSERT conflict contract. The target is always a concrete column list;
+/// provider-native any-unique-key behavior and general MERGE source semantics are deliberately not
+/// represented by this node.
+/// </summary>
+public sealed record InsertConflictClause(
+    ImmutableArray<SqlIdentifier> TargetColumns,
+    InsertConflictActionKind Action,
+    ImmutableArray<InsertConflictAssignment> Assignments,
+    SourceSpan Span) : SqlNode(Span);
+
 public sealed record InsertStatement(
     NamedTableSource Target,
     ImmutableArray<SqlIdentifier> Columns,
     InsertSource Source,
     SourceSpan Span) : SqlStatement(Span)
 {
+    public InsertConflictClause? Conflict { get; init; }
     public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
 }
