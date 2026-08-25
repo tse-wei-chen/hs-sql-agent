@@ -1,9 +1,9 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Binding;
+namespace HsSqlAgent.SqlCore.Core.Binding;
 
 /// <summary>
 /// Scope-aware binder for the independent Core AST. It resolves qualified column references to
