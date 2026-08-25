@@ -436,6 +436,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
     {
         var left = RenderExpression(binary.Left, compiler);
         var right = RenderExpression(binary.Right, compiler);
+        var likeEscape = CoreLikeEscapeSqlRenderer.RenderSuffix(binary, compiler);
 
         if (binary.Operator == "%" && compiler is OracleCompiler or FirebirdCompiler)
             return Combine($"MOD({left.Sql}, {right.Sql})", left, right);
@@ -451,7 +452,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             "LIKE" or "ILIKE" or "AND" or "OR" or "IN" or "NOT IN" => binary.Operator,
             _ => throw new SqlCompilationException($"Unsupported binary operator '{binary.Operator}'.")
         };
-        return Combine($"({left.Sql} {op} {right.Sql})", left, right);
+        return Combine($"({left.Sql} {op} {right.Sql}{likeEscape})", left, right);
     }
 
     private static RenderedExpression RenderFunction(FunctionCallExpr function, Compiler compiler)

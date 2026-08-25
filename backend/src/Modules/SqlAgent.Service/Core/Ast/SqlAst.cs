@@ -47,7 +47,12 @@ public sealed record ColumnExpr(SqlIdentifier Name, SourceSpan Span) : SqlExpr(S
 
 public sealed record UnaryExpr(string Operator, SqlExpr Operand, SourceSpan Span) : SqlExpr(Span);
 
-public sealed record BinaryExpr(SqlExpr Left, string Operator, SqlExpr Right, SourceSpan Span) : SqlExpr(Span);
+public sealed record BinaryExpr(
+    SqlExpr Left,
+    string Operator,
+    SqlExpr Right,
+    SourceSpan Span,
+    string? LikeEscape = null) : SqlExpr(Span);
 
 public sealed record FunctionCallExpr(
     SqlIdentifier Name,

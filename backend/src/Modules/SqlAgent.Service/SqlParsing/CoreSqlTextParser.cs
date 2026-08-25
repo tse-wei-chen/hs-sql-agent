@@ -26,12 +26,13 @@ public static class CoreSqlTextParser
                 mysqlNoBackslashEscapes: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).Tokenize(),
             sourceDialect,
             sourceProfile);
-        ValidateStatementTokens(tokens, sourceDialect, sourceProfile);
+        ValidateStatementTokens(tokens, sourceDialect);
         var topLimit = NormalizeSqlServerTop(tokens, sourceDialect, out var normalizedTokens);
         normalizedTokens = CommaFromNormalizer.Normalize(normalizedTokens);
         var statement = new CoreQueryTextParser(
             new CoreTokenReader(normalizedTokens),
-            sourceDialect).ParseComplete(topLimit);
+            sourceDialect,
+            requireExplicitLikeEscape: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).ParseComplete(topLimit);
         return new ParsedStatement(
             statement,
             sourceDialect,
@@ -54,10 +55,11 @@ public static class CoreSqlTextParser
                 mysqlNoBackslashEscapes: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).Tokenize(),
             sourceDialect,
             sourceProfile);
-        ValidateStatementTokens(tokens, sourceDialect, sourceProfile);
+        ValidateStatementTokens(tokens, sourceDialect);
         var statement = new CoreDmlTextParser(
             new CoreTokenReader(tokens),
-            sourceDialect).ParseComplete();
+            sourceDialect,
+            requireExplicitLikeEscape: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).ParseComplete();
         return new ParsedStatement(
             statement,
             sourceDialect,
@@ -127,8 +129,7 @@ public static class CoreSqlTextParser
 
     private static void ValidateStatementTokens(
         Token[] tokens,
-        SqlAgentToolType sourceDialect,
-        SqlProviderCapabilityProfile? sourceProfile)
+        SqlAgentToolType sourceDialect)
     {
         var content = tokens.Where(token => token.Type != TokenType.EOF).ToArray();
         for (var i = 0; i < content.Length; i++)
@@ -155,15 +156,6 @@ public static class CoreSqlTextParser
                 throw new SqlParseException(
                     $"LIMIT is not valid raw source syntax for dialect {sourceDialect} at position {token.Pos}; " +
                     "use the source provider's native row-limiting form or a structured Core row limit.");
-            }
-            if (sourceDialect == SqlAgentToolType.MySQL
-                && sourceProfile is { Provider: SqlAgentToolType.MySQL }
-                && sourceProfile.HasSessionMode("NO_BACKSLASH_ESCAPES")
-                && CoreTokenReader.IsWord(token, "LIKE"))
-            {
-                throw new SqlParseException(
-                    $"MySQL LIKE under NO_BACKSLASH_ESCAPES changes the default pattern escape semantics at position {token.Pos}; " +
-                    "Core does not yet model an explicit LIKE ESCAPE contract, so this source form remains fail-closed.");
             }
             if (token.Type == TokenType.Keyword
                 && sourceDialect == SqlAgentToolType.MsSqlServer

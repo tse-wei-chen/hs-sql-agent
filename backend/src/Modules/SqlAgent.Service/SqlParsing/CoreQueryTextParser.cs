@@ -11,11 +11,17 @@ internal sealed class CoreQueryTextParser
     private readonly SqlAgentToolType _sourceDialect;
     private readonly CoreExpressionTextParser _expressions;
 
-    public CoreQueryTextParser(CoreTokenReader reader, SqlAgentToolType sourceDialect)
+    public CoreQueryTextParser(
+        CoreTokenReader reader,
+        SqlAgentToolType sourceDialect,
+        bool requireExplicitLikeEscape = false)
     {
         _reader = reader;
         _sourceDialect = sourceDialect;
-        _expressions = new CoreExpressionTextParser(reader, ParseQueryExpression);
+        _expressions = new CoreExpressionTextParser(
+            reader,
+            ParseQueryExpression,
+            requireExplicitLikeEscape);
     }
 
     public SqlStatement ParseComplete(int? topLimit = null)

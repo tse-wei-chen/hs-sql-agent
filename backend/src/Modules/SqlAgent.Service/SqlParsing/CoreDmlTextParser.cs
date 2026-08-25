@@ -10,12 +10,20 @@ internal sealed class CoreDmlTextParser
     private readonly CoreTokenReader _reader;
     private readonly SqlAgentToolType _sourceDialect;
     private readonly CoreExpressionTextParser _expressions;
+    private readonly bool _requireExplicitLikeEscape;
 
-    public CoreDmlTextParser(CoreTokenReader reader, SqlAgentToolType sourceDialect)
+    public CoreDmlTextParser(
+        CoreTokenReader reader,
+        SqlAgentToolType sourceDialect,
+        bool requireExplicitLikeEscape = false)
     {
         _reader = reader;
         _sourceDialect = sourceDialect;
-        _expressions = new CoreExpressionTextParser(reader, ParseNestedQuery);
+        _requireExplicitLikeEscape = requireExplicitLikeEscape;
+        _expressions = new CoreExpressionTextParser(
+            reader,
+            ParseNestedQuery,
+            requireExplicitLikeEscape);
     }
 
     public SqlStatement ParseComplete()
@@ -248,5 +256,8 @@ internal sealed class CoreDmlTextParser
     }
 
     private SqlStatement ParseNestedQuery() =>
-        new CoreQueryTextParser(_reader, _sourceDialect).ParseQueryExpression();
+        new CoreQueryTextParser(
+            _reader,
+            _sourceDialect,
+            _requireExplicitLikeEscape).ParseQueryExpression();
 }
