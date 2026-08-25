@@ -2,13 +2,15 @@ using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Core.Pipeline;
 
 public sealed record ParsedStatement(
     SqlStatement Statement,
     SqlAgentToolType SourceDialect,
-    bool EnforceSourceDialectSyntax = false);
+    bool EnforceSourceDialectSyntax = false,
+    SqlProviderCapabilityProfile? SourceProfile = null);
 
 public sealed record BoundStatement(
     SqlStatement Statement,

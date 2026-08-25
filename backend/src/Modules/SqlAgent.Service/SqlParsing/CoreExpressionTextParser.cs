@@ -10,6 +10,8 @@ internal sealed class CoreExpressionTextParser(
     CoreTokenReader reader,
     Func<SqlStatement> parseSubquery)
 {
+    internal const string MySqlPipesConcatToken = "__CORE_MYSQL_PIPES_CONCAT_TOKEN__";
+
     private readonly CoreTokenReader _reader = reader;
     private readonly Func<SqlStatement> _parseSubquery = parseSubquery;
 
@@ -133,11 +135,24 @@ internal sealed class CoreExpressionTextParser(
     private SqlExpr ParseMultiplicative()
     {
         var start = _reader.Position;
-        var left = ParsePostfix();
+        var left = ParseProfiledConcat();
         while (_reader.Peek().Type == TokenType.Operator && _reader.Peek().Value is "*" or "/" or "%")
         {
             var op = _reader.Advance().Value;
-            left = new BinaryExpr(left, op, ParsePostfix(), _reader.SpanFrom(start));
+            left = new BinaryExpr(left, op, ParseProfiledConcat(), _reader.SpanFrom(start));
+        }
+        return left;
+    }
+
+    private SqlExpr ParseProfiledConcat()
+    {
+        var start = _reader.Position;
+        var left = ParsePostfix();
+        while (_reader.Peek().Type == TokenType.Operator
+               && _reader.Peek().Value == MySqlPipesConcatToken)
+        {
+            _reader.Advance();
+            left = new BinaryExpr(left, "||", ParsePostfix(), _reader.SpanFrom(start));
         }
         return left;
     }

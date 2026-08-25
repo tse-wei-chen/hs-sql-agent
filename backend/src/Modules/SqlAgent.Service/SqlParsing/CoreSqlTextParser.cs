@@ -1,6 +1,7 @@
 using System.Globalization;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.SqlParsing;
 
@@ -10,28 +11,95 @@ namespace SqlAgent.Service.SqlParsing;
 /// </summary>
 public static class CoreSqlTextParser
 {
-    public static ParsedStatement ParseQuery(string sql, SqlAgentToolType sourceDialect)
+    public static ParsedStatement ParseQuery(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        SqlProviderCapabilityProfile? sourceProfile = null)
     {
         ArgumentNullException.ThrowIfNull(sql);
-        var tokens = new SqlTokenizer(sql, sourceDialect).Tokenize();
+        ValidateSourceProfile(sourceDialect, sourceProfile);
+        var tokens = ApplySourceProfileTokens(
+            new SqlTokenizer(sql, sourceDialect).Tokenize(),
+            sourceDialect,
+            sourceProfile);
         ValidateStatementTokens(tokens, sourceDialect);
         var topLimit = NormalizeSqlServerTop(tokens, sourceDialect, out var normalizedTokens);
         normalizedTokens = CommaFromNormalizer.Normalize(normalizedTokens);
         var statement = new CoreQueryTextParser(
             new CoreTokenReader(normalizedTokens),
             sourceDialect).ParseComplete(topLimit);
-        return new ParsedStatement(statement, sourceDialect, EnforceSourceDialectSyntax: true);
+        return new ParsedStatement(
+            statement,
+            sourceDialect,
+            EnforceSourceDialectSyntax: true,
+            SourceProfile: sourceProfile);
     }
 
-    public static ParsedStatement ParseDml(string sql, SqlAgentToolType sourceDialect)
+    public static ParsedStatement ParseDml(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        SqlProviderCapabilityProfile? sourceProfile = null)
     {
         ArgumentNullException.ThrowIfNull(sql);
-        var tokens = new SqlTokenizer(sql, sourceDialect).Tokenize();
+        ValidateSourceProfile(sourceDialect, sourceProfile);
+        var tokens = ApplySourceProfileTokens(
+            new SqlTokenizer(sql, sourceDialect).Tokenize(),
+            sourceDialect,
+            sourceProfile);
         ValidateStatementTokens(tokens, sourceDialect);
         var statement = new CoreDmlTextParser(
             new CoreTokenReader(tokens),
             sourceDialect).ParseComplete();
-        return new ParsedStatement(statement, sourceDialect, EnforceSourceDialectSyntax: true);
+        return new ParsedStatement(
+            statement,
+            sourceDialect,
+            EnforceSourceDialectSyntax: true,
+            SourceProfile: sourceProfile);
+    }
+
+    private static void ValidateSourceProfile(
+        SqlAgentToolType sourceDialect,
+        SqlProviderCapabilityProfile? sourceProfile)
+    {
+        if (sourceProfile is null) return;
+        if (sourceProfile.Provider != sourceDialect)
+        {
+            throw new ArgumentException(
+                $"Source capability profile declares provider {sourceProfile.Provider}, " +
+                $"but parser source dialect is {sourceDialect}.",
+                nameof(sourceProfile));
+        }
+        if (sourceProfile.CompatibilityLevel is < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sourceProfile),
+                sourceProfile.CompatibilityLevel,
+                "Provider compatibility level must be non-negative.");
+        }
+    }
+
+    private static Token[] ApplySourceProfileTokens(
+        Token[] tokens,
+        SqlAgentToolType sourceDialect,
+        SqlProviderCapabilityProfile? sourceProfile)
+    {
+        if (sourceDialect != SqlAgentToolType.MySQL
+            || sourceProfile is null
+            || (!sourceProfile.HasSessionMode("PIPES_AS_CONCAT")
+                && !sourceProfile.HasSessionMode("ANSI")))
+        {
+            return tokens;
+        }
+
+        return tokens
+            .Select(token => token.Type == TokenType.Operator && token.Value == "||"
+                ? new Token(
+                    TokenType.Operator,
+                    CoreExpressionTextParser.MySqlPipesConcatToken,
+                    token.Pos,
+                    token.Length)
+                : token)
+            .ToArray();
     }
 
     private static void ValidateStatementTokens(Token[] tokens, SqlAgentToolType sourceDialect)

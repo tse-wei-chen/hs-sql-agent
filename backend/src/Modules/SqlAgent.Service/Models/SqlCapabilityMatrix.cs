@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-24.26";
+    public const string Version = "2026-08-24.27";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -41,7 +41,9 @@ public static class SqlCapabilityMatrix
         var capabilities = new List<SqlCapability>
         {
             new("provider.target_profile", "provider", SqlCapabilityStatus.Supported,
-                "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared profile-dependent capabilities remain fail-closed; this matrix version first uses the profile to gate SQL Server REGEXP_LIKE at compatibility level 170+. Source-dialect session-sensitive grammar remains a separate future profile boundary."),
+                "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+.") ,
+            new("provider.source_profile", "provider", SqlCapabilityStatus.Supported,
+                "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. This matrix version first uses source session modes to resolve MySQL || only when PIPES_AS_CONCAT or ANSI is explicitly declared; absent or unrelated modes remain fail-closed."),
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
             new("select.row_limit", "query", SqlCapabilityStatus.Translated,
@@ -110,7 +112,7 @@ public static class SqlCapabilityMatrix
                     ? SqlCapabilityStatus.Translated
                     : SqlCapabilityStatus.Supported,
                 provider == SqlAgentToolType.MySQL
-                    ? "Canonical string concatenation is translated to CONCAT(left, right); MySQL source '||' is rejected because its meaning depends on PIPES_AS_CONCAT sql_mode."
+                    ? "Canonical string concatenation is translated to CONCAT(left, right). Raw MySQL source || is accepted as concatenation only when the separate source capability profile declares PIPES_AS_CONCAT or ANSI sql_mode; without that source-session contract it remains fail-closed because MySQL otherwise interprets || as logical OR. A target profile alone never authorizes the source spelling."
                     : provider == SqlAgentToolType.MsSqlServer
                         ? "Canonical string concatenation is translated to +."
                         : "The provider-native || operator is emitted."),
