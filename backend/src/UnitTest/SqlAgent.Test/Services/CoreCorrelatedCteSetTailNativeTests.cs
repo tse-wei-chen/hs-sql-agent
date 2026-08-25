@@ -20,17 +20,16 @@ public sealed class CoreCorrelatedCteSetTailNativeTests
         var connectionString = Environment.GetEnvironmentVariable(connectionEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(connectionString)) return;
 
-        var provider = targetProvider switch
-        {
-            SqlAgentToolType.Postgres => (ISqlProvider)new PostgresProvider(),
-            SqlAgentToolType.MySQL => new MySqlProvider(),
-            _ => throw new InvalidOperationException($"Unsupported native test provider {targetProvider}.")
-        };
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var outerTable = "cte_outer_" + suffix;
         var archiveTable = "cte_archive_" + suffix;
 
-        await using var connection = provider.CreateConnection(connectionString);
+        await using DbConnection connection = targetProvider switch
+        {
+            SqlAgentToolType.Postgres => new PostgresProvider().CreateConnection(connectionString),
+            SqlAgentToolType.MySQL => new MySqlProvider().CreateConnection(connectionString),
+            _ => throw new InvalidOperationException($"Unsupported native test provider {targetProvider}.")
+        };
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         try
         {
