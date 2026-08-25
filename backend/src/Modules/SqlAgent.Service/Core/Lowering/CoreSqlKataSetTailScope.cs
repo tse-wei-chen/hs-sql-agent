@@ -1,4 +1,5 @@
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Binding;
 
 namespace SqlAgent.Service.Core.Lowering;
 
