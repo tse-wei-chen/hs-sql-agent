@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-25.29";
+    public const string Version = "2026-08-25.30";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -43,7 +43,7 @@ public static class SqlCapabilityMatrix
             new("provider.target_profile", "provider", SqlCapabilityStatus.Supported,
                 "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+.") ,
             new("provider.source_profile", "provider", SqlCapabilityStatus.Supported,
-                "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Raw MySQL LIKE under NO_BACKSLASH_ESCAPES remains fail-closed until Core represents an explicit LIKE ESCAPE contract. Absent or unrelated modes remain fail-closed rather than guessing session sql_mode."),
+                "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Absent or unrelated modes remain fail-closed rather than guessing session sql_mode."),
             new("select.basic", "query", SqlCapabilityStatus.Translated,
                 "SELECT/JOIN/WHERE/GROUP BY/HAVING/ORDER BY within the structured Core grammar."),
             new("select.row_limit", "query", SqlCapabilityStatus.Translated,
@@ -116,6 +116,8 @@ public static class SqlCapabilityMatrix
                     : provider == SqlAgentToolType.MsSqlServer
                         ? "Canonical string concatenation is translated to +."
                         : "The provider-native || operator is emitted."),
+            new("expression.like_escape", "expression", SqlCapabilityStatus.Translated,
+                "Explicit single-character literal LIKE ESCAPE is represented structurally and emitted for all target providers while the pattern remains parameterized. Dynamic, empty, multi-character, and control-character escape specifications fail-closed. MySQL NO_BACKSLASH_ESCAPES source requires the explicit escape contract for raw LIKE; target rendering does not rely on provider-default escape semantics."),
             new("expression.boolean_select", "expression",
                 provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
                     ? SqlCapabilityStatus.Rejected

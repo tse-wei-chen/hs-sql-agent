@@ -25,7 +25,8 @@ public sealed class CoreSourceCapabilityProfileMatrixTests
         Assert.Contains("NO_BACKSLASH_ESCAPES", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ANSI does not imply", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("LIKE", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ESCAPE", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("explicit single-character ESCAPE", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("omitting", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("PIPES_AS_CONCAT", concat.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("target profile alone", concat.Detail, StringComparison.OrdinalIgnoreCase);
