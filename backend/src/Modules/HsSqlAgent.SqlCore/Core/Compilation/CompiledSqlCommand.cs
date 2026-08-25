@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Compilation;
+namespace HsSqlAgent.SqlCore.Core.Compilation;
 
 public enum SqlStatementKind
 {
