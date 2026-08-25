@@ -1,4 +1,4 @@
-namespace SqlAgent.Service.Enums;
+namespace HsSqlAgent.SqlCore.Enums;
 
 public enum DmlOperation
 {
