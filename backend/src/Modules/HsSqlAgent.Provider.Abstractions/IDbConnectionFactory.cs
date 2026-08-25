@@ -1,6 +1,6 @@
 using System.Data.Common;
 
-namespace SqlAgent.Service.Core.Execution;
+namespace HsSqlAgent.Provider.Abstractions;
 
 public interface IDbConnectionFactory
 {

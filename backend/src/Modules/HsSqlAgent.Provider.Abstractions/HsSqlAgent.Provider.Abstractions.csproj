@@ -7,7 +7,6 @@
     <AssemblyName>HsSqlAgent.Provider.Abstractions</AssemblyName>
     <RootNamespace>HsSqlAgent.Provider.Abstractions</RootNamespace>
     <IsPackable>true</IsPackable>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <DebugType>portable</DebugType>
@@ -33,15 +32,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Include="../SqlAgent.Service/Core/Execution/IDbConnectionFactory.cs" Link="Core/Execution/IDbConnectionFactory.cs" />
-    <Compile Include="../SqlAgent.Service/Core/Execution/DmlPreviewTransactionFactory.cs" Link="Core/Execution/DmlPreviewTransactionFactory.cs" />
-    <Compile Include="../SqlAgent.Service/Core/Providers/ISqlProvider.cs" Link="Core/Providers/ISqlProvider.cs" />
-    <Compile Include="../SqlAgent.Service/Core/Providers/SqlProvider.cs" Link="Core/Providers/SqlProvider.cs" />
-    <Compile Include="../SqlAgent.Service/Core/Providers/SqlProviderBase.cs" Link="Core/Providers/SqlProviderBase.cs" />
-    <Compile Include="../SqlAgent.Service/Core/Providers/ProviderExecutionErrorMapper.cs" Link="Core/Providers/ProviderExecutionErrorMapper.cs" />
   </ItemGroup>
 
 </Project>

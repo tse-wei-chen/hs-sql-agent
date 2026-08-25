@@ -1,13 +1,8 @@
-using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Providers;
+namespace HsSqlAgent.Provider.Abstractions;
 
-/// <summary>
-/// Core-owned provider composition. Provider identity, connection creation, lowering, metadata and
-/// execution-error mapping are explicit collaborators; no legacy strategy behavior is exposed here.
-/// </summary>
 public sealed class SqlProvider : ISqlProvider, IProviderDmlPreviewTransactionSource
 {
     public SqlProvider(
@@ -16,13 +11,7 @@ public sealed class SqlProvider : ISqlProvider, IProviderDmlPreviewTransactionSo
         IProviderLowerer lowerer,
         IProviderMetadataReader metadata,
         IProviderErrorMapper errors)
-        : this(
-            type,
-            connections,
-            lowerer,
-            metadata,
-            errors,
-            new ProviderDmlPreviewTransactionFactory())
+        : this(type, connections, lowerer, metadata, errors, new ProviderDmlPreviewTransactionFactory())
     {
     }
 
@@ -39,7 +28,6 @@ public sealed class SqlProvider : ISqlProvider, IProviderDmlPreviewTransactionSo
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(errors);
         ArgumentNullException.ThrowIfNull(previewTransactions);
-
         Type = type;
         Connections = connections;
         Lowerer = lowerer;

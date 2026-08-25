@@ -3,13 +3,8 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Providers;
+namespace HsSqlAgent.Provider.Abstractions;
 
-/// <summary>
-/// Provider-owned execution error mapper. It normalizes database-specific exception details into
-/// the stable <see cref="IProviderErrorMapper"/> contract without taking compile-time dependencies
-/// on any ADO.NET driver assembly.
-/// </summary>
 public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) : IProviderErrorMapper
 {
     private readonly SqlAgentToolType _providerType = providerType;
@@ -17,30 +12,18 @@ public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) 
     public Exception Map(Exception exception, string operation)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        var normalizedOperation = string.IsNullOrWhiteSpace(operation)
-            ? "operation"
-            : operation.Trim().ToLowerInvariant();
+        var normalizedOperation = string.IsNullOrWhiteSpace(operation) ? "operation" : operation.Trim().ToLowerInvariant();
         var code = ExtractCode(exception) ?? "unknown";
         var message = ExtractMessage(exception);
-        return new ProviderExecutionException(
-            _providerType,
-            normalizedOperation,
-            code,
-            message,
-            exception);
+        return new ProviderExecutionException(_providerType, normalizedOperation, code, message, exception);
     }
 
     private string? ExtractCode(Exception exception) => _providerType switch
     {
-        SqlAgentToolType.Postgres => ReadProperty(exception, "SqlState")
-            ?? ExtractPostgresSqlState(exception.ToString()),
-        SqlAgentToolType.MySQL => ReadProperty(exception, "Number")
-            ?? ExtractMySqlCode(exception.Message),
-        SqlAgentToolType.MsSqlServer => ReadProperty(exception, "Number")
-            ?? ExtractMsSqlCode(exception.Message),
-        SqlAgentToolType.Sqlite => ReadProperty(exception, "SqliteErrorCode") is { } sqliteCode
-            ? $"SQLITE_{sqliteCode}"
-            : null,
+        SqlAgentToolType.Postgres => ReadProperty(exception, "SqlState") ?? ExtractPostgresSqlState(exception.ToString()),
+        SqlAgentToolType.MySQL => ReadProperty(exception, "Number") ?? ExtractMySqlCode(exception.Message),
+        SqlAgentToolType.MsSqlServer => ReadProperty(exception, "Number") ?? ExtractMsSqlCode(exception.Message),
+        SqlAgentToolType.Sqlite => ReadProperty(exception, "SqliteErrorCode") is { } sqliteCode ? $"SQLITE_{sqliteCode}" : null,
         SqlAgentToolType.Oracle => ExtractOracleCode(exception.Message),
         SqlAgentToolType.Firebird => ExtractFirebirdCode(exception),
         _ => null
@@ -48,8 +31,7 @@ public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) 
 
     private string ExtractMessage(Exception exception)
     {
-        if (_providerType == SqlAgentToolType.Postgres
-            && ReadProperty(exception, "MessageText") is { } postgresMessage)
+        if (_providerType == SqlAgentToolType.Postgres && ReadProperty(exception, "MessageText") is { } postgresMessage)
             return postgresMessage;
         return exception.GetBaseException().Message;
     }
@@ -58,29 +40,16 @@ public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) 
     {
         for (Exception? current = exception; current != null; current = current.InnerException)
         {
-            var property = current.GetType().GetProperty(
-                propertyName,
-                BindingFlags.Instance | BindingFlags.Public);
-            if (property?.CanRead != true)
-                continue;
-
+            var property = current.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+            if (property?.CanRead != true) continue;
             try
             {
                 var value = property.GetValue(current);
-                if (value is null)
-                    continue;
-                return Convert.ToString(value, CultureInfo.InvariantCulture);
+                if (value is not null) return Convert.ToString(value, CultureInfo.InvariantCulture);
             }
-            catch (TargetInvocationException)
-            {
-                // Provider diagnostics are best-effort. Fall through to the stable regex fallback.
-            }
-            catch (MethodAccessException)
-            {
-                // Provider diagnostics are best-effort. Fall through to the stable regex fallback.
-            }
+            catch (TargetInvocationException) { }
+            catch (MethodAccessException) { }
         }
-
         return null;
     }
 
@@ -116,18 +85,10 @@ public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) 
     private static string? ExtractFirebirdCode(Exception exception)
     {
         var message = exception.Message ?? string.Empty;
-        var sqlCode = Regex.Match(
-            message,
-            @"SQL\s+(?:error\s+)?[Cc]ode\s*=\s*(?<code>-?\d+)",
-            RegexOptions.IgnoreCase);
+        var sqlCode = Regex.Match(message, @"SQL\s+(?:error\s+)?[Cc]ode\s*=\s*(?<code>-?\d+)", RegexOptions.IgnoreCase);
         if (sqlCode.Success) return "FB_SQL_" + sqlCode.Groups["code"].Value;
-
-        var gdsCode = Regex.Match(
-            message,
-            @".*gds\s+code\s*=\s*(?<code>\d+)",
-            RegexOptions.IgnoreCase);
+        var gdsCode = Regex.Match(message, @".*gds\s+code\s*=\s*(?<code>\d+)", RegexOptions.IgnoreCase);
         if (gdsCode.Success) return "FB_GDS_" + gdsCode.Groups["code"].Value;
-
         return ReadProperty(exception, "ErrorCode");
     }
 }

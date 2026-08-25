@@ -1,17 +1,31 @@
-// Compile-time aliases keep the large service-registration method source-compatible while the
-// runtime types have been retired. These aliases emit no ISqlStrategy/*Strategy/SqlStrategyFactory
-// types; the DI registrations compile directly to the provider types below.
-global using ISqlStrategy = SqlAgent.Service.Core.Providers.SqlProviderBase;
-global using MySqlStrategy = SqlAgent.Service.Core.Providers.MySqlProvider;
-global using PostgresStrategy = SqlAgent.Service.Core.Providers.PostgresProvider;
-global using SqliteStrategy = SqlAgent.Service.Core.Providers.SqliteProvider;
-global using MsSqlServerStrategy = SqlAgent.Service.Core.Providers.MsSqlServerProvider;
-global using OracleStrategy = SqlAgent.Service.Core.Providers.OracleProvider;
-global using FirebirdStrategy = SqlAgent.Service.Core.Providers.FirebirdProvider;
+global using IDmlPreviewTransactionFactory = HsSqlAgent.Provider.Abstractions.IDmlPreviewTransactionFactory;
+global using IProviderDmlPreviewTransactionSource = HsSqlAgent.Provider.Abstractions.IProviderDmlPreviewTransactionSource;
+global using ProviderDmlPreviewTransactionFactory = HsSqlAgent.Provider.Abstractions.ProviderDmlPreviewTransactionFactory;
+global using ISqlProvider = HsSqlAgent.Provider.Abstractions.ISqlProvider;
+global using ISqlProviderFactory = HsSqlAgent.Provider.Abstractions.ISqlProviderFactory;
+global using IProviderMetadataReader = HsSqlAgent.Provider.Abstractions.IProviderMetadataReader;
+global using IProviderErrorMapper = HsSqlAgent.Provider.Abstractions.IProviderErrorMapper;
+global using DatabaseColumnMetadata = HsSqlAgent.Provider.Abstractions.DatabaseColumnMetadata;
+global using DatabaseUniqueKeyMetadata = HsSqlAgent.Provider.Abstractions.DatabaseUniqueKeyMetadata;
+global using SqlProvider = HsSqlAgent.Provider.Abstractions.SqlProvider;
+global using SqlProviderBase = HsSqlAgent.Provider.Abstractions.SqlProviderBase;
+global using ProviderExecutionException = HsSqlAgent.Provider.Abstractions.ProviderExecutionException;
+global using PostgresProvider = HsSqlAgent.Provider.PostgreSql.PostgresProvider;
+global using MySqlProvider = HsSqlAgent.Provider.MySql.MySqlProvider;
+global using SqliteProvider = HsSqlAgent.Provider.Sqlite.SqliteProvider;
+global using MsSqlServerProvider = HsSqlAgent.Provider.SqlServer.MsSqlServerProvider;
+global using OracleProvider = HsSqlAgent.Provider.Oracle.OracleProvider;
+global using FirebirdProvider = HsSqlAgent.Provider.Firebird.FirebirdProvider;
+global using FirebirdDmlPreviewTransactionFactory = HsSqlAgent.Provider.Firebird.FirebirdDmlPreviewTransactionFactory;
+
+global using ISqlStrategy = HsSqlAgent.Provider.Abstractions.SqlProviderBase;
+global using MySqlStrategy = HsSqlAgent.Provider.MySql.MySqlProvider;
+global using PostgresStrategy = HsSqlAgent.Provider.PostgreSql.PostgresProvider;
+global using SqliteStrategy = HsSqlAgent.Provider.Sqlite.SqliteProvider;
+global using MsSqlServerStrategy = HsSqlAgent.Provider.SqlServer.MsSqlServerProvider;
+global using OracleStrategy = HsSqlAgent.Provider.Oracle.OracleProvider;
+global using FirebirdStrategy = HsSqlAgent.Provider.Firebird.FirebirdProvider;
 global using SqlStrategyFactory = SqlAgent.Service.Factories.SqlProviderFactory;
 
-// HsSqlAgentServiceExtensions still imports the historical namespace. Keep an empty source
-// namespace in this compilation until that monolithic registration file is split; it emits no type.
-namespace SqlAgent.Service.Strategies
-{
-}
+namespace SqlAgent.Service.Core.Providers { internal static class ProviderNamespaceCompatibilityMarker; }
+namespace SqlAgent.Service.Strategies { }
