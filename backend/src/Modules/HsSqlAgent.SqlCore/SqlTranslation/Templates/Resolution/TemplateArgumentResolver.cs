@@ -53,7 +53,7 @@ internal sealed class TemplateArgumentResolver(ITemplateModifierRegistry modifie
 
     private TemplateCaseSelectCondition ResolveCase(TemplateCaseExpression expression, IList<SelectCondition>? arguments, TranslationContext? context) => new()
     {
-        Cases = expression.Cases.Select(branch => new SqlAgent.Service.Models.TemplateCaseBranch
+        Cases = expression.Cases.Select(branch => new HsSqlAgent.SqlCore.Models.TemplateCaseBranch
         {
             Condition = Resolve(branch.Condition, arguments, context),
             Value = Resolve(branch.Value, arguments, context)

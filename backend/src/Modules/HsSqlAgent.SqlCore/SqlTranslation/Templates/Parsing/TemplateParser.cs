@@ -1,6 +1,7 @@
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.SqlTranslation.Templates.Ast;
+using TemplateAstCaseBranch = SqlAgent.Service.SqlTranslation.Templates.Ast.TemplateCaseBranch;
 
 namespace SqlAgent.Service.SqlTranslation.Templates.Parsing;
 
@@ -196,13 +197,13 @@ internal sealed class TemplateParser
 
     private TemplateCaseExpression ParseCase()
     {
-        var cases = new List<TemplateCaseBranch>();
+        var cases = new List<TemplateAstCaseBranch>();
         while (MatchKeyword("WHEN"))
         {
             var condition = ParseOr();
             ExpectKeyword("THEN");
             var value = ParseOr();
-            cases.Add(new TemplateCaseBranch(condition, value));
+            cases.Add(new TemplateAstCaseBranch(condition, value));
         }
         if (cases.Count == 0) throw Error("CASE requires at least one WHEN branch");
         var elseExpression = MatchKeyword("ELSE") ? ParseOr() : null;
