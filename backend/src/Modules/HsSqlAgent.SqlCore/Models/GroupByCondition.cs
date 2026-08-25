@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 
-namespace SqlAgent.Service.Models;
+namespace HsSqlAgent.SqlCore.Models;
 
 [JsonPolymorphic(
     TypeDiscriminatorPropertyName = "type",

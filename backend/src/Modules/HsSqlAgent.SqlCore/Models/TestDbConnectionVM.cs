@@ -1,4 +1,4 @@
-namespace SqlAgent.Service.Models;
+namespace HsSqlAgent.SqlCore.Models;
 
 public class TestDbConnectionVM
 {

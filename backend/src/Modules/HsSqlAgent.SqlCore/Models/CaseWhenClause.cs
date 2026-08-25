@@ -1,6 +1,6 @@
 using System.ComponentModel;
 
-namespace SqlAgent.Service.Models;
+namespace HsSqlAgent.SqlCore.Models;
 
 public class CaseWhenClause
 {

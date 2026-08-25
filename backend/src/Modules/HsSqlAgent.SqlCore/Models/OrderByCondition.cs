@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Text.Json.Serialization;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Models;
+namespace HsSqlAgent.SqlCore.Models;
 
 [JsonPolymorphic(
     TypeDiscriminatorPropertyName = "type",

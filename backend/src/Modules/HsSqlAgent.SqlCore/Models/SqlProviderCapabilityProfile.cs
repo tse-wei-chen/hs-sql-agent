@@ -1,6 +1,6 @@
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Models;
+namespace HsSqlAgent.SqlCore.Models;
 
 /// <summary>
 /// Declared runtime capability profile for one SQL provider. The same immutable profile shape can
