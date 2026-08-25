@@ -4,7 +4,7 @@ using SqlAgent.Service.Core.Compilation;
 using SqlAgent.Service.Core.Lowering;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Pipeline;
+namespace HsSqlAgent.SqlCore.Core.Pipeline;
 
 /// <summary>
 /// Guards query shapes whose CTE scope cannot be preserved by the available lowering path.

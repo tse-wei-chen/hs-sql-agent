@@ -6,7 +6,7 @@ using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Core.Pipeline;
+namespace HsSqlAgent.SqlCore.Core.Pipeline;
 
 /// <summary>
 /// Compiler pipeline entry point. The typed boundary starts at <see cref="ParsedStatement"/> so

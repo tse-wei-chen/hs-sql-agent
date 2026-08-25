@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace SqlAgent.Service.Core.Pipeline;
+namespace HsSqlAgent.SqlCore.Core.Pipeline;
 
 /// <summary>
 /// Explicit metadata-backed assurance for provider lowerings whose native conflict semantics need

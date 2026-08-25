@@ -7,7 +7,7 @@ using SqlAgent.Service.Core.Normalization;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
-namespace SqlAgent.Service.Core.Pipeline;
+namespace HsSqlAgent.SqlCore.Core.Pipeline;
 
 public sealed record DmlCompilationPolicy(
     bool RequireWhereForUpdate = true,

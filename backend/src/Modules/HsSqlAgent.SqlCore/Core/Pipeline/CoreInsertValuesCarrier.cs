@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Compilation;
 
-namespace SqlAgent.Service.Core.Pipeline;
+namespace HsSqlAgent.SqlCore.Core.Pipeline;
 
 /// <summary>
 /// Adapts INSERT VALUES cells to existing Core query/update expression pipelines without changing
