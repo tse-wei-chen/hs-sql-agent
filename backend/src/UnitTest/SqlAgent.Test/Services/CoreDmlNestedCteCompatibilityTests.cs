@@ -88,6 +88,32 @@ public class CoreDmlNestedCteCompatibilityTests
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
+    public void CompileUpdate_ScalarRootCteSetTail_PreservesTargetCorrelationAndBindings(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "UPDATE users SET score = (" +
+            "WITH ranked AS (SELECT score FROM archived WHERE tenant_id = 7) " +
+            "SELECT r.score FROM ranked AS r WHERE r.score <= users.score " +
+            "UNION ALL SELECT users.score FROM ranked AS r WHERE r.score = users.score " +
+            "ORDER BY 1 DESC LIMIT 1) WHERE id = 9",
+            targetProvider);
+
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY 1 DESC", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_set", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, command.Parameters.Length);
+        Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
+        Assert.Equal(1, Convert.ToInt32(command.Parameters[1].Value));
+        Assert.Equal(9, Convert.ToInt32(command.Parameters[2].Value));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
     public void CompileDelete_ExistsWithDerivedCte_UsesNestedCompilerAdapter(
         SqlAgentToolType targetProvider)
     {
