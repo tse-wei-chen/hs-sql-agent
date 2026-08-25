@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-25.36";
+    public const string Version = "2026-08-25.37";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -221,7 +221,7 @@ public static class SqlCapabilityMatrix
                     ? SqlCapabilityStatus.Translated
                     : SqlCapabilityStatus.Supported,
                 provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? "Structured ASC NULLS FIRST and DESC NULLS LAST are canonicalized to the provider's identical native default ordering and the unsupported modifier is omitted. ASC NULLS LAST and DESC NULLS FIRST remain fail-closed because no single-evaluation rewrite is modeled; raw MySQL/SQL Server source syntax with NULLS modifiers is rejected at the source-dialect boundary."
+                    ? "Structured ASC NULLS FIRST and DESC NULLS LAST are canonicalized to the provider's identical native default ordering and the unsupported modifier is omitted. ASC NULLS LAST and DESC NULLS FIRST are translated with a CASE null-rank only when ORDER BY is a direct row-source column, including window ordering and nested DML SELECTs. DISTINCT statement tails, set-operation tails, projection alias references, and computed expressions remain fail-closed so Core does not duplicate arbitrary expression evaluation or violate provider ORDER BY select-list rules. Raw MySQL/SQL Server source syntax with NULLS modifiers is rejected at the source-dialect boundary."
                     : "NULLS FIRST/LAST is emitted natively."),
             new("parameter.unbound", "parameter", SqlCapabilityStatus.Rejected,
                 "Unbound ?, :name, @name, $1, and {{name}} parameters are rejected; Custom Tool parameters are rendered first."),
