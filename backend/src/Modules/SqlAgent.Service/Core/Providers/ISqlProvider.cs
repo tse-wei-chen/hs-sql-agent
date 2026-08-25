@@ -12,6 +12,30 @@ public sealed record DatabaseColumnMetadata(
     bool IsPrimaryKey,
     int? PrimaryKeyOrdinal = null);
 
+/// <summary>
+/// One provider-native uniqueness rule that can affect INSERT conflict behavior. The inventory keeps
+/// richer or currently unsupported shapes instead of filtering them out so callers can distinguish
+/// "no other unique key exists" from "another unique key exists but Core cannot target it".
+/// </summary>
+public sealed record DatabaseUniqueKeyMetadata(
+    string Schema,
+    string Table,
+    string Name,
+    bool IsPrimaryKey,
+    IReadOnlyList<string> Columns,
+    bool IsPartial = false,
+    bool HasExpressions = false,
+    bool HasPrefixKeyParts = false,
+    bool IsEnforced = true)
+{
+    public bool IsSimpleEnforcedColumnKey =>
+        IsEnforced
+        && !IsPartial
+        && !HasExpressions
+        && !HasPrefixKeyParts
+        && Columns.Count > 0;
+}
+
 public interface IProviderMetadataReader
 {
     Task<IReadOnlyList<string>> GetSchemasAsync(
@@ -24,6 +48,12 @@ public interface IProviderMetadataReader
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+        string connectionString,
+        string schema,
+        string table,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
         string connectionString,
         string schema,
         string table,

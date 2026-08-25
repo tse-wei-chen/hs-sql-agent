@@ -57,7 +57,9 @@ public sealed class CoreDmlUpsertCapabilityMatrixTests
         Assert.Contains("ON DUPLICATE KEY", capability.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("UNIQUE", capability.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("conflict target", capability.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("metadata", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("inventories", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("sole enforced", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("statement-level assurance", capability.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

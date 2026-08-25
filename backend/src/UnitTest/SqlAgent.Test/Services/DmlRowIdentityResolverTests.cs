@@ -164,5 +164,12 @@ public class DmlRowIdentityResolverTests
             LastColumnsRequest = (schema, table);
             return Task.FromResult(columns);
         }
+
+        public Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+            string connectionString,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DatabaseUniqueKeyMetadata>>([]);
     }
 }
