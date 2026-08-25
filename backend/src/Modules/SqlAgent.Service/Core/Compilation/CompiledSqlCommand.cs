@@ -25,7 +25,16 @@ public sealed record CompiledSqlCommand(
     ImmutableArray<SqlParameterValue> Parameters,
     SqlStatementKind Kind,
     string PlanFingerprint,
-    SqlAgentToolType TargetProvider);
+    SqlAgentToolType TargetProvider)
+{
+    /// <summary>
+    /// True when a DML command returns one application result row per directly affected row.
+    /// Execution coordinators use this structural bit to choose reader semantics without inferring
+    /// behavior from SQL text. SELECT commands keep this false because their kind already carries
+    /// result-set intent.
+    /// </summary>
+    public bool ReturnsRows { get; init; }
+}
 
 public sealed class SqlCompilationException : InvalidOperationException
 {

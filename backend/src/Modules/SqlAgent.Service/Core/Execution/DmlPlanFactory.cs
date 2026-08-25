@@ -4,6 +4,7 @@ using SqlAgent.Service.Core.Ast;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
+using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Core.Execution;
 
@@ -31,7 +32,8 @@ public sealed class DmlPlanFactory(
         DmlRowIdentityAssurance assurance = DmlRowIdentityAssurance.Strict,
         int maxAffectedRows = 0,
         TimeSpan? approvalTtl = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SqlProviderCapabilityProfile? targetProfile = null)
     {
         ArgumentNullException.ThrowIfNull(parsedMutation);
         ArgumentNullException.ThrowIfNull(validationContext);
@@ -50,7 +52,8 @@ public sealed class DmlPlanFactory(
                 compilationPolicy,
                 maxAffectedRows,
                 approvalTtl,
-                cancellationToken);
+                cancellationToken,
+                targetProfile);
         }
 
         var (operation, target, predicate) = MutationShape(parsedMutation.Statement);
@@ -68,13 +71,14 @@ public sealed class DmlPlanFactory(
             null,
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
-        var resolvedMutation = new ParsedStatement(resolvedStatement, parsedMutation.SourceDialect);
+        var resolvedMutation = parsedMutation with { Statement = resolvedStatement };
 
         var mutationCommand = _dmlCompiler.Compile(
             resolvedMutation,
             targetProvider,
             validationContext,
-            compilationPolicy);
+            compilationPolicy,
+            targetProfile);
 
         var identityColumns = identity.Columns;
         var selectItems = identityColumns.IsDefaultOrEmpty
@@ -110,7 +114,8 @@ public sealed class DmlPlanFactory(
             parsedMatch,
             targetProvider,
             validationContext,
-            new SqlExecutionPlanPolicy());
+            new SqlExecutionPlanPolicy(),
+            targetProfile);
 
         var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
             mutationCommand,
@@ -138,7 +143,8 @@ public sealed class DmlPlanFactory(
         DmlCompilationPolicy? compilationPolicy,
         int maxAffectedRows,
         TimeSpan? approvalTtl,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SqlProviderCapabilityProfile? targetProfile)
     {
         if (insert.Source is not InsertValuesSource values)
         {
@@ -162,13 +168,14 @@ public sealed class DmlPlanFactory(
             null,
             insert.Target.Span);
         var resolvedInsert = insert with { Target = resolvedTarget };
-        var resolvedMutation = new ParsedStatement(resolvedInsert, parsedMutation.SourceDialect);
+        var resolvedMutation = parsedMutation with { Statement = resolvedInsert };
 
         var mutationCommand = _dmlCompiler.Compile(
             resolvedMutation,
             targetProvider,
             validationContext,
-            compilationPolicy);
+            compilationPolicy,
+            targetProfile);
         var previewRows = BuildInsertPreviewRows(resolvedInsert, values);
 
         if (maxAffectedRows > 0 && previewRows.Length > maxAffectedRows)
