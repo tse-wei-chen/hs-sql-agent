@@ -1,3 +1,4 @@
+global using IDbConnectionFactory = HsSqlAgent.Provider.Abstractions.IDbConnectionFactory;
 global using IDmlPreviewTransactionFactory = HsSqlAgent.Provider.Abstractions.IDmlPreviewTransactionFactory;
 global using IProviderDmlPreviewTransactionSource = HsSqlAgent.Provider.Abstractions.IProviderDmlPreviewTransactionSource;
 global using ProviderDmlPreviewTransactionFactory = HsSqlAgent.Provider.Abstractions.ProviderDmlPreviewTransactionFactory;

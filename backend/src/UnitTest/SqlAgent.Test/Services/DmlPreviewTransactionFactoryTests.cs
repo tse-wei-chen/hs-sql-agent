@@ -40,7 +40,12 @@ public sealed class DmlPreviewTransactionFactoryTests
         IsolationLevel isolation,
         FbTransactionBehavior expectedIsolationFlag)
     {
-        var behavior = FirebirdDmlPreviewTransactionFactory.ResolveBehavior(isolation);
+        var method = typeof(FirebirdDmlPreviewTransactionFactory).GetMethod(
+            "ResolveBehavior",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        var behavior = Assert.IsType<FbTransactionBehavior>(method!.Invoke(null, [isolation]));
 
         Assert.True(behavior.HasFlag(FbTransactionBehavior.Read));
         Assert.False(behavior.HasFlag(FbTransactionBehavior.Write));
