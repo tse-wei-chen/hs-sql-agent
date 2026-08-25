@@ -22,7 +22,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-25.32";
+    public const string Version = "2026-08-25.33";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -248,7 +248,7 @@ public static class SqlCapabilityMatrix
                         ? "Oracle nested parenthesized or nested-definition WITH forms fail closed in DML because the target grammar rejects them; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."
                         : "Nested WITH fragments in DML fail closed because this provider has no declared portable general-subquery or nested-CTE-definition contract; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."),
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
-                "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. General MERGE, MySQL any-unique-key ON DUPLICATE KEY behavior, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract."),
+                "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY behavior, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract."),
             new("dml.returning_output", "dml",
                 dmlReturningEnabled ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
                 dmlReturningEnabled
@@ -275,8 +275,10 @@ public static class SqlCapabilityMatrix
                     : provider == SqlAgentToolType.Sqlite
                         ? "SQLite UPSERT remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.24 or newer."
                         : provider == SqlAgentToolType.MySQL
-                            ? "MySQL ON DUPLICATE KEY UPDATE can fire on any UNIQUE or PRIMARY KEY and has no explicit conflict target. Core does not translate the deterministic conflict-column contract without unique-index metadata, so this capability remains fail-closed."
-                            : "This provider requires MERGE-style source and match semantics. Core has not yet modeled the source-row cardinality and match guarantees needed for a portable MERGE contract, so upsert remains fail-closed.")
+                            ? "MySQL ON DUPLICATE KEY UPDATE can fire on any UNIQUE or PRIMARY KEY and has no explicit conflict target. Core does not translate the deterministic conflict-column contract without complete unique-index metadata, so this capability remains fail-closed."
+                            : provider == SqlAgentToolType.Firebird
+                                ? "Firebird raw UPDATE OR INSERT ... MATCHING is canonicalized only with an explicit MATCHING column list. Firebird target lowering is available only when DmlConflictTargetAssurance proves that the canonical conflict target equals the complete resolved primary key and the conflict update mirrors every supplied INSERT column as the same proposed-row column. Because this capability matrix has no per-statement primary-key assurance input, the default Firebird capability remains Rejected and fail-closed; DO NOTHING, partial updates, general UNIQUE-key matching, and general MERGE remain rejected."
+                                : "This provider requires MERGE-style source and match semantics. Core has not yet modeled the source-row cardinality and match guarantees needed for a portable MERGE contract, so upsert remains fail-closed.")
         };
 
         return new ProviderSqlCapabilities(Version, provider, capabilities);
