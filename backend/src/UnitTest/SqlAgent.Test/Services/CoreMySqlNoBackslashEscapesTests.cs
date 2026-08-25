@@ -51,7 +51,7 @@ public sealed class CoreMySqlNoBackslashEscapesTests
     {
         var error = Assert.Throws<SqlParseException>(() =>
             CoreSqlTextParser.ParseQuery(
-                "SELECT 'a\\'b'",
+                "SELECT 'a\\'xyz'",
                 SqlAgentToolType.MySQL,
                 MySqlProfile("NO_BACKSLASH_ESCAPES")));
 
