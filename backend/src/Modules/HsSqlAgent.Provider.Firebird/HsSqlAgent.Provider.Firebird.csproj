@@ -39,6 +39,8 @@
 
   <ItemGroup>
     <Compile Include="../SqlAgent.Service/Core/Providers/FirebirdProvider.cs" Link="Core/Providers/FirebirdProvider.cs" />
+    <Compile Include="FirebirdDmlPreviewTransactionFactory.cs" />
+    <InternalsVisibleTo Include="SqlAgent.Test" />
   </ItemGroup>
 
 </Project>

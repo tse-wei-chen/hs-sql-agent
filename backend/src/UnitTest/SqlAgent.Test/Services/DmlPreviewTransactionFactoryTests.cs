@@ -3,6 +3,7 @@ using System.Reflection;
 using FirebirdSql.Data.FirebirdClient;
 using Microsoft.Data.Sqlite;
 using SqlAgent.Service.Core.Execution;
+using SqlAgent.Service.Core.Providers;
 using SqlAgent.Service.Enums;
 using Xunit;
 
@@ -39,17 +40,21 @@ public sealed class DmlPreviewTransactionFactoryTests
         IsolationLevel isolation,
         FbTransactionBehavior expectedIsolationFlag)
     {
-        var method = typeof(ProviderDmlPreviewTransactionFactory).GetMethod(
-            "FirebirdBehavior",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        Assert.NotNull(method);
-        var behavior = Assert.IsType<FbTransactionBehavior>(method!.Invoke(null, [isolation]));
+        var behavior = FirebirdDmlPreviewTransactionFactory.ResolveBehavior(isolation);
 
         Assert.True(behavior.HasFlag(FbTransactionBehavior.Read));
         Assert.False(behavior.HasFlag(FbTransactionBehavior.Write));
         Assert.True(behavior.HasFlag(FbTransactionBehavior.NoWait));
         Assert.True(behavior.HasFlag(expectedIsolationFlag));
+    }
+
+    [Fact]
+    public void FirebirdProvider_UsesProviderOwnedNativePreviewFactory()
+    {
+        var provider = new FirebirdProvider();
+
+        Assert.IsType<FirebirdDmlPreviewTransactionFactory>(provider.PreviewTransactions);
+        Assert.Equal("HsSqlAgent.Provider.Firebird", provider.PreviewTransactions.GetType().Assembly.GetName().Name);
     }
 
     [Fact]
@@ -82,10 +87,26 @@ public sealed class DmlPreviewTransactionFactoryTests
     }
 
     [Fact]
-    public async Task Firebird_RejectsNonFirebirdConnectionInsteadOfSilentlyDroppingReadOnly()
+    public async Task GenericFactory_RejectsFirebirdInsteadOfSilentlyDroppingNativeReadOnly()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         var factory = new ProviderDmlPreviewTransactionFactory();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            factory.BeginAsync(
+                connection,
+                SqlAgentToolType.Firebird,
+                IsolationLevel.Serializable,
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("provider-native", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FirebirdFactory_RejectsNonFirebirdConnectionInsteadOfSilentlyDroppingReadOnly()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        var factory = new FirebirdDmlPreviewTransactionFactory();
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             factory.BeginAsync(

@@ -26,6 +26,8 @@ public sealed class ProviderPackageBoundaryTests
         Assert.Same(assembly, typeof(SqlProvider).Assembly);
         Assert.Same(assembly, typeof(ProviderExecutionErrorMapper).Assembly);
         Assert.Same(assembly, typeof(IDbConnectionFactory).Assembly);
+        Assert.Same(assembly, typeof(IDmlPreviewTransactionFactory).Assembly);
+        Assert.Same(assembly, typeof(ProviderDmlPreviewTransactionFactory).Assembly);
 
         var references = ReferenceNames(typeof(ISqlProvider));
         Assert.Contains("HsSqlAgent.SqlCore", references);
@@ -63,7 +65,18 @@ public sealed class ProviderPackageBoundaryTests
     }
 
     [Fact]
-    public void SqlAgentService_NoLongerOwnsProviderRuntimeTypes()
+    public void FirebirdPreviewSafety_IsOwnedByFirebirdProviderAssembly()
+    {
+        Assert.Equal(
+            "HsSqlAgent.Provider.Firebird",
+            typeof(FirebirdDmlPreviewTransactionFactory).Assembly.GetName().Name);
+        Assert.Same(
+            typeof(FirebirdProvider).Assembly,
+            typeof(FirebirdDmlPreviewTransactionFactory).Assembly);
+    }
+
+    [Fact]
+    public void SqlAgentService_NoLongerOwnsProviderRuntimeTypesOrReferencesDatabaseDrivers()
     {
         var serviceAssembly = typeof(SqlAgent.Service.Factories.SqlProviderFactory).Assembly;
 
@@ -76,6 +89,15 @@ public sealed class ProviderPackageBoundaryTests
         Assert.Null(serviceAssembly.GetType("SqlAgent.Service.Core.Providers.MsSqlServerProvider", throwOnError: false));
         Assert.Null(serviceAssembly.GetType("SqlAgent.Service.Core.Providers.OracleProvider", throwOnError: false));
         Assert.Null(serviceAssembly.GetType("SqlAgent.Service.Core.Providers.FirebirdProvider", throwOnError: false));
+
+        var references = serviceAssembly.GetReferencedAssemblies()
+            .Select(reference => reference.Name)
+            .Where(name => name is not null)
+            .Cast<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("Dapper", references);
+        foreach (var driver in DriverAssemblies)
+            Assert.DoesNotContain(driver, references);
     }
 
     private static HashSet<string> ReferenceNames(Type type) =>

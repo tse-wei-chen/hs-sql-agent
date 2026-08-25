@@ -20,11 +20,13 @@ public sealed class TypedDmlRuntime(
     IDmlApprovalChallengeStore? challengeStore = null,
     IDmlPreviewTransactionFactory? previewTransactionFactory = null)
 {
+    private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
+        new ProviderDmlPreviewTransactionFactory();
+
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
-    private readonly IDmlPreviewTransactionFactory _previewTransactionFactory =
-        previewTransactionFactory ?? new ProviderDmlPreviewTransactionFactory();
+    private readonly IDmlPreviewTransactionFactory? _previewTransactionFactory = previewTransactionFactory;
 
     public async Task<TypedDmlApprovalSession> PreviewAsync(
         ISqlProvider provider,
@@ -64,7 +66,7 @@ public sealed class TypedDmlRuntime(
             provider.Connections,
             _timeProvider,
             _challengeStore,
-            previewTransactionFactory: _previewTransactionFactory);
+            previewTransactionFactory: ResolvePreviewTransactions(provider));
         var preview = await coordinator.PreviewAsync(
             connectionString,
             plan,
@@ -106,13 +108,18 @@ public sealed class TypedDmlRuntime(
             provider.Connections,
             _timeProvider,
             _challengeStore,
-            previewTransactionFactory: _previewTransactionFactory);
+            previewTransactionFactory: ResolvePreviewTransactions(provider));
         return await coordinator.CommitAsync(
             connectionString,
             session.Plan,
             session.Preview.Challenge,
             cancellationToken);
     }
+
+    private IDmlPreviewTransactionFactory ResolvePreviewTransactions(ISqlProvider provider) =>
+        _previewTransactionFactory
+        ?? (provider as IProviderDmlPreviewTransactionSource)?.PreviewTransactions
+        ?? DriverNeutralPreviewTransactions;
 
     internal static bool SupportsStatement(SqlStatement statement) =>
         statement is UpdateStatement

@@ -13,10 +13,15 @@ namespace SqlAgent.Service.Core.Providers;
 /// provider identity, connection creation, metadata access and management-side connection-string
 /// construction.
 /// </summary>
-public abstract class SqlProviderBase : ISqlProvider, IDbConnectionFactory, IProviderMetadataReader
+public abstract class SqlProviderBase :
+    ISqlProvider,
+    IDbConnectionFactory,
+    IProviderMetadataReader,
+    IProviderDmlPreviewTransactionSource
 {
     private IProviderLowerer? _lowerer;
     private IProviderErrorMapper? _errors;
+    private IDmlPreviewTransactionFactory? _previewTransactions;
 
     public abstract SqlAgentToolType DbType { get; }
     public SqlAgentToolType Type => DbType;
@@ -25,6 +30,8 @@ public abstract class SqlProviderBase : ISqlProvider, IDbConnectionFactory, IPro
     public IProviderLowerer Lowerer => _lowerer ??= new SqlKataProviderLowerer(DbType);
     public IProviderMetadataReader Metadata => this;
     public IProviderErrorMapper Errors => _errors ??= new ProviderExecutionErrorMapper(DbType);
+    public virtual IDmlPreviewTransactionFactory PreviewTransactions =>
+        _previewTransactions ??= new ProviderDmlPreviewTransactionFactory();
 
     public abstract string BuildConnectionString(BuildDbConnectionModelBase model);
     public abstract DbConnection CreateConnection(string? connectionString);

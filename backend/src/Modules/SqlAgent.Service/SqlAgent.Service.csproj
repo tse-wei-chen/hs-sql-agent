@@ -15,10 +15,6 @@
 		<PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
 		<PackageReference Include="dapper" />
 		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
-		<PackageReference Include="MySql.Data" />
-		<PackageReference Include="Npgsql" />
-		<PackageReference Include="Oracle.ManagedDataAccess.Core" />
-		<PackageReference Include="FirebirdSql.Data.FirebirdClient" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -30,6 +26,10 @@
 		<ProjectReference Include="../HsSqlAgent.Provider.SqlServer/HsSqlAgent.Provider.SqlServer.csproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.Oracle/HsSqlAgent.Provider.Oracle.csproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.Firebird/HsSqlAgent.Provider.Firebird.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="SqlAgent.Test" />
 	</ItemGroup>
 
 	<!-- SQL compiler and provider runtime contracts/implementations now have separate assembly owners.
@@ -45,6 +45,7 @@
 		<Compile Remove="Core/Pipeline/**/*.cs" />
 		<Compile Remove="Core/Execution/DmlFingerprintService.cs" />
 		<Compile Remove="Core/Execution/IDbConnectionFactory.cs" />
+		<Compile Remove="Core/Execution/DmlPreviewTransactionFactory.cs" />
 		<Compile Remove="Core/Providers/**/*.cs" />
 		<Compile Remove="Enums/**/*.cs" />
 		<Compile Remove="Models/**/*.cs" />

@@ -1,6 +1,7 @@
 using System.Data.Common;
 using Dapper;
 using FirebirdSql.Data.FirebirdClient;
+using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.Models;
 
@@ -8,7 +9,11 @@ namespace SqlAgent.Service.Core.Providers;
 
 public class FirebirdProvider : SqlProviderBase
 {
+    private readonly IDmlPreviewTransactionFactory _previewTransactions =
+        new FirebirdDmlPreviewTransactionFactory();
+
     public override SqlAgentToolType DbType => SqlAgentToolType.Firebird;
+    public override IDmlPreviewTransactionFactory PreviewTransactions => _previewTransactions;
 
     public override string BuildConnectionString(BuildDbConnectionModelBase model)
     {

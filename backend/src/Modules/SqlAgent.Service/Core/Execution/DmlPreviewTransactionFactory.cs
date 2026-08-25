@@ -1,6 +1,5 @@
 using System.Data;
 using System.Data.Common;
-using FirebirdSql.Data.FirebirdClient;
 using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -20,6 +19,22 @@ public interface IDmlPreviewTransactionFactory
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Optional provider capability for databases whose preview transaction semantics require a
+/// provider-native transaction API. Existing ISqlProvider implementations do not have to implement
+/// this side-interface; callers fall back to the driver-neutral policy and unsupported native-only
+/// modes remain fail-closed.
+/// </summary>
+public interface IProviderDmlPreviewTransactionSource
+{
+    IDmlPreviewTransactionFactory PreviewTransactions { get; }
+}
+
+/// <summary>
+/// Driver-neutral preview transaction policy for providers whose read-only semantics can be expressed
+/// through portable DbConnection APIs and fixed SQL. Providers that need native transaction options
+/// supply their own implementation through IProviderDmlPreviewTransactionSource.
+/// </summary>
 public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactionFactory
 {
     internal const string ReadOnlyTransactionSql = "SET TRANSACTION READ ONLY";
@@ -45,12 +60,10 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
             SqlAgentToolType.Oracle => await BeginOracleReadOnlyAsync(
                 connection,
                 cancellationToken),
-            SqlAgentToolType.Firebird => await BeginFirebirdAsync(
-                connection,
-                isolationLevel,
-                cancellationToken),
             SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite =>
                 await connection.BeginTransactionAsync(isolationLevel, cancellationToken),
+            SqlAgentToolType.Firebird => throw new InvalidOperationException(
+                "Firebird DML preview requires the provider-native preview transaction factory so a read-only TPB is enforced."),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(provider),
                 provider,
@@ -71,35 +84,11 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
             "Unsupported DML preview provider.")
     };
 
-    internal static FbTransactionBehavior FirebirdBehavior(IsolationLevel isolationLevel) =>
-        isolationLevel switch
-        {
-            IsolationLevel.Serializable =>
-                FbTransactionBehavior.Read |
-                FbTransactionBehavior.NoWait |
-                FbTransactionBehavior.Consistency,
-            IsolationLevel.RepeatableRead or IsolationLevel.Snapshot =>
-                FbTransactionBehavior.Read |
-                FbTransactionBehavior.NoWait |
-                FbTransactionBehavior.Concurrency,
-            IsolationLevel.ReadCommitted or IsolationLevel.ReadUncommitted or IsolationLevel.Unspecified =>
-                FbTransactionBehavior.Read |
-                FbTransactionBehavior.NoWait |
-                FbTransactionBehavior.ReadCommitted |
-                FbTransactionBehavior.RecVersion,
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(isolationLevel),
-                isolationLevel,
-                "Unsupported Firebird DML preview isolation level.")
-        };
-
     private static async Task<DbTransaction> BeginMySqlAsync(
         DbConnection connection,
         IsolationLevel isolationLevel,
         CancellationToken cancellationToken)
     {
-        // MySQL applies transaction access mode to the next transaction, so READ ONLY must be
-        // configured before BeginTransactionAsync starts the transaction.
         await ExecuteSetupSqlAsync(
             connection,
             transaction: null,
@@ -112,11 +101,6 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
         DbConnection connection,
         CancellationToken cancellationToken)
     {
-        // Oracle READ ONLY is itself a transaction mode with a transaction-start consistent
-        // snapshot. Do not combine it with BeginTransaction(Serializable): that would establish a
-        // conflicting transaction mode before SET TRANSACTION READ ONLY. Begin a normal local
-        // transaction only to obtain the DbTransaction handle; the first SQL statement establishes
-        // the read-only snapshot mode.
         return await BeginThenMarkReadOnlyAsync(
             connection,
             IsolationLevel.ReadCommitted,
@@ -131,7 +115,6 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
         var transaction = await connection.BeginTransactionAsync(isolationLevel, cancellationToken);
         try
         {
-            // No application SQL is executed before this transaction characteristic is applied.
             await ExecuteSetupSqlAsync(
                 connection,
                 transaction,
@@ -153,25 +136,6 @@ public sealed class ProviderDmlPreviewTransactionFactory : IDmlPreviewTransactio
             await transaction.DisposeAsync();
             throw;
         }
-    }
-
-    private static async Task<DbTransaction> BeginFirebirdAsync(
-        DbConnection connection,
-        IsolationLevel isolationLevel,
-        CancellationToken cancellationToken)
-    {
-        if (connection is not FbConnection firebird)
-        {
-            throw new InvalidOperationException(
-                "Firebird DML preview requires an FbConnection so a native read-only TPB can be used.");
-        }
-
-        var options = new FbTransactionOptions
-        {
-            TransactionBehavior = FirebirdBehavior(isolationLevel),
-            WaitTimeout = null
-        };
-        return await firebird.BeginTransactionAsync(options, cancellationToken);
     }
 
     private static async Task ExecuteSetupSqlAsync(
