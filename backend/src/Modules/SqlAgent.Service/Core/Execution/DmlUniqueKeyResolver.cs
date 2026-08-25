@@ -1,3 +1,4 @@
+using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -10,6 +11,14 @@ public sealed record DmlUniqueKeyResolution(
 
     public bool HasUnsupportedEnforcedUniqueKeys =>
         EnforcedKeys.Any(key => !key.IsSimpleEnforcedColumnKey);
+
+    public DmlConflictTargetAssurance ToConflictTargetAssurance() =>
+        DmlConflictTargetAssurance.FromUniqueKey(
+            MatchedKey.Columns,
+            MatchedKey.Name,
+            MatchedKey.IsPrimaryKey,
+            EnforcedKeys.Count,
+            HasUnsupportedEnforcedUniqueKeys);
 }
 
 /// <summary>

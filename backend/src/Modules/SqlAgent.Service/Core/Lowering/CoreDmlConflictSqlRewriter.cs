@@ -11,12 +11,14 @@ namespace SqlAgent.Service.Core.Lowering;
 /// <summary>
 /// Lowers the deterministic explicit-target INSERT conflict contract after the ordinary INSERT has
 /// been compiled. PostgreSQL and SQLite use ON CONFLICT directly. Firebird may use UPDATE OR INSERT
-/// only when metadata-backed primary-key assurance proves MATCHING identifies at most one row and
-/// the canonical update exactly mirrors all proposed INSERT columns.
+/// only with explicit primary-key assurance. MySQL may use ON DUPLICATE KEY UPDATE only when an
+/// explicit target profile supports proposed-row aliases and provider metadata proves that the
+/// canonical target is the sole enforced native unique-conflict source.
 /// </summary>
 internal static class CoreDmlConflictSqlRewriter
 {
     private static readonly Version SqliteUpsertVersion = new(3, 24);
+    private static readonly Version MySqlProposedRowAliasVersion = new(8, 0, 19);
 
     public static CompiledSqlCommand Apply(
         CompiledSqlCommand command,
@@ -38,6 +40,15 @@ internal static class CoreDmlConflictSqlRewriter
             return RewriteFirebird(
                 command,
                 insert,
+                conflictTargetAssurance,
+                policyVersion);
+        }
+        if (command.TargetProvider == SqlAgentToolType.MySQL)
+        {
+            return RewriteMySql(
+                command,
+                insert,
+                targetProfile,
                 conflictTargetAssurance,
                 policyVersion);
         }
@@ -87,6 +98,86 @@ internal static class CoreDmlConflictSqlRewriter
             PlanFingerprint = string.Empty
         };
         return RecomputeFingerprint(rewritten, policyVersion);
+    }
+
+    private static CompiledSqlCommand RewriteMySql(
+        CompiledSqlCommand command,
+        InsertStatement insert,
+        SqlProviderCapabilityProfile? targetProfile,
+        DmlConflictTargetAssurance? assurance,
+        string policyVersion)
+    {
+        var conflict = insert.Conflict
+            ?? throw new SqlCompilationException("INSERT conflict contract is missing.");
+        if (conflict.Action != InsertConflictActionKind.UpdateProposedValues)
+        {
+            throw new SqlCompilationException(
+                "MySQL INSERT IGNORE is not a portable ON CONFLICT DO NOTHING equivalent because it can suppress errors beyond the explicit conflict target; MySQL DO NOTHING therefore remains fail-closed.");
+        }
+        if (targetProfile?.ServerVersion is not { } version
+            || version.CompareTo(MySqlProposedRowAliasVersion) < 0)
+        {
+            throw new SqlCompilationException(
+                "MySQL conflict lowering requires an explicit target capability profile with ServerVersion 8.0.19 or newer so Core can use the proposed-row alias form instead of deprecated VALUES(column) semantics.");
+        }
+
+        ValidateMySqlUniqueKeyTarget(conflict, assurance);
+
+        var compiler = SqlKataProviderLowerer.CreateCompiler(SqlAgentToolType.MySQL);
+        var aliasName = CreateMySqlProposedRowAlias(insert);
+        var alias = CoreIdentifierSqlRenderer.Render(
+            SqlIdentifier.Unquoted(aliasName, SourceSpan.Unknown),
+            compiler,
+            allowWildcard: false);
+        var assignments = string.Join(", ", conflict.Assignments.Select(assignment =>
+            CoreIdentifierSqlRenderer.Render(assignment.Column, compiler, allowWildcard: false)
+            + " = " + alias + "."
+            + CoreIdentifierSqlRenderer.Render(assignment.ProposedColumn, compiler, allowWildcard: false)));
+        var sql = command.Sql.TrimEnd().TrimEnd(';');
+        var rewritten = command with
+        {
+            Sql = sql + $" AS {alias} ON DUPLICATE KEY UPDATE {assignments}",
+            PlanFingerprint = string.Empty
+        };
+        return RecomputeFingerprint(rewritten, policyVersion);
+    }
+
+    private static void ValidateMySqlUniqueKeyTarget(
+        InsertConflictClause conflict,
+        DmlConflictTargetAssurance? assurance)
+    {
+        if (assurance is null || assurance.MatchedUniqueKeyColumns.IsDefaultOrEmpty)
+        {
+            throw new SqlCompilationException(
+                "MySQL ON DUPLICATE KEY UPDATE requires metadata-backed statement assurance proving the explicit conflict target matches a complete enforced unique key and is the sole enforced native conflict source.");
+        }
+        if (!assurance.IsSoleEnforcedUniqueKey)
+        {
+            throw new SqlCompilationException(
+                "MySQL ON DUPLICATE KEY UPDATE can react to any UNIQUE or PRIMARY KEY conflict. Core requires the matched conflict target to be the sole enforced native unique-conflict source, including no additional richer expression, prefix, partial, or otherwise unsupported enforced unique keys.");
+        }
+
+        var target = conflict.TargetColumns
+            .Select(RequireSinglePart)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var matchedKey = assurance.MatchedUniqueKeyColumns
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (target.Count != conflict.TargetColumns.Length
+            || matchedKey.Count != assurance.MatchedUniqueKeyColumns.Length
+            || !target.SetEquals(matchedKey))
+        {
+            throw new SqlCompilationException(
+                "MySQL conflict lowering requires the canonical explicit conflict target to match the complete metadata-resolved unique key exactly.");
+        }
+    }
+
+    private static string CreateMySqlProposedRowAlias(InsertStatement insert)
+    {
+        const string preferred = "__core_proposed";
+        var tableName = insert.Target.Name.Parts[^1].Value;
+        return string.Equals(tableName, preferred, StringComparison.OrdinalIgnoreCase)
+            ? preferred + "_row"
+            : preferred;
     }
 
     private static void ValidateFirebirdPrimaryKeyTarget(
@@ -256,9 +347,6 @@ internal static class CoreDmlConflictSqlRewriter
             case SqlAgentToolType.Sqlite:
                 throw new SqlCompilationException(
                     "SQLite UPSERT requires an explicit target capability profile with ServerVersion 3.24 or newer.");
-            case SqlAgentToolType.MySQL:
-                throw new SqlCompilationException(
-                    "MySQL ON DUPLICATE KEY UPDATE can fire on any UNIQUE or PRIMARY KEY and has no explicit conflict target; Core cannot translate the deterministic target-column contract without complete unique-index metadata.");
             case SqlAgentToolType.MsSqlServer:
             case SqlAgentToolType.Oracle:
                 throw new SqlCompilationException(
