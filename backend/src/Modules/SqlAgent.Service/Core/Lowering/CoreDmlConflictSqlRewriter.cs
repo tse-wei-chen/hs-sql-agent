@@ -114,14 +114,15 @@ internal static class CoreDmlConflictSqlRewriter
             throw new SqlCompilationException(
                 "MySQL INSERT IGNORE is not a portable ON CONFLICT DO NOTHING equivalent because it can suppress errors beyond the explicit conflict target; MySQL DO NOTHING therefore remains fail-closed.");
         }
+
+        ValidateMySqlUniqueKeyTarget(conflict, assurance);
+
         if (targetProfile?.ServerVersion is not { } version
             || version.CompareTo(MySqlProposedRowAliasVersion) < 0)
         {
             throw new SqlCompilationException(
                 "MySQL conflict lowering requires an explicit target capability profile with ServerVersion 8.0.19 or newer so Core can use the proposed-row alias form instead of deprecated VALUES(column) semantics.");
         }
-
-        ValidateMySqlUniqueKeyTarget(conflict, assurance);
 
         var compiler = SqlKataProviderLowerer.CreateCompiler(SqlAgentToolType.MySQL);
         var aliasName = CreateMySqlProposedRowAlias(insert);
