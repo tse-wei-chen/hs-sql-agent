@@ -1,9 +1,10 @@
 using System.Collections.Immutable;
 using SqlAgent.Service.Core.Ast;
+using SqlAgent.Service.Core.Binding;
 using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Enums;
 
-namespace SqlAgent.Service.Core.Binding;
+namespace HsSqlAgent.SqlCore.Core.Binding;
 
 /// <summary>
 /// DML binder that delegates query scoping to <see cref="SqlAstBinder"/> while handling INSERT's

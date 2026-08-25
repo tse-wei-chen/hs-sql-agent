@@ -1,6 +1,6 @@
-using SqlAgent.Service.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Ast;
 
-namespace SqlAgent.Service.Core.Binding;
+namespace HsSqlAgent.SqlCore.Core.Binding;
 
 public sealed record TableSymbol(
     string Name,

@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace SqlAgent.Service.Core.Binding;
+namespace HsSqlAgent.SqlCore.Core.Binding;
 
 public sealed record QueryAliasFact(string Alias, string Target, int ScopeId);
 
