@@ -6,8 +6,8 @@ namespace SqlAgent.Service.SqlParsing;
 
 /// <summary>
 /// Extracts the deliberately small portable INSERT conflict grammar before the ordinary DML parser
-/// consumes the statement. Keeping this clause separate avoids teaching the general expression
-/// parser about the special EXCLUDED row scope.
+/// consumes the statement. PostgreSQL/SQLite ON CONFLICT and the metadata-gated Firebird UPDATE OR
+/// INSERT ... MATCHING shape canonicalize to the same explicit conflict AST.
 /// </summary>
 internal static class CoreDmlConflictTextParser
 {
@@ -17,10 +17,12 @@ internal static class CoreDmlConflictTextParser
         Version? sourceServerVersion)
     {
         ArgumentNullException.ThrowIfNull(tokens);
+        if (IsFirebirdUpdateOrInsertStart(tokens))
+            return ExtractFirebirdUpdateOrInsert(tokens, sourceDialect);
         if (tokens.Length == 0 || !CoreTokenReader.IsWord(tokens[0], "INSERT"))
             return (tokens, null);
 
-        var onIndex = FindRootConflictStartAfterValues(tokens);
+        var onIndex = FindRootClauseAfterValues(tokens, "ON");
         if (onIndex < 0)
             return (tokens, null);
 
@@ -43,7 +45,7 @@ internal static class CoreDmlConflictTextParser
                 onToken);
         }
 
-        ValidateSourceContract(sourceDialect, sourceServerVersion, onToken);
+        ValidateOnConflictSourceContract(sourceDialect, sourceServerVersion, onToken);
         reader.Expect(TokenType.LParen, "'(' before ON CONFLICT target column list");
         var targetColumns = ParseUniqueSinglePartColumns(reader, "ON CONFLICT target column");
         reader.Expect(TokenType.RParen, "')' after ON CONFLICT target column list");
@@ -73,18 +75,94 @@ internal static class CoreDmlConflictTextParser
             action,
             assignments,
             reader.SpanFrom(start));
-        var normalized = new Token[tokens.Length - consumed];
-        Array.Copy(tokens, 0, normalized, 0, onIndex);
-        Array.Copy(
-            tokens,
-            onIndex + consumed,
-            normalized,
-            onIndex,
-            tokens.Length - onIndex - consumed);
-        return (normalized, conflict);
+        return (RemoveRange(tokens, onIndex, consumed), conflict);
     }
 
-    private static int FindRootConflictStartAfterValues(Token[] tokens)
+    private static (Token[] Tokens, InsertConflictClause? Conflict) ExtractFirebirdUpdateOrInsert(
+        Token[] tokens,
+        SqlAgentToolType sourceDialect)
+    {
+        if (sourceDialect != SqlAgentToolType.Firebird)
+        {
+            throw CoreTokenReader.Error(
+                $"UPDATE OR INSERT is Firebird source syntax and is not valid for source dialect {sourceDialect}.",
+                tokens[0]);
+        }
+
+        // Drop UPDATE OR so the ordinary INSERT parser can own target/VALUES/RETURNING parsing.
+        var normalizedPrefix = new Token[tokens.Length - 2];
+        Array.Copy(tokens, 2, normalizedPrefix, 0, normalizedPrefix.Length);
+
+        var matchingIndex = FindRootClauseAfterValues(normalizedPrefix, "MATCHING");
+        if (matchingIndex < 0)
+        {
+            throw CoreTokenReader.Error(
+                "Portable Firebird UPDATE OR INSERT requires an explicit MATCHING column list; implicit primary-key matching is not canonicalized without source metadata.",
+                tokens[0]);
+        }
+
+        var reader = new CoreTokenReader(normalizedPrefix[matchingIndex..]);
+        var start = reader.Position;
+        var matchingToken = reader.ExpectWord("MATCHING");
+        reader.Expect(TokenType.LParen, "'(' before Firebird MATCHING column list");
+        var targetColumns = ParseUniqueSinglePartColumns(reader, "Firebird MATCHING column");
+        reader.Expect(TokenType.RParen, "')' after Firebird MATCHING column list");
+        if (targetColumns.IsDefaultOrEmpty)
+            throw CoreTokenReader.Error("Firebird MATCHING requires at least one explicit column.", matchingToken);
+        ValidateTrailer(reader);
+
+        var insertColumns = ParseInsertColumns(normalizedPrefix);
+        var assignments = insertColumns
+            .Select(column => new InsertConflictAssignment(column, column, column.Span))
+            .ToImmutableArray();
+        var conflict = new InsertConflictClause(
+            targetColumns,
+            InsertConflictActionKind.UpdateProposedValues,
+            assignments,
+            reader.SpanFrom(start));
+        return (RemoveRange(normalizedPrefix, matchingIndex, reader.Position), conflict);
+    }
+
+    private static ImmutableArray<SqlIdentifier> ParseInsertColumns(Token[] normalizedInsertTokens)
+    {
+        var depth = 0;
+        var listStart = -1;
+        for (var i = 0; i < normalizedInsertTokens.Length; i++)
+        {
+            var token = normalizedInsertTokens[i];
+            if (depth == 0 && token.Type == TokenType.LParen)
+            {
+                listStart = i;
+                break;
+            }
+            if (CoreTokenReader.IsWord(token, "VALUES"))
+                break;
+            if (token.Type == TokenType.LParen) depth++;
+            else if (token.Type == TokenType.RParen) depth = Math.Max(0, depth - 1);
+        }
+
+        if (listStart < 0)
+        {
+            throw CoreTokenReader.Error(
+                "Portable Firebird UPDATE OR INSERT requires an explicit INSERT column list.",
+                normalizedInsertTokens[0]);
+        }
+
+        var reader = new CoreTokenReader(normalizedInsertTokens[(listStart + 1)..]);
+        var columns = ParseUniqueSinglePartColumns(reader, "Firebird UPDATE OR INSERT column");
+        reader.Expect(TokenType.RParen, "')' after Firebird UPDATE OR INSERT column list");
+        if (columns.IsDefaultOrEmpty)
+            throw CoreTokenReader.Error("Firebird UPDATE OR INSERT requires at least one explicit column.", reader.Peek());
+        return columns;
+    }
+
+    private static bool IsFirebirdUpdateOrInsertStart(Token[] tokens) =>
+        tokens.Length >= 3
+        && CoreTokenReader.IsWord(tokens[0], "UPDATE")
+        && CoreTokenReader.IsWord(tokens[1], "OR")
+        && CoreTokenReader.IsWord(tokens[2], "INSERT");
+
+    private static int FindRootClauseAfterValues(Token[] tokens, string word)
     {
         var depth = 0;
         var sawValues = false;
@@ -109,13 +187,26 @@ internal static class CoreDmlConflictTextParser
                 sawValues = true;
                 continue;
             }
-            if (sawValues && CoreTokenReader.IsWord(token, "ON"))
+            if (sawValues && CoreTokenReader.IsWord(token, word))
                 return i;
             if (sawValues && (CoreTokenReader.IsWord(token, "RETURNING")
                 || token.Type is TokenType.Semicolon or TokenType.EOF))
                 return -1;
         }
         return -1;
+    }
+
+    private static Token[] RemoveRange(Token[] tokens, int start, int count)
+    {
+        var normalized = new Token[tokens.Length - count];
+        Array.Copy(tokens, 0, normalized, 0, start);
+        Array.Copy(
+            tokens,
+            start + count,
+            normalized,
+            start,
+            tokens.Length - start - count);
+        return normalized;
     }
 
     private static ImmutableArray<SqlIdentifier> ParseUniqueSinglePartColumns(
@@ -182,11 +273,11 @@ internal static class CoreDmlConflictTextParser
         if (token.Type is TokenType.EOF or TokenType.Semicolon || reader.PeekWord("RETURNING"))
             return;
         throw CoreTokenReader.Error(
-            "Portable ON CONFLICT supports only DO NOTHING or assignments of the exact form target = EXCLUDED.source; arbitrary update expressions and predicates remain fail-closed.",
+            "Portable conflict handling supports only the canonical conflict clause followed directly by optional RETURNING; provider-specific predicates, ORDER BY, ROWS, and extra clauses remain fail-closed.",
             token);
     }
 
-    private static void ValidateSourceContract(
+    private static void ValidateOnConflictSourceContract(
         SqlAgentToolType sourceDialect,
         Version? sourceServerVersion,
         Token token)
@@ -205,9 +296,12 @@ internal static class CoreDmlConflictTextParser
                 throw CoreTokenReader.Error(
                     "MySQL ON DUPLICATE KEY UPDATE has no explicit conflict target and is not represented by the deterministic portable upsert contract.",
                     token);
+            case SqlAgentToolType.Firebird:
+                throw CoreTokenReader.Error(
+                    "Firebird source upsert uses UPDATE OR INSERT ... MATCHING rather than ON CONFLICT; use the native explicit MATCHING form so Core can preserve source semantics.",
+                    token);
             case SqlAgentToolType.MsSqlServer:
             case SqlAgentToolType.Oracle:
-            case SqlAgentToolType.Firebird:
                 throw CoreTokenReader.Error(
                     $"Source dialect {sourceDialect} uses MERGE-style upsert semantics, which require a separate source-row cardinality contract and remain fail-closed.",
                     token);

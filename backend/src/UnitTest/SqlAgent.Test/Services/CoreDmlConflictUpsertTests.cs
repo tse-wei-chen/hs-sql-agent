@@ -104,7 +104,6 @@ public sealed class CoreDmlConflictUpsertTests
     [InlineData(SqlAgentToolType.MySQL, "unique")]
     [InlineData(SqlAgentToolType.MsSqlServer, "MERGE")]
     [InlineData(SqlAgentToolType.Oracle, "MERGE")]
-    [InlineData(SqlAgentToolType.Firebird, "MERGE")]
     public void Compile_ConflictUpsertToNonEquivalentTarget_FailsClosed(
         SqlAgentToolType targetProvider,
         string expectedMessage)
@@ -132,7 +131,7 @@ public sealed class CoreDmlConflictUpsertTests
                 "ON CONFLICT (id) DO UPDATE SET name = excluded.name || '!'",
                 SqlAgentToolType.Postgres));
 
-        Assert.Contains("exact form", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("conflict clause", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

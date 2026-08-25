@@ -38,7 +38,8 @@ public sealed class CoreDmlCompiler(
         SqlAgentToolType targetProvider,
         SqlPlanValidationContext validationContext,
         DmlCompilationPolicy? policy = null,
-        SqlProviderCapabilityProfile? targetProfile = null)
+        SqlProviderCapabilityProfile? targetProfile = null,
+        DmlConflictTargetAssurance? conflictTargetAssurance = null)
     {
         ArgumentNullException.ThrowIfNull(parsed);
         ArgumentNullException.ThrowIfNull(validationContext);
@@ -119,6 +120,7 @@ public sealed class CoreDmlCompiler(
                 command,
                 insertStatement,
                 targetProfile,
+                conflictTargetAssurance,
                 validated.PolicyVersion);
         }
 
