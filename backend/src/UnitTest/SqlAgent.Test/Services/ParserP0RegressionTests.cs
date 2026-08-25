@@ -59,7 +59,7 @@ public class ParserP0RegressionTests
         Assert.Contains("scalar literals", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static QueryFacts BindFacts(SqlAgent.Service.Models.QueryDefinition definition)
+    private static QueryFacts BindFacts(HsSqlAgent.SqlCore.Models.QueryDefinition definition)
     {
         var parsed = new ParsedStatement(
             QueryDefinitionCoreMapper.Map(definition),
