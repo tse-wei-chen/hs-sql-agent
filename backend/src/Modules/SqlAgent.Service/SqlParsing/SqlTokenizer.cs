@@ -22,12 +22,23 @@ public class SqlTokenizer
 {
     private readonly string _sql;
     private readonly SqlAgentToolType? _provider;
+    private readonly bool _mysqlAnsiQuotes;
     private int _pos;
 
-    public SqlTokenizer(string sql, SqlAgentToolType? provider = null)
+    public SqlTokenizer(
+        string sql,
+        SqlAgentToolType? provider = null,
+        bool mysqlAnsiQuotes = false)
     {
         _sql = sql ?? throw new ArgumentNullException(nameof(sql));
         _provider = provider;
+        if (mysqlAnsiQuotes && provider != SqlAgentToolType.MySQL)
+        {
+            throw new ArgumentException(
+                "MySQL ANSI_QUOTES lexical mode can only be enabled with the MySQL provider.",
+                nameof(mysqlAnsiQuotes));
+        }
+        _mysqlAnsiQuotes = mysqlAnsiQuotes;
     }
 
     private static readonly HashSet<string> Keywords = new(StringComparer.OrdinalIgnoreCase)
@@ -127,10 +138,10 @@ public class SqlTokenizer
 
             if (c == '"')
             {
-                if (_provider == SqlAgentToolType.MySQL)
+                if (_provider == SqlAgentToolType.MySQL && !_mysqlAnsiQuotes)
                 {
                     throw Error(
-                        "MySQL double-quote semantics depend on ANSI_QUOTES sql_mode; Core rejects this delimiter because session sql_mode is not part of the compilation plan.",
+                        "MySQL double-quote semantics depend on ANSI_QUOTES sql_mode; Core rejects this delimiter unless the source profile explicitly declares ANSI_QUOTES or ANSI.",
                         _pos,
                         1);
                 }

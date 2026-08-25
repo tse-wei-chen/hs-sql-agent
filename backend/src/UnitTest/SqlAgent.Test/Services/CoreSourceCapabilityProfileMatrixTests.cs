@@ -20,7 +20,9 @@ public sealed class CoreSourceCapabilityProfileMatrixTests
         Assert.Equal(SqlCapabilityStatus.Supported, sourceProfile.Status);
         Assert.Contains("separate", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("PIPES_AS_CONCAT", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ANSI", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ANSI_QUOTES", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("double-quoted identifiers", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", sourceProfile.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("PIPES_AS_CONCAT", concat.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("target profile alone", concat.Detail, StringComparison.OrdinalIgnoreCase);
     }

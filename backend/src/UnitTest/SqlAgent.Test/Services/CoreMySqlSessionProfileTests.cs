@@ -74,6 +74,64 @@ public sealed class CoreMySqlSessionProfileTests
     }
 
     [Fact]
+    public void Parse_MySqlDoubleQuotesWithoutSourceProfile_RemainsFailClosed()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT \"display_name\" FROM users",
+                SqlAgentToolType.MySQL));
+
+        Assert.Contains("ANSI_QUOTES", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source profile", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_MySqlDoubleQuotesWithUnrelatedMode_RemainsFailClosed()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT \"display_name\" FROM users",
+                SqlAgentToolType.MySQL,
+                MySqlProfile("PIPES_AS_CONCAT")));
+
+        Assert.Contains("ANSI_QUOTES", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("ANSI_QUOTES")]
+    [InlineData("ANSI")]
+    public void Parse_MySqlAnsiQuotedIdentifier_WithDeclaredMode_PreservesQuoteIntent(string mode)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT \"display\"\"name\" FROM users",
+            SqlAgentToolType.MySQL,
+            MySqlProfile(mode));
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var column = Assert.IsType<ColumnExpr>(Assert.Single(select.Select).Expression);
+        var part = Assert.Single(column.Name.Parts);
+
+        Assert.Equal("display\"name", part.Value);
+        Assert.True(part.WasQuoted);
+    }
+
+    [Fact]
+    public void Parse_MySqlAnsiQuotedIdentifier_AllowsBacktickAsIdentifierContent()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT \"display`name\" FROM users",
+            SqlAgentToolType.MySQL,
+            MySqlProfile("ANSI_QUOTES"));
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var column = Assert.IsType<ColumnExpr>(Assert.Single(select.Select).Expression);
+        var part = Assert.Single(column.Name.Parts);
+
+        Assert.Equal("display`name", part.Value);
+        Assert.True(part.WasQuoted);
+    }
+
+    [Fact]
     public void Compile_TargetProfileMode_DoesNotAuthorizeSourceSemantics()
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
@@ -121,6 +179,17 @@ public sealed class CoreMySqlSessionProfileTests
         Assert.Contains("CONCAT(", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Single(command.Parameters);
         Assert.Equal(7, Convert.ToInt32(command.Parameters[0].Value));
+    }
+
+    [Fact]
+    public void ParseDml_MySqlAnsiQuotes_UsesSameSessionLexicalContract()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE \"users\" SET \"display_name\" = 'Ada' WHERE \"id\" = 7",
+            SqlAgentToolType.MySQL,
+            MySqlProfile("ANSI_QUOTES"));
+
+        Assert.IsType<UpdateStatement>(parsed.Statement);
     }
 
     private static CompiledSqlCommand CompileQuery(
