@@ -301,9 +301,9 @@ public sealed class DmlCoordinator(
 
         var expectedKind = plan.Operation switch
         {
-            SqlAgent.Service.Enums.DmlOperation.Insert => SqlStatementKind.Insert,
-            SqlAgent.Service.Enums.DmlOperation.Update => SqlStatementKind.Update,
-            SqlAgent.Service.Enums.DmlOperation.Delete => SqlStatementKind.Delete,
+            HsSqlAgent.SqlCore.Enums.DmlOperation.Insert => SqlStatementKind.Insert,
+            HsSqlAgent.SqlCore.Enums.DmlOperation.Update => SqlStatementKind.Update,
+            HsSqlAgent.SqlCore.Enums.DmlOperation.Delete => SqlStatementKind.Delete,
             _ => throw new InvalidOperationException($"Unsupported DML operation {plan.Operation}.")
         };
         if (plan.MutationCommand.Kind != expectedKind)
@@ -318,7 +318,7 @@ public sealed class DmlCoordinator(
         switch (plan.ApprovalMode)
         {
             case DmlApprovalMode.InsertValues:
-                if (plan.Operation != SqlAgent.Service.Enums.DmlOperation.Insert)
+                if (plan.Operation != HsSqlAgent.SqlCore.Enums.DmlOperation.Insert)
                     throw new InvalidOperationException("INSERT VALUES approval mode requires an INSERT operation.");
                 if (plan.MatchQueryCommand is not null)
                     throw new InvalidOperationException("INSERT VALUES approval must not carry a row-set match command.");
@@ -333,7 +333,7 @@ public sealed class DmlCoordinator(
                 return;
 
             case DmlApprovalMode.RowSetMutation:
-                if (plan.Operation == SqlAgent.Service.Enums.DmlOperation.Insert)
+                if (plan.Operation == HsSqlAgent.SqlCore.Enums.DmlOperation.Insert)
                     throw new InvalidOperationException("INSERT cannot use row-set mutation approval mode.");
                 if (plan.MatchQueryCommand is null)
                     throw new InvalidOperationException("Row-set DML approval requires a SELECT match command.");
