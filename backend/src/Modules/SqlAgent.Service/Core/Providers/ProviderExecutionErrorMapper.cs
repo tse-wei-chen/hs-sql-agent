@@ -1,17 +1,14 @@
+using System.Globalization;
+using System.Reflection;
 using System.Text.RegularExpressions;
-using FirebirdSql.Data.FirebirdClient;
-using Microsoft.Data.SqlClient;
-using Microsoft.Data.Sqlite;
-using MySql.Data.MySqlClient;
-using Npgsql;
 using SqlAgent.Service.Enums;
 
 namespace SqlAgent.Service.Core.Providers;
 
 /// <summary>
 /// Provider-owned execution error mapper. It normalizes database-specific exception details into
-/// the stable <see cref="IProviderErrorMapper"/> contract without routing execution through the
-/// historical strategy surface.
+/// the stable <see cref="IProviderErrorMapper"/> contract without taking compile-time dependencies
+/// on any ADO.NET driver assembly.
 /// </summary>
 public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) : IProviderErrorMapper
 {
@@ -35,14 +32,14 @@ public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) 
 
     private string? ExtractCode(Exception exception) => _providerType switch
     {
-        SqlAgentToolType.Postgres => FindException<PostgresException>(exception)?.SqlState
+        SqlAgentToolType.Postgres => ReadProperty(exception, "SqlState")
             ?? ExtractPostgresSqlState(exception.ToString()),
-        SqlAgentToolType.MySQL => FindException<MySqlException>(exception)?.Number.ToString()
+        SqlAgentToolType.MySQL => ReadProperty(exception, "Number")
             ?? ExtractMySqlCode(exception.Message),
-        SqlAgentToolType.MsSqlServer => FindException<SqlException>(exception)?.Number.ToString()
+        SqlAgentToolType.MsSqlServer => ReadProperty(exception, "Number")
             ?? ExtractMsSqlCode(exception.Message),
-        SqlAgentToolType.Sqlite => FindException<SqliteException>(exception) is { } sqlite
-            ? $"SQLITE_{sqlite.SqliteErrorCode}"
+        SqlAgentToolType.Sqlite => ReadProperty(exception, "SqliteErrorCode") is { } sqliteCode
+            ? $"SQLITE_{sqliteCode}"
             : null,
         SqlAgentToolType.Oracle => ExtractOracleCode(exception.Message),
         SqlAgentToolType.Firebird => ExtractFirebirdCode(exception),
@@ -52,9 +49,39 @@ public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) 
     private string ExtractMessage(Exception exception)
     {
         if (_providerType == SqlAgentToolType.Postgres
-            && FindException<PostgresException>(exception) is { } postgres)
-            return postgres.MessageText;
+            && ReadProperty(exception, "MessageText") is { } postgresMessage)
+            return postgresMessage;
         return exception.GetBaseException().Message;
+    }
+
+    private static string? ReadProperty(Exception exception, string propertyName)
+    {
+        for (Exception? current = exception; current != null; current = current.InnerException)
+        {
+            var property = current.GetType().GetProperty(
+                propertyName,
+                BindingFlags.Instance | BindingFlags.Public);
+            if (property?.CanRead != true)
+                continue;
+
+            try
+            {
+                var value = property.GetValue(current);
+                if (value is null)
+                    continue;
+                return Convert.ToString(value, CultureInfo.InvariantCulture);
+            }
+            catch (TargetInvocationException)
+            {
+                // Provider diagnostics are best-effort. Fall through to the stable regex fallback.
+            }
+            catch (MethodAccessException)
+            {
+                // Provider diagnostics are best-effort. Fall through to the stable regex fallback.
+            }
+        }
+
+        return null;
     }
 
     private static string? ExtractPostgresSqlState(string message)
@@ -101,18 +128,7 @@ public sealed class ProviderExecutionErrorMapper(SqlAgentToolType providerType) 
             RegexOptions.IgnoreCase);
         if (gdsCode.Success) return "FB_GDS_" + gdsCode.Groups["code"].Value;
 
-        return FindException<FbException>(exception)?.ErrorCode.ToString();
-    }
-
-    private static TException? FindException<TException>(Exception exception)
-        where TException : Exception
-    {
-        for (var current = exception; current != null; current = current.InnerException)
-        {
-            if (current is TException typed)
-                return typed;
-        }
-        return null;
+        return ReadProperty(exception, "ErrorCode");
     }
 }
 

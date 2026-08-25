@@ -7,11 +7,6 @@ using SqlAgent.Service.Services;
 
 namespace SqlAgent.Service.Core.Execution;
 
-public interface IDbConnectionFactory
-{
-    DbConnection Create(string connectionString);
-}
-
 /// <summary>
 /// Execution boundary for SELECT commands. It knows nothing about QueryDefinition, Core AST,
 /// translation registries or SqlKata; it executes exactly the immutable command it receives.

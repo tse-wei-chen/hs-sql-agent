@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>HsSqlAgent.Provider.MySql</AssemblyName>
+    <RootNamespace>HsSqlAgent.Provider.MySql</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+    <PackageId>HsSqlAgent.Provider.MySql</PackageId>
+    <VersionPrefix>1.10.10</VersionPrefix>
+    <Authors>tse-wei-chen</Authors>
+    <Company>hs-sql-agent</Company>
+    <Description>HsSqlAgent MySql runtime provider package.</Description>
+    <PackageTags>sql;database;provider;mysql</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+    <PackageReference Include="dapper" />
+    <PackageReference Include="MySql.Data" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../SqlAgent.Service/Core/Providers/MySqlProvider.cs" Link="Core/Providers/MySqlProvider.cs" />
+  </ItemGroup>
+
+</Project>

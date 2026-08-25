@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>HsSqlAgent.Provider.Abstractions</AssemblyName>
+    <RootNamespace>HsSqlAgent.Provider.Abstractions</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+    <PackageId>HsSqlAgent.Provider.Abstractions</PackageId>
+    <VersionPrefix>1.10.10</VersionPrefix>
+    <Authors>tse-wei-chen</Authors>
+    <Company>hs-sql-agent</Company>
+    <Description>Provider runtime contracts, base implementation and driver-neutral error mapping for HsSqlAgent.</Description>
+    <PackageTags>sql;database;provider;abstractions</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../SqlAgent.Service/Core/Execution/IDbConnectionFactory.cs" Link="Core/Execution/IDbConnectionFactory.cs" />
+    <Compile Include="../SqlAgent.Service/Core/Providers/ISqlProvider.cs" Link="Core/Providers/ISqlProvider.cs" />
+    <Compile Include="../SqlAgent.Service/Core/Providers/SqlProvider.cs" Link="Core/Providers/SqlProvider.cs" />
+    <Compile Include="../SqlAgent.Service/Core/Providers/SqlProviderBase.cs" Link="Core/Providers/SqlProviderBase.cs" />
+    <Compile Include="../SqlAgent.Service/Core/Providers/ProviderExecutionErrorMapper.cs" Link="Core/Providers/ProviderExecutionErrorMapper.cs" />
+  </ItemGroup>
+
+</Project>

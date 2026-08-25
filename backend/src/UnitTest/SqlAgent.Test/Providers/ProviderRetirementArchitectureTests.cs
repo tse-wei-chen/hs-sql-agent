@@ -30,21 +30,22 @@ public class ProviderRetirementArchitectureTests
     }
 
     [Fact]
-    public void ProviderImplementations_LiveOnCoreProviderBoundary()
+    public void ProviderImplementations_LiveInDedicatedProviderAssemblies()
     {
         var providerTypes = new[]
         {
-            typeof(PostgresProvider),
-            typeof(MySqlProvider),
-            typeof(SqliteProvider),
-            typeof(MsSqlServerProvider),
-            typeof(OracleProvider),
-            typeof(FirebirdProvider)
+            (typeof(PostgresProvider), "HsSqlAgent.Provider.PostgreSql"),
+            (typeof(MySqlProvider), "HsSqlAgent.Provider.MySql"),
+            (typeof(SqliteProvider), "HsSqlAgent.Provider.Sqlite"),
+            (typeof(MsSqlServerProvider), "HsSqlAgent.Provider.SqlServer"),
+            (typeof(OracleProvider), "HsSqlAgent.Provider.Oracle"),
+            (typeof(FirebirdProvider), "HsSqlAgent.Provider.Firebird")
         };
 
-        foreach (var providerType in providerTypes)
+        foreach (var (providerType, assemblyName) in providerTypes)
         {
             Assert.Equal("SqlAgent.Service.Core.Providers", providerType.Namespace);
+            Assert.Equal(assemblyName, providerType.Assembly.GetName().Name);
             Assert.True(typeof(SqlProviderBase).IsAssignableFrom(providerType));
             Assert.True(typeof(ISqlProvider).IsAssignableFrom(providerType));
             var constructor = Assert.Single(providerType.GetConstructors(BindingFlags.Instance | BindingFlags.Public));

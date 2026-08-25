@@ -18,7 +18,7 @@ public sealed class SqlCorePackageBoundaryTests
         Assert.Same(coreAssembly, typeof(CoreSqlTextParser).Assembly);
         Assert.Same(coreAssembly, typeof(SqlCapabilityMatrix).Assembly);
         Assert.NotSame(coreAssembly, typeof(MySqlProvider).Assembly);
-        Assert.Equal("SqlAgent.Service", typeof(MySqlProvider).Assembly.GetName().Name);
+        Assert.Equal("HsSqlAgent.Provider.MySql", typeof(MySqlProvider).Assembly.GetName().Name);
     }
 
     [Fact]
