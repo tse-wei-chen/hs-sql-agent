@@ -18,6 +18,7 @@ public static class DmlFingerprintService
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Append(hash, mutationCommand.TargetProvider.ToString());
         Append(hash, mutationCommand.Kind.ToString());
+        Append(hash, mutationCommand.ReturnsRows ? "returnsRows:true" : "returnsRows:false");
         Append(hash, mutationCommand.Sql);
         Append(hash, policyVersion);
 

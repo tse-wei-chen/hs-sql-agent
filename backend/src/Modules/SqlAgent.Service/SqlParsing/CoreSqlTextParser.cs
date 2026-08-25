@@ -59,7 +59,8 @@ public static class CoreSqlTextParser
         var statement = new CoreDmlTextParser(
             new CoreTokenReader(tokens),
             sourceDialect,
-            requireExplicitLikeEscape: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).ParseComplete();
+            requireExplicitLikeEscape: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile),
+            sourceServerVersion: sourceProfile?.ServerVersion).ParseComplete();
         return new ParsedStatement(
             statement,
             sourceDialect,

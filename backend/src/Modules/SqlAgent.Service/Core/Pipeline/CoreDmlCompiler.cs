@@ -112,7 +112,12 @@ public sealed class CoreDmlCompiler(
         if (command.Kind != expectedKind)
             throw new SqlCompilationException(
                 $"Core DML lowerer produced {command.Kind} for expected {expectedKind} statement.");
-        return command;
+
+        return CoreDmlReturningSqlRewriter.Apply(
+            command,
+            profiledStatement,
+            targetProfile,
+            validated.PolicyVersion);
     }
 
     private static void ValidateMutationPolicy(

@@ -139,27 +139,30 @@ public sealed class DmlCoordinator(
                     "DML execution cancelled: the matched row set changed after approval.");
             }
 
-            var affected = await ExecuteAsync(
+            var execution = await ExecuteMutationAsync(
                 connection,
                 transaction,
                 plan.MutationCommand,
                 cancellationToken);
 
-            if (affected != approvedChallenge.AffectedRows)
+            if (execution.AffectedRows != approvedChallenge.AffectedRows)
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return new DmlCommitResult(
                     false,
                     0,
                     $"DML execution cancelled: affected row count changed after revalidation " +
-                    $"(approved={approvedChallenge.AffectedRows}, executed={affected}).");
+                    $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
             }
 
             await transaction.CommitAsync(cancellationToken);
             return new DmlCommitResult(
                 true,
-                affected,
-                "DML operation committed after approval and row-set revalidation.");
+                execution.AffectedRows,
+                "DML operation committed after approval and row-set revalidation.")
+            {
+                ReturnedRows = execution.ReturnedRows
+            };
         }
         catch
         {
@@ -200,27 +203,30 @@ public sealed class DmlCoordinator(
         DmlApprovalChallenge approvedChallenge,
         CancellationToken cancellationToken)
     {
-        var affected = await ExecuteAsync(
+        var execution = await ExecuteMutationAsync(
             connection,
             transaction,
             plan.MutationCommand,
             cancellationToken);
 
-        if (affected != approvedChallenge.AffectedRows)
+        if (execution.AffectedRows != approvedChallenge.AffectedRows)
         {
             await transaction.RollbackAsync(cancellationToken);
             return new DmlCommitResult(
                 false,
                 0,
                 $"INSERT execution cancelled: approved payload row count changed " +
-                $"(approved={approvedChallenge.AffectedRows}, executed={affected}).");
+                $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
         }
 
         await transaction.CommitAsync(cancellationToken);
         return new DmlCommitResult(
             true,
-            affected,
-            "INSERT VALUES committed after exact-plan approval validation.");
+            execution.AffectedRows,
+            "INSERT VALUES committed after exact-plan approval validation.")
+        {
+            ReturnedRows = execution.ReturnedRows
+        };
     }
 
     private DmlApprovalChallenge CreateChallenge(
@@ -398,18 +404,33 @@ public sealed class DmlCoordinator(
         return result.Select(ToReadOnlyRow).ToList();
     }
 
-    private static async Task<int> ExecuteAsync(
+    private static async Task<MutationExecutionResult> ExecuteMutationAsync(
         DbConnection connection,
         DbTransaction transaction,
         CompiledSqlCommand command,
         CancellationToken cancellationToken)
     {
-        return await connection.ExecuteAsync(
-            new CommandDefinition(
-                command.Sql,
-                BuildParameters(command),
-                transaction,
-                cancellationToken: cancellationToken));
+        if (!command.ReturnsRows)
+        {
+            var affected = await connection.ExecuteAsync(
+                new CommandDefinition(
+                    command.Sql,
+                    BuildParameters(command),
+                    transaction,
+                    cancellationToken: cancellationToken));
+            return new MutationExecutionResult(
+                affected,
+                ImmutableArray<IReadOnlyDictionary<string, object?>>.Empty);
+        }
+
+        var rows = await QueryRowsAsync(
+            connection,
+            transaction,
+            command,
+            cancellationToken);
+        return new MutationExecutionResult(
+            rows.Count,
+            rows.ToImmutableArray());
     }
 
     private static DynamicParameters BuildParameters(CompiledSqlCommand command)
@@ -438,4 +459,8 @@ public sealed class DmlCoordinator(
         var trimmed = name.Trim();
         return trimmed[0] is '@' or ':' or '$' ? trimmed[1..] : trimmed;
     }
+
+    private sealed record MutationExecutionResult(
+        int AffectedRows,
+        ImmutableArray<IReadOnlyDictionary<string, object?>> ReturnedRows);
 }

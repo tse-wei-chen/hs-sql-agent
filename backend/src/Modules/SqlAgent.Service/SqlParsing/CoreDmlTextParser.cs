@@ -11,15 +11,18 @@ internal sealed class CoreDmlTextParser
     private readonly SqlAgentToolType _sourceDialect;
     private readonly CoreExpressionTextParser _expressions;
     private readonly bool _requireExplicitLikeEscape;
+    private readonly Version? _sourceServerVersion;
 
     public CoreDmlTextParser(
         CoreTokenReader reader,
         SqlAgentToolType sourceDialect,
-        bool requireExplicitLikeEscape = false)
+        bool requireExplicitLikeEscape = false,
+        Version? sourceServerVersion = null)
     {
         _reader = reader;
         _sourceDialect = sourceDialect;
         _requireExplicitLikeEscape = requireExplicitLikeEscape;
+        _sourceServerVersion = sourceServerVersion;
         _expressions = new CoreExpressionTextParser(
             reader,
             ParseNestedQuery,
@@ -93,7 +96,11 @@ internal sealed class CoreDmlTextParser
         else
             throw CoreTokenReader.Error("INSERT requires VALUES or a SELECT source.", _reader.Peek());
 
-        return new InsertStatement(target, columns.ToImmutable(), source, _reader.SpanFrom(start));
+        var returning = ParseReturningColumnsIfPresent();
+        return new InsertStatement(target, columns.ToImmutable(), source, _reader.SpanFrom(start))
+        {
+            Returning = returning
+        };
     }
 
     private UpdateStatement ParseUpdate()
@@ -125,7 +132,11 @@ internal sealed class CoreDmlTextParser
 
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
-        return new UpdateStatement(target, assignments.ToImmutable(), predicate, _reader.SpanFrom(start));
+        var returning = ParseReturningColumnsIfPresent();
+        return new UpdateStatement(target, assignments.ToImmutable(), predicate, _reader.SpanFrom(start))
+        {
+            Returning = returning
+        };
     }
 
     private DeleteStatement ParseDelete()
@@ -139,8 +150,100 @@ internal sealed class CoreDmlTextParser
             throw CoreTokenReader.Error("DELETE target aliases are not represented by the Core DML AST.", _reader.Peek());
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
-        return new DeleteStatement(target, predicate, _reader.SpanFrom(start));
+        var returning = ParseReturningColumnsIfPresent();
+        return new DeleteStatement(target, predicate, _reader.SpanFrom(start))
+        {
+            Returning = returning
+        };
     }
+
+    private ImmutableArray<SqlIdentifier> ParseReturningColumnsIfPresent()
+    {
+        if (!_reader.MatchWord("RETURNING"))
+            return ImmutableArray<SqlIdentifier>.Empty;
+
+        var returningToken = _reader.Peek(-1);
+        ValidateReturningSourceContract(returningToken);
+
+        var columns = ImmutableArray.CreateBuilder<SqlIdentifier>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hasWildcard = false;
+        do
+        {
+            SqlIdentifier column;
+            var token = _reader.Peek();
+            if (token.Type == TokenType.Operator && token.Value == "*")
+            {
+                _reader.Advance();
+                column = SqlIdentifier.Unquoted("*", CoreTokenReader.Span(token));
+                hasWildcard = true;
+            }
+            else
+            {
+                column = _reader.ParseIdentifierPath("RETURNING column");
+                if (column.Parts.Length != 1)
+                {
+                    throw CoreTokenReader.Error(
+                        "Portable DML RETURNING accepts unqualified target columns only; OLD/NEW/table-qualified and expression result items remain fail-closed.",
+                        token);
+                }
+            }
+
+            var name = column.Parts[0].Value;
+            if (!seen.Add(name))
+                throw CoreTokenReader.Error($"RETURNING column '{name}' is declared more than once.", token);
+            columns.Add(column);
+        } while (_reader.Match(TokenType.Comma));
+
+        if (hasWildcard && columns.Count != 1)
+        {
+            throw CoreTokenReader.Error(
+                "RETURNING * cannot be mixed with explicit RETURNING columns in the portable Core contract.",
+                returningToken);
+        }
+
+        return columns.ToImmutable();
+    }
+
+    private void ValidateReturningSourceContract(Token returningToken)
+    {
+        switch (_sourceDialect)
+        {
+            case SqlAgentToolType.Postgres:
+                return;
+            case SqlAgentToolType.Sqlite when IsAtLeast(_sourceServerVersion, 3, 35):
+                return;
+            case SqlAgentToolType.Sqlite:
+                throw CoreTokenReader.Error(
+                    "Raw SQLite RETURNING requires a source capability profile with ServerVersion 3.35 or newer.",
+                    returningToken);
+            case SqlAgentToolType.Firebird when IsAtLeast(_sourceServerVersion, 5, 0):
+                return;
+            case SqlAgentToolType.Firebird:
+                throw CoreTokenReader.Error(
+                    "Portable multi-row Firebird DSQL RETURNING requires a source capability profile with ServerVersion 5.0 or newer.",
+                    returningToken);
+            case SqlAgentToolType.MsSqlServer:
+                throw CoreTokenReader.Error(
+                    "SQL Server uses OUTPUT rather than RETURNING; trigger-sensitive OUTPUT result semantics are not yet represented by the portable Core DML contract.",
+                    returningToken);
+            case SqlAgentToolType.Oracle:
+                throw CoreTokenReader.Error(
+                    "Oracle RETURNING requires RETURNING INTO host or bind variables, which are not represented by the portable Core DML result-row contract.",
+                    returningToken);
+            case SqlAgentToolType.MySQL:
+                throw CoreTokenReader.Error(
+                    "MySQL has no declared DML RETURNING result-row syntax in the Core MySQL 8.4 source profile.",
+                    returningToken);
+            default:
+                throw CoreTokenReader.Error(
+                    $"DML RETURNING is not represented for source dialect {_sourceDialect}.",
+                    returningToken);
+        }
+    }
+
+    private static bool IsAtLeast(Version? actual, int major, int minor) =>
+        actual is not null && actual.CompareTo(new Version(major, minor)) >= 0;
 
     private SqlExpr ParseUpdateAssignmentValue()
     {

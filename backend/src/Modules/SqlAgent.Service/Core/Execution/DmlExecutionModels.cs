@@ -54,7 +54,15 @@ public sealed record DmlApprovalChallenge(
 public sealed record DmlCommitResult(
     bool Committed,
     int AffectedRows,
-    string Message);
+    string Message)
+{
+    /// <summary>
+    /// Rows produced by an approved DML result clause. Empty for ordinary mutations and failed or
+    /// cancelled commits. Each returned row corresponds to one directly affected database row.
+    /// </summary>
+    public ImmutableArray<IReadOnlyDictionary<string, object?>> ReturnedRows { get; init; } =
+        ImmutableArray<IReadOnlyDictionary<string, object?>>.Empty;
+}
 
 public interface IDmlCoordinator
 {

@@ -128,10 +128,14 @@ internal sealed class TypedDmlApprovalFlow(
                 currentPolicy,
                 currentAllowedTables,
                 cancellationToken);
+            var result = commit.Committed
+                ? $"Success | affectedRows={commit.AffectedRows} | {commit.Message}"
+                : commit.Message;
+            if (commit.Committed && !commit.ReturnedRows.IsDefaultOrEmpty)
+                result += $" | returnedRows={JsonSerializer.Serialize(commit.ReturnedRows)}";
+
             return new TypedDmlExecutionTiming(
-                commit.Committed
-                    ? $"Success | affectedRows={commit.AffectedRows} | {commit.Message}"
-                    : commit.Message,
+                result,
                 approvalWaitDurationMs,
                 commit.AffectedRows,
                 commit.Committed);

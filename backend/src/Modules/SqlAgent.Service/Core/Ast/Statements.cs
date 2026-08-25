@@ -113,12 +113,18 @@ public sealed record UpdateStatement(
     NamedTableSource Target,
     ImmutableArray<Assignment> Assignments,
     SqlExpr? Predicate,
-    SourceSpan Span) : SqlStatement(Span);
+    SourceSpan Span) : SqlStatement(Span)
+{
+    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+}
 
 public sealed record DeleteStatement(
     NamedTableSource Target,
     SqlExpr? Predicate,
-    SourceSpan Span) : SqlStatement(Span);
+    SourceSpan Span) : SqlStatement(Span)
+{
+    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+}
 
 public abstract record InsertSource(SourceSpan Span) : SqlNode(Span);
 
@@ -134,4 +140,7 @@ public sealed record InsertStatement(
     NamedTableSource Target,
     ImmutableArray<SqlIdentifier> Columns,
     InsertSource Source,
-    SourceSpan Span) : SqlStatement(Span);
+    SourceSpan Span) : SqlStatement(Span)
+{
+    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+}
