@@ -22,6 +22,13 @@ public sealed class SqlCorePackageBoundaryTests
     }
 
     [Fact]
+    public void TemporalLiteralParser_IsPublicSqlCoreSurface()
+    {
+        Assert.True(typeof(SqlTemporalLiteralParser).IsPublic);
+        Assert.Equal("HsSqlAgent.SqlCore", typeof(SqlTemporalLiteralParser).Assembly.GetName().Name);
+    }
+
+    [Fact]
     public void SqlCoreAssembly_DoesNotReferenceRuntimeDatabaseDriversOrDapper()
     {
         var references = typeof(CoreSqlCompiler).Assembly

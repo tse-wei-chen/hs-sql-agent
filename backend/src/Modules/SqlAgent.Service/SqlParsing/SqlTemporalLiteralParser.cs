@@ -3,7 +3,7 @@ using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.SqlParsing;
 
-internal static class SqlTemporalLiteralParser
+public static class SqlTemporalLiteralParser
 {
     private static readonly string[] TimeFormats =
     [
