@@ -23,12 +23,14 @@ public class SqlTokenizer
     private readonly string _sql;
     private readonly SqlAgentToolType? _provider;
     private readonly bool _mysqlAnsiQuotes;
+    private readonly bool _mysqlNoBackslashEscapes;
     private int _pos;
 
     public SqlTokenizer(
         string sql,
         SqlAgentToolType? provider = null,
-        bool mysqlAnsiQuotes = false)
+        bool mysqlAnsiQuotes = false,
+        bool mysqlNoBackslashEscapes = false)
     {
         _sql = sql ?? throw new ArgumentNullException(nameof(sql));
         _provider = provider;
@@ -38,7 +40,14 @@ public class SqlTokenizer
                 "MySQL ANSI_QUOTES lexical mode can only be enabled with the MySQL provider.",
                 nameof(mysqlAnsiQuotes));
         }
+        if (mysqlNoBackslashEscapes && provider != SqlAgentToolType.MySQL)
+        {
+            throw new ArgumentException(
+                "MySQL NO_BACKSLASH_ESCAPES lexical mode can only be enabled with the MySQL provider.",
+                nameof(mysqlNoBackslashEscapes));
+        }
         _mysqlAnsiQuotes = mysqlAnsiQuotes;
+        _mysqlNoBackslashEscapes = mysqlNoBackslashEscapes;
     }
 
     private static readonly HashSet<string> Keywords = new(StringComparer.OrdinalIgnoreCase)
@@ -306,8 +315,23 @@ public class SqlTokenizer
                 return new Token(type, identifier, start, raw.Length);
             }
 
-            if (_sql[_pos] == '\\' && delimiter == '\'' && _provider == SqlAgentToolType.MySQL)
-                throw Error("MySQL backslash-escaped strings require provider-aware literal decoding and are not yet supported.", start, _pos - start + 1);
+            if (_sql[_pos] == '\\' && _provider == SqlAgentToolType.MySQL && !_mysqlNoBackslashEscapes)
+            {
+                if (type == TokenType.String && delimiter == '\'')
+                {
+                    throw Error(
+                        "MySQL backslash escape semantics depend on NO_BACKSLASH_ESCAPES sql_mode; Core rejects single-quoted strings containing backslashes unless the source profile explicitly declares NO_BACKSLASH_ESCAPES.",
+                        start,
+                        _pos - start + 1);
+                }
+                if (type == TokenType.Identifier)
+                {
+                    throw Error(
+                        "MySQL backslash escape semantics inside quoted identifiers depend on NO_BACKSLASH_ESCAPES sql_mode; Core rejects this identifier unless the source profile explicitly declares NO_BACKSLASH_ESCAPES.",
+                        start,
+                        _pos - start + 1);
+                }
+            }
             _pos++;
         }
 
