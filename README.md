@@ -80,8 +80,11 @@ Custom SQL tools pass through the same parser, validation, access policy, and ex
 
 ## SQL Execution Flow
 
-<img width="970" height="1850" alt="image" src="https://github.com/user-attachments/assets/2c3306fb-5962-4ba6-88fc-db192d57e684" />
-
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="miscellaneous/diagram-black.png">
+  <source media="(prefers-color-scheme: light)" srcset="miscellaneous/diagram-light.png">
+  <img alt="SQL Execution Flow" src="miscellaneous/diagram-light.png">
+</picture>
 
 ### DML Approval Prompt
 
