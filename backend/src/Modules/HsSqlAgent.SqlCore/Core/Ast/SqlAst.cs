@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace SqlAgent.Service.Core.Ast;
+namespace HsSqlAgent.SqlCore.Core.Ast;
 
 /// <summary>
 /// Source location carried by compiler nodes. Offsets are zero-based and End is exclusive.

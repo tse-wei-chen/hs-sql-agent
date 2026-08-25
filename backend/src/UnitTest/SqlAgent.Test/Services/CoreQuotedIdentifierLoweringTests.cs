@@ -72,7 +72,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
             SqlAgentToolType.Postgres);
 
         var bound = new SqlAstBinder().Bind(parsed);
-        var select = Assert.IsType<SqlAgent.Service.Core.Ast.SelectStatement>(bound.Statement);
+        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(bound.Statement);
         var first = Assert.IsType<BoundColumnExpr>(select.Select[0].Expression);
         var second = Assert.IsType<BoundColumnExpr>(select.Select[1].Expression);
 
@@ -100,7 +100,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
             SqlAgentToolType.Postgres);
 
         var bound = new SqlAstBinder().Bind(parsed);
-        var select = Assert.IsType<SqlAgent.Service.Core.Ast.SelectStatement>(bound.Statement);
+        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(bound.Statement);
         var column = Assert.IsType<BoundColumnExpr>(Assert.Single(select.Select).Expression);
         Assert.Equal("foo", column.Source?.Alias);
     }

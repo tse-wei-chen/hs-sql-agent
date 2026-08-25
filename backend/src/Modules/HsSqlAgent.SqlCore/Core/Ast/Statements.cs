@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace SqlAgent.Service.Core.Ast;
+namespace HsSqlAgent.SqlCore.Core.Ast;
 
 public abstract record TableSource(SourceSpan Span) : SqlNode(Span);
 

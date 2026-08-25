@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace SqlAgent.Service.Core.Ast;
+namespace HsSqlAgent.SqlCore.Core.Ast;
 
 public enum SetOperationKind
 {
