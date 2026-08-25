@@ -60,10 +60,23 @@ public sealed class CoreDmlUpsertCapabilityMatrixTests
         Assert.Contains("metadata", capability.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Firebird_DefaultMatrixRemainsRejectedButPublishesPrimaryKeyAssurancePath()
+    {
+        var capability = Capability(SqlAgentToolType.Firebird);
+
+        Assert.Equal(SqlCapabilityStatus.Rejected, capability.Status);
+        Assert.Contains("UPDATE OR INSERT", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MATCHING", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("primary key", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("assurance", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("partial", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", capability.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
-    [InlineData(SqlAgentToolType.Firebird)]
     public void MergeProviders_RemainRejectedUntilCardinalityContractExists(
         SqlAgentToolType provider)
     {
