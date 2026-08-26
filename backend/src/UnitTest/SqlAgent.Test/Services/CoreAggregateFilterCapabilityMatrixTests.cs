@@ -71,15 +71,33 @@ public sealed class CoreAggregateFilterCapabilityMatrixTests
         Assert.Contains("4.0", filter.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(25, 0, SqlCapabilityStatus.Rejected)]
+    [InlineData(26, 0, SqlCapabilityStatus.Supported)]
+    [InlineData(27, 0, SqlCapabilityStatus.Supported)]
+    public void Matrix_OracleFilter_Tracks26AiBoundary(
+        int major,
+        int minor,
+        SqlCapabilityStatus expected)
+    {
+        var filter = Filter(SqlCapabilityMatrix.ForProvider(
+            SqlAgentToolType.Oracle,
+            Profile(SqlAgentToolType.Oracle, major, minor)));
+
+        Assert.Equal(expected, filter.Status);
+        Assert.Contains("26", filter.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
-    public void Matrix_Oracle26Filter_RemainsRejectedUntilPredicateScopeIsModeled()
+    public void Matrix_Oracle26Filter_DocumentsPredicateRestrictions()
     {
         var filter = Filter(SqlCapabilityMatrix.ForProvider(
             SqlAgentToolType.Oracle,
             Profile(SqlAgentToolType.Oracle, 26, 0)));
 
-        Assert.Equal(SqlCapabilityStatus.Rejected, filter.Status);
-        Assert.Contains("26ai", filter.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlCapabilityStatus.Supported, filter.Status);
+        Assert.Contains("subqueries", filter.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("window functions", filter.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("outer references", filter.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
