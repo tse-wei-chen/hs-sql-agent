@@ -12,7 +12,9 @@ namespace SqlAgent.Service.SqlParsing { }
 namespace SqlAgent.Service.SqlTranslation { }
 namespace SqlAgent.Service.SqlTranslation.Ast { }
 namespace SqlAgent.Service.SqlTranslation.Ast.Semantic { }
+namespace SqlAgent.Service.SqlTranslation.Context { }
 namespace SqlAgent.Service.SqlTranslation.DateFormats { }
+namespace SqlAgent.Service.SqlTranslation.Diagnostics { }
 namespace SqlAgent.Service.SqlTranslation.Functions { }
 namespace SqlAgent.Service.SqlTranslation.Functions.Translators { }
 namespace SqlAgent.Service.SqlTranslation.Normalization { }
@@ -21,3 +23,4 @@ namespace SqlAgent.Service.SqlTranslation.TemplateAst { }
 namespace SqlAgent.Service.SqlTranslation.TemplateModifiers { }
 namespace SqlAgent.Service.SqlTranslation.TemplateParsing { }
 namespace SqlAgent.Service.SqlTranslation.TemplateResolution { }
+namespace SqlAgent.Service.SqlTranslation.Templates.Ast { }
