@@ -1,8 +1,8 @@
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlTranslation.Ast.Semantic;
-using SqlAgent.Service.SqlTranslation.Context;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlTranslation.Ast.Semantic;
+using HsSqlAgent.SqlCore.SqlTranslation.Context;
 
-namespace SqlAgent.Service.SqlTranslation.Functions.Translators;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Functions.Translators;
 
 public sealed class TemporalFunctionTranslator : ISpecializedFunctionTranslator
 {
