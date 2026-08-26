@@ -1,9 +1,9 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.SqlTranslation.Templates.Ast;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast;
 using SqlAgent.Service.SqlTranslation.Templates.Modifiers;
 
-namespace SqlAgent.Service.SqlTranslation.Functions;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Functions;
 
 public interface IFunctionRegistry
 {

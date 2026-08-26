@@ -1,6 +1,6 @@
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
-namespace SqlAgent.Service.SqlTranslation.Functions;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Functions;
 
 public enum SemanticFunction
 {

@@ -1,9 +1,9 @@
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.SqlTranslation.Context;
-using SqlAgent.Service.SqlTranslation.Diagnostics;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlParsing;
+using HsSqlAgent.SqlCore.SqlTranslation.Context;
+using HsSqlAgent.SqlCore.SqlTranslation.Diagnostics;
 
-namespace SqlAgent.Service.SqlTranslation.Functions;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Functions;
 
 public sealed record FunctionTranslationResult(
     SelectCondition Expression,

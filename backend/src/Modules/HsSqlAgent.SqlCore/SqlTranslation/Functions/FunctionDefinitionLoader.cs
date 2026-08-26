@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SqlAgent.Service.SqlTranslation.Functions;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Functions;
 
 public static class FunctionDefinitionLoader
 {
