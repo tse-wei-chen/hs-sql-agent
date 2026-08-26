@@ -1,6 +1,6 @@
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
-namespace SqlAgent.Service.SqlTranslation.Templates.Ast;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast;
 
 public abstract record TemplateExpression;
 
