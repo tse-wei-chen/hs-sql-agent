@@ -1,6 +1,6 @@
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
-namespace SqlAgent.Service.SqlTranslation.DateFormats;
+namespace HsSqlAgent.SqlCore.SqlTranslation.DateFormats;
 
 public abstract record DateFormatPart;
 public sealed record DateFormatLiteral(string Value) : DateFormatPart;
