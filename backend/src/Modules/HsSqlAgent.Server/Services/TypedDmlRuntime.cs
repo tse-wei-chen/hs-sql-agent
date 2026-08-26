@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
-using SqlAgent.Service.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Ast;
 using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 
 namespace HsSqlAgent.Server.Services;

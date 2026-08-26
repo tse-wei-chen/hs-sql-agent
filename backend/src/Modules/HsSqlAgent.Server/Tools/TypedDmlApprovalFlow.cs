@@ -3,7 +3,7 @@ using System.Text.Json;
 using Admin.Service.Interfaces;
 using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Protocol;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
 using static ModelContextProtocol.Protocol.ElicitRequestParams;
 

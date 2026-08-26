@@ -8,7 +8,7 @@ using Common.Models;
 using HsSqlAgent.Server.Background;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Server.Middleware;
 

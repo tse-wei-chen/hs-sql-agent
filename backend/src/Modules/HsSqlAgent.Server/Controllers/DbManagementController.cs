@@ -7,9 +7,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 using SqlAgent.Service.Factories;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Server.Controllers;
 
