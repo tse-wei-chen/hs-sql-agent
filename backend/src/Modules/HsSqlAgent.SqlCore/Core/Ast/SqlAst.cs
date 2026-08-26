@@ -58,7 +58,15 @@ public sealed record FunctionCallExpr(
     SqlIdentifier Name,
     ImmutableArray<SqlExpr> Arguments,
     bool IsDistinct,
-    SourceSpan Span) : SqlExpr(Span);
+    SourceSpan Span) : SqlExpr(Span)
+{
+    /// <summary>
+    /// ORDER BY owned by the aggregate call itself, distinct from statement ORDER BY and OVER
+    /// ordering. The structure is modeled now so future provider support cannot be represented by
+    /// raw SQL fragments; the compiler remains fail-closed while the capability is not enabled.
+    /// </summary>
+    public ImmutableArray<OrderByItem> AggregateOrderBy { get; init; } = ImmutableArray<OrderByItem>.Empty;
+}
 
 /// <summary>
 /// SQL aggregate FILTER modifier. Kept as a wrapper instead of a FunctionCallExpr field so the
