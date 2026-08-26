@@ -1,5 +1,8 @@
 <Project>
   <PropertyGroup>
+    <!-- One release version for every first-party NuGet package. Override with
+         -p:VersionPrefix=... when preparing a release. -->
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">1.10.10</VersionPrefix>
     <Exclude>[*]*.Models.*</Exclude>
     <ExcludeByFile>**/Modules/SqlKata.Service/**/*</ExcludeByFile>
   </PropertyGroup>

@@ -18,7 +18,6 @@
 
   <PropertyGroup>
     <PackageId>HsSqlAgent.SqlCore</PackageId>
-    <VersionPrefix>1.10.10</VersionPrefix>
     <Authors>tse-wei-chen</Authors>
     <Company>hs-sql-agent</Company>
     <Description>Provider-driver-free SQL parser, AST, validation, normalization and cross-database compiler core for HsSqlAgent.</Description>

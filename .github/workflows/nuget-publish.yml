@@ -35,14 +35,33 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Pack
+      - name: Pack all public packages
+        shell: bash
         run: |
+          set -euo pipefail
+          projects=(
+            backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj
+            backend/src/Modules/HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj
+            backend/src/Modules/HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj
+            backend/src/Modules/HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj
+            backend/src/Modules/HsSqlAgent.Provider.Sqlite/HsSqlAgent.Provider.Sqlite.csproj
+            backend/src/Modules/HsSqlAgent.Provider.SqlServer/HsSqlAgent.Provider.SqlServer.csproj
+            backend/src/Modules/HsSqlAgent.Provider.Oracle/HsSqlAgent.Provider.Oracle.csproj
+            backend/src/Modules/HsSqlAgent.Provider.Firebird/HsSqlAgent.Provider.Firebird.csproj
+            backend/src/Modules/HsSqlAgent.Server/HsSqlAgent.Server.csproj
+          )
           if [ -n "${{ github.event.inputs.version_suffix }}" ]; then
-            dotnet pack -c Release --version-suffix "${{ github.event.inputs.version_suffix }}" -o "${{ github.workspace }}/nupkg"
+            pack_args=(--version-suffix "${{ github.event.inputs.version_suffix }}")
           else
-            dotnet pack -c Release -o "${{ github.workspace }}/nupkg"
+            pack_args=()
           fi
-        working-directory: backend/src/Modules/HsSqlAgent.Server
+          for project in "${projects[@]}"; do
+            dotnet pack "$project" -c Release "${pack_args[@]}" -o "${{ github.workspace }}/nupkg"
+          done
+
+      - name: Smoke test packed Server package
+        shell: bash
+        run: .github/scripts/nuget-consumer-smoke.sh "${{ github.workspace }}/nupkg"
 
       - name: Log in to NuGet.org
         id: nuget_login

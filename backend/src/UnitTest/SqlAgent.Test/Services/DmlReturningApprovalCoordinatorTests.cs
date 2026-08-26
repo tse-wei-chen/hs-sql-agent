@@ -14,7 +14,8 @@ public sealed class DmlReturningApprovalCoordinatorTests
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"hs-sql-agent-returning-{Guid.NewGuid():N}.db");
-        var connectionString = $"Data Source={databasePath}";
+        // Disable pooling so Windows releases the temporary database before cleanup.
+        var connectionString = $"Data Source={databasePath};Pooling=False";
         try
         {
             await CreateUsersTableAsync(connectionString);
@@ -65,7 +66,8 @@ public sealed class DmlReturningApprovalCoordinatorTests
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"hs-sql-agent-returning-mismatch-{Guid.NewGuid():N}.db");
-        var connectionString = $"Data Source={databasePath}";
+        // Disable pooling so Windows releases the temporary database before cleanup.
+        var connectionString = $"Data Source={databasePath};Pooling=False";
         try
         {
             await CreateUsersTableAsync(connectionString);

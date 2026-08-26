@@ -4,7 +4,7 @@
     <AssemblyName>HsSqlAgent.Provider.Oracle</AssemblyName><RootNamespace>HsSqlAgent.Provider.Oracle</RootNamespace><IsPackable>true</IsPackable>
     <PublishRepositoryUrl>true</PublishRepositoryUrl><EmbedUntrackedSources>true</EmbedUntrackedSources><DebugType>portable</DebugType><Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
-    <PackageId>HsSqlAgent.Provider.Oracle</PackageId><VersionPrefix>1.10.10</VersionPrefix><Authors>tse-wei-chen</Authors><Company>hs-sql-agent</Company>
+    <PackageId>HsSqlAgent.Provider.Oracle</PackageId><Authors>tse-wei-chen</Authors><Company>hs-sql-agent</Company>
     <Description>HsSqlAgent Oracle runtime provider package.</Description><PackageTags>sql;database;provider;oracle</PackageTags><PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl><RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl><RepositoryType>git</RepositoryType>
     <IncludeSymbols>true</IncludeSymbols><SymbolPackageFormat>snupkg</SymbolPackageFormat>

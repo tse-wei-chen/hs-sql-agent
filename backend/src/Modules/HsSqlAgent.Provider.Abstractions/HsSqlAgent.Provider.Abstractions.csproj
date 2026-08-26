@@ -13,7 +13,6 @@
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
     <PackageId>HsSqlAgent.Provider.Abstractions</PackageId>
-    <VersionPrefix>1.10.10</VersionPrefix>
     <Authors>tse-wei-chen</Authors>
     <Company>hs-sql-agent</Company>
     <Description>Provider runtime contracts, base implementation and driver-neutral error mapping for HsSqlAgent.</Description>
