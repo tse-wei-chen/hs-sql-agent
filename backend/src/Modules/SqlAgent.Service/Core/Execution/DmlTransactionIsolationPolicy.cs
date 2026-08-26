@@ -1,5 +1,5 @@
 using System.Data;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace SqlAgent.Service.Core.Execution;
 

@@ -1,5 +1,5 @@
 
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 
 namespace SqlAgent.Service.Interfaces;
 

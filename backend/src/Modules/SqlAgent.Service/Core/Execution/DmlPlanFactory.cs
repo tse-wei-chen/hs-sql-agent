@@ -1,10 +1,11 @@
 using System.Collections.Immutable;
 using System.Text.Json;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.Core.Execution;
 
 namespace SqlAgent.Service.Core.Execution;
 

@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using Dapper;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 
 namespace SqlAgent.Service.Services;
 

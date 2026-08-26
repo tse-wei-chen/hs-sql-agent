@@ -1,6 +1,6 @@
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
 namespace SqlAgent.Service.Factories;
 

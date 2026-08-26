@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace SqlAgent.Service.Core.Execution;
 
