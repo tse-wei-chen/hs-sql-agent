@@ -49,6 +49,14 @@ public sealed class CoreSqlCompiler(
             };
         }
 
+        CoreAggregateFilterProfileValidator.Validate(
+            bound.Statement,
+            parsed.EnforceSourceDialectSyntax,
+            bound.SourceDialect,
+            parsed.SourceProfile,
+            targetProvider,
+            targetProfile);
+
         var canonical = _normalizer.Normalize(bound, targetProvider);
         if (parsed.EnforceSourceDialectSyntax)
         {
