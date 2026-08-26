@@ -1,10 +1,10 @@
-using SqlAgent.Service.Core.Analysis;
-using SqlAgent.Service.Core.Binding;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Lowering;
-using SqlAgent.Service.Core.Normalization;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Analysis;
+using HsSqlAgent.SqlCore.Core.Binding;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Lowering;
+using HsSqlAgent.SqlCore.Core.Normalization;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.SqlCore.Core.Pipeline;
 

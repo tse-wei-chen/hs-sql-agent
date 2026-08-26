@@ -1,8 +1,8 @@
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Binding;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Binding;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.SqlCore.Core.Pipeline;
 

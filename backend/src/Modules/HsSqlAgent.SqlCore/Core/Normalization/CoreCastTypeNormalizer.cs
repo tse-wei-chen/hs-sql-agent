@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.SqlCore.Core.Normalization;
 

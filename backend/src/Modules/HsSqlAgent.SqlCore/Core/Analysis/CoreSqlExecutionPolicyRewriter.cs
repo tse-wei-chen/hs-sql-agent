@@ -1,5 +1,5 @@
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 
 namespace HsSqlAgent.SqlCore.Core.Analysis;
 

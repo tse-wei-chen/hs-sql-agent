@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Compilation;
 
 namespace HsSqlAgent.SqlCore.Core.Pipeline;
 

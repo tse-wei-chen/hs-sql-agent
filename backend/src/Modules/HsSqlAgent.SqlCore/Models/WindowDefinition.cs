@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.SqlCore.Models;
 

@@ -1,11 +1,11 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Binding;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlTranslation.DateFormats;
-using SqlAgent.Service.SqlTranslation.Functions;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Binding;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlTranslation.DateFormats;
+using HsSqlAgent.SqlCore.SqlTranslation.Functions;
 
 namespace HsSqlAgent.SqlCore.Core.Normalization;
 

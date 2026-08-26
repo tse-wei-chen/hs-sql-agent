@@ -1,9 +1,9 @@
 using HsSqlAgent.SqlCore.Models;
-using SqlAgent.Service.SqlTranslation.Context;
-using SqlAgent.Service.SqlTranslation.Templates.Ast;
-using SqlAgent.Service.SqlTranslation.Templates.Modifiers;
-using SqlAgent.Service.SqlTranslation.Templates.Parsing;
-using SqlAgent.Service.SqlTranslation.Templates.Resolution;
+using HsSqlAgent.SqlCore.SqlTranslation.Context;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Modifiers;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Parsing;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Resolution;
 
 namespace HsSqlAgent.SqlCore.SqlParsing;
 

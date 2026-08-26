@@ -1,5 +1,5 @@
 using HsSqlAgent.SqlCore.Models;
-using SqlAgent.Service.SqlTranslation.DateFormats;
+using HsSqlAgent.SqlCore.SqlTranslation.DateFormats;
 
 namespace HsSqlAgent.SqlCore.SqlTranslation.Ast.Semantic;
 
