@@ -1,4 +1,4 @@
-namespace SqlAgent.Service.SqlTranslation.Diagnostics;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Diagnostics;
 
 public enum UnknownFunctionPolicy
 {

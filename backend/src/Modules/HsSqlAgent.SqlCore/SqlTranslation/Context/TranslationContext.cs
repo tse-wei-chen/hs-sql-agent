@@ -1,7 +1,7 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlTranslation.Diagnostics;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlTranslation.Diagnostics;
 
-namespace SqlAgent.Service.SqlTranslation.Context;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Context;
 
 public sealed record TranslationContext(
     SqlAgentToolType SourceDialect,
