@@ -37,6 +37,7 @@ public sealed class CoreSqlCompiler(
         CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile);
 
         var bound = _binder.Bind(parsed);
+        CoreAggregateLocalOrderingGuard.Validate(bound.Statement);
         if (parsed.EnforceSourceDialectSyntax)
         {
             CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect);
