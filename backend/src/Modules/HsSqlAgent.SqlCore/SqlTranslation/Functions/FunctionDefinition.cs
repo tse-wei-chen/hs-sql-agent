@@ -44,7 +44,7 @@ public sealed record FunctionDefinition
     public required FunctionTranslationKind TranslationKind { get; init; }
     public string? Template { get; init; }
     public string? Translator { get; init; }
-    public Diagnostics.FunctionPortability Portability { get; init; } = Diagnostics.FunctionPortability.Native;
+    public HsSqlAgent.SqlCore.SqlTranslation.Diagnostics.FunctionPortability Portability { get; init; } = HsSqlAgent.SqlCore.SqlTranslation.Diagnostics.FunctionPortability.Native;
 
     public bool AcceptsArgumentCount(int count) =>
         count >= MinArguments && (MaxArguments is null || count <= MaxArguments.Value);
