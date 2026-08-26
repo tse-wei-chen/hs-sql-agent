@@ -2,8 +2,8 @@ using System.Data.Common;
 using Dapper;
 using MySql.Data.MySqlClient;
 using HsSqlAgent.Provider.Abstractions;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Provider.MySql;
 

@@ -2,7 +2,7 @@ using System.Data;
 using System.Data.Common;
 using FirebirdSql.Data.FirebirdClient;
 using HsSqlAgent.Provider.Abstractions;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.Provider.Firebird;
 
