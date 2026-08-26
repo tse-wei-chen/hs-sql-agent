@@ -1,8 +1,8 @@
 using System.Data.Common;
-using SqlAgent.Service.Core.Lowering;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Core.Lowering;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Provider.Abstractions;
 

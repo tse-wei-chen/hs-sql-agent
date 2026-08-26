@@ -1,6 +1,6 @@
 using System.Data;
 using System.Data.Common;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.Provider.Abstractions;
 

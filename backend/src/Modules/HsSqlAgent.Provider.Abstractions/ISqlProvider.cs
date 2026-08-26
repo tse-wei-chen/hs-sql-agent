@@ -1,5 +1,5 @@
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.Provider.Abstractions;
 
