@@ -126,6 +126,12 @@ internal static class CoreSourceDialectValidator
                 return;
 
             case FilterExpr filter:
+                if (sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
+                {
+                    throw new SqlCompilationException(
+                        $"Aggregate FILTER (WHERE ...) is not valid for declared source dialect {sourceDialect} " +
+                        "in the Core source capability profile.");
+                }
                 VisitExpr(filter.Expression, sourceDialect);
                 VisitExpr(filter.Predicate, sourceDialect);
                 return;
