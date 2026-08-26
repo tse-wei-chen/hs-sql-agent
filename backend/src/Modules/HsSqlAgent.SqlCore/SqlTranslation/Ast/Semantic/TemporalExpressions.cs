@@ -1,6 +1,6 @@
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 
-namespace SqlAgent.Service.SqlTranslation.Ast.Semantic;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Ast.Semantic;
 
 public enum SqlDatePart
 {

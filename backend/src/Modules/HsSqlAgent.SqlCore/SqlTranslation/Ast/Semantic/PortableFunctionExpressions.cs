@@ -1,7 +1,7 @@
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 using SqlAgent.Service.SqlTranslation.DateFormats;
 
-namespace SqlAgent.Service.SqlTranslation.Ast.Semantic;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Ast.Semantic;
 
 public sealed class DateFormatExpression : SelectCondition
 {
