@@ -1,3 +1,5 @@
+global using HsSqlAgent.SqlCore.Core.Execution;
+
 namespace SqlAgent.Service.Core.Analysis { }
 namespace SqlAgent.Service.Core.Ast { }
 namespace SqlAgent.Service.Core.Binding { }
