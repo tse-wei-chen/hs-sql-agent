@@ -22,6 +22,7 @@ public class SqlAstBinderTests
         Assert.NotNull(column.Source);
         Assert.Equal("sales.orders", column.Source!.Name);
         Assert.Equal("o", column.Source.Alias);
+        Assert.False(column.IsOuterReference);
         Assert.Contains("sales.orders", bound.Facts.ReferencedTables);
     }
 
@@ -72,7 +73,7 @@ public class SqlAstBinderTests
     }
 
     [Fact]
-    public void Bind_CorrelatedSubquery_ResolvesOuterAlias()
+    public void Bind_CorrelatedSubquery_ResolvesOuterAliasAndMarksOuterReference()
     {
         var outer = new QueryDefinition
         {
@@ -110,8 +111,59 @@ public class SqlAstBinderTests
         var exists = Assert.IsType<ExistsExpr>(select.Where);
         var inner = Assert.IsType<SelectStatement>(exists.Query);
         var comparison = Assert.IsType<BinaryExpr>(inner.Where);
+        var localColumn = Assert.IsType<BoundColumnExpr>(comparison.Left);
         var outerColumn = Assert.IsType<BoundColumnExpr>(comparison.Right);
+        Assert.Equal("orders", localColumn.Source!.Name);
+        Assert.False(localColumn.IsOuterReference);
         Assert.Equal("users", outerColumn.Source!.Name);
         Assert.Equal("u", outerColumn.Source.Alias);
+        Assert.True(outerColumn.IsOuterReference);
+    }
+
+    [Fact]
+    public void Bind_CorrelatedSubquery_LocalAliasShadowing_RemainsLocal()
+    {
+        var outer = new QueryDefinition
+        {
+            TableName = "users",
+            Alias = "u",
+            SelectColumns = [new FieldSelectCondition { FieldName = "u.id" }],
+            WhereColumnsAndValues =
+            [
+                new SubQueryWhereCondition
+                {
+                    Operator = "EXISTS",
+                    SubQuery = new QueryDefinition
+                    {
+                        TableName = "orders",
+                        Alias = "u",
+                        SelectColumns = [new FieldSelectCondition { FieldName = "u.id" }],
+                        WhereColumnsAndValues =
+                        [
+                            new ColumnCompareWhereCondition
+                            {
+                                LeftFieldName = "u.user_id",
+                                Operator = "=",
+                                RightFieldName = "u.id"
+                            }
+                        ]
+                    }
+                }
+            ]
+        };
+        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(outer), SqlAgentToolType.Postgres);
+
+        var bound = new SqlAstBinder().Bind(parsed);
+
+        var select = Assert.IsType<SelectStatement>(bound.Statement);
+        var exists = Assert.IsType<ExistsExpr>(select.Where);
+        var inner = Assert.IsType<SelectStatement>(exists.Query);
+        var comparison = Assert.IsType<BinaryExpr>(inner.Where);
+        var left = Assert.IsType<BoundColumnExpr>(comparison.Left);
+        var right = Assert.IsType<BoundColumnExpr>(comparison.Right);
+        Assert.Equal("orders", left.Source!.Name);
+        Assert.Equal("orders", right.Source!.Name);
+        Assert.False(left.IsOuterReference);
+        Assert.False(right.IsOuterReference);
     }
 }
