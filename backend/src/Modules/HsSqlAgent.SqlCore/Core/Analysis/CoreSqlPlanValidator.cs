@@ -215,7 +215,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 return;
             case FilterExpr filter:
                 if (provider is not (
-                    SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird))
+                    SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird))
                 {
                     throw CapabilityError(provider, "expression.filter");
                 }

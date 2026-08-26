@@ -710,7 +710,7 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
     private static RenderedExpression RenderFilter(FilterExpr filter, Compiler compiler)
     {
-        if (compiler is not (PostgresCompiler or SqliteCompiler or FirebirdCompiler))
+        if (compiler is not (PostgresCompiler or SqliteCompiler or OracleCompiler or FirebirdCompiler))
             throw new SqlCompilationException(
                 $"FILTER lowering is not supported by {compiler.GetType().Name}.");
         var expression = RenderExpression(filter.Expression, compiler);

@@ -122,17 +122,130 @@ public class CoreAggregateFilterProfileTests
     }
 
     [Fact]
-    public void Compile_Oracle26Filter_RemainsFailClosedUntilPredicateRestrictionsAreModeled()
+    public void Compile_OracleFilterWithoutSourceVersion_FailsClosed()
     {
         var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
             FilterSql,
             SqlAgentToolType.Oracle,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("Oracle source", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_OracleFilterWithPre26SourceVersion_FailsClosedBeforePredicateValidation()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Postgres,
+            Profile(SqlAgentToolType.Oracle, 25, 0)));
+
+        Assert.Contains("Oracle source", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("subqueries", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_Oracle26SourceFilterWithLocalPredicate_Compiles()
+    {
+        var command = CompileRaw(
+            FilterSql,
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Postgres,
+            Profile(SqlAgentToolType.Oracle, 26, 0));
+
+        Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_Oracle26SourceFilterWithSubqueryPredicate_FailsClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
+            SqlAgentToolType.Oracle,
             SqlAgentToolType.Postgres,
             Profile(SqlAgentToolType.Oracle, 26, 0)));
 
-        Assert.Contains("Oracle source", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("26ai", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("filter-condition", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Oracle 26ai source", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("subqueries", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_OracleFilterWithoutTargetVersion_FailsClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            FilterSql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle));
+
+        Assert.Contains("Oracle target", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_OracleFilterWithPre26TargetVersion_FailsClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            FilterSql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle,
+            targetProfile: Profile(SqlAgentToolType.Oracle, 25, 0)));
+
+        Assert.Contains("Oracle target", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_Oracle26TargetFilterWithLocalPredicate_CompilesNatively()
+    {
+        var command = CompileRaw(
+            FilterSql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle,
+            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0));
+
+        Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_Oracle26TargetFilterWithSubqueryPredicate_FailsClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle,
+            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0)));
+
+        Assert.Contains("Oracle 26ai target", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("subqueries", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_Oracle26TargetFilterWithWindowFunctionPredicate_FailsClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            "SELECT SUM(amount) FILTER (WHERE ROW_NUMBER() OVER (ORDER BY id) > 1) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle,
+            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0)));
+
+        Assert.Contains("Oracle 26ai target", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("window functions", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_Oracle26TargetFilterWithOuterReferencePredicate_FailsClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            "SELECT u.id, (SELECT SUM(o.amount) FILTER (WHERE o.user_id = u.id) FROM orders o) AS total FROM users u",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle,
+            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0)));
+
+        Assert.Contains("Oracle 26ai target", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("outer references", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

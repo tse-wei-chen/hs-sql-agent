@@ -20,7 +20,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-26.38";
+    public const string Version = "2026-08-26.39";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
