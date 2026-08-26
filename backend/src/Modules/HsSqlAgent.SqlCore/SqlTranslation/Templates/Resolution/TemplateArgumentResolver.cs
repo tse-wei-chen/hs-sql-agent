@@ -1,9 +1,9 @@
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlTranslation.Context;
-using SqlAgent.Service.SqlTranslation.Templates.Ast;
-using SqlAgent.Service.SqlTranslation.Templates.Modifiers;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlTranslation.Context;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Modifiers;
 
-namespace SqlAgent.Service.SqlTranslation.Templates.Resolution;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Templates.Resolution;
 
 internal sealed class TemplateArgumentResolver(ITemplateModifierRegistry modifierRegistry)
 {
