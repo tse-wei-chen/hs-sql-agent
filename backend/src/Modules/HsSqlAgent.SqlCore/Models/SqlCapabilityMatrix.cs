@@ -20,7 +20,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-25.37";
+    public const string Version = "2026-08-26.38";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -145,6 +145,7 @@ public static class SqlCapabilityMatrix
                 provider == SqlAgentToolType.Postgres
                     ? "PostgreSQL INTERVAL 'literal' is preserved. Raw Core SQL accepts this PostgreSQL-style interval literal only when the declared source dialect is PostgreSQL; structured Core input is independent of the raw source-syntax gate."
                     : "PostgreSQL-style INTERVAL 'literal' has no declared target equivalent for this provider. Raw SQL that parses into this Core interval-literal shape is also rejected when the declared source dialect is non-PostgreSQL; provider-native interval forms such as MySQL INTERVAL expr unit require a separate structured translation contract."),
+            SqlAggregateFilterCapabilityRules.MatrixCapability(provider, targetProfile),
             new("aggregate.string", "aggregate", SqlCapabilityStatus.Translated,
                 "Portable string aggregation canonicalizes STRING_AGG/GROUP_CONCAT/LISTAGG/LIST to one value expression plus a literal separator and lowers to provider-native syntax. MySQL targets use GROUP_CONCAT(value SEPARATOR separator); raw MySQL comma-separated GROUP_CONCAT arguments remain multiple value expressions and are never reinterpreted as a separator."),
             new("aggregate.string.dynamic_separator", "aggregate", SqlCapabilityStatus.Rejected,
