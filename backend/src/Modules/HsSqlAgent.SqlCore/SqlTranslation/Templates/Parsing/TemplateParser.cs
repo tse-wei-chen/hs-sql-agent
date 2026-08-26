@@ -1,7 +1,7 @@
 using SqlAgent.Service.Enums;
 using SqlAgent.Service.SqlParsing;
 using SqlAgent.Service.SqlTranslation.Templates.Ast;
-using TemplateAstCaseBranch = SqlAgent.Service.SqlTranslation.Templates.Ast.TemplateCaseBranch;
+using TemplateAstCaseBranch = HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast.TemplateCaseBranch;
 
 namespace SqlAgent.Service.SqlTranslation.Templates.Parsing;
 
