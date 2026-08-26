@@ -1,6 +1,6 @@
 services:
   hs-sql-agent:
-    image: ghcr.io/tse-wei-chen/hs-sql-agent:v1.10.9
+    image: ghcr.io/tse-wei-chen/hs-sql-agent:v1.10.10
     container_name: hs-sql-agent
     ports:
       - "8080:8080"
