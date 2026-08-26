@@ -1,8 +1,8 @@
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlTranslation.Context;
-using SqlAgent.Service.SqlTranslation.DateFormats;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlTranslation.Context;
+using HsSqlAgent.SqlCore.SqlTranslation.DateFormats;
 
-namespace SqlAgent.Service.SqlTranslation.Templates.Modifiers;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Templates.Modifiers;
 
 public interface ITemplateModifier
 {
