@@ -1,9 +1,9 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.SqlTranslation.Templates.Ast;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
+using HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast;
 using TemplateAstCaseBranch = HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast.TemplateCaseBranch;
 
-namespace SqlAgent.Service.SqlTranslation.Templates.Parsing;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Templates.Parsing;
 
 internal sealed class TemplateParser
 {

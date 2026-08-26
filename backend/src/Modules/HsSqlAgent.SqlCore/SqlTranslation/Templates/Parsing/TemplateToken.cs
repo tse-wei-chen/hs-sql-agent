@@ -1,4 +1,4 @@
-namespace SqlAgent.Service.SqlTranslation.Templates.Parsing;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Templates.Parsing;
 
 internal enum TemplateTokenKind
 {
