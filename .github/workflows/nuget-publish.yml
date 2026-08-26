@@ -61,7 +61,7 @@ jobs:
 
       - name: Smoke test packed Server package
         shell: bash
-        run: .github/scripts/nuget-consumer-smoke.sh "${{ github.workspace }}/nupkg"
+        run: bash .github/scripts/nuget-consumer-smoke.sh "${{ github.workspace }}/nupkg"
 
       - name: Log in to NuGet.org
         id: nuget_login

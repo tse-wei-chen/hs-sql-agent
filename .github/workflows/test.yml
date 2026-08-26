@@ -117,7 +117,7 @@ jobs:
           done
       - name: Smoke test packed Server package
         shell: bash
-        run: .github/scripts/nuget-consumer-smoke.sh artifacts/packages
+        run: bash .github/scripts/nuget-consumer-smoke.sh artifacts/packages
 
   frontend-test:
     runs-on: ubuntu-latest
