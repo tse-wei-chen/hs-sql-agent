@@ -1,8 +1,3 @@
-using HsSqlAgent.SqlCore.Models;
-using HsSqlAgent.SqlCore.SqlParsing;
-using HsSqlAgent.SqlCore.SqlTranslation.Context;
-using HsSqlAgent.SqlCore.SqlTranslation.Diagnostics;
-
 namespace HsSqlAgent.SqlCore.SqlTranslation.Functions;
 
 public sealed record FunctionTranslationResult(

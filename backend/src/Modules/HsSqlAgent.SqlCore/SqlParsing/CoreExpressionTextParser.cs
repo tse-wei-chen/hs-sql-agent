@@ -1,8 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.SqlCore.SqlParsing;
 

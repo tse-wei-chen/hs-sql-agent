@@ -1,8 +1,6 @@
 using System.Collections.Immutable;
 using System.Data.Common;
 using Dapper;
-using HsSqlAgent.SqlCore.Core.Compilation;
-using HsSqlAgent.SqlCore.Core.Execution;
 
 namespace SqlAgent.Service.Core.Execution;
 

@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.Provider.Abstractions;
 

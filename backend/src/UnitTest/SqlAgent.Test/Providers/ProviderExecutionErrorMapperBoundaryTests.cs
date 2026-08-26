@@ -1,5 +1,3 @@
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using Xunit;
 
 namespace SqlAgent.Test.Providers;

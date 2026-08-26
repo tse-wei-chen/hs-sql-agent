@@ -5,10 +5,6 @@ using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Moq;
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Core.Pipeline;
-using SqlAgent.Service.Core.Providers;
-using HsSqlAgent.SqlCore.Enums;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;

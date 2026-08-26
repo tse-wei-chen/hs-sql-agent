@@ -2,8 +2,6 @@ using System.Data.Common;
 using Dapper;
 using Oracle.ManagedDataAccess.Client;
 using HsSqlAgent.Provider.Abstractions;
-using HsSqlAgent.SqlCore.Enums;
-using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Provider.Oracle;
 

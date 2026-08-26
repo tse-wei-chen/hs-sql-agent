@@ -1,8 +1,5 @@
-using System.Data.Common;
 using System.Diagnostics;
 using Dapper;
-using HsSqlAgent.SqlCore.Core.Compilation;
-using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Services;
 
 namespace SqlAgent.Service.Core.Execution;

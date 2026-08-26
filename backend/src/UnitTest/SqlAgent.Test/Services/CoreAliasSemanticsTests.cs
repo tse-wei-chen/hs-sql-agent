@@ -1,6 +1,3 @@
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Mapping;
-using SqlAgent.Service.Models;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

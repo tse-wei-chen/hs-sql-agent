@@ -3,7 +3,6 @@ using MySql.Data.MySqlClient;
 using Npgsql;
 using NpgsqlTypes;
 using Oracle.ManagedDataAccess.Client;
-using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using Xunit;
 

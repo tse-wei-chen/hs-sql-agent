@@ -1,7 +1,4 @@
 using System.Data.Common;
-using SqlAgent.Service.Core.Providers;
-using HsSqlAgent.SqlCore.Models;
-using HsSqlAgent.SqlCore.Enums;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Factories;
 

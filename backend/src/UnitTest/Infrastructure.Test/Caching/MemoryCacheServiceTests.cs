@@ -1,4 +1,3 @@
-using Common.Interfaces;
 using Infrastructure.Caching;
 using Microsoft.Extensions.Caching.Memory;
 using Xunit;

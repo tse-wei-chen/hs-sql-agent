@@ -1,9 +1,7 @@
 using System.Data;
 using System.Globalization;
 using System.Reflection;
-using System.Threading;
 using Dapper;
-using HsSqlAgent.SqlCore.Models;
 
 namespace SqlAgent.Service.Services;
 

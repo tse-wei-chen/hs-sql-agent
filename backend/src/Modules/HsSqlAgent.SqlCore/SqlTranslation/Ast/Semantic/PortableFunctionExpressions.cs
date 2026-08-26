@@ -1,6 +1,3 @@
-using HsSqlAgent.SqlCore.Models;
-using HsSqlAgent.SqlCore.SqlTranslation.DateFormats;
-
 namespace HsSqlAgent.SqlCore.SqlTranslation.Ast.Semantic;
 
 public sealed class DateFormatExpression : SelectCondition

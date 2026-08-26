@@ -1,6 +1,4 @@
 using System.Reflection;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using Xunit;
 

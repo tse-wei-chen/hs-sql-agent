@@ -2,8 +2,6 @@ using System.Data.Common;
 using Dapper;
 using FirebirdSql.Data.FirebirdClient;
 using HsSqlAgent.Provider.Abstractions;
-using HsSqlAgent.SqlCore.Enums;
-using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Provider.Firebird;
 

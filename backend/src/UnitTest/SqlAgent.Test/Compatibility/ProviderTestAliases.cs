@@ -1,11 +1,9 @@
 global using IDbConnectionFactory = HsSqlAgent.Provider.Abstractions.IDbConnectionFactory;
 global using IDmlPreviewTransactionFactory = HsSqlAgent.Provider.Abstractions.IDmlPreviewTransactionFactory;
-global using IProviderDmlPreviewTransactionSource = HsSqlAgent.Provider.Abstractions.IProviderDmlPreviewTransactionSource;
 global using ProviderDmlPreviewTransactionFactory = HsSqlAgent.Provider.Abstractions.ProviderDmlPreviewTransactionFactory;
 global using ISqlProvider = HsSqlAgent.Provider.Abstractions.ISqlProvider;
 global using ISqlProviderFactory = HsSqlAgent.Provider.Abstractions.ISqlProviderFactory;
 global using IProviderMetadataReader = HsSqlAgent.Provider.Abstractions.IProviderMetadataReader;
-global using IProviderErrorMapper = HsSqlAgent.Provider.Abstractions.IProviderErrorMapper;
 global using DatabaseColumnMetadata = HsSqlAgent.Provider.Abstractions.DatabaseColumnMetadata;
 global using DatabaseUniqueKeyMetadata = HsSqlAgent.Provider.Abstractions.DatabaseUniqueKeyMetadata;
 global using SqlProvider = HsSqlAgent.Provider.Abstractions.SqlProvider;
@@ -21,15 +19,9 @@ global using FirebirdProvider = HsSqlAgent.Provider.Firebird.FirebirdProvider;
 global using FirebirdDmlPreviewTransactionFactory = HsSqlAgent.Provider.Firebird.FirebirdDmlPreviewTransactionFactory;
 
 global using ISqlStrategy = HsSqlAgent.Provider.Abstractions.SqlProviderBase;
-global using BaseSqlStrategy = HsSqlAgent.Provider.Abstractions.SqlProviderBase;
 global using MySqlStrategy = HsSqlAgent.Provider.MySql.MySqlProvider;
 global using PostgresStrategy = HsSqlAgent.Provider.PostgreSql.PostgresProvider;
 global using SqliteStrategy = HsSqlAgent.Provider.Sqlite.SqliteProvider;
 global using MsSqlServerStrategy = HsSqlAgent.Provider.SqlServer.MsSqlServerProvider;
 global using OracleStrategy = HsSqlAgent.Provider.Oracle.OracleProvider;
 global using FirebirdStrategy = HsSqlAgent.Provider.Firebird.FirebirdProvider;
-global using SqlStrategyFactory = SqlAgent.Service.Factories.SqlProviderFactory;
-global using ISqlStrategyFactory = HsSqlAgent.Provider.Abstractions.ISqlProviderFactory;
-
-namespace SqlAgent.Service.Core.Providers { internal static class ProviderNamespaceCompatibilityMarker; }
-namespace SqlAgent.Service.Strategies { }

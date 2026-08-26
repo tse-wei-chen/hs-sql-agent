@@ -1,6 +1,3 @@
-using HsSqlAgent.SqlCore.Core.Pipeline;
-using HsSqlAgent.SqlCore.Enums;
-
 namespace HsSqlAgent.Provider.Abstractions;
 
 public sealed class SqlProvider : ISqlProvider, IProviderDmlPreviewTransactionSource

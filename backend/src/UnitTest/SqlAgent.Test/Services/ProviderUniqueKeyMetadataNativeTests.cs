@@ -1,5 +1,4 @@
 using System.Data.Common;
-using SqlAgent.Service.Core.Providers;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

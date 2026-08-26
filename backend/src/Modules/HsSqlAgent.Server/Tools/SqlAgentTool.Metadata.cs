@@ -3,7 +3,6 @@ using System.Text.Json;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Models;
 using ModelContextProtocol.Server;
-using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Server.Tools;
 

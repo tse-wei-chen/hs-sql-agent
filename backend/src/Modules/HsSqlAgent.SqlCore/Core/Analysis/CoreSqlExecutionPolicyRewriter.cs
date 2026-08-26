@@ -1,6 +1,3 @@
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Core.Pipeline;
-
 namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>

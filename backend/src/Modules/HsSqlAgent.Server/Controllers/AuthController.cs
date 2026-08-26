@@ -1,6 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Auth.Service.Data;
 using Admin.Service.Interfaces;
 using Auth.Service.Interfaces;
 using Auth.Service.Models;

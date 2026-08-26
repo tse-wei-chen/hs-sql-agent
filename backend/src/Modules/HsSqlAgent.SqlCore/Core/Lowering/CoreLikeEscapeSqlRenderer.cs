@@ -1,5 +1,3 @@
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Core.Compilation;
 using SqlKata.Compilers;
 
 namespace HsSqlAgent.SqlCore.Core.Lowering;

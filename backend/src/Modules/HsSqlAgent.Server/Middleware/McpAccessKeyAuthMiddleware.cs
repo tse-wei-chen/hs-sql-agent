@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using Admin.Service.Interfaces;
@@ -8,7 +7,6 @@ using Common.Models;
 using HsSqlAgent.Server.Background;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
-using HsSqlAgent.SqlCore.Models;
 
 namespace HsSqlAgent.Server.Middleware;
 

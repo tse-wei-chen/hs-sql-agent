@@ -1,7 +1,4 @@
 using System.Collections.Immutable;
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Core.Pipeline;
-using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.SqlCore.Core.Binding;
 

@@ -1,13 +1,6 @@
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using Moq;
-using HsSqlAgent.SqlCore.Core.Compilation;
-using HsSqlAgent.SqlCore.Core.Mapping;
-using HsSqlAgent.SqlCore.Core.Pipeline;
-using SqlAgent.Service.Core.Providers;
-using HsSqlAgent.SqlCore.Enums;
-using HsSqlAgent.SqlCore.Models;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;

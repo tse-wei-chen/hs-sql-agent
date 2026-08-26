@@ -1,6 +1,4 @@
 using System.Text.Json;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 using SqlAgent.Service.Validation;
 using Xunit;
 

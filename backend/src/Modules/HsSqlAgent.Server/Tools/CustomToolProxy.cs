@@ -5,18 +5,9 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
 using HsSqlAgent.Server.Services;
-using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Core.Binding;
-using HsSqlAgent.SqlCore.Core.Pipeline;
-using SqlAgent.Service.Core.Providers;
-using HsSqlAgent.SqlCore.Enums;
 using SqlAgent.Service.Interfaces;
-using HsSqlAgent.SqlCore.Models;
-using HsSqlAgent.SqlCore.SqlParsing;
-using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
 namespace HsSqlAgent.Server.Tools;
 

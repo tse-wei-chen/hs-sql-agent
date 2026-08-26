@@ -1,6 +1,3 @@
-using HsSqlAgent.SqlCore.Models;
-using HsSqlAgent.SqlCore.SqlTranslation.Context;
-
 namespace HsSqlAgent.SqlCore.SqlTranslation.Functions.Translators;
 
 public interface ISpecializedFunctionTranslator

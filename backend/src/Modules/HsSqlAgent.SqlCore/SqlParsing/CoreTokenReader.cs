@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using HsSqlAgent.SqlCore.Core.Ast;
 
 namespace HsSqlAgent.SqlCore.SqlParsing;
 

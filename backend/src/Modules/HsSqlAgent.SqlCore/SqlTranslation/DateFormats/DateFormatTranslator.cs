@@ -1,5 +1,3 @@
-using HsSqlAgent.SqlCore.Enums;
-
 namespace HsSqlAgent.SqlCore.SqlTranslation.DateFormats;
 
 public abstract record DateFormatPart;

@@ -1,5 +1,3 @@
-using HsSqlAgent.SqlCore.Enums;
-
 namespace HsSqlAgent.SqlCore.SqlTranslation.Templates.Ast;
 
 public abstract record TemplateExpression;

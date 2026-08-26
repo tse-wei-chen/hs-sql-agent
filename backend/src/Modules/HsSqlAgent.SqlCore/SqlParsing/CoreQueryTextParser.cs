@@ -1,7 +1,5 @@
 using System.Collections.Immutable;
 using System.Globalization;
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.SqlCore.SqlParsing;
 

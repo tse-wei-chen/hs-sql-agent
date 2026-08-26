@@ -1,5 +1,3 @@
-using HsSqlAgent.SqlCore.Core.Ast;
-
 namespace HsSqlAgent.SqlCore.Core.Binding;
 
 public sealed record TableSymbol(

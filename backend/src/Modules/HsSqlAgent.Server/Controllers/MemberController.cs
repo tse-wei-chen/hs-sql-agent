@@ -4,7 +4,6 @@ using Admin.Service.Interfaces;
 using Auth.Service.Interfaces;
 using Auth.Service.Models;
 using HsSqlAgent.Server.Authorization;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HsSqlAgent.Server.Controllers;

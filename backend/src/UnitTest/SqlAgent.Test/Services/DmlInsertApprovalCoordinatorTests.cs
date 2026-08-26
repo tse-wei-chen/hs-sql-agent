@@ -2,9 +2,6 @@ using System.Collections.Immutable;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

@@ -1,6 +1,3 @@
-
-using HsSqlAgent.SqlCore.Models;
-
 namespace SqlAgent.Service.Interfaces;
 
 public interface IDbSetterService

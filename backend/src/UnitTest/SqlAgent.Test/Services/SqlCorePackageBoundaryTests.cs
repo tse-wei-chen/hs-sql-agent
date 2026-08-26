@@ -1,7 +1,3 @@
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

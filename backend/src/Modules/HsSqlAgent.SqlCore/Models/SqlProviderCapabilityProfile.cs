@@ -1,5 +1,3 @@
-using HsSqlAgent.SqlCore.Enums;
-
 namespace HsSqlAgent.SqlCore.Models;
 
 /// <summary>

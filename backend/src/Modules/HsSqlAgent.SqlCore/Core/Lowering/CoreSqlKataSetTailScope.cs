@@ -1,6 +1,3 @@
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Core.Binding;
-
 namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>

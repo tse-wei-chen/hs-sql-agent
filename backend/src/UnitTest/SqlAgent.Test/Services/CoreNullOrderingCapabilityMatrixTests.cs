@@ -1,5 +1,3 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

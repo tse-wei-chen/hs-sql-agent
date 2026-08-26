@@ -1,5 +1,3 @@
-using HsSqlAgent.SqlCore.Models;
-
 namespace HsSqlAgent.SqlCore.SqlTranslation.Ast.Semantic;
 
 public abstract record JsonPathSegment;

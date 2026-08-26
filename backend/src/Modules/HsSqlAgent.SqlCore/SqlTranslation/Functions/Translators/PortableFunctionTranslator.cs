@@ -1,9 +1,3 @@
-using HsSqlAgent.SqlCore.Enums;
-using HsSqlAgent.SqlCore.Models;
-using HsSqlAgent.SqlCore.SqlTranslation.Ast.Semantic;
-using HsSqlAgent.SqlCore.SqlTranslation.DateFormats;
-using HsSqlAgent.SqlCore.SqlTranslation.Context;
-
 namespace HsSqlAgent.SqlCore.SqlTranslation.Functions.Translators;
 
 public sealed class PortableFunctionTranslator : ISpecializedFunctionTranslator

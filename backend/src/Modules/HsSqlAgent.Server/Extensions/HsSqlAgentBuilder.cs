@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Builder;
 using HsSqlAgent.Server.Models;
 
 namespace HsSqlAgent.Server.Extensions;

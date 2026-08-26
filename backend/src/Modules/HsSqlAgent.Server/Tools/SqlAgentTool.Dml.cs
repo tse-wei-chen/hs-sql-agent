@@ -4,9 +4,6 @@ using System.Text.Json;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Server;
-using HsSqlAgent.SqlCore.Core.Ast;
-using HsSqlAgent.SqlCore.Core.Pipeline;
-using HsSqlAgent.SqlCore.SqlParsing;
 
 namespace HsSqlAgent.Server.Tools;
 

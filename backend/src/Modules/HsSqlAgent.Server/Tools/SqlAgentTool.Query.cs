@@ -3,9 +3,6 @@ using System.Diagnostics;
 using System.Text.Json;
 using Admin.Service.Models;
 using ModelContextProtocol.Server;
-using HsSqlAgent.SqlCore.Core.Binding;
-using HsSqlAgent.SqlCore.Core.Pipeline;
-using HsSqlAgent.SqlCore.SqlParsing;
 
 namespace HsSqlAgent.Server.Tools;
 

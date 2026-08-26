@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using HsSqlAgent.SqlCore.Core.Compilation;
 
 namespace HsSqlAgent.SqlCore.Core.Execution;
 

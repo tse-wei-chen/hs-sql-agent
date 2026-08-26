@@ -2,9 +2,6 @@ using System.Data;
 using System.Reflection;
 using FirebirdSql.Data.FirebirdClient;
 using Microsoft.Data.Sqlite;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

@@ -1,6 +1,5 @@
 using System.Text;
 using Admin.Service.Data;
-using Admin.Service.Data.Entites;
 using Admin.Service.Models;
 using Common.Interfaces;
 using Common.Services;

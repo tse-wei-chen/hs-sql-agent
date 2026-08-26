@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using HsSqlAgent.SqlCore.Enums;
 
 namespace HsSqlAgent.SqlCore.Core.Compilation;
 
