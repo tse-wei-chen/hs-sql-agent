@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlParsing;
 
 namespace SqlAgent.Service.Services;
 
