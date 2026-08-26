@@ -1,8 +1,8 @@
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlTranslation.Context;
-using SqlAgent.Service.SqlTranslation.Functions;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlTranslation.Context;
+using HsSqlAgent.SqlCore.SqlTranslation.Functions;
 
-namespace SqlAgent.Service.SqlTranslation.Normalization;
+namespace HsSqlAgent.SqlCore.SqlTranslation.Normalization;
 
 public sealed class SqlSemanticNormalizer(IFunctionRegistry registry)
 {

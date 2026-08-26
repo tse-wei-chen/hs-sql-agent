@@ -1,6 +1,6 @@
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 
-namespace SqlAgent.Service.SqlParsing;
+namespace HsSqlAgent.SqlCore.SqlParsing;
 
 public enum TokenType
 {
