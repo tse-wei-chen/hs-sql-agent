@@ -7,10 +7,6 @@ namespace HsSqlAgent.SqlCore.Core.Analysis;
 /// </summary>
 internal static class CoreAggregateFilterProfileValidator
 {
-    private static readonly Version PostgresMinimumVersion = new(9, 4);
-    private static readonly Version SqliteMinimumVersion = new(3, 30);
-    private static readonly Version FirebirdMinimumVersion = new(4, 0);
-
     public static void Validate(
         SqlStatement statement,
         bool enforceSourceDialectSyntax,
@@ -32,68 +28,10 @@ internal static class CoreAggregateFilterProfileValidator
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? profile)
     {
-        switch (provider)
-        {
-            case SqlAgentToolType.Postgres:
-                // FILTER has existed since PostgreSQL 9.4. Current supported PostgreSQL release
-                // families all satisfy that baseline, so an omitted profile keeps the established
-                // portable PostgreSQL contract; an explicitly declared older server is rejected.
-                if (profile?.ServerVersion is { } postgresVersion
-                    && postgresVersion.CompareTo(PostgresMinimumVersion) < 0)
-                {
-                    throw VersionError(side, provider, PostgresMinimumVersion, postgresVersion);
-                }
-                return;
-
-            case SqlAgentToolType.Sqlite:
-                RequireDeclaredMinimumVersion(side, provider, profile, SqliteMinimumVersion);
-                return;
-
-            case SqlAgentToolType.Firebird:
-                RequireDeclaredMinimumVersion(side, provider, profile, FirebirdMinimumVersion);
-                return;
-
-            case SqlAgentToolType.Oracle:
-                throw new SqlCompilationException(
-                    $"SQL capability 'expression.filter' remains fail-closed for Oracle {side} SQL. " +
-                    "Oracle 26ai introduces aggregate FILTER, but Core does not yet model its filter-condition " +
-                    "restrictions on subqueries, window functions, and outer references.");
-
-            case SqlAgentToolType.MySQL:
-            case SqlAgentToolType.MsSqlServer:
-                throw new SqlCompilationException(
-                    $"SQL capability 'expression.filter' is not supported by provider {provider} for {side} SQL.");
-
-            default:
-                throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unsupported SQL provider.");
-        }
+        var error = SqlAggregateFilterCapabilityRules.ValidationError(provider, profile, side);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
-
-    private static void RequireDeclaredMinimumVersion(
-        string side,
-        SqlAgentToolType provider,
-        SqlProviderCapabilityProfile? profile,
-        Version minimumVersion)
-    {
-        if (profile?.ServerVersion is not { } declaredVersion)
-        {
-            throw new SqlCompilationException(
-                $"SQL capability 'expression.filter' requires a declared {provider} {side} capability " +
-                $"profile with ServerVersion {minimumVersion}+.");
-        }
-
-        if (declaredVersion.CompareTo(minimumVersion) < 0)
-            throw VersionError(side, provider, minimumVersion, declaredVersion);
-    }
-
-    private static SqlCompilationException VersionError(
-        string side,
-        SqlAgentToolType provider,
-        Version minimumVersion,
-        Version declaredVersion) =>
-        new(
-            $"SQL capability 'expression.filter' requires {provider} {side} ServerVersion " +
-            $"{minimumVersion}+; declared version is {declaredVersion}.");
 
     private static bool ContainsFilter(SqlStatement statement) => statement switch
     {
