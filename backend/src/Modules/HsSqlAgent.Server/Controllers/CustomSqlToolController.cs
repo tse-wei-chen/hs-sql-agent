@@ -13,13 +13,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 using SqlAgent.Service.Factories;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlParsing;
 
 namespace HsSqlAgent.Server.Controllers;
 
