@@ -3,12 +3,12 @@ using System.Data.Common;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using Moq;
-using SqlAgent.Service.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using SqlAgent.Service.Core.Execution;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;

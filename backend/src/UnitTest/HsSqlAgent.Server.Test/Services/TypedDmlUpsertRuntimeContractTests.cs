@@ -1,6 +1,6 @@
 using HsSqlAgent.Server.Services;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;

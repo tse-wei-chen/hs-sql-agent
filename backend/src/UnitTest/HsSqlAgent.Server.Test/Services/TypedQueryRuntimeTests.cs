@@ -1,12 +1,12 @@
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using Moq;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Mapping;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Mapping;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using SqlAgent.Service.Strategies;
 using Xunit;
 

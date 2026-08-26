@@ -4,9 +4,9 @@ using System.Text.Json;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
-using SqlAgent.Service.Core.Binding;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
+using HsSqlAgent.SqlCore.Core.Binding;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;

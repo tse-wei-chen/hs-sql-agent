@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
+using HsSqlAgent.SqlCore.Models;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using Xunit;

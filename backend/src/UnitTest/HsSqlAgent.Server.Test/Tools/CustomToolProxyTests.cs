@@ -7,11 +7,11 @@ using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
 using Moq;
-using SqlAgent.Service.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Ast;
 using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
+using HsSqlAgent.SqlCore.Enums;
 using SqlAgent.Service.Interfaces;
 using Xunit;
 
