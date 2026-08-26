@@ -9,9 +9,7 @@ using Common.Interfaces;
 using HsSqlAgent.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SqlAgent.Service.Enums;
 using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
 
 namespace HsSqlAgent.Server.Background;
 

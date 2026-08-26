@@ -1,15 +1,11 @@
-using System.Net;
-using System.Text;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using Xunit;

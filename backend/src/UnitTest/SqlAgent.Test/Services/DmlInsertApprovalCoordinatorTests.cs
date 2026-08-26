@@ -2,9 +2,6 @@ using System.Collections.Immutable;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -39,7 +36,8 @@ public sealed class DmlInsertApprovalCoordinatorTests
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"hs-sql-agent-insert-{Guid.NewGuid():N}.db");
-        var connectionString = $"Data Source={databasePath}";
+        // Disable pooling so Windows releases the temporary database before cleanup.
+        var connectionString = $"Data Source={databasePath};Pooling=False";
         try
         {
             await using (var setup = new SqliteConnection(connectionString))

@@ -1,6 +1,3 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-
 namespace SqlAgent.Service.Factories;
 
 /// <summary>

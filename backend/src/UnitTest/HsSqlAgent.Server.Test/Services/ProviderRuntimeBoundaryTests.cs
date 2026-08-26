@@ -1,8 +1,5 @@
 using System.Reflection;
 using HsSqlAgent.Server.Services;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;

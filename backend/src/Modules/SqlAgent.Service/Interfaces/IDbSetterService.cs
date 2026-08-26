@@ -1,6 +1,3 @@
-
-using SqlAgent.Service.Models;
-
 namespace SqlAgent.Service.Interfaces;
 
 public interface IDbSetterService

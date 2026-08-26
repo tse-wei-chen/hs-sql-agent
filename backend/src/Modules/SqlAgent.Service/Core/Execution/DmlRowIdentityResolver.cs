@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Providers;
 
 namespace SqlAgent.Service.Core.Execution;
 

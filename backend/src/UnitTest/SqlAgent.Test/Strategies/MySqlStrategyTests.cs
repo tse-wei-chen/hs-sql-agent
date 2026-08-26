@@ -1,12 +1,5 @@
 using System.Text.Json;
-using DotNet.Testcontainers.Builders;
 using MySql.Data.MySqlClient;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Strategies;
 using Testcontainers.MySql;
 using Xunit;
 

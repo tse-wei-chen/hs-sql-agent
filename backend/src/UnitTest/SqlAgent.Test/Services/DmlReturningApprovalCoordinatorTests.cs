@@ -2,10 +2,6 @@ using System.Collections.Immutable;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -18,7 +14,8 @@ public sealed class DmlReturningApprovalCoordinatorTests
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"hs-sql-agent-returning-{Guid.NewGuid():N}.db");
-        var connectionString = $"Data Source={databasePath}";
+        // Disable pooling so Windows releases the temporary database before cleanup.
+        var connectionString = $"Data Source={databasePath};Pooling=False";
         try
         {
             await CreateUsersTableAsync(connectionString);
@@ -69,7 +66,8 @@ public sealed class DmlReturningApprovalCoordinatorTests
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"hs-sql-agent-returning-mismatch-{Guid.NewGuid():N}.db");
-        var connectionString = $"Data Source={databasePath}";
+        // Disable pooling so Windows releases the temporary database before cleanup.
+        var connectionString = $"Data Source={databasePath};Pooling=False";
         try
         {
             await CreateUsersTableAsync(connectionString);
@@ -111,7 +109,7 @@ public sealed class DmlReturningApprovalCoordinatorTests
     }
 
     private static ValidatedDmlPlan CreateInsertPlan(
-        SqlAgent.Service.Core.Compilation.CompiledSqlCommand command,
+        HsSqlAgent.SqlCore.Core.Compilation.CompiledSqlCommand command,
         int expectedRows)
     {
         const string policyVersion = "policy-returning-v1";

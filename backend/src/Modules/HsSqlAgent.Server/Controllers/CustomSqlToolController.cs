@@ -13,13 +13,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
 
 namespace HsSqlAgent.Server.Controllers;
 

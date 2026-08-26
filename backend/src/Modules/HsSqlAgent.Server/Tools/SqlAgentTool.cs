@@ -1,8 +1,6 @@
 using Admin.Service.Interfaces;
 using HsSqlAgent.Server.Services;
-using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
-using SqlAgent.Service.Core.Providers;
 
 namespace HsSqlAgent.Server.Tools;
 

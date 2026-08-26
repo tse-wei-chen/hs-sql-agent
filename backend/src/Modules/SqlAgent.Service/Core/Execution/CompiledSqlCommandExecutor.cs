@@ -1,16 +1,8 @@
-using System.Data.Common;
 using System.Diagnostics;
 using Dapper;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Pipeline;
 using SqlAgent.Service.Services;
 
 namespace SqlAgent.Service.Core.Execution;
-
-public interface IDbConnectionFactory
-{
-    DbConnection Create(string connectionString);
-}
 
 /// <summary>
 /// Execution boundary for SELECT commands. It knows nothing about QueryDefinition, Core AST,

@@ -1,8 +1,3 @@
-using SqlAgent.Service.Core.Binding;
-using SqlAgent.Service.Core.Mapping;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -59,7 +54,7 @@ public class ParserP0RegressionTests
         Assert.Contains("scalar literals", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static QueryFacts BindFacts(SqlAgent.Service.Models.QueryDefinition definition)
+    private static QueryFacts BindFacts(HsSqlAgent.SqlCore.Models.QueryDefinition definition)
     {
         var parsed = new ParsedStatement(
             QueryDefinitionCoreMapper.Map(definition),

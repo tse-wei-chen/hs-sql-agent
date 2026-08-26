@@ -1,9 +1,3 @@
-using SqlAgent.Service.Core.Binding;
-using SqlAgent.Service.Core.Mapping;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -72,7 +66,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
             SqlAgentToolType.Postgres);
 
         var bound = new SqlAstBinder().Bind(parsed);
-        var select = Assert.IsType<SqlAgent.Service.Core.Ast.SelectStatement>(bound.Statement);
+        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(bound.Statement);
         var first = Assert.IsType<BoundColumnExpr>(select.Select[0].Expression);
         var second = Assert.IsType<BoundColumnExpr>(select.Select[1].Expression);
 
@@ -100,7 +94,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
             SqlAgentToolType.Postgres);
 
         var bound = new SqlAstBinder().Bind(parsed);
-        var select = Assert.IsType<SqlAgent.Service.Core.Ast.SelectStatement>(bound.Statement);
+        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(bound.Statement);
         var column = Assert.IsType<BoundColumnExpr>(Assert.Single(select.Select).Expression);
         Assert.Equal("foo", column.Source?.Alias);
     }
@@ -225,7 +219,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
             StringComparison.OrdinalIgnoreCase);
     }
 
-    private static SqlAgent.Service.Core.Compilation.CompiledSqlCommand Compile(
+    private static HsSqlAgent.SqlCore.Core.Compilation.CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(

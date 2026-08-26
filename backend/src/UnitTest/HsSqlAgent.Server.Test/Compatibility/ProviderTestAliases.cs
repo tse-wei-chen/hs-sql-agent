@@ -1,8 +1,8 @@
-// Compile-time aliases keep a few historical server-test assertions source-compatible while the
-// production strategy runtime types remain retired. These aliases emit no legacy runtime types.
-global using ISqlStrategy = SqlAgent.Service.Core.Providers.SqlProviderBase;
-global using BaseSqlStrategy = SqlAgent.Service.Core.Providers.SqlProviderBase;
+global using IDbConnectionFactory = HsSqlAgent.Provider.Abstractions.IDbConnectionFactory;
+global using IProviderMetadataReader = HsSqlAgent.Provider.Abstractions.IProviderMetadataReader;
+global using DatabaseColumnMetadata = HsSqlAgent.Provider.Abstractions.DatabaseColumnMetadata;
+global using ISqlProvider = HsSqlAgent.Provider.Abstractions.ISqlProvider;
+global using ISqlProviderFactory = HsSqlAgent.Provider.Abstractions.ISqlProviderFactory;
 
-namespace SqlAgent.Service.Strategies
-{
-}
+global using ISqlStrategy = HsSqlAgent.Provider.Abstractions.SqlProviderBase;
+global using BaseSqlStrategy = HsSqlAgent.Provider.Abstractions.SqlProviderBase;

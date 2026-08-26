@@ -1,6 +1,4 @@
 using System.Text.Json;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
 
 namespace SqlAgent.Service.Validation;
 

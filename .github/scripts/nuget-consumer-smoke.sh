@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+package_source="$(cd "$1" && pwd)"
+server_package="$(find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Server.*.nupkg' ! -name '*.symbols.nupkg' -print -quit)"
+if [[ -z "$server_package" ]]; then
+  echo "HsSqlAgent.Server package was not found in $package_source" >&2
+  exit 1
+fi
+
+version="$(basename "$server_package")"
+version="${version#HsSqlAgent.Server.}"
+version="${version%.nupkg}"
+consumer_dir="$(mktemp -d)"
+trap 'rm -rf "$consumer_dir"' EXIT
+
+dotnet new console --framework net10.0 --no-restore --output "$consumer_dir"
+cat > "$consumer_dir/NuGet.Config" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="local-packages" value="$package_source" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+</configuration>
+EOF
+
+dotnet add "$consumer_dir" package HsSqlAgent.Server --version "$version" --source "$package_source" --no-restore
+cat > "$consumer_dir/Program.cs" <<'EOF'
+using System.Reflection;
+
+string[] expectedAssemblies =
+[
+    "HsSqlAgent.Server",
+    "HsSqlAgent.SqlCore",
+    "HsSqlAgent.Provider.Abstractions",
+    "HsSqlAgent.Provider.PostgreSql",
+    "HsSqlAgent.Provider.MySql",
+    "HsSqlAgent.Provider.Sqlite",
+    "HsSqlAgent.Provider.SqlServer",
+    "HsSqlAgent.Provider.Oracle",
+    "HsSqlAgent.Provider.Firebird"
+];
+
+foreach (string assemblyName in expectedAssemblies)
+{
+    Assembly assembly = Assembly.Load(assemblyName);
+    _ = assembly.GetExportedTypes();
+    Console.WriteLine($"Loaded {assembly.GetName().Name} {assembly.GetName().Version}");
+}
+EOF
+
+dotnet restore "$consumer_dir" --configfile "$consumer_dir/NuGet.Config" --no-cache
+dotnet build "$consumer_dir" --configuration Release --no-restore
+dotnet run --project "$consumer_dir" --configuration Release --no-build

@@ -1,7 +1,5 @@
 using System.Threading.Channels;
 using Admin.Service.Interfaces;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 
 namespace HsSqlAgent.Server.Services;

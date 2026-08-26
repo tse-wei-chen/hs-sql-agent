@@ -1,9 +1,4 @@
-using System.Text.Json;
 using Microsoft.Data.SqlClient;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
 using Testcontainers.MsSql;
 using Xunit;
 

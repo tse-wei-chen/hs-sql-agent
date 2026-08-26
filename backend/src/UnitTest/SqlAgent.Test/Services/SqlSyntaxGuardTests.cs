@@ -1,5 +1,3 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

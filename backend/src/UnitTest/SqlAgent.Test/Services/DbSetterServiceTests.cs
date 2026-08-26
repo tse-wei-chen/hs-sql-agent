@@ -1,11 +1,6 @@
 using System.Data.Common;
 using Moq;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
-using SqlAgent.Service.Interfaces;
-using SqlAgent.Service.Models;
 using SqlAgent.Service.Services;
 using Xunit;
 

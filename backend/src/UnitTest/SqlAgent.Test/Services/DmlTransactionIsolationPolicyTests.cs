@@ -1,6 +1,5 @@
 using System.Data;
 using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Enums;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

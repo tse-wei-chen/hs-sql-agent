@@ -1,8 +1,5 @@
 using Moq;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
-using SqlAgent.Service.Models;
 using Xunit;
 
 namespace SqlAgent.Test.Factories;

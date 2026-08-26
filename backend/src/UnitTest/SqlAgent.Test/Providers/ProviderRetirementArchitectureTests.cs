@@ -1,6 +1,4 @@
 using System.Reflection;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
 using Xunit;
 
@@ -30,21 +28,22 @@ public class ProviderRetirementArchitectureTests
     }
 
     [Fact]
-    public void ProviderImplementations_LiveOnCoreProviderBoundary()
+    public void ProviderImplementations_LiveInDedicatedProviderAssembliesAndNamespaces()
     {
         var providerTypes = new[]
         {
-            typeof(PostgresProvider),
-            typeof(MySqlProvider),
-            typeof(SqliteProvider),
-            typeof(MsSqlServerProvider),
-            typeof(OracleProvider),
-            typeof(FirebirdProvider)
+            (typeof(PostgresProvider), "HsSqlAgent.Provider.PostgreSql", "HsSqlAgent.Provider.PostgreSql"),
+            (typeof(MySqlProvider), "HsSqlAgent.Provider.MySql", "HsSqlAgent.Provider.MySql"),
+            (typeof(SqliteProvider), "HsSqlAgent.Provider.Sqlite", "HsSqlAgent.Provider.Sqlite"),
+            (typeof(MsSqlServerProvider), "HsSqlAgent.Provider.SqlServer", "HsSqlAgent.Provider.SqlServer"),
+            (typeof(OracleProvider), "HsSqlAgent.Provider.Oracle", "HsSqlAgent.Provider.Oracle"),
+            (typeof(FirebirdProvider), "HsSqlAgent.Provider.Firebird", "HsSqlAgent.Provider.Firebird")
         };
 
-        foreach (var providerType in providerTypes)
+        foreach (var (providerType, namespaceName, assemblyName) in providerTypes)
         {
-            Assert.Equal("SqlAgent.Service.Core.Providers", providerType.Namespace);
+            Assert.Equal(namespaceName, providerType.Namespace);
+            Assert.Equal(assemblyName, providerType.Assembly.GetName().Name);
             Assert.True(typeof(SqlProviderBase).IsAssignableFrom(providerType));
             Assert.True(typeof(ISqlProvider).IsAssignableFrom(providerType));
             var constructor = Assert.Single(providerType.GetConstructors(BindingFlags.Instance | BindingFlags.Public));

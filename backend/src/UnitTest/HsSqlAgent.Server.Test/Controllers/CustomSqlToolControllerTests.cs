@@ -9,13 +9,7 @@ using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Moq;
-using SqlAgent.Service.Core.Ast;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Core.Pipeline;
-using SqlAgent.Service.Core.Providers;
-using SqlAgent.Service.Enums;
 using SqlAgent.Service.Factories;
-using SqlAgent.Service.Models;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Controllers;

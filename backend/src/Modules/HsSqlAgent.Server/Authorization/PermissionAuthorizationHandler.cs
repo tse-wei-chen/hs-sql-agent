@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Auth.Service.Data;
 using Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;

@@ -1,7 +1,5 @@
 using Admin.Service.Models;
 using Common.Models;
-using HsSqlAgent.Server.Models;
-using SqlAgent.Service.Enums;
 
 namespace HsSqlAgent.Server.Tools;
 

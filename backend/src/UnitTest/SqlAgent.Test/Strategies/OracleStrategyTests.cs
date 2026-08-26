@@ -1,8 +1,4 @@
 using System.Text.Json;
-using DotNet.Testcontainers.Builders;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.Strategies;
 using Testcontainers.Oracle;
 using Xunit;
 

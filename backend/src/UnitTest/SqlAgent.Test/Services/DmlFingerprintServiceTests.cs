@@ -1,7 +1,4 @@
 using System.Collections.Immutable;
-using SqlAgent.Service.Core.Compilation;
-using SqlAgent.Service.Core.Execution;
-using SqlAgent.Service.Enums;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

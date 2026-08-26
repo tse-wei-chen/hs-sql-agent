@@ -13,9 +13,18 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-builder
 WORKDIR /app
 
 COPY backend/Directory.Packages.props ./backend/
+COPY backend/Directory.Build.props ./backend/
 COPY backend/src/Common/Common.csproj ./backend/src/Common/
 COPY backend/src/Modules/Admin.Service/Admin.Service.csproj ./backend/src/Modules/Admin.Service/
 COPY backend/src/Modules/SqlAgent.Service/SqlAgent.Service.csproj ./backend/src/Modules/SqlAgent.Service/
+COPY backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj ./backend/src/Modules/HsSqlAgent.SqlCore/
+COPY backend/src/Modules/HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj ./backend/src/Modules/HsSqlAgent.Provider.Abstractions/
+COPY backend/src/Modules/HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj ./backend/src/Modules/HsSqlAgent.Provider.PostgreSql/
+COPY backend/src/Modules/HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj ./backend/src/Modules/HsSqlAgent.Provider.MySql/
+COPY backend/src/Modules/HsSqlAgent.Provider.Sqlite/HsSqlAgent.Provider.Sqlite.csproj ./backend/src/Modules/HsSqlAgent.Provider.Sqlite/
+COPY backend/src/Modules/HsSqlAgent.Provider.SqlServer/HsSqlAgent.Provider.SqlServer.csproj ./backend/src/Modules/HsSqlAgent.Provider.SqlServer/
+COPY backend/src/Modules/HsSqlAgent.Provider.Oracle/HsSqlAgent.Provider.Oracle.csproj ./backend/src/Modules/HsSqlAgent.Provider.Oracle/
+COPY backend/src/Modules/HsSqlAgent.Provider.Firebird/HsSqlAgent.Provider.Firebird.csproj ./backend/src/Modules/HsSqlAgent.Provider.Firebird/
 COPY backend/src/Modules/SqlKata.Service/Directory.Packages.props ./backend/src/Modules/SqlKata.Service/
 COPY backend/src/Modules/SqlKata.Service/QueryBuilder/QueryBuilder.csproj ./backend/src/Modules/SqlKata.Service/QueryBuilder/
 COPY backend/src/Modules/SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj ./backend/src/Modules/SqlKata.Service/SqlKata.Execution/

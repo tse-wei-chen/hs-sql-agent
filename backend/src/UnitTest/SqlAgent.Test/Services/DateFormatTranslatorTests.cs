@@ -1,8 +1,3 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.SqlTranslation.Context;
-using SqlAgent.Service.SqlTranslation.DateFormats;
 using Xunit;
 
 namespace SqlAgent.Test.Services;

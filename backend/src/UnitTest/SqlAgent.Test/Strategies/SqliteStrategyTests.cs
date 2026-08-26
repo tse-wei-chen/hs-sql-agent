@@ -1,10 +1,6 @@
 using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlParsing;
-using SqlAgent.Service.Strategies;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;

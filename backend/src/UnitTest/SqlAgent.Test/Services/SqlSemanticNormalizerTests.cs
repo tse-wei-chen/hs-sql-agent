@@ -1,9 +1,3 @@
-using SqlAgent.Service.Enums;
-using SqlAgent.Service.Models;
-using SqlAgent.Service.SqlTranslation.Context;
-using SqlAgent.Service.SqlTranslation.Diagnostics;
-using SqlAgent.Service.SqlTranslation.Functions;
-using SqlAgent.Service.SqlTranslation.Normalization;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
