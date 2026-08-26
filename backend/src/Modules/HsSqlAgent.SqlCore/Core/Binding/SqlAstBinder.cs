@@ -308,16 +308,25 @@ public sealed class SqlAstBinder : ISqlBinder
         if (parts.IsDefaultOrEmpty) throw new InvalidOperationException("Column identifier has no parts.");
 
         if (parts.Length == 1)
-            return new BoundColumnExpr(column.Name, scope.TryResolveSingleVisibleSource(), column.Span);
+        {
+            var resolved = scope.TryResolveSingleVisibleSource();
+            return new BoundColumnExpr(column.Name, resolved?.Symbol, column.Span)
+            {
+                IsOuterReference = resolved?.IsOuterReference ?? false
+            };
+        }
 
         var qualifierParts = parts.Take(parts.Length - 1).ToArray();
         var qualifier = string.Join('.', qualifierParts.Select(p => p.Value));
-        var resolved = scope.ResolveQualifier(qualifierParts);
-        if (resolved is null)
+        var resolvedQualifier = scope.ResolveQualifier(qualifierParts);
+        if (resolvedQualifier is null)
             throw new InvalidOperationException(
                 $"Column '{Name(column.Name)}' references unknown table/alias qualifier '{qualifier}'.");
 
-        return new BoundColumnExpr(column.Name, resolved, column.Span);
+        return new BoundColumnExpr(column.Name, resolvedQualifier.Symbol, column.Span)
+        {
+            IsOuterReference = resolvedQualifier.IsOuterReference
+        };
     }
 
     private static SubqueryExpr BindSubquery(
@@ -349,6 +358,8 @@ public sealed class SqlAstBinder : ISqlBinder
     private static string Name(SqlIdentifier identifier) => string.Join('.', identifier.Parts.Select(part => part.Value));
     private static string? AliasValue(IdentifierPart? alias) =>
         alias is null || string.IsNullOrWhiteSpace(alias.Value) ? null : alias.Value.Trim();
+
+    private sealed record ResolvedSource(TableSymbol Symbol, bool IsOuterReference);
 
     private sealed class BindingState
     {
@@ -420,7 +431,9 @@ public sealed class SqlAstBinder : ISqlBinder
             AddQualifier(state.IdentifierKey([alias]), symbol);
         }
 
-        public TableSymbol? ResolveQualifier(IEnumerable<IdentifierPart> qualifierParts)
+        public ResolvedSource? ResolveQualifier(
+            IEnumerable<IdentifierPart> qualifierParts,
+            bool isOuterReference = false)
         {
             var key = state.IdentifierKey(qualifierParts);
             if (_qualifiers.TryGetValue(key, out var matches))
@@ -430,16 +443,16 @@ public sealed class SqlAstBinder : ISqlBinder
                     var qualifier = string.Join('.', qualifierParts.Select(part => part.Value));
                     throw new InvalidOperationException($"Ambiguous table/alias qualifier '{qualifier}' in SQL scope {Id}.");
                 }
-                return matches[0];
+                return new ResolvedSource(matches[0], isOuterReference);
             }
-            return Parent?.ResolveQualifier(qualifierParts);
+            return Parent?.ResolveQualifier(qualifierParts, isOuterReference: true);
         }
 
-        public TableSymbol? TryResolveSingleVisibleSource()
+        public ResolvedSource? TryResolveSingleVisibleSource(bool isOuterReference = false)
         {
-            if (_sources.Count == 1) return _sources[0];
+            if (_sources.Count == 1) return new ResolvedSource(_sources[0], isOuterReference);
             if (_sources.Count > 1) return null;
-            return Parent?.TryResolveSingleVisibleSource();
+            return Parent?.TryResolveSingleVisibleSource(isOuterReference: true);
         }
 
         private void RegisterAlias(IdentifierPart? alias, TableSymbol symbol)
