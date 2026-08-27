@@ -208,7 +208,9 @@ internal static partial class NativeSqlExpressionRenderer
             bool => CastBinding("BOOLEAN", value),
             byte or sbyte or short or ushort or int => CastBinding("INTEGER", value),
             uint or long => CastBinding("BIGINT", value),
-            decimal => CastBinding("DECIMAL(38,10)", value),
+            decimal decimalValue => CastBinding(
+                SqlFirebirdDecimalCapabilityRules.FirebirdCastType(decimalValue),
+                decimalValue),
             double or float => CastBinding("DOUBLE PRECISION", value),
             _ => Bind(value)
         };

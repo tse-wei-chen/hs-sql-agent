@@ -272,6 +272,16 @@ internal static class CoreProviderProfileRewriter
                 throw new SqlCompilationException(error);
         }
 
+        if (literal.Value is decimal decimalValue)
+        {
+            var error = SqlFirebirdDecimalCapabilityRules.TargetValidationError(
+                targetProvider,
+                targetProfile,
+                decimalValue);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+        }
+
         return literal;
     }
 
