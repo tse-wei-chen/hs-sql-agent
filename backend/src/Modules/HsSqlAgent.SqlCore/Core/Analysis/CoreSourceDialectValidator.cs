@@ -105,6 +105,13 @@ internal static class CoreSourceDialectValidator
                     throw new SqlCompilationException(intervalError);
                 return;
 
+            case BinaryExpr binary
+                when binary.Operator.Equals("||", StringComparison.OrdinalIgnoreCase):
+                var concatSourceError = SqlConcatCapabilityRules.RawSourceSyntaxError(sourceDialect);
+                if (concatSourceError is not null)
+                    throw new SqlCompilationException(concatSourceError);
+                return;
+
             case FunctionCallExpr function:
                 ValidateFunction(function, sourceDialect);
                 ValidateAggregateSeparatorClause(function, sourceDialect);
