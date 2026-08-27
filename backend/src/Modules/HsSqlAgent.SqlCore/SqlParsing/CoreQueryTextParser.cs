@@ -351,12 +351,13 @@ internal sealed class CoreQueryTextParser
         int? offset = null;
         var usedLimitClause = false;
         var usedCommaLimit = false;
+        var grammar = SqlSourceDialectGrammarRules.For(_sourceDialect);
         if (_reader.MatchWord("LIMIT"))
         {
             usedLimitClause = true;
             if (_reader.MatchWord("ALL"))
             {
-                if (_sourceDialect != SqlAgentToolType.Postgres)
+                if (!grammar.SupportsLimitAll)
                 {
                     throw CoreTokenReader.Error(
                         $"LIMIT ALL raw source syntax is valid only for PostgreSQL, not {_sourceDialect}.",
@@ -369,7 +370,7 @@ internal sealed class CoreQueryTextParser
                 if (_reader.Peek().Type == TokenType.Comma)
                 {
                     var comma = _reader.Advance();
-                    if (_sourceDialect is not (SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                    if (!grammar.SupportsCommaLimit)
                     {
                         throw CoreTokenReader.Error(
                             $"LIMIT offset,row_count raw source syntax is valid only for MySQL and SQLite, not {_sourceDialect}.",
@@ -397,14 +398,13 @@ internal sealed class CoreQueryTextParser
                     offsetToken);
             }
 
-            var offsetRequiresLimit = _sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite;
-            if (offsetRequiresLimit && !usedLimitClause)
+            if (grammar.OffsetRequiresLimit && !usedLimitClause)
             {
                 throw CoreTokenReader.Error(
                     $"OFFSET without a preceding LIMIT is not valid raw source syntax for {_sourceDialect}.",
                     offsetToken);
             }
-            if (_sourceDialect == SqlAgentToolType.MsSqlServer && !hasOrderBy)
+            if (grammar.RequiresOrderByForOffset && !hasOrderBy)
             {
                 throw CoreTokenReader.Error(
                     "SQL Server OFFSET/FETCH raw source syntax requires a statement-level ORDER BY clause.",
@@ -413,7 +413,7 @@ internal sealed class CoreQueryTextParser
 
             _reader.Advance();
             offset = ParseNonNegativeInt("OFFSET");
-            if (UsesStandardOffsetFetch(_sourceDialect))
+            if (grammar.UsesStandardOffsetFetch)
                 ParseOffsetRowKeyword();
 
             if (_reader.PeekWord("FETCH"))
@@ -435,13 +435,13 @@ internal sealed class CoreQueryTextParser
                     "LIMIT and FETCH cannot be combined in the same raw query tail.",
                     _reader.Peek());
             }
-            if (_sourceDialect == SqlAgentToolType.MsSqlServer)
+            if (grammar.FetchRequiresOffset)
             {
                 throw CoreTokenReader.Error(
                     "SQL Server FETCH requires a preceding OFFSET clause inside ORDER BY.",
                     _reader.Peek());
             }
-            if (_sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite)
+            if (!grammar.SupportsFetchFirstNext)
             {
                 throw CoreTokenReader.Error(
                     $"FETCH FIRST/NEXT is not valid raw row-limiting syntax for {_sourceDialect}; use LIMIT instead.",
@@ -455,7 +455,8 @@ internal sealed class CoreQueryTextParser
 
     private void ParseOffsetRowKeyword()
     {
-        if (_sourceDialect == SqlAgentToolType.Postgres)
+        var grammar = SqlSourceDialectGrammarRules.For(_sourceDialect);
+        if (grammar.OffsetRowKeywordOptional)
         {
             if (_reader.MatchWord("ROW")) return;
             _reader.MatchWord("ROWS");
@@ -474,13 +475,14 @@ internal sealed class CoreQueryTextParser
         if (!CoreTokenReader.IsWord(fetchToken, "FETCH"))
             throw CoreTokenReader.Error("Expected FETCH.", fetchToken);
 
-        if (_sourceDialect == SqlAgentToolType.MsSqlServer && !hasPrecedingOffset)
+        var grammar = SqlSourceDialectGrammarRules.For(_sourceDialect);
+        if (grammar.FetchRequiresOffset && !hasPrecedingOffset)
         {
             throw CoreTokenReader.Error(
                 "SQL Server FETCH requires a preceding OFFSET clause.",
                 fetchToken);
         }
-        if (_sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite)
+        if (!grammar.SupportsFetchFirstNext)
         {
             throw CoreTokenReader.Error(
                 $"FETCH FIRST/NEXT is not valid raw row-limiting syntax for {_sourceDialect}.",
@@ -495,7 +497,7 @@ internal sealed class CoreQueryTextParser
         {
             count = ParseNonNegativeInt("FETCH");
         }
-        else if (_sourceDialect == SqlAgentToolType.MsSqlServer)
+        else if (grammar.FetchRequiresExplicitPositiveCount)
         {
             throw CoreTokenReader.Error(
                 "SQL Server FETCH requires an explicit positive integer row count.",
@@ -506,7 +508,7 @@ internal sealed class CoreQueryTextParser
             count = 1;
         }
 
-        if (_sourceDialect == SqlAgentToolType.MsSqlServer && count == 0)
+        if (grammar.FetchRequiresExplicitPositiveCount && count == 0)
         {
             throw CoreTokenReader.Error(
                 "SQL Server FETCH row count must be greater than zero.",
@@ -531,12 +533,6 @@ internal sealed class CoreQueryTextParser
         _reader.ExpectWord("ONLY");
         return count;
     }
-
-    private static bool UsesStandardOffsetFetch(SqlAgentToolType sourceDialect) =>
-        sourceDialect is SqlAgentToolType.Postgres
-            or SqlAgentToolType.MsSqlServer
-            or SqlAgentToolType.Oracle
-            or SqlAgentToolType.Firebird;
 
     private int ParseNonNegativeInt(string description)
     {

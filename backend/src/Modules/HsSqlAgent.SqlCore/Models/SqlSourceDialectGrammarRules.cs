@@ -29,7 +29,16 @@ internal static class SqlSourceDialectGrammarRules
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Time
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: true),
+                SupportsTypedTemporalZoneQualifier: true,
+                SupportsLimitAll: true,
+                SupportsCommaLimit: false,
+                OffsetRequiresLimit: false,
+                RequiresOrderByForOffset: false,
+                UsesStandardOffsetFetch: true,
+                OffsetRowKeywordOptional: true,
+                SupportsFetchFirstNext: true,
+                FetchRequiresOffset: false,
+                FetchRequiresExplicitPositiveCount: false),
 
             [SqlAgentToolType.MySQL] = new(
                 SqlAgentToolType.MySQL,
@@ -40,7 +49,16 @@ internal static class SqlSourceDialectGrammarRules
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Time
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                SupportsLimitAll: false,
+                SupportsCommaLimit: true,
+                OffsetRequiresLimit: true,
+                RequiresOrderByForOffset: false,
+                UsesStandardOffsetFetch: false,
+                OffsetRowKeywordOptional: false,
+                SupportsFetchFirstNext: false,
+                FetchRequiresOffset: false,
+                FetchRequiresExplicitPositiveCount: false),
 
             [SqlAgentToolType.MsSqlServer] = new(
                 SqlAgentToolType.MsSqlServer,
@@ -48,7 +66,16 @@ internal static class SqlSourceDialectGrammarRules
                 SupportsLimitKeyword: false,
                 SupportsBareBooleanKeywords: false,
                 TypedTemporalLiteralKinds: SqlTypedTemporalLiteralKinds.None,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                SupportsLimitAll: false,
+                SupportsCommaLimit: false,
+                OffsetRequiresLimit: false,
+                RequiresOrderByForOffset: true,
+                UsesStandardOffsetFetch: true,
+                OffsetRowKeywordOptional: false,
+                SupportsFetchFirstNext: true,
+                FetchRequiresOffset: true,
+                FetchRequiresExplicitPositiveCount: true),
 
             [SqlAgentToolType.Sqlite] = new(
                 SqlAgentToolType.Sqlite,
@@ -56,7 +83,16 @@ internal static class SqlSourceDialectGrammarRules
                 SupportsLimitKeyword: true,
                 SupportsBareBooleanKeywords: true,
                 TypedTemporalLiteralKinds: SqlTypedTemporalLiteralKinds.None,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                SupportsLimitAll: false,
+                SupportsCommaLimit: true,
+                OffsetRequiresLimit: true,
+                RequiresOrderByForOffset: false,
+                UsesStandardOffsetFetch: false,
+                OffsetRowKeywordOptional: false,
+                SupportsFetchFirstNext: false,
+                FetchRequiresOffset: false,
+                FetchRequiresExplicitPositiveCount: false),
 
             [SqlAgentToolType.Oracle] = new(
                 SqlAgentToolType.Oracle,
@@ -66,7 +102,16 @@ internal static class SqlSourceDialectGrammarRules
                 TypedTemporalLiteralKinds:
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                SupportsLimitAll: false,
+                SupportsCommaLimit: false,
+                OffsetRequiresLimit: false,
+                RequiresOrderByForOffset: false,
+                UsesStandardOffsetFetch: true,
+                OffsetRowKeywordOptional: false,
+                SupportsFetchFirstNext: true,
+                FetchRequiresOffset: false,
+                FetchRequiresExplicitPositiveCount: false),
 
             [SqlAgentToolType.Firebird] = new(
                 SqlAgentToolType.Firebird,
@@ -77,7 +122,16 @@ internal static class SqlSourceDialectGrammarRules
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Time
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: false)
+                SupportsTypedTemporalZoneQualifier: false,
+                SupportsLimitAll: false,
+                SupportsCommaLimit: false,
+                OffsetRequiresLimit: false,
+                RequiresOrderByForOffset: false,
+                UsesStandardOffsetFetch: true,
+                OffsetRowKeywordOptional: false,
+                SupportsFetchFirstNext: true,
+                FetchRequiresOffset: false,
+                FetchRequiresExplicitPositiveCount: false)
         };
 
     internal static IEnumerable<SqlSourceDialectGrammarContract> All => Contracts.Values;
@@ -112,7 +166,16 @@ internal sealed record SqlSourceDialectGrammarContract(
     bool SupportsLimitKeyword,
     bool SupportsBareBooleanKeywords,
     SqlTypedTemporalLiteralKinds TypedTemporalLiteralKinds,
-    bool SupportsTypedTemporalZoneQualifier)
+    bool SupportsTypedTemporalZoneQualifier,
+    bool SupportsLimitAll,
+    bool SupportsCommaLimit,
+    bool OffsetRequiresLimit,
+    bool RequiresOrderByForOffset,
+    bool UsesStandardOffsetFetch,
+    bool OffsetRowKeywordOptional,
+    bool SupportsFetchFirstNext,
+    bool FetchRequiresOffset,
+    bool FetchRequiresExplicitPositiveCount)
 {
     internal bool SupportsTypedTemporalLiteral(
         string temporalType,
