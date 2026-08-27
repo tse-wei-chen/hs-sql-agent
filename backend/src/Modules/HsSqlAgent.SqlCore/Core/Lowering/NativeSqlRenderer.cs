@@ -632,7 +632,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
             windowOrder.ToImmutable());
     }
 
-    private static int TryResolveProjectionOrderIndex(
+    private int TryResolveProjectionOrderIndex(
         SqlExpr expression,
         ImmutableArray<SelectItem> projection)
     {
@@ -684,64 +684,29 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
         return -1;
     }
 
-    private static bool SqlServerProjectionExpressionMatches(
+    private bool SqlServerProjectionExpressionMatches(
         SqlExpr projected,
         SqlExpr ordered)
     {
-        if (Equals(projected, ordered))
-            return true;
+        var projectedFragment = RenderExpression(projected);
+        var orderedFragment = RenderExpression(ordered);
 
-        var projectedColumn = projected as BoundColumnExpr;
-        var orderedColumn = ordered as BoundColumnExpr;
-        if (projectedColumn is not null && orderedColumn is not null)
+        if (!string.Equals(
+                projectedFragment.Sql,
+                orderedFragment.Sql,
+                StringComparison.Ordinal))
         {
-            var projectedName = projectedColumn.Name.Parts.IsDefaultOrEmpty
-                ? null
-                : projectedColumn.Name.Parts[^1].Value;
-            var orderedName = orderedColumn.Name.Parts.IsDefaultOrEmpty
-                ? null
-                : orderedColumn.Name.Parts[^1].Value;
-            if (!string.Equals(
-                    projectedName,
-                    orderedName,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            if (projectedColumn.Source is null || orderedColumn.Source is null)
-                return projectedColumn.Source is null && orderedColumn.Source is null;
-
-            return string.Equals(
-                projectedColumn.Source.VisibleName,
-                orderedColumn.Source.VisibleName,
-                StringComparison.OrdinalIgnoreCase);
+            return false;
         }
 
-        var projectedIdentifier = projected switch
-        {
-            ColumnExpr column => column.Name,
-            BoundColumnExpr column => column.Name,
-            _ => null
-        };
-        var orderedIdentifier = ordered switch
-        {
-            ColumnExpr column => column.Name,
-            BoundColumnExpr column => column.Name,
-            _ => null
-        };
-        if (projectedIdentifier is null || orderedIdentifier is null)
+        if (projectedFragment.Bindings.Length != orderedFragment.Bindings.Length)
             return false;
 
-        if (projectedIdentifier.Parts.Length != orderedIdentifier.Parts.Length)
-            return false;
-
-        for (var i = 0; i < projectedIdentifier.Parts.Length; i++)
+        for (var i = 0; i < projectedFragment.Bindings.Length; i++)
         {
-            if (!string.Equals(
-                    projectedIdentifier.Parts[i].Value,
-                    orderedIdentifier.Parts[i].Value,
-                    StringComparison.OrdinalIgnoreCase))
+            if (!Equals(
+                    projectedFragment.Bindings[i],
+                    orderedFragment.Bindings[i]))
             {
                 return false;
             }

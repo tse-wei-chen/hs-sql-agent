@@ -45,6 +45,19 @@ public sealed class CoreSqlServerNativePaginationTests
     }
 
     [Fact]
+    public void Compile_DistinctComputedOffsetPagination_OrdersThroughProjectedExpression()
+    {
+        var command = Compile(
+            "SELECT DISTINCT LOWER(name) AS label FROM users " +
+            "ORDER BY LOWER(name) LIMIT 10 OFFSET 5");
+
+        Assert.Contains("SELECT DISTINCT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ROW_NUMBER()", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_core_page_order_", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS [label]", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_OffsetWildcardProjection_FailsClosedInsteadOfLeakingSyntheticColumn()
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
