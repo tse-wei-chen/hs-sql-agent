@@ -438,10 +438,21 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
         {
             return Combine($"MOD({left.Sql}, {right.Sql})", left, right);
         }
-        if (binary.Operator == "||" && compiler is MySqlCompiler)
-            return Combine($"CONCAT({left.Sql}, {right.Sql})", left, right);
-        if (binary.Operator == "||" && compiler is SqlServerCompiler)
-            return Combine($"({left.Sql} + {right.Sql})", left, right);
+        if (binary.Operator == "||")
+        {
+            var provider = SqlKataCompilerProviderClassifier.Resolve(compiler);
+            return SqlConcatCapabilityRules.TargetSyntax(provider) switch
+            {
+                SqlConcatTargetSyntax.ConcatFunction =>
+                    Combine($"CONCAT({left.Sql}, {right.Sql})", left, right),
+                SqlConcatTargetSyntax.PlusOperator =>
+                    Combine($"({left.Sql} + {right.Sql})", left, right),
+                SqlConcatTargetSyntax.NativePipes =>
+                    Combine($"({left.Sql} || {right.Sql}{likeEscape})", left, right),
+                _ => throw new SqlCompilationException(
+                    $"Unsupported concat target syntax for provider {provider}.")
+            };
+        }
 
         var op = binary.Operator switch
         {

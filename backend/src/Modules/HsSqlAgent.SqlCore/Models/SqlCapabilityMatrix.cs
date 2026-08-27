@@ -112,15 +112,7 @@ public static class SqlCapabilityMatrix
             new("expression.arithmetic", "expression", SqlCapabilityStatus.Translated,
                 "+, -, *, and / are preserved by the AST/compiler."),
             SqlModuloCapabilityRules.MatrixCapability(provider),
-            new("expression.concat", "expression",
-                provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Supported,
-                provider == SqlAgentToolType.MySQL
-                    ? "Canonical string concatenation is translated to CONCAT(left, right). Raw MySQL source || is accepted as concatenation only when the separate source capability profile declares PIPES_AS_CONCAT or ANSI sql_mode; without that source-session contract it remains fail-closed because MySQL otherwise interprets || as logical OR. A target profile alone never authorizes the source spelling."
-                    : provider == SqlAgentToolType.MsSqlServer
-                        ? "Canonical string concatenation is translated to +."
-                        : "The provider-native || operator is emitted."),
+            SqlConcatCapabilityRules.MatrixCapability(provider),
             new("expression.like_escape", "expression", SqlCapabilityStatus.Translated,
                 "Explicit single-character literal LIKE ESCAPE is represented structurally and emitted for all target providers while the pattern remains parameterized. Dynamic, empty, multi-character, and control-character escape specifications fail-closed. MySQL NO_BACKSLASH_ESCAPES source requires the explicit escape contract for raw LIKE; target rendering does not rely on provider-default escape semantics."),
             new("expression.boolean_select", "expression",

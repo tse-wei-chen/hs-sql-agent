@@ -480,9 +480,12 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             if (error is not null)
                 throw new SqlCompilationException(error);
         }
-        if (normalized == "||" && context.SourceDialect == SqlAgentToolType.MySQL)
-            throw new SqlCompilationException(
-                "MySQL '||' semantics depend on PIPES_AS_CONCAT sql_mode; Core rejects the operator because session sql_mode is not part of the compilation plan.");
+        if (normalized == "||")
+        {
+            var error = SqlConcatCapabilityRules.SourceValidationError(context.SourceDialect);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+        }
         if (normalized == "%")
         {
             var error = SqlModuloCapabilityRules.SourceValidationError(context.SourceDialect);
