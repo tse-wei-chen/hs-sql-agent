@@ -13,6 +13,13 @@ public sealed class CoreSqlServerNativePaginationTests
         Assert.Contains("ROW_NUMBER()", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("AS [id]", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("[results_wrapper].[_core_page_0]", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "ORDER BY [results_wrapper].[_core_page_row] ASC",
+            command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            command.Sql.LastIndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase) >
+            command.Sql.LastIndexOf("WHERE", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(
             "SELECT * FROM (SELECT",
             command.Sql,
@@ -87,6 +94,13 @@ public sealed class CoreSqlServerNativePaginationTests
         Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ROW_NUMBER()", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("AS [id]", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "ORDER BY [results_wrapper].[_core_page_row] ASC",
+            command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            command.Sql.LastIndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase) >
+            command.Sql.LastIndexOf("WHERE", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(
             "SELECT * FROM (SELECT *, ROW_NUMBER()",
             command.Sql,

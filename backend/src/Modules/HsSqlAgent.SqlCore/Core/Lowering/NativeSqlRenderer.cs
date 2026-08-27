@@ -555,6 +555,15 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
             bindings.Add((long)offset + limit.Value);
         }
 
+        // Filtering on ROW_NUMBER selects the correct page, but SQL does not preserve the window
+        // ordering through the outer query unless it is stated again. Keep the synthetic row key
+        // hidden from the result projection while using it to restore the requested page order.
+        sql.Append(" ORDER BY ")
+            .Append(wrapperAlias)
+            .Append('.')
+            .Append(rowAlias)
+            .Append(" ASC");
+
         return new NativeSqlFragment(sql.ToString(), bindings.ToImmutable());
     }
 
