@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace HsSqlAgent.SqlCore.Core.Lowering;
@@ -515,7 +516,7 @@ internal static class NativeSqlExpressionRenderer
             provider,
             renderSubquery,
             dmlContext);
-        var format = SqlStringLiteral(function.Arguments[1], "date format");
+        var format = SqlStringLiteral(function.Arguments[1], "date format", provider);
 
         var sql = provider switch
         {
@@ -547,7 +548,7 @@ internal static class NativeSqlExpressionRenderer
             provider,
             renderSubquery,
             dmlContext);
-        var format = SqlStringLiteral(function.Arguments[1], "date parse format");
+        var format = SqlStringLiteral(function.Arguments[1], "date parse format", provider);
 
         var sql = provider switch
         {
@@ -810,7 +811,8 @@ internal static class NativeSqlExpressionRenderer
             renderSubquery);
         var separator = SqlStringLiteral(
             function.Arguments[1],
-            "string aggregate separator");
+            "string aggregate separator",
+            provider);
 
         if (!function.AggregateOrderBy.IsDefaultOrEmpty)
         {
@@ -1289,10 +1291,23 @@ internal static class NativeSqlExpressionRenderer
 
     private static string SqlStringLiteral(
         SqlExpr expression,
-        string label)
+        string label,
+        SqlAgentToolType provider)
     {
         if (expression is not LiteralExpr { Value: string value })
             throw new SqlCompilationException(label + " must be a string literal.");
+
+        // MySQL interprets backslash escape sequences unless NO_BACKSLASH_ESCAPES is active.
+        // Core cannot assume a target session mode at this low-level rendering boundary, and
+        // GROUP_CONCAT SEPARATOR cannot use a bound parameter. Use a UTF-8 hexadecimal string
+        // literal whenever the value contains a backslash or control character so the emitted
+        // value is independent of sql_mode and cannot change lexical structure.
+        if (provider == SqlAgentToolType.MySQL
+            && value.Any(character => character == '\\' || char.IsControl(character)))
+        {
+            var bytes = Encoding.UTF8.GetBytes(value);
+            return "_utf8mb4 X'" + Convert.ToHexString(bytes) + "'";
+        }
 
         return "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
     }
