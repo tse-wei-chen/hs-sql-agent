@@ -673,11 +673,81 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
 
         for (var i = 0; i < projection.Length; i++)
         {
-            if (Equals(projection[i].Expression, expression))
+            if (SqlServerProjectionExpressionMatches(
+                    projection[i].Expression,
+                    expression))
+            {
                 return i;
+            }
         }
 
         return -1;
+    }
+
+    private static bool SqlServerProjectionExpressionMatches(
+        SqlExpr projected,
+        SqlExpr ordered)
+    {
+        if (Equals(projected, ordered))
+            return true;
+
+        var projectedColumn = projected as BoundColumnExpr;
+        var orderedColumn = ordered as BoundColumnExpr;
+        if (projectedColumn is not null && orderedColumn is not null)
+        {
+            var projectedName = projectedColumn.Name.Parts.IsDefaultOrEmpty
+                ? null
+                : projectedColumn.Name.Parts[^1].Value;
+            var orderedName = orderedColumn.Name.Parts.IsDefaultOrEmpty
+                ? null
+                : orderedColumn.Name.Parts[^1].Value;
+            if (!string.Equals(
+                    projectedName,
+                    orderedName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (projectedColumn.Source is null || orderedColumn.Source is null)
+                return projectedColumn.Source is null && orderedColumn.Source is null;
+
+            return string.Equals(
+                projectedColumn.Source.VisibleName,
+                orderedColumn.Source.VisibleName,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        var projectedIdentifier = projected switch
+        {
+            ColumnExpr column => column.Name,
+            BoundColumnExpr column => column.Name,
+            _ => null
+        };
+        var orderedIdentifier = ordered switch
+        {
+            ColumnExpr column => column.Name,
+            BoundColumnExpr column => column.Name,
+            _ => null
+        };
+        if (projectedIdentifier is null || orderedIdentifier is null)
+            return false;
+
+        if (projectedIdentifier.Parts.Length != orderedIdentifier.Parts.Length)
+            return false;
+
+        for (var i = 0; i < projectedIdentifier.Parts.Length; i++)
+        {
+            if (!string.Equals(
+                    projectedIdentifier.Parts[i].Value,
+                    orderedIdentifier.Parts[i].Value,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static ImmutableArray<IdentifierPart> ProjectionOutputNames(
