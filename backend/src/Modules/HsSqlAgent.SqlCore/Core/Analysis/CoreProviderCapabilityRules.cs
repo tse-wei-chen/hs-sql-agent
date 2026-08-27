@@ -212,12 +212,15 @@ internal static class CoreProviderCapabilityRules
         }
 
         if (name is "LAG" or "LEAD"
-            && provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.MySQL
             && function.Arguments.Length >= 2
-            && TryIntegerLiteral(function.Arguments[1], out var offset)
-            && offset < 0)
+            && TryIntegerLiteral(function.Arguments[1], out var offset))
         {
-            throw CapabilityError(provider, $"function.{name.ToLowerInvariant()}.negative_offset");
+            var error = SqlWindowCapabilityRules.LiteralOffsetValidationError(
+                name,
+                offset,
+                provider);
+            if (error is not null)
+                throw new SqlCompilationException(error);
         }
     }
 

@@ -29,6 +29,18 @@ internal static class SqlWindowCapabilityRules
             ? CapabilityError(provider, "function.nth_value")
             : null;
 
+    internal static string? LiteralOffsetValidationError(
+        string functionName,
+        long offset,
+        SqlAgentToolType provider) =>
+        functionName is "LAG" or "LEAD"
+        && offset < 0
+        && provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.MySQL
+            ? CapabilityError(
+                provider,
+                $"function.{functionName.ToLowerInvariant()}.negative_offset")
+            : null;
+
     internal static string? WindowValidationError(
         WindowedExpr windowed,
         SqlAgentToolType provider)
