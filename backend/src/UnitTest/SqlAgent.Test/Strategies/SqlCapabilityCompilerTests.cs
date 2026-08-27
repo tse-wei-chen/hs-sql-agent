@@ -89,7 +89,10 @@ public class SqlCapabilityCompilerTests
             if (provider == SqlAgentToolType.Postgres)
             {
                 var command = Compile(definition, provider, provider);
-                Assert.Contains("INTERVAL '1 day'", command.Sql, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("AS interval)", command.Sql, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("1 day", command.Sql, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "1 day"));
                 Assert.Equal(SqlCapabilityStatus.Supported, capability.Status);
                 continue;
             }

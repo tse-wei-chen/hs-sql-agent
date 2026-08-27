@@ -172,10 +172,9 @@ internal static class NativeSqlExpressionRenderer
                 "INTERVAL expressions are supported only by PostgreSQL in the Core backend.");
         }
 
-        var literal = interval.Literal.Replace("'", "''", StringComparison.Ordinal);
         return new NativeSqlFragment(
-            "INTERVAL '" + literal + "'",
-            ImmutableArray<object?>.Empty);
+            "CAST(" + P + " AS interval)",
+            [interval.Literal]);
     }
 
     private static NativeSqlFragment RenderUnary(

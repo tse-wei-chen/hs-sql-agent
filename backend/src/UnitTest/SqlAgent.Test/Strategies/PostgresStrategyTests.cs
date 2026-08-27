@@ -316,6 +316,24 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     }
 
     [Fact]
+    public async Task ExecuteQueryAsync_PostgresIntervalLiteral_ExecutesAsBoundInterval()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT CURRENT_TIMESTAMP - INTERVAL '1 day' AS shifted FROM orders LIMIT 1");
+        definition.SourceDialect = SqlAgentToolType.Postgres;
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Single(document.RootElement.EnumerateArray());
+        var shifted = document.RootElement[0].GetProperty("shifted");
+        Assert.NotEqual(JsonValueKind.Null, shifted.ValueKind);
+    }
+
+    [Fact]
     public async Task ExecuteQueryAsync_ShouldTranslatePortableDateFormat()
     {
         var json = await Strategy.ExecuteQueryAsync(
