@@ -164,8 +164,6 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
         }
         if (binary.Operator == "||" && compiler is MySqlCompiler)
             return Combine($"CONCAT({left.Sql}, {right.Sql})", left, right);
-        if (binary.Operator == "||" && compiler is SqlServerCompiler)
-            return Combine($"({left.Sql} + {right.Sql})", left, right);
 
         var op = binary.Operator switch
         {

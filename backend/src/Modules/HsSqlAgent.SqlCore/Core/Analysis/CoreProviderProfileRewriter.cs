@@ -182,11 +182,10 @@ internal static class CoreProviderProfileRewriter
         {
             Operand = RewriteExpression(unary.Operand, targetProvider, targetProfile)
         },
-        BinaryExpr binary => binary with
-        {
-            Left = RewriteExpression(binary.Left, targetProvider, targetProfile),
-            Right = RewriteExpression(binary.Right, targetProvider, targetProfile)
-        },
+        BinaryExpr binary => RewriteBinary(
+            binary,
+            targetProvider,
+            targetProfile),
         FunctionCallExpr function => RewriteFunction(function, targetProvider, targetProfile),
         FilterExpr filter => filter with
         {
@@ -249,6 +248,34 @@ internal static class CoreProviderProfileRewriter
         _ => throw new SqlCompilationException(
             $"Unsupported expression during provider-profile rewrite: {expression.GetType().Name}")
     };
+
+    private static BinaryExpr RewriteBinary(
+        BinaryExpr binary,
+        SqlAgentToolType targetProvider,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        var rewritten = binary with
+        {
+            Left = RewriteExpression(binary.Left, targetProvider, targetProfile),
+            Right = RewriteExpression(binary.Right, targetProvider, targetProfile)
+        };
+
+        if (targetProvider != SqlAgentToolType.MsSqlServer
+            || !binary.Operator.Equals("||", StringComparison.OrdinalIgnoreCase))
+        {
+            return rewritten;
+        }
+
+        return SqlConcatCapabilityRules.EvaluateSqlServerTarget(targetProfile) switch
+        {
+            SqlServerConcatTargetMode.NativePipes => rewritten,
+            SqlServerConcatTargetMode.PlusOperator => rewritten with { Operator = "+" },
+            SqlServerConcatTargetMode.Rejected => throw new SqlCompilationException(
+                SqlConcatCapabilityRules.SqlServerTargetValidationError(targetProfile)),
+            _ => throw new SqlCompilationException(
+                "Unsupported SQL Server concat target mode.")
+        };
+    }
 
     private static FunctionCallExpr RewriteFunction(
         FunctionCallExpr function,
