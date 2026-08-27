@@ -695,8 +695,30 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
     private static RenderedExpression RenderStringAggregate(FunctionCallExpr function, Compiler compiler)
     {
         RequireArguments(function, 2);
+        if (function.IsDistinct)
+            throw new SqlCompilationException("Canonical CORE_STRING_AGG DISTINCT semantics are not enabled.");
+
         var value = RenderExpression(function.Arguments[0], compiler);
         var separator = SqlStringLiteral(function.Arguments[1], "string aggregate separator");
+
+        if (!function.AggregateOrderBy.IsDefaultOrEmpty)
+        {
+            var ordering = RenderOrderByClause(function.AggregateOrderBy, compiler, "aggregate");
+            var orderedSql = compiler switch
+            {
+                PostgresCompiler => $"STRING_AGG({value.Sql}, {separator} {ordering.Sql})",
+                SqliteCompiler => $"GROUP_CONCAT({value.Sql}, {separator} {ordering.Sql})",
+                SqlServerCompiler => $"STRING_AGG({value.Sql}, {separator}) WITHIN GROUP ({ordering.Sql})",
+                OracleCompiler => $"LISTAGG({value.Sql}, {separator}) WITHIN GROUP ({ordering.Sql})",
+                MySqlCompiler => $"GROUP_CONCAT({value.Sql} {ordering.Sql} SEPARATOR {separator})",
+                _ => throw new SqlCompilationException(
+                    $"Aggregate-local ORDER BY lowering is not supported by {compiler.GetType().Name}.")
+            };
+            return new RenderedExpression(
+                orderedSql,
+                value.Bindings.Concat(ordering.Bindings).ToImmutableArray());
+        }
+
         var sql = compiler switch
         {
             SqlServerCompiler or PostgresCompiler => $"STRING_AGG({value.Sql}, {separator})",
@@ -720,6 +742,33 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
             expression.Bindings.Concat(predicate.Bindings).ToImmutableArray());
     }
 
+    private static (string Sql, ImmutableArray<object?> Bindings) RenderOrderByClause(
+        ImmutableArray<OrderByItem> orderBy,
+        Compiler compiler,
+        string context)
+    {
+        var orderParts = new List<string>();
+        var bindings = ImmutableArray.CreateBuilder<object?>();
+
+        foreach (var item in orderBy)
+        {
+            var rendered = RenderExpression(item.Expression, compiler);
+            var sql = rendered.Sql + (item.Descending ? " DESC" : " ASC");
+            sql += item.NullOrdering switch
+            {
+                NullOrderingKind.Default => string.Empty,
+                NullOrderingKind.First => " NULLS FIRST",
+                NullOrderingKind.Last => " NULLS LAST",
+                _ => throw new SqlCompilationException(
+                    $"Unsupported NULL ordering '{item.NullOrdering}' in {context}.")
+            };
+            orderParts.Add(sql);
+            bindings.AddRange(rendered.Bindings);
+        }
+
+        return ("ORDER BY " + string.Join(", ", orderParts), bindings.ToImmutable());
+    }
+
     private static RenderedExpression RenderWindowed(WindowedExpr windowed, Compiler compiler)
     {
         var expression = RenderExpression(windowed.Expression, compiler);
@@ -738,23 +787,9 @@ public sealed class SqlKataProviderLowerer(SqlAgentToolType provider) : IProvide
 
         if (!windowed.Window.OrderBy.IsDefaultOrEmpty)
         {
-            var orderParts = new List<string>();
-            foreach (var item in windowed.Window.OrderBy)
-            {
-                var rendered = RenderExpression(item.Expression, compiler);
-                var sql = rendered.Sql + (item.Descending ? " DESC" : " ASC");
-                sql += item.NullOrdering switch
-                {
-                    NullOrderingKind.Default => string.Empty,
-                    NullOrderingKind.First => " NULLS FIRST",
-                    NullOrderingKind.Last => " NULLS LAST",
-                    _ => throw new SqlCompilationException(
-                        $"Unsupported NULL ordering '{item.NullOrdering}' in window.")
-                };
-                orderParts.Add(sql);
-                bindings.AddRange(rendered.Bindings);
-            }
-            parts.Add("ORDER BY " + string.Join(", ", orderParts));
+            var ordering = RenderOrderByClause(windowed.Window.OrderBy, compiler, "window");
+            parts.Add(ordering.Sql);
+            bindings.AddRange(ordering.Bindings);
         }
 
         if (windowed.Window.Frame is not null)

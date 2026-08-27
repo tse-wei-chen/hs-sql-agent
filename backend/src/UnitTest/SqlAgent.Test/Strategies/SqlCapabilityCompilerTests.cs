@@ -80,13 +80,23 @@ public class SqlCapabilityCompilerTests
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT created_at + INTERVAL '1 day' FROM events");
 
-        var postgres = Compile(definition, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
-        Assert.Contains("INTERVAL '1 day'", postgres.Sql, StringComparison.OrdinalIgnoreCase);
-
-        foreach (var provider in Providers.Where(item => item != SqlAgentToolType.Postgres))
+        foreach (var provider in Providers)
         {
+            var capability = Assert.Single(
+                SqlCapabilityMatrix.ForProvider(provider).Capabilities,
+                item => item.Id == "expression.interval");
+
+            if (provider == SqlAgentToolType.Postgres)
+            {
+                var command = Compile(definition, provider, provider);
+                Assert.Contains("INTERVAL '1 day'", command.Sql, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal(SqlCapabilityStatus.Supported, capability.Status);
+                continue;
+            }
+
             var error = Assert.Throws<SqlCompilationException>(() => Compile(definition, provider, provider));
             Assert.Contains("expression.interval", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(SqlCapabilityStatus.Rejected, capability.Status);
         }
     }
 

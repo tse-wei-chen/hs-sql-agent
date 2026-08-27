@@ -16,7 +16,7 @@ internal static class CoreNullOrderingRewriter
     public static SqlStatement Rewrite(SqlStatement statement, SqlAgentToolType targetProvider)
     {
         ArgumentNullException.ThrowIfNull(statement);
-        if (targetProvider is not (SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer))
+        if (!SqlNullOrderingCapabilityRules.RequiresTargetRewrite(targetProvider))
             return statement;
 
         return RewriteStatement(statement, targetProvider);

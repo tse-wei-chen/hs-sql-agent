@@ -54,6 +54,13 @@ public sealed record BinaryExpr(
     SourceSpan Span,
     string? LikeEscape = null) : SqlExpr(Span);
 
+public enum AggregateOrderSyntaxKind
+{
+    None,
+    Inline,
+    WithinGroup
+}
+
 public sealed record FunctionCallExpr(
     SqlIdentifier Name,
     ImmutableArray<SqlExpr> Arguments,
@@ -66,6 +73,20 @@ public sealed record FunctionCallExpr(
     /// raw SQL fragments; the compiler remains fail-closed while the capability is not enabled.
     /// </summary>
     public ImmutableArray<OrderByItem> AggregateOrderBy { get; init; } = ImmutableArray<OrderByItem>.Empty;
+
+    /// <summary>
+    /// Raw parser spelling that produced <see cref="AggregateOrderBy"/>. Canonical/structured AST
+    /// construction may leave this as None because target lowering depends on ordering semantics,
+    /// while raw source validation uses it to reject dialect-mismatched syntax.
+    /// </summary>
+    public AggregateOrderSyntaxKind AggregateOrderSyntax { get; init; } = AggregateOrderSyntaxKind.None;
+
+    /// <summary>
+    /// Decoded raw SEPARATOR string supplied by aggregate clause syntax (currently MySQL
+    /// GROUP_CONCAT only). This is source-syntax metadata; normalization moves it into the
+    /// canonical string-aggregate separator argument and clears the field.
+    /// </summary>
+    public string? AggregateSeparatorClause { get; init; }
 }
 
 /// <summary>

@@ -22,4 +22,19 @@ public sealed class CoreNullOrderingCapabilityMatrixTests
         Assert.Contains("computed", capability.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", capability.Detail, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Matrix_DocumentsNativeNullOrderingProviders(SqlAgentToolType provider)
+    {
+        var capability = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(provider).Capabilities,
+            item => item.Id == "ordering.nulls");
+
+        Assert.Equal(SqlCapabilityStatus.Supported, capability.Status);
+        Assert.Contains("emitted natively", capability.Detail, StringComparison.OrdinalIgnoreCase);
+    }
 }

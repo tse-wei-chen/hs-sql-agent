@@ -247,7 +247,15 @@ public sealed class SqlAstBinder : ISqlBinder
                     $"Quoted or qualified function identifier '{Name(function.Name)}' is not supported by the portable Core function registry."),
             FunctionCallExpr function => function with
             {
-                Arguments = function.Arguments.Select(argument => BindExpr(argument, scope, visibleCtes, state)).ToImmutableArray()
+                Arguments = function.Arguments
+                    .Select(argument => BindExpr(argument, scope, visibleCtes, state))
+                    .ToImmutableArray(),
+                AggregateOrderBy = function.AggregateOrderBy
+                    .Select(item => item with
+                    {
+                        Expression = BindExpr(item.Expression, scope, visibleCtes, state)
+                    })
+                    .ToImmutableArray()
             },
             FilterExpr filter => filter with
             {

@@ -20,7 +20,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-26.39";
+    public const string Version = "2026-08-27.44";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -140,14 +140,11 @@ public static class SqlCapabilityMatrix
                 "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available."),
             new("expression.cast", "expression", SqlCapabilityStatus.Translated,
                 "Standard CAST input is normalized through a source-aware Core type model before provider-specific CAST spelling is emitted. Raw PostgreSQL :: cast spelling is accepted only when the declared source dialect is PostgreSQL; non-PostgreSQL raw sources fail before AST canonicalization. Unknown cross-dialect vendor types fail closed."),
-            new("expression.interval", "expression",
-                provider == SqlAgentToolType.Postgres ? SqlCapabilityStatus.Supported : SqlCapabilityStatus.Rejected,
-                provider == SqlAgentToolType.Postgres
-                    ? "PostgreSQL INTERVAL 'literal' is preserved. Raw Core SQL accepts this PostgreSQL-style interval literal only when the declared source dialect is PostgreSQL; structured Core input is independent of the raw source-syntax gate."
-                    : "PostgreSQL-style INTERVAL 'literal' has no declared target equivalent for this provider. Raw SQL that parses into this Core interval-literal shape is also rejected when the declared source dialect is non-PostgreSQL; provider-native interval forms such as MySQL INTERVAL expr unit require a separate structured translation contract."),
+            SqlIntervalLiteralCapabilityRules.MatrixCapability(provider),
             SqlAggregateFilterCapabilityRules.MatrixCapability(provider, targetProfile),
             new("aggregate.string", "aggregate", SqlCapabilityStatus.Translated,
-                "Portable string aggregation canonicalizes STRING_AGG/GROUP_CONCAT/LISTAGG/LIST to one value expression plus a literal separator and lowers to provider-native syntax. MySQL targets use GROUP_CONCAT(value SEPARATOR separator); raw MySQL comma-separated GROUP_CONCAT arguments remain multiple value expressions and are never reinterpreted as a separator."),
+                "Portable string aggregation canonicalizes STRING_AGG/GROUP_CONCAT/LISTAGG/LIST to one value expression plus a literal separator and lowers to provider-native syntax. Source defaults are normalized semantically: Oracle one-argument LISTAGG becomes an empty separator (its omitted delimiter is NULL/no separator), while one-argument GROUP_CONCAT and Firebird LIST use comma. STRING_AGG requires an explicit separator. MySQL raw GROUP_CONCAT SEPARATOR 'literal' is parsed as source syntax metadata and normalized into the canonical separator argument; comma-separated GROUP_CONCAT arguments remain multiple value expressions and are never reinterpreted as a separator. MySQL targets use native GROUP_CONCAT(... SEPARATOR ...)."),
+            SqlAggregateLocalOrderingCapabilityRules.MatrixCapability(provider, targetProfile),
             new("aggregate.string.dynamic_separator", "aggregate", SqlCapabilityStatus.Rejected,
                 "Dynamic or per-row string-aggregate separators are rejected at the Core capability boundary; the portable aggregate currently requires a literal separator so provider delimiter evaluation rules cannot drift during lowering."),
             new("temporal.typed_literals", "temporal", SqlCapabilityStatus.Translated,
@@ -215,13 +212,7 @@ public static class SqlCapabilityMatrix
                 "ROWS/RANGE frames are represented structurally; provider/function combinations that do not accept a frame and SQL Server RANGE offsets fail closed before lowering."),
             new("ordering.ordinal", "ordering", SqlCapabilityStatus.Translated,
                 "Statement-level ORDER BY output positions are represented as typed ordinals and emitted as ordinals rather than parameterized numeric literals."),
-            new("ordering.nulls", "ordering",
-                provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Supported,
-                provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-                    ? "Structured ASC NULLS FIRST and DESC NULLS LAST are canonicalized to the provider's identical native default ordering and the unsupported modifier is omitted. ASC NULLS LAST and DESC NULLS FIRST are translated with a CASE null-rank only when ORDER BY is a direct row-source column, including window ordering and nested DML SELECTs. DISTINCT statement tails, set-operation tails, projection alias references, and computed expressions remain fail-closed so Core does not duplicate arbitrary expression evaluation or violate provider ORDER BY select-list rules. Raw MySQL/SQL Server source syntax with NULLS modifiers is rejected at the source-dialect boundary."
-                    : "NULLS FIRST/LAST is emitted natively."),
+            SqlNullOrderingCapabilityRules.MatrixCapability(provider),
             new("parameter.unbound", "parameter", SqlCapabilityStatus.Rejected,
                 "Unbound ?, :name, @name, $1, and {{name}} parameters are rejected; Custom Tool parameters are rendered first."),
             new("dml.basic", "dml", SqlCapabilityStatus.Translated,

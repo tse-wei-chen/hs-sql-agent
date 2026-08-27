@@ -267,6 +267,42 @@ public class CoreSourceDialectValidationTests
     }
 
     [Fact]
+    public void Compile_MySqlWindowNullOrdering_IsRejectedThroughSharedTraversal()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT ROW_NUMBER() OVER (ORDER BY amount NULLS FIRST) FROM orders",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("NULLS FIRST", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_DeepCaseFunction_UsesSharedSourceDialectBoundary()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT CASE WHEN id > 0 THEN COALESCE(DATE_FORMAT(created_at, '%Y'), 'n/a') ELSE 'none' END FROM orders",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MySQL));
+
+        Assert.Contains("DATE_FORMAT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MsSqlServer", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_NestedScalarSubqueryStatementNullOrdering_IsStillRejected()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT (SELECT amount FROM orders ORDER BY amount NULLS FIRST LIMIT 1) FROM users",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("NULLS FIRST", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_Dml_UsesTheSameSourceDialectBoundary()
     {
         var ex = Assert.Throws<SqlCompilationException>(() =>
