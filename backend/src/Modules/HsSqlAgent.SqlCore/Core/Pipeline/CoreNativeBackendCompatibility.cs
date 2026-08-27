@@ -8,7 +8,7 @@ namespace HsSqlAgent.SqlCore.Core.Pipeline;
 /// query-graph rewrite to nested SELECT compilation, while scalar/EXISTS expressions render their
 /// subquery as a complete compiler fragment so root WITH definitions can be retained where legal.
 /// </summary>
-internal static class CoreSqlKataBackendCompatibility
+internal static class CoreNativeBackendCompatibility
 {
     public static void ValidateQuery(
         SqlStatement statement,
@@ -62,7 +62,7 @@ internal static class CoreSqlKataBackendCompatibility
 
             default:
                 throw new SqlCompilationException(
-                    $"Unsupported statement for SqlKata DML compatibility validation: {statement.GetType().Name}");
+                    $"Unsupported statement for native DML backend compatibility validation: {statement.GetType().Name}");
         }
     }
 
@@ -149,7 +149,7 @@ internal static class CoreSqlKataBackendCompatibility
 
             default:
                 throw new SqlCompilationException(
-                    $"Unsupported statement for SqlKata backend compatibility validation: {statement.GetType().Name}");
+                    $"Unsupported statement for native backend compatibility validation: {statement.GetType().Name}");
         }
     }
 
@@ -202,7 +202,7 @@ internal static class CoreSqlKataBackendCompatibility
                 or QueryPosition.CteDefinition)
         || (position == QueryPosition.ScalarSubquery
             && CanLowerNestedCteFragment(provider, allowNestedCteFragments)
-            && CoreSqlKataSetTailScope.CanRenderDirectTail(query));
+            && CoreNativeSetTailScope.CanRenderDirectTail(query));
 
     private static bool CanLowerNestedCteFragment(
         SqlAgentToolType provider,
@@ -213,7 +213,7 @@ internal static class CoreSqlKataBackendCompatibility
             or SqlAgentToolType.Sqlite;
 
     private static SqlCompilationException CteScopeError(string capability, string detail) =>
-        new($"SQL capability '{capability}' is not supported by the current SqlKata backend: {detail}.");
+        new($"SQL capability '{capability}' is not supported by the native SQL backend: {detail}.");
 
     private static bool RequiresSetTailWrapper(QueryStatement query) =>
         !query.OrderBy.IsDefaultOrEmpty
@@ -314,7 +314,7 @@ internal static class CoreSqlKataBackendCompatibility
                 return;
             default:
                 throw new SqlCompilationException(
-                    $"Unsupported expression for SqlKata backend compatibility validation: {expression.GetType().Name}");
+                    $"Unsupported expression for native backend compatibility validation: {expression.GetType().Name}");
         }
     }
 

@@ -90,11 +90,8 @@ public sealed class CoreSqlCompiler(
         {
             Statement = CoreRootCteSetTailRewriter.Rewrite(executable.Statement)
         };
-        CoreSqlKataBackendCompatibility.ValidateQuery(executable.Statement, targetProvider);
+        CoreNativeBackendCompatibility.ValidateQuery(executable.Statement, targetProvider);
 
-        IProviderLowerer lowerer = CoreSqlKataDerivedCteLowerer.CanLower(executable.Statement)
-            ? new CoreSqlKataDerivedCteLowerer(targetProvider)
-            : new SqlKataProviderLowerer(targetProvider);
-        return lowerer.Lower(executable);
+        return new NativeSqlRenderer(targetProvider).Lower(executable);
     }
 }

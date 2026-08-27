@@ -4,9 +4,9 @@ namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Preserves root CTE scope when a set-operation query needs an outer ORDER BY/LIMIT/OFFSET
-/// wrapper. SqlKata compiles a nested set query through CompileSelectQuery, which does not emit
-/// that nested query's WITH components. Moving only the statement-root CTEs to the mechanically
-/// generated outer SELECT is scope-equivalent and keeps nested/local CTE shapes fail-closed.
+/// wrapper. Moving only statement-root CTEs to the mechanically generated outer SELECT is
+/// scope-equivalent, keeps the canonical scope explicit, and leaves nested/local CTE shapes
+/// fail-closed where the target grammar has no declared contract.
 /// </summary>
 internal static class CoreRootCteSetTailRewriter
 {

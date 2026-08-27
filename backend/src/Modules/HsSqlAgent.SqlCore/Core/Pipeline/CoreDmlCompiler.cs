@@ -93,21 +93,9 @@ public sealed class CoreDmlCompiler(
             validated.TargetProvider,
             validated.PolicyVersion);
 
-        CoreSqlKataBackendCompatibility.ValidateDml(profiledStatement, targetProvider);
+        CoreNativeBackendCompatibility.ValidateDml(profiledStatement, targetProvider);
 
-        var command = profiledStatement switch
-        {
-            InsertStatement insert when CoreInsertSelectCteLowerer.CanLower(insert) =>
-                CoreInsertSelectCteLowerer.Lower(executable, insert),
-            InsertStatement insert =>
-                new SqlKataInsertLowerer(targetProvider).Lower(executable, insert),
-            UpdateStatement update =>
-                new SqlKataUpdateLowerer(targetProvider).Lower(executable, update),
-            DeleteStatement =>
-                new SqlKataDmlLowerer(targetProvider).Lower(executable),
-            _ => throw new SqlCompilationException(
-                $"Statement '{profiledStatement.GetType().Name}' is not supported by the Core DML lowerer.")
-        };
+        var command = new NativeSqlRenderer(targetProvider).Lower(executable);
         var expectedKind = parsed.Statement switch
         {
             InsertStatement => SqlStatementKind.Insert,
