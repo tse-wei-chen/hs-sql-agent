@@ -133,12 +133,9 @@ internal static partial class NativeSqlExpressionRenderer
     {
         RequireArguments(function, 2);
         var part = LiteralKeyword(function.Arguments[0], "date part");
-        if (part == "QUARTER")
-        {
-            var error = SqlQuarterDatePartCapabilityRules.TargetValidationError(provider);
-            if (error is not null)
-                throw new SqlCompilationException(error);
-        }
+        var capabilityError = SqlDatePartCapabilityRules.TargetValidationError(part, provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
 
         var value = Render(
             function.Arguments[1],
