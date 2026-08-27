@@ -27,12 +27,11 @@ internal static class CoreProviderCapabilityRules
 
     public static void ValidateLiteral(LiteralExpr literal, SqlAgentToolType provider)
     {
-        if (provider == SqlAgentToolType.Oracle && literal.Value is SqlTimeValue)
+        if (literal.Value is SqlTimeValue)
         {
-            throw CapabilityError(
-                provider,
-                "literal.time",
-                "Oracle has no standalone TIME data type.");
+            var error = SqlStandaloneTimeCapabilityRules.TargetValidationError(provider);
+            if (error is not null)
+                throw new SqlCompilationException(error);
         }
 
         if (provider == SqlAgentToolType.MySQL

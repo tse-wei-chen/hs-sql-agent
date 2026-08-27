@@ -158,8 +158,12 @@ internal static partial class NativeSqlExpressionRenderer
         LiteralExpr literal,
         SqlAgentToolType provider)
     {
-        if (literal.Value is SqlTimeValue && provider == SqlAgentToolType.Oracle)
-            throw new SqlCompilationException("Oracle has no standalone TIME data type.");
+        if (literal.Value is SqlTimeValue)
+        {
+            var capabilityError = SqlStandaloneTimeCapabilityRules.TargetValidationError(provider);
+            if (capabilityError is not null)
+                throw new SqlCompilationException(capabilityError);
+        }
 
         if (literal.Value is SqlOffsetDateTimeValue
             && provider == SqlAgentToolType.MySQL)
