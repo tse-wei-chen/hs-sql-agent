@@ -850,7 +850,9 @@ internal static class NativeSqlExpressionRenderer
         {
             SqlAgentToolType.MsSqlServer or SqlAgentToolType.Postgres =>
                 "STRING_AGG(" + value.Sql + ", " + separator + ")",
-            SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite =>
+            SqlAgentToolType.MySQL =>
+                "GROUP_CONCAT(" + value.Sql + " SEPARATOR " + separator + ")",
+            SqlAgentToolType.Sqlite =>
                 "GROUP_CONCAT(" + value.Sql + ", " + separator + ")",
             SqlAgentToolType.Oracle =>
                 "LISTAGG(" + value.Sql + ", " + separator + ")",
