@@ -9,18 +9,6 @@ namespace HsSqlAgent.SqlCore.Core.Analysis;
 /// </summary>
 internal static class CoreProviderCapabilityRules
 {
-    private static readonly HashSet<string> ModeledWindowFunctions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST",
-        "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE", "NTILE"
-    };
-
-    private static readonly HashSet<string> FrameInsensitiveWindowFunctions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST",
-        "LAG", "LEAD", "NTILE"
-    };
-
     private static readonly Regex PortableJsonPropertyPath = new(
         @"^\$\.[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$",
         RegexOptions.CultureInvariant);
@@ -49,8 +37,9 @@ internal static class CoreProviderCapabilityRules
         var name = IdentifierText(function.Name).ToUpperInvariant();
         switch (name)
         {
-            case "NTH_VALUE" when provider == SqlAgentToolType.MsSqlServer:
-                throw CapabilityError(provider, "function.nth_value");
+            case "NTH_VALUE":
+                ValidateWindowFunctionCapability(name, provider);
+                break;
 
             case "CORE_DATE_FORMAT":
             case "CORE_DATE_PARSE":
@@ -94,29 +83,22 @@ internal static class CoreProviderCapabilityRules
                 $"DISTINCT window aggregate '{name}' is not a portable Core capability and is rejected before lowering.");
         }
 
-        // PostgreSQL accepts frame syntax for functions that use the whole partition. MySQL and
-        // Firebird explicitly accept and ignore it for ranking/LAG/LEAD-style functions. SQL Server
-        // and Oracle do not expose the window-frame clause for these function families, so reject
-        // only those target providers instead of imposing a false cross-provider restriction.
-        if (windowed.Window.Frame is not null
-            && FrameInsensitiveWindowFunctions.Contains(name)
-            && provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle)
-        {
-            throw CapabilityError(provider, $"window.frame.{name.ToLowerInvariant()}");
-        }
+        var capabilityError = SqlWindowCapabilityRules.WindowValidationError(
+            windowed,
+            provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+    }
 
-        if (provider == SqlAgentToolType.MsSqlServer && ModeledWindowFunctions.Contains(name)
-            && windowed.Window.OrderBy.IsDefaultOrEmpty)
-        {
-            throw CapabilityError(provider, "window.order_by");
-        }
-
-        if (provider == SqlAgentToolType.MsSqlServer
-            && windowed.Window.Frame is { Unit: WindowFrameUnitKind.Range } frame
-            && (HasOffsetBound(frame.Start) || frame.End is not null && HasOffsetBound(frame.End)))
-        {
-            throw CapabilityError(provider, "window.range_offset");
-        }
+    private static void ValidateWindowFunctionCapability(
+        string functionName,
+        SqlAgentToolType provider)
+    {
+        var error = SqlWindowCapabilityRules.FunctionValidationError(
+            functionName,
+            provider);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void ValidateTemporalFormatCapability(
@@ -246,9 +228,6 @@ internal static class CoreProviderCapabilityRules
         FilterExpr { Expression: FunctionCallExpr function } => function,
         _ => null
     };
-
-    private static bool HasOffsetBound(WindowFrameBoundCore bound) =>
-        bound.Kind is WindowFrameBoundKindCore.Preceding or WindowFrameBoundKindCore.Following;
 
     private static bool TryIntegerLiteral(SqlExpr expression, out long value)
     {

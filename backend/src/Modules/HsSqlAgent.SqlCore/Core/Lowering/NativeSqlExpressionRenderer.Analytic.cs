@@ -166,6 +166,12 @@ internal static partial class NativeSqlExpressionRenderer
         SqlAgentToolType provider,
         Func<SqlStatement, NativeSqlFragment> renderSubquery)
     {
+        var capabilityError = SqlWindowCapabilityRules.WindowValidationError(
+            windowed,
+            provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+
         var expression = Render(
             windowed.Expression,
             provider,
