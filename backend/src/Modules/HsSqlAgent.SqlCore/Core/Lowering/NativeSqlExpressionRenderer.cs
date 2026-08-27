@@ -516,24 +516,32 @@ internal static class NativeSqlExpressionRenderer
             provider,
             renderSubquery,
             dmlContext);
-        var format = SqlStringLiteral(function.Arguments[1], "date format", provider);
+        var format = Bind(StringLiteralValue(
+            function.Arguments[1],
+            "date format"));
 
-        var sql = provider switch
+        return provider switch
         {
-            SqlAgentToolType.MsSqlServer =>
-                "FORMAT(" + value.Sql + ", " + format + ")",
-            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle =>
-                "TO_CHAR(" + value.Sql + ", " + format + ")",
-            SqlAgentToolType.MySQL =>
-                "DATE_FORMAT(" + value.Sql + ", " + format + ")",
-            SqlAgentToolType.Sqlite =>
-                "STRFTIME(" + format + ", " + value.Sql + ")",
+            SqlAgentToolType.MsSqlServer => Combine(
+                "FORMAT(" + value.Sql + ", " + format.Sql + ")",
+                value,
+                format),
+            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle => Combine(
+                "TO_CHAR(" + value.Sql + ", " + format.Sql + ")",
+                value,
+                format),
+            SqlAgentToolType.MySQL => Combine(
+                "DATE_FORMAT(" + value.Sql + ", " + format.Sql + ")",
+                value,
+                format),
+            SqlAgentToolType.Sqlite => Combine(
+                "STRFTIME(" + format.Sql + ", " + value.Sql + ")",
+                format,
+                value),
             SqlAgentToolType.Firebird => throw new SqlCompilationException(
                 "portable date formatting is not supported by Firebird."),
             _ => throw new SqlCompilationException("Unsupported date-format provider.")
         };
-
-        return value with { Sql = sql };
     }
 
     private static NativeSqlFragment RenderDateParse(
@@ -548,19 +556,23 @@ internal static class NativeSqlExpressionRenderer
             provider,
             renderSubquery,
             dmlContext);
-        var format = SqlStringLiteral(function.Arguments[1], "date parse format", provider);
+        var format = Bind(StringLiteralValue(
+            function.Arguments[1],
+            "date parse format"));
 
-        var sql = provider switch
+        return provider switch
         {
-            SqlAgentToolType.MySQL =>
-                "DATE(STR_TO_DATE(" + value.Sql + ", " + format + "))",
-            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle =>
-                "TO_DATE(" + value.Sql + ", " + format + ")",
+            SqlAgentToolType.MySQL => Combine(
+                "DATE(STR_TO_DATE(" + value.Sql + ", " + format.Sql + "))",
+                value,
+                format),
+            SqlAgentToolType.Postgres or SqlAgentToolType.Oracle => Combine(
+                "TO_DATE(" + value.Sql + ", " + format.Sql + ")",
+                value,
+                format),
             _ => throw new SqlCompilationException(
                 "formatted date parsing is not supported by this provider.")
         };
-
-        return value with { Sql = sql };
     }
 
     private static NativeSqlFragment RenderPosition(
@@ -1287,6 +1299,16 @@ internal static class NativeSqlExpressionRenderer
         }
 
         return normalized;
+    }
+
+    private static string StringLiteralValue(
+        SqlExpr expression,
+        string label)
+    {
+        if (expression is not LiteralExpr { Value: string value })
+            throw new SqlCompilationException(label + " must be a string literal.");
+
+        return value;
     }
 
     private static string SqlStringLiteral(

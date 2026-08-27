@@ -178,11 +178,56 @@ public class SqlCapabilityCompilerTests
         var definition = SqlDefinitionParser.ParseQuery(
             "SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') FROM orders");
         var postgres = Compile(definition, SqlAgentToolType.MySQL, SqlAgentToolType.Postgres);
-        Assert.Contains("YYYY-MM-DD HH24:MI", postgres.Sql, StringComparison.Ordinal);
+        Assert.Contains("TO_CHAR(", postgres.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("YYYY-MM-DD HH24:MI", postgres.Sql, StringComparison.Ordinal);
+        Assert.Contains(
+            postgres.Parameters,
+            parameter => Equals(parameter.Value, "YYYY-MM-DD HH24:MI"));
 
         var wrongSource = Assert.Throws<SqlCompilationException>(() =>
             Compile(definition, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
         Assert.Contains("Postgres date-format token", wrongSource.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DateFormat_AndDateParse_FormatModelsAreBoundInsteadOfInlined()
+    {
+        var format = SqlDefinitionParser.ParseQuery(
+            "SELECT DATE_FORMAT(created_at, '%Y-%m-%d') FROM orders");
+
+        foreach (var provider in new[]
+                 {
+                     SqlAgentToolType.Postgres,
+                     SqlAgentToolType.MySQL,
+                     SqlAgentToolType.MsSqlServer,
+                     SqlAgentToolType.Oracle,
+                     SqlAgentToolType.Sqlite
+                 })
+        {
+            var command = Compile(format, SqlAgentToolType.MySQL, provider);
+            Assert.DoesNotContain("%Y-%m-%d", command.Sql, StringComparison.Ordinal);
+            Assert.NotEmpty(command.Parameters);
+            Assert.Contains(
+                command.Parameters,
+                parameter => parameter.Value is string);
+        }
+
+        var parse = SqlDefinitionParser.ParseQuery(
+            "SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') FROM orders");
+        foreach (var provider in new[]
+                 {
+                     SqlAgentToolType.Postgres,
+                     SqlAgentToolType.MySQL,
+                     SqlAgentToolType.Oracle
+                 })
+        {
+            var command = Compile(parse, SqlAgentToolType.MsSqlServer, provider);
+            Assert.DoesNotContain("yyyy/MM/dd", command.Sql, StringComparison.Ordinal);
+            Assert.Contains(
+                command.Parameters,
+                parameter => parameter.Value is string text
+                    && text.Contains("/", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
