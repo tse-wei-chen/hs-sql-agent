@@ -110,7 +110,7 @@ public sealed class CoreAggregateModifierTraversalTests
         Assert.DoesNotContain("recent(id)", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static ParsedSqlQuery WithAggregateOrderExpression(SqlExpr orderExpression)
+    private static ParsedStatement WithAggregateOrderExpression(SqlExpr orderExpression)
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT STRING_AGG(name, ',') FROM users",
