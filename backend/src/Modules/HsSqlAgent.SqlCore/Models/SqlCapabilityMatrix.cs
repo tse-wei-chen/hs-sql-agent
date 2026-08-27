@@ -147,22 +147,10 @@ public static class SqlCapabilityMatrix
             SqlDateMathCapabilityRules.MatrixCapability(provider),
             SqlTemporalFormatCapabilityRules.DateFormatMatrixCapability(provider),
             SqlTemporalFormatCapabilityRules.FormattedParseMatrixCapability(provider),
-            new("json.extract", "json",
-                provider is SqlAgentToolType.Firebird or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle
-                    ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
-                provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle
-                    ? "Ambiguous JSON_EXTRACT is rejected because the scalar/object result type is unknown; use an explicit JSON_VALUE or JSON_QUERY contract."
-                    : provider == SqlAgentToolType.Firebird
-                        ? "Portable JSON extraction has no declared Firebird equivalent."
-                        : "Constant JSON property-chain paths such as $.user.name are normalized and translated; root-only, array-index, wildcard, filter, quoted-property, recursive-descent, and dynamic paths fail closed."),
+            SqlJsonCapabilityRules.ExtractMatrixCapability(provider),
             new("json.path.simple", "json", SqlCapabilityStatus.Translated,
                 "Portable JSON paths are limited to constant property chains beginning at $, for example $.user.name; root-only, array-index, wildcard, filter, quoted property names, recursive descent, and dynamic paths are rejected before lowering."),
-            new("json.set", "json",
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
-                    ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
-                    ? "Portable JSON mutation has no declared equivalent for this provider."
-                    : "Portable JSON mutation is rendered with provider-native functions after constant property-chain path validation."),
+            SqlJsonCapabilityRules.SetMatrixCapability(provider),
             new("regex.match", "regex",
                 provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
                     || sqlServerRegexEnabled
