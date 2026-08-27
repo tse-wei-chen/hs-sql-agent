@@ -332,9 +332,7 @@ internal sealed class CoreExpressionTextParser(
         var value = ParseExpression();
         _reader.Expect(TokenType.RParen, "')' after EXTRACT expression");
 
-        // YEAR/MONTH/DAY already have canonical portable semantics in CoreSqlNormalizer. Other
-        // units remain fail-closed until the canonical date-part family accepts them directly.
-        if (part is not ("YEAR" or "MONTH" or "DAY"))
+        if (!SqlDatePartCapabilityRules.IsRepresentedPart(part))
             throw CoreTokenReader.Error($"EXTRACT({part} ...) is not yet represented by the canonical date-part family.", partToken);
 
         return new FunctionCallExpr(

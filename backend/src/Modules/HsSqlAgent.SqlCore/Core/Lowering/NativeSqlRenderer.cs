@@ -174,6 +174,22 @@ public sealed partial class NativeSqlRenderer(SqlAgentToolType provider) : IProv
         if (extraProjection is not null)
             projections.Add(extraProjection);
 
+        var groupItems = statement.GroupBy.IsDefaultOrEmpty
+            ? Array.Empty<NativeSqlFragment>()
+            : statement.GroupBy
+                .Select(item => RenderExpression(item))
+                .ToArray();
+        if (Provider == SqlAgentToolType.Postgres
+            && groupItems.Length > 0
+            && !statement.Select.IsDefaultOrEmpty
+            && !statement.Span.Equals(SourceSpan.Unknown))
+        {
+            SharePostgresGroupingBindings(
+                statement,
+                projections,
+                groupItems);
+        }
+
         for (var i = 0; i < projections.Count; i++)
         {
             if (i > 0)
@@ -211,11 +227,8 @@ public sealed partial class NativeSqlRenderer(SqlAgentToolType provider) : IProv
             bindings.AddRange(where.Bindings);
         }
 
-        if (!statement.GroupBy.IsDefaultOrEmpty)
+        if (groupItems.Length > 0)
         {
-            var groupItems = statement.GroupBy
-                .Select(item => RenderExpression(item))
-                .ToArray();
             sql.Append(" GROUP BY ")
                 .Append(string.Join(", ", groupItems.Select(item => item.Sql)));
             foreach (var item in groupItems)
@@ -529,6 +542,98 @@ public sealed partial class NativeSqlRenderer(SqlAgentToolType provider) : IProv
         return new NativeSqlFragment(
             keyword + " " + source.Sql + " ON " + predicate.Sql,
             source.Bindings.Concat(predicate.Bindings).ToImmutableArray());
+    }
+
+    private void SharePostgresGroupingBindings(
+        SelectStatement statement,
+        List<NativeSqlFragment> projections,
+        NativeSqlFragment[] groupItems)
+    {
+        for (var groupIndex = 0; groupIndex < groupItems.Length; groupIndex++)
+        {
+            var groupItem = groupItems[groupIndex];
+            if (!groupItem.Bindings.Any(binding => binding is not NativeSharedSqlBinding))
+                continue;
+
+            for (var projectionIndex = 0;
+                 projectionIndex < statement.Select.Length;
+                 projectionIndex++)
+            {
+                var projectedExpression = RenderExpression(
+                    statement.Select[projectionIndex].Expression);
+                if (!EquivalentParameterizedExpression(
+                        groupItem,
+                        projectedExpression))
+                {
+                    continue;
+                }
+
+                var keyPrefix =
+                    "postgres-group:" +
+                    statement.Span.Start + ":" +
+                    statement.Span.End + ":" +
+                    projectionIndex + ":";
+
+                projections[projectionIndex] = projections[projectionIndex] with
+                {
+                    Bindings = ShareGroupingBindings(
+                        projections[projectionIndex].Bindings,
+                        keyPrefix)
+                };
+                groupItems[groupIndex] = groupItem with
+                {
+                    Bindings = ShareGroupingBindings(
+                        groupItem.Bindings,
+                        keyPrefix)
+                };
+                break;
+            }
+        }
+    }
+
+    private static bool EquivalentParameterizedExpression(
+        NativeSqlFragment left,
+        NativeSqlFragment right)
+    {
+        if (!string.Equals(left.Sql, right.Sql, StringComparison.Ordinal)
+            || left.Bindings.Length != right.Bindings.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Bindings.Length; i++)
+        {
+            if (!Equals(
+                    SharedBindingValue(left.Bindings[i]),
+                    SharedBindingValue(right.Bindings[i])))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static object? SharedBindingValue(object? binding) =>
+        binding is NativeSharedSqlBinding shared
+            ? shared.Value
+            : binding;
+
+    private static ImmutableArray<object?> ShareGroupingBindings(
+        ImmutableArray<object?> bindings,
+        string keyPrefix)
+    {
+        var shared = ImmutableArray.CreateBuilder<object?>(bindings.Length);
+        for (var i = 0; i < bindings.Length; i++)
+        {
+            var binding = bindings[i];
+            shared.Add(binding is NativeSharedSqlBinding
+                ? binding
+                : new NativeSharedSqlBinding(
+                    keyPrefix + i,
+                    binding));
+        }
+        return shared.ToImmutable();
     }
 
     private NativeSqlFragment RenderOrderBy(
