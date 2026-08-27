@@ -87,6 +87,27 @@ public sealed class CoreWindowCapabilityContractTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("LAG", SqlAgentToolType.MsSqlServer, "function.lag.negative_offset")]
+    [InlineData("LEAD", SqlAgentToolType.MsSqlServer, "function.lead.negative_offset")]
+    [InlineData("LAG", SqlAgentToolType.MySQL, "function.lag.negative_offset")]
+    [InlineData("LEAD", SqlAgentToolType.MySQL, "function.lead.negative_offset")]
+    public void Compile_NegativeLagLeadOffset_RejectedTargets_RemainFailClosed(
+        string functionName,
+        SqlAgentToolType targetProvider,
+        string capability)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            $"SELECT {functionName}(amount, -1) OVER (ORDER BY id) FROM orders",
+            SqlAgentToolType.Postgres,
+            targetProvider));
+
+        Assert.Contains(
+            capability,
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_SqlServerWindowedAggregate_WithoutOrderBy_RemainsAccepted()
     {

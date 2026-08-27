@@ -212,12 +212,15 @@ internal static class CoreProviderCapabilityRules
         }
 
         if (name is "LAG" or "LEAD"
-            && provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.MySQL
             && function.Arguments.Length >= 2
-            && TryIntegerLiteral(function.Arguments[1], out var offset)
-            && offset < 0)
+            && TryIntegerLiteral(function.Arguments[1], out var offset))
         {
-            throw CapabilityError(provider, $"function.{name.ToLowerInvariant()}.negative_offset");
+            var error = SqlWindowCapabilityRules.LiteralOffsetValidationError(
+                name,
+                offset,
+                provider);
+            if (error is not null)
+                throw new SqlCompilationException(error);
         }
     }
 
@@ -239,6 +242,26 @@ internal static class CoreProviderCapabilityRules
             case LiteralExpr { Value: int v }: value = v; return true;
             case LiteralExpr { Value: uint v }: value = v; return true;
             case LiteralExpr { Value: long v }: value = v; return true;
+            case LiteralExpr { Value: decimal v }
+                when v == decimal.Truncate(v)
+                    && v >= long.MinValue
+                    && v <= long.MaxValue:
+                value = (long)v;
+                return true;
+            case LiteralExpr { Value: double v }
+                when double.IsFinite(v)
+                    && v == Math.Truncate(v)
+                    && v >= long.MinValue
+                    && v <= long.MaxValue:
+                value = (long)v;
+                return true;
+            case LiteralExpr { Value: float v }
+                when float.IsFinite(v)
+                    && v == MathF.Truncate(v)
+                    && v >= long.MinValue
+                    && v <= long.MaxValue:
+                value = (long)v;
+                return true;
             default:
                 value = default;
                 return false;
