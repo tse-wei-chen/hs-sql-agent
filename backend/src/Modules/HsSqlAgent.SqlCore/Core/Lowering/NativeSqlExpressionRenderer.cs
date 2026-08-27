@@ -212,7 +212,8 @@ internal static class NativeSqlExpressionRenderer
                 right);
         }
 
-        if (binary.Operator == "||" && provider == SqlAgentToolType.MySQL)
+        if (binary.Operator == "||"
+            && SqlConcatCapabilityRules.UsesConcatFunctionForCanonicalPipes(provider))
         {
             return Combine(
                 "CONCAT(" + left.Sql + ", " + right.Sql + ")",

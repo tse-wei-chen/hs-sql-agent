@@ -17,6 +17,35 @@ internal static class SqlConcatCapabilityRules
     private static readonly Version SqlServerAlwaysNullConcatVersion = new(14, 0);
     private static readonly Version SqlServerNativePipesVersion = new(17, 0);
 
+    internal static bool SupportsMySqlPipesAsConcat(
+        SqlAgentToolType sourceDialect,
+        SqlProviderCapabilityProfile? sourceProfile) =>
+        sourceDialect == SqlAgentToolType.MySQL
+        && sourceProfile is { Provider: SqlAgentToolType.MySQL }
+        && (sourceProfile.HasSessionMode("PIPES_AS_CONCAT")
+            || sourceProfile.HasSessionMode("ANSI"));
+
+    internal static string? SourceSemanticValidationError(
+        SqlAgentToolType sourceDialect) =>
+        sourceDialect == SqlAgentToolType.MySQL
+            ? "MySQL '||' semantics depend on PIPES_AS_CONCAT sql_mode; Core rejects the operator because session sql_mode is not part of the compilation plan."
+            : null;
+
+    internal static bool UsesConcatFunctionForCanonicalPipes(
+        SqlAgentToolType targetProvider) => targetProvider switch
+    {
+        SqlAgentToolType.MySQL => true,
+        SqlAgentToolType.Postgres
+            or SqlAgentToolType.Sqlite
+            or SqlAgentToolType.MsSqlServer
+            or SqlAgentToolType.Oracle
+            or SqlAgentToolType.Firebird => false,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(targetProvider),
+            targetProvider,
+            "Unsupported SQL provider.")
+    };
+
     internal static string? RawSourceSyntaxError(SqlAgentToolType sourceDialect) =>
         sourceDialect == SqlAgentToolType.MsSqlServer
             ? "Raw SQL Server source operator '||' remains fail-closed. SQL Server 2025 (17.x) introduces ANSI pipes concatenation, but Core has not yet declared a T-SQL 17.x source grammar/precedence contract."
