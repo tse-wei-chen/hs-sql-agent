@@ -89,7 +89,8 @@ public class CoreMySqlStringAggregateTests
             SqlAgentToolType.Postgres);
 
         Assert.Contains("STRING_AGG(", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("','", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("','", command.Sql, StringComparison.Ordinal);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, ","));
     }
 
     private static CompiledSqlCommand Compile(
