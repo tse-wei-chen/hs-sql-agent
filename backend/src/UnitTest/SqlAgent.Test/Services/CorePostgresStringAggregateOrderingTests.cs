@@ -34,6 +34,18 @@ public sealed class CorePostgresStringAggregateOrderingTests
     }
 
     [Fact]
+    public void Compile_PostgresStringAggSeparator_WithBackslashQuoteAndUnicode_IsBound()
+    {
+        var command = Compile(
+            "SELECT STRING_AGG(name, '\\''雪') FROM users",
+            SqlAgentToolType.Postgres);
+
+        Assert.DoesNotContain("\\''雪", command.Sql, StringComparison.Ordinal);
+        var parameter = Assert.Single(command.Parameters);
+        Assert.Equal("\\'雪", parameter.Value);
+    }
+
+    [Fact]
     public void Compile_PostgresStringAggOrdering_BindsNestedOrderExpressionParameters()
     {
         var command = Compile(

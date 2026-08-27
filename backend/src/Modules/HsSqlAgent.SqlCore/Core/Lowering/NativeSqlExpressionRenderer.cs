@@ -831,10 +831,16 @@ internal static class NativeSqlExpressionRenderer
             function.Arguments[0],
             provider,
             renderSubquery);
-        var separator = SqlStringLiteral(
-            function.Arguments[1],
-            "string aggregate separator",
-            provider);
+        var separator = provider == SqlAgentToolType.Postgres
+            ? Bind(StringLiteralValue(
+                function.Arguments[1],
+                "string aggregate separator"))
+            : new NativeSqlFragment(
+                SqlStringLiteral(
+                    function.Arguments[1],
+                    "string aggregate separator",
+                    provider),
+                ImmutableArray<object?>.Empty);
 
         if (!function.AggregateOrderBy.IsDefaultOrEmpty)
         {
@@ -846,20 +852,20 @@ internal static class NativeSqlExpressionRenderer
             var orderedSql = provider switch
             {
                 SqlAgentToolType.Postgres =>
-                    "STRING_AGG(" + value.Sql + ", " + separator + " " +
+                    "STRING_AGG(" + value.Sql + ", " + separator.Sql + " " +
                     ordering.Sql + ")",
                 SqlAgentToolType.Sqlite =>
-                    "GROUP_CONCAT(" + value.Sql + ", " + separator + " " +
+                    "GROUP_CONCAT(" + value.Sql + ", " + separator.Sql + " " +
                     ordering.Sql + ")",
                 SqlAgentToolType.MsSqlServer =>
-                    "STRING_AGG(" + value.Sql + ", " + separator +
+                    "STRING_AGG(" + value.Sql + ", " + separator.Sql +
                     ") WITHIN GROUP (" + ordering.Sql + ")",
                 SqlAgentToolType.Oracle =>
-                    "LISTAGG(" + value.Sql + ", " + separator +
+                    "LISTAGG(" + value.Sql + ", " + separator.Sql +
                     ") WITHIN GROUP (" + ordering.Sql + ")",
                 SqlAgentToolType.MySQL =>
                     "GROUP_CONCAT(" + value.Sql + " " + ordering.Sql +
-                    " SEPARATOR " + separator + ")",
+                    " SEPARATOR " + separator.Sql + ")",
                 _ => throw new SqlCompilationException(
                     "Aggregate-local ORDER BY lowering is not supported by " +
                     provider + ".")
@@ -867,26 +873,33 @@ internal static class NativeSqlExpressionRenderer
 
             return new NativeSqlFragment(
                 orderedSql,
-                value.Bindings.Concat(ordering.Bindings).ToImmutableArray());
+                value.Bindings
+                    .Concat(separator.Bindings)
+                    .Concat(ordering.Bindings)
+                    .ToImmutableArray());
         }
 
         var sql = provider switch
         {
             SqlAgentToolType.MsSqlServer or SqlAgentToolType.Postgres =>
-                "STRING_AGG(" + value.Sql + ", " + separator + ")",
+                "STRING_AGG(" + value.Sql + ", " + separator.Sql + ")",
             SqlAgentToolType.MySQL =>
-                "GROUP_CONCAT(" + value.Sql + " SEPARATOR " + separator + ")",
+                "GROUP_CONCAT(" + value.Sql + " SEPARATOR " + separator.Sql + ")",
             SqlAgentToolType.Sqlite =>
-                "GROUP_CONCAT(" + value.Sql + ", " + separator + ")",
+                "GROUP_CONCAT(" + value.Sql + ", " + separator.Sql + ")",
             SqlAgentToolType.Oracle =>
-                "LISTAGG(" + value.Sql + ", " + separator + ")",
+                "LISTAGG(" + value.Sql + ", " + separator.Sql + ")",
             SqlAgentToolType.Firebird =>
-                "LIST(" + value.Sql + ", " + separator + ")",
+                "LIST(" + value.Sql + ", " + separator.Sql + ")",
             _ => throw new SqlCompilationException(
                 "Unsupported string aggregate provider.")
         };
 
-        return value with { Sql = sql };
+        return new NativeSqlFragment(
+            sql,
+            value.Bindings
+                .Concat(separator.Bindings)
+                .ToImmutableArray());
     }
 
     private static NativeSqlFragment RenderFilter(

@@ -15,7 +15,7 @@ public sealed class CoreCorrelatedCteSetTailCapabilityMatrixTests
         var scope = Assert.Single(matrix.Capabilities, item => item.Id == "select.cte_scope");
         var dml = Assert.Single(matrix.Capabilities, item => item.Id == "dml.nested_cte_scope");
 
-        Assert.Equal("2026-08-27.45", matrix.MatrixVersion);
+        Assert.Equal("2026-08-27.46", matrix.MatrixVersion);
         Assert.Equal(SqlCapabilityStatus.Translated, scalar.Status);
         Assert.Contains("combined output name", scalar.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("output ordinal", scalar.Detail, StringComparison.OrdinalIgnoreCase);

@@ -316,6 +316,33 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     }
 
     [Fact]
+    public async Task ExecuteQueryAsync_PostgresStringAggBackslashQuoteSeparator_ExecutesAsBoundText()
+    {
+        const string separator = "\\'雪";
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT STRING_AGG(name, '\\''雪') AS names FROM users");
+        definition.SourceDialect = SqlAgentToolType.Postgres;
+
+        var json = await Strategy.ExecuteQueryAsync(
+            definition,
+            Fixture.ConnectionString,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var names = document.RootElement[0]
+            .EnumerateObject()
+            .Single()
+            .Value
+            .GetString();
+        Assert.NotNull(names);
+        Assert.Equal(
+            new[] { "Alice", "Bob", "Charlie" },
+            names.Split(separator, StringSplitOptions.None)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray());
+    }
+
+    [Fact]
     public async Task ExecuteQueryAsync_PostgresIntervalLiteral_ExecutesAsBoundInterval()
     {
         var definition = SqlDefinitionParser.ParseQuery(
