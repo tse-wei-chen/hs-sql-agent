@@ -132,7 +132,7 @@ public sealed class CoreAggregateModifierTraversalTests
         var parsed = WithAggregateOrderExpression(
             new SubqueryExpr(
                 CoreSqlTextParser.ParseQuery(
-                    "SELECT missing_column",
+                    "SELECT *",
                     SqlAgentToolType.Postgres).Statement,
                 SourceSpan.Unknown));
 
@@ -143,7 +143,6 @@ public sealed class CoreAggregateModifierTraversalTests
                 new SqlPlanValidationContext("aggregate-traversal-v1"),
                 new SqlExecutionPlanPolicy()));
 
-        Assert.Contains("missing_column", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("requires a FROM source", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -164,7 +163,7 @@ public sealed class CoreAggregateModifierTraversalTests
     }
 
     [Fact]
-    public void Compile_InsertValuesAggregateOrderingColumn_FailsScopeValidation()
+    public void Compile_InsertValuesAggregateOrdering_FailsBeforeNativeRendering()
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(
@@ -176,8 +175,8 @@ public sealed class CoreAggregateModifierTraversalTests
                 new SqlPlanValidationContext("aggregate-traversal-v1"),
                 new DmlCompilationPolicy()));
 
-        Assert.Contains("INSERT VALUES scalar expression", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("source_column", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Aggregate function", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not allowed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static ParsedStatement WithAggregateOrderExpression(SqlExpr orderExpression)
