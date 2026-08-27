@@ -534,7 +534,7 @@ public sealed partial class NativeSqlRenderer(SqlAgentToolType provider) : IProv
 
         var capabilityError = SqlJoinCapabilityRules.TargetValidationError(
             join.Kind,
-            _provider);
+            Provider);
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
 
