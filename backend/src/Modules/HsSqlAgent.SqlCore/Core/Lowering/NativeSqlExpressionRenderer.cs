@@ -199,6 +199,13 @@ internal static class NativeSqlExpressionRenderer
         Func<SqlStatement, NativeSqlFragment> renderSubquery,
         bool dmlContext)
     {
+        if (binary.Operator is "IN" or "NOT IN"
+            && binary.Right is not SubqueryExpr)
+        {
+            throw new SqlCompilationException(
+                "Canonical binary IN/NOT IN requires a scalar subquery RHS; expression lists must use InExpr.");
+        }
+
         var left = Render(binary.Left, provider, renderSubquery, dmlContext);
         var right = Render(binary.Right, provider, renderSubquery, dmlContext);
         var likeEscape = CoreLikeEscapeSqlRenderer.RenderSuffix(binary, provider);
@@ -1266,6 +1273,7 @@ internal static class NativeSqlExpressionRenderer
         SqlStatement statement,
         Func<SqlStatement, NativeSqlFragment> renderSubquery)
     {
+        ValidateScalarSubqueryProjection(statement);
         var subquery = renderSubquery(statement);
         return subquery with { Sql = "(" + subquery.Sql + ")" };
     }
@@ -1274,12 +1282,44 @@ internal static class NativeSqlExpressionRenderer
         ExistsExpr exists,
         Func<SqlStatement, NativeSqlFragment> renderSubquery)
     {
-        var subquery = RenderSubquery(exists.Query, renderSubquery);
+        var subquery = renderSubquery(exists.Query);
         return subquery with
         {
             Sql = (exists.IsNegated ? "NOT " : string.Empty) +
-                  "EXISTS " + subquery.Sql
+                  "EXISTS (" + subquery.Sql + ")"
         };
+    }
+
+    private static void ValidateScalarSubqueryProjection(SqlStatement statement)
+    {
+        var projection = statement switch
+        {
+            SelectStatement select => select.Select,
+            QueryStatement query => query.Head.Select,
+            _ => throw new SqlCompilationException(
+                "Scalar subquery must contain a SELECT-compatible query statement.")
+        };
+
+        if (projection.Length != 1
+            || IsDirectProjectionWildcard(projection[0].Expression))
+        {
+            throw new SqlCompilationException(
+                "Scalar subquery must expose exactly one statically known output column.");
+        }
+    }
+
+    private static bool IsDirectProjectionWildcard(SqlExpr expression)
+    {
+        var identifier = expression switch
+        {
+            ColumnExpr column => column.Name,
+            BoundColumnExpr column => column.Name,
+            _ => null
+        };
+        return identifier is not null
+            && !identifier.Parts.IsDefaultOrEmpty
+            && identifier.Parts[^1].Value == "*"
+            && !identifier.Parts[^1].WasQuoted;
     }
 
     private static NativeSqlFragment RenderIdentifier(
