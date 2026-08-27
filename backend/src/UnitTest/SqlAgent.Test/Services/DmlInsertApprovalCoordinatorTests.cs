@@ -59,6 +59,7 @@ public sealed class DmlInsertApprovalCoordinatorTests
             var preview = await coordinator.PreviewAsync(
                 connectionString,
                 plan,
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken);
 
             var result = await coordinator.CommitAsync(
