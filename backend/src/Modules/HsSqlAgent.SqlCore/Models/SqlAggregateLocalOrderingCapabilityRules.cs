@@ -49,6 +49,27 @@ internal static class SqlAggregateLocalOrderingCapabilityRules
         return null;
     }
 
+    internal static string? CanonicalTargetShapeValidationError(
+        string functionName,
+        SqlAgentToolType provider,
+        bool everyOrderingExpressionReferencesColumn)
+    {
+        if (!IsStructuredStringAggregate(functionName)
+            || !HasModeledTargetFamily(provider))
+        {
+            return $"SQL capability 'aggregate.string.ordering' is not supported by provider {provider} for this Core plan.";
+        }
+
+        if (provider == SqlAgentToolType.MsSqlServer
+            && !everyOrderingExpressionReferencesColumn)
+        {
+            return "SQL Server STRING_AGG WITHIN GROUP ordering requires non-constant expressions; " +
+                   "Core requires each ordering expression to reference a column.";
+        }
+
+        return null;
+    }
+
     internal static SqlCapability MatrixCapability(
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? targetProfile)
@@ -259,6 +280,13 @@ internal static class SqlAggregateLocalOrderingCapabilityRules
               $"{minimumLevel}+; declared level is {declaredLevel}."
             : null;
     }
+
+    private static bool HasModeledTargetFamily(SqlAgentToolType provider) =>
+        provider is SqlAgentToolType.Postgres
+            or SqlAgentToolType.Sqlite
+            or SqlAgentToolType.MsSqlServer
+            or SqlAgentToolType.Oracle
+            or SqlAgentToolType.MySQL;
 
     private static bool IsStructuredStringAggregate(string functionName) =>
         functionName.Equals("STRING_AGG", StringComparison.OrdinalIgnoreCase)

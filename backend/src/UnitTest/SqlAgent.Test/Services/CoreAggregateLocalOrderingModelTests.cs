@@ -89,6 +89,50 @@ public class CoreAggregateLocalOrderingModelTests
     }
 
     [Fact]
+    public void QueryCompiler_StructuredSqlServerConstantOrdering_RemainsFailClosed()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT STRING_AGG(name, ',') FROM users",
+            SqlAgentToolType.Postgres);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var projection = Assert.Single(select.Select);
+        var aggregate = Assert.IsType<FunctionCallExpr>(projection.Expression);
+        var ordered = aggregate with
+        {
+            AggregateOrderBy =
+            [
+                new OrderByItem(
+                    new LiteralExpr(1, aggregate.Span),
+                    Descending: false,
+                    NullOrderingKind.Default,
+                    aggregate.Span)
+            ]
+        };
+        parsed = parsed with
+        {
+            EnforceSourceDialectSyntax = false,
+            Statement = select with
+            {
+                Select = [projection with { Expression = ordered }]
+            }
+        };
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MsSqlServer,
+                new SqlPlanValidationContext("policy-v1"),
+                new SqlExecutionPlanPolicy(),
+                new SqlProviderCapabilityProfile(
+                    SqlAgentToolType.MsSqlServer,
+                    ServerVersion: new Version(14, 0),
+                    CompatibilityLevel: 110)));
+
+        Assert.Contains("non-constant", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("column", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void DmlCompiler_ModeledAggregateLocalOrdering_FailsClosedBeforeLowering()
     {
         var parsed = CoreSqlTextParser.ParseDml(
