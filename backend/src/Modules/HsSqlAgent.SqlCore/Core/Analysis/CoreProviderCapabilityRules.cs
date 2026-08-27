@@ -22,13 +22,12 @@ internal static class CoreProviderCapabilityRules
                 throw new SqlCompilationException(error);
         }
 
-        if (provider == SqlAgentToolType.MySQL
-            && literal.Value is SqlOffsetDateTimeValue or DateTimeOffset)
+        if (literal.Value is SqlOffsetDateTimeValue or DateTimeOffset)
         {
-            throw CapabilityError(
-                provider,
-                "literal.timestamp_offset",
-                "MySQL has no native timestamp type that preserves a UTC offset.");
+            var error = SqlOffsetTimestampCapabilityRules.ProviderValidationError(
+                provider);
+            if (error is not null)
+                throw new SqlCompilationException(error);
         }
     }
 

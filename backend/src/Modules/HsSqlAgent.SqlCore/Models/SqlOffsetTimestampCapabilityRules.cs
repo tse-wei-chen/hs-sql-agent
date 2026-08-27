@@ -31,6 +31,12 @@ internal static class SqlOffsetTimestampCapabilityRules
             "Unsupported SQL provider.")
     };
 
+    internal static string? ProviderValidationError(
+        SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.MySQL
+            ? TargetValidationError(provider, targetProfile: null)
+            : null;
+
     internal static string? TargetValidationError(
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? targetProfile)

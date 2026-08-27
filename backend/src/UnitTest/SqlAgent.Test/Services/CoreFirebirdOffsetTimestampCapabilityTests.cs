@@ -9,6 +9,39 @@ public sealed class CoreFirebirdOffsetTimestampCapabilityTests
         new DateTimeOffset(2026, 8, 27, 17, 30, 0, TimeSpan.FromHours(8)));
 
     [Fact]
+    public void Matrix_MySqlOffsetTimestamp_RemainsRejected()
+    {
+        var capability = OffsetCapability(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MySQL));
+
+        Assert.Equal(SqlCapabilityStatus.Rejected, capability.Status);
+        Assert.Contains(
+            "UTC offset",
+            capability.Detail,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CompileQuery_MySqlOffsetTimestamp_UsesCanonicalCapabilityId()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                OffsetQuery(),
+                SqlAgentToolType.MySQL,
+                new SqlPlanValidationContext("mysql-offset-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains(
+            "temporal.offset_timestamp",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "literal.timestamp_offset",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_FirebirdOffsetTimestamp_RequiresVersion4Profile()
     {
         Assert.Equal(
