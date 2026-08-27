@@ -206,7 +206,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
 
         if (statement.Where is not null)
         {
-            var where = RenderExpression(statement.Where);
+            var where = RenderPredicateExpression(statement.Where);
             sql.Append(" WHERE ").Append(where.Sql);
             bindings.AddRange(where.Bindings);
         }
@@ -224,7 +224,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
 
         if (statement.Having is not null)
         {
-            var having = RenderExpression(statement.Having);
+            var having = RenderPredicateExpression(statement.Having);
             sql.Append(" HAVING ").Append(having.Sql);
             bindings.AddRange(having.Bindings);
         }
@@ -988,7 +988,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
             return source with { Sql = keyword + " " + source.Sql };
         }
 
-        var predicate = RenderExpression(join.Predicate);
+        var predicate = RenderPredicateExpression(join.Predicate);
         return new NativeSqlFragment(
             keyword + " " + source.Sql + " ON " + predicate.Sql,
             source.Bindings.Concat(predicate.Bindings).ToImmutableArray());
@@ -1287,6 +1287,17 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
                 QueryPosition.ScalarSubquery),
             dmlContext);
 
+    private NativeSqlFragment RenderPredicateExpression(
+        SqlExpr expression,
+        bool dmlContext = false) =>
+        NativeSqlExpressionRenderer.RenderPredicate(
+            expression,
+            Provider,
+            statement => RenderStatement(
+                statement,
+                QueryPosition.ScalarSubquery),
+            dmlContext);
+
     private NativeSqlFragment RenderInsert(InsertStatement insert)
     {
         if (insert.Columns.IsDefaultOrEmpty)
@@ -1470,7 +1481,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
 
         if (update.Predicate is not null)
         {
-            var predicate = RenderExpression(
+            var predicate = RenderPredicateExpression(
                 update.Predicate,
                 dmlContext: true);
             sql.Append(" WHERE ").Append(predicate.Sql);
@@ -1491,7 +1502,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
 
         if (delete.Predicate is not null)
         {
-            var predicate = RenderExpression(
+            var predicate = RenderPredicateExpression(
                 delete.Predicate,
                 dmlContext: true);
             sql.Append(" WHERE ").Append(predicate.Sql);

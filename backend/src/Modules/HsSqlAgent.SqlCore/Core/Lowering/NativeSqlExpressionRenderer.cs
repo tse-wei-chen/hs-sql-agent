@@ -72,6 +72,64 @@ internal static class NativeSqlExpressionRenderer
         };
     }
 
+    public static NativeSqlFragment RenderPredicate(
+        SqlExpr expression,
+        SqlAgentToolType provider,
+        Func<SqlStatement, NativeSqlFragment> renderSubquery,
+        bool dmlContext = false)
+    {
+        ArgumentNullException.ThrowIfNull(expression);
+        ArgumentNullException.ThrowIfNull(renderSubquery);
+
+        if (provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer)
+        {
+            if (expression is LiteralExpr { Value: bool boolean })
+            {
+                return new NativeSqlFragment(
+                    boolean ? "(1 = 1)" : "(1 = 0)",
+                    ImmutableArray<object?>.Empty);
+            }
+
+            if (expression is UnaryExpr { Operator: "NOT" } unary)
+            {
+                var operand = RenderPredicate(
+                    unary.Operand,
+                    provider,
+                    renderSubquery,
+                    dmlContext);
+                return operand with
+                {
+                    Sql = "NOT (" + operand.Sql + ")"
+                };
+            }
+
+            if (expression is BinaryExpr binary
+                && binary.Operator is "AND" or "OR")
+            {
+                var left = RenderPredicate(
+                    binary.Left,
+                    provider,
+                    renderSubquery,
+                    dmlContext);
+                var right = RenderPredicate(
+                    binary.Right,
+                    provider,
+                    renderSubquery,
+                    dmlContext);
+                return Combine(
+                    "(" + left.Sql + " " + binary.Operator + " " + right.Sql + ")",
+                    left,
+                    right);
+            }
+        }
+
+        return Render(
+            expression,
+            provider,
+            renderSubquery,
+            dmlContext);
+    }
+
     private static NativeSqlFragment RenderLiteral(
         LiteralExpr literal,
         SqlAgentToolType provider)
@@ -929,7 +987,7 @@ internal static class NativeSqlExpressionRenderer
             filter.Expression,
             provider,
             renderSubquery);
-        var predicate = Render(
+        var predicate = RenderPredicate(
             filter.Predicate,
             provider,
             renderSubquery);
@@ -1159,7 +1217,7 @@ internal static class NativeSqlExpressionRenderer
         var parts = new List<string>();
         foreach (var branch in @case.Branches)
         {
-            var condition = Render(
+            var condition = RenderPredicate(
                 branch.Condition,
                 provider,
                 renderSubquery,
