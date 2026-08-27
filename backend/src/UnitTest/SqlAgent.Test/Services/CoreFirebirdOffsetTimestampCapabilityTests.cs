@@ -91,10 +91,7 @@ public sealed class CoreFirebirdOffsetTimestampCapabilityTests
         Assert.Single(command.Parameters);
     }
 
-    private static ProviderSqlCapabilities OffsetCapability(ProviderSqlCapabilities matrix) =>
-        matrix;
-
-    private static SqlCapability OffsetCapability(ProviderSqlCapabilities matrix, bool _ = true) =>
+    private static SqlCapability OffsetCapability(ProviderSqlCapabilities matrix) =>
         Assert.Single(matrix.Capabilities, item => item.Id == "temporal.offset_timestamp");
 
     private static ParsedStatement OffsetQuery()
