@@ -10,9 +10,6 @@ namespace HsSqlAgent.SqlCore.Core.Lowering;
 /// </summary>
 internal static class CoreDmlReturningSqlRewriter
 {
-    private static readonly Version SqliteReturningVersion = new(3, 35);
-    private static readonly Version FirebirdMultiRowReturningVersion = new(5, 0);
-
     public static CompiledSqlCommand Apply(
         CompiledSqlCommand command,
         SqlStatement statement,
@@ -27,7 +24,11 @@ internal static class CoreDmlReturningSqlRewriter
         if (returning.IsDefaultOrEmpty)
             return command;
 
-        ValidateTargetContract(command.TargetProvider, targetProfile);
+        var capabilityError = SqlDmlReturningCapabilityRules.TargetValidationError(
+            command.TargetProvider,
+            targetProfile);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
         ValidateColumns(returning);
 
         var projection = string.Join(", ", returning.Select(column =>
@@ -54,39 +55,6 @@ internal static class CoreDmlReturningSqlRewriter
         DeleteStatement delete => delete.Returning,
         _ => ImmutableArray<SqlIdentifier>.Empty
     };
-
-    private static void ValidateTargetContract(
-        SqlAgentToolType provider,
-        SqlProviderCapabilityProfile? targetProfile)
-    {
-        switch (provider)
-        {
-            case SqlAgentToolType.Postgres:
-                return;
-            case SqlAgentToolType.Sqlite when IsAtLeast(targetProfile, SqliteReturningVersion):
-                return;
-            case SqlAgentToolType.Sqlite:
-                throw new SqlCompilationException(
-                    "SQLite DML RETURNING requires an explicit target capability profile with ServerVersion 3.35 or newer.");
-            case SqlAgentToolType.Firebird when IsAtLeast(targetProfile, FirebirdMultiRowReturningVersion):
-                return;
-            case SqlAgentToolType.Firebird:
-                throw new SqlCompilationException(
-                    "Portable multi-row Firebird DSQL RETURNING requires an explicit target capability profile with ServerVersion 5.0 or newer.");
-            case SqlAgentToolType.MsSqlServer:
-                throw new SqlCompilationException(
-                    "SQL Server OUTPUT without INTO is trigger-sensitive and Core has no target-table trigger capability metadata; DML result rows remain fail-closed for SQL Server.");
-            case SqlAgentToolType.Oracle:
-                throw new SqlCompilationException(
-                    "Oracle DML RETURNING requires RETURNING INTO host or bind variables, which are not represented by the Core result-row execution contract.");
-            case SqlAgentToolType.MySQL:
-                throw new SqlCompilationException(
-                    "MySQL has no declared DML RETURNING result-row equivalent in the Core MySQL 8.4 target profile.");
-            default:
-                throw new SqlCompilationException(
-                    $"DML result rows are not represented for target provider {provider}.");
-        }
-    }
 
     private static void ValidateColumns(ImmutableArray<SqlIdentifier> columns)
     {
@@ -116,10 +84,4 @@ internal static class CoreDmlReturningSqlRewriter
                 "RETURNING * cannot be mixed with explicit RETURNING columns in the portable Core contract.");
         }
     }
-
-    private static bool IsAtLeast(
-        SqlProviderCapabilityProfile? profile,
-        Version required) =>
-        profile?.ServerVersion is { } actual
-        && actual.CompareTo(required) >= 0;
 }

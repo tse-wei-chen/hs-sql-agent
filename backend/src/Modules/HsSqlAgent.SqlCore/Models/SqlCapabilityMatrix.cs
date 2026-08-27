@@ -33,13 +33,6 @@ public static class SqlCapabilityMatrix
                 nameof(targetProfile));
         }
 
-        var dmlReturningEnabled = provider == SqlAgentToolType.Postgres
-            || provider == SqlAgentToolType.Sqlite
-                && targetProfile?.ServerVersion is { } sqliteVersion
-                && sqliteVersion.CompareTo(new Version(3, 35)) >= 0
-            || provider == SqlAgentToolType.Firebird
-                && targetProfile?.ServerVersion is { } firebirdVersion
-                && firebirdVersion.CompareTo(new Version(5, 0)) >= 0;
         var dmlConflictUpsertEnabled = provider == SqlAgentToolType.Postgres
             || provider == SqlAgentToolType.Sqlite
                 && targetProfile?.ServerVersion is { } sqliteUpsertVersion
@@ -119,23 +112,7 @@ public static class SqlCapabilityMatrix
             SqlNestedCteCapabilityRules.DmlNestedMatrixCapability(provider),
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
                 "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract."),
-            new("dml.returning_output", "dml",
-                dmlReturningEnabled ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
-                dmlReturningEnabled
-                    ? provider == SqlAgentToolType.Postgres
-                        ? "INSERT/UPDATE/DELETE may return unqualified target columns or a lone wildcard through native RETURNING. Result-producing mutations are marked structurally, materialized through the DML execution boundary, and the returned-row count must still match the approved affected-row count before commit."
-                        : provider == SqlAgentToolType.Sqlite
-                            ? "SQLite ServerVersion 3.35+ target profiles may return unqualified target columns or a lone wildcard through native RETURNING. The explicit target version is required; returned-row count remains part of approval revalidation before commit."
-                            : "Firebird ServerVersion 5.0+ target profiles may use the portable multi-row DSQL RETURNING contract for unqualified target columns or a lone wildcard. The explicit target version is required; returned-row count remains part of approval revalidation before commit."
-                    : provider == SqlAgentToolType.Sqlite
-                        ? "SQLite DML RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.35 or newer."
-                        : provider == SqlAgentToolType.Firebird
-                            ? "Portable multi-row Firebird DSQL RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 5.0 or newer."
-                            : provider == SqlAgentToolType.MsSqlServer
-                                ? "SQL Server OUTPUT without INTO is trigger-sensitive. Core does not yet carry target-table trigger capability metadata, so result rows remain fail-closed instead of assuming OUTPUT can be returned directly to the client."
-                                : provider == SqlAgentToolType.Oracle
-                                    ? "Oracle DML RETURNING requires RETURNING INTO host or bind variables, which are outside the Core result-row execution contract."
-                                    : "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."),
+            SqlDmlReturningCapabilityRules.MatrixCapability(provider, targetProfile),
             new("dml.upsert_merge", "dml",
                 dmlConflictUpsertEnabled ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
                 dmlConflictUpsertEnabled
