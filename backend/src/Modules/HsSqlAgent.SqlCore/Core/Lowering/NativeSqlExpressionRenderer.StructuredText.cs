@@ -17,6 +17,12 @@ internal static partial class NativeSqlExpressionRenderer
         bool dmlContext)
     {
         RequireArguments(function, 2);
+        var capabilityError = SqlJsonCapabilityRules.TargetValidationError(
+            "CORE_JSON_EXTRACT",
+            provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+
         var value = Render(
             function.Arguments[0],
             provider,
@@ -64,6 +70,12 @@ internal static partial class NativeSqlExpressionRenderer
         bool dmlContext)
     {
         RequireArguments(function, 3);
+        var capabilityError = SqlJsonCapabilityRules.TargetValidationError(
+            "CORE_JSON_SET",
+            provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+
         var value = Render(
             function.Arguments[0],
             provider,

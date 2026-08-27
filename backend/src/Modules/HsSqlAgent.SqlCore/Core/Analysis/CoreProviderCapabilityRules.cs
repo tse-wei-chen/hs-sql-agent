@@ -58,14 +58,10 @@ internal static class CoreProviderCapabilityRules
                 ValidateTemporalFormatCapability(name, provider);
                 break;
 
-            case "CORE_JSON_EXTRACT" when provider is not (
-                SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite):
-                throw CapabilityError(provider, "function.json_extract");
-
-            case "CORE_JSON_SET" when provider is not (
-                SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    or SqlAgentToolType.MsSqlServer):
-                throw CapabilityError(provider, "function.json_set");
+            case "CORE_JSON_EXTRACT":
+            case "CORE_JSON_SET":
+                ValidateJsonCapability(name, provider);
+                break;
 
             // SQL Server 2025 can expose REGEXP_LIKE at compatibility level 170+. The provider-wide
             // semantic pass therefore lets SQL Server reach the target-profile stage, which still
@@ -169,6 +165,17 @@ internal static class CoreProviderCapabilityRules
             rawUnit,
             provider,
             functionName);
+        if (error is not null)
+            throw new SqlCompilationException(error);
+    }
+
+    private static void ValidateJsonCapability(
+        string functionName,
+        SqlAgentToolType provider)
+    {
+        var error = SqlJsonCapabilityRules.TargetValidationError(
+            functionName,
+            provider);
         if (error is not null)
             throw new SqlCompilationException(error);
     }
