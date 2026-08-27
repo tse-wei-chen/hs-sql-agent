@@ -162,29 +162,12 @@ internal static class CoreProviderCapabilityRules
                 $"Canonical function '{functionName}' requires a literal date-part unit.");
         }
 
-        var unit = rawUnit.Trim().ToUpperInvariant();
-        var surfaceName = functionName == "CORE_DATE_ADD" ? "DATEADD" : "DATEDIFF";
-        if (provider is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Sqlite)
-        {
-            if (unit != "DAY")
-            {
-                throw CapabilityError(
-                    provider,
-                    $"{functionName.ToLowerInvariant()}.unit.{unit.ToLowerInvariant()}",
-                    $"{surfaceName} unit {unit} is not supported by {provider}.");
-            }
-            return;
-        }
-
-        // Firebird supports YEAR/MONTH/WEEK/DAY/HOUR/MINUTE/SECOND for the canonical units
-        // represented by Core, but not QUARTER.
-        if (provider == SqlAgentToolType.Firebird && unit == "QUARTER")
-        {
-            throw CapabilityError(
-                provider,
-                $"{functionName.ToLowerInvariant()}.unit.quarter",
-                $"{surfaceName} unit QUARTER is not supported by Firebird.");
-        }
+        var error = SqlDateMathCapabilityRules.TargetValidationError(
+            rawUnit,
+            provider,
+            functionName);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void ValidateJsonPath(
