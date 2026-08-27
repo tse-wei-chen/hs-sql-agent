@@ -37,6 +37,13 @@ public sealed class CoreSqlCompiler(
         CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile);
 
         var bound = _binder.Bind(parsed);
+        CoreJoinProfileValidator.Validate(
+            bound.Statement,
+            parsed.EnforceSourceDialectSyntax,
+            bound.SourceDialect,
+            parsed.SourceProfile,
+            targetProvider,
+            targetProfile);
         CoreAggregateLocalOrderingGuard.Validate(
             bound.Statement,
             parsed.EnforceSourceDialectSyntax,
@@ -92,6 +99,6 @@ public sealed class CoreSqlCompiler(
         };
         CoreNativeBackendCompatibility.ValidateQuery(executable.Statement, targetProvider);
 
-        return new NativeSqlRenderer(targetProvider).Lower(executable);
+        return new NativeSqlRenderer(targetProvider, targetProfile).Lower(executable);
     }
 }

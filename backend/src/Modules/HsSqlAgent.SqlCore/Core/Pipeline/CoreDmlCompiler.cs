@@ -41,6 +41,13 @@ public sealed class CoreDmlCompiler(
         ValidateMutationPolicy(parsed.Statement, policy);
 
         var bound = _binder.Bind(parsed);
+        CoreJoinProfileValidator.Validate(
+            bound.Statement,
+            parsed.EnforceSourceDialectSyntax,
+            bound.SourceDialect,
+            parsed.SourceProfile,
+            targetProvider,
+            targetProfile);
         CoreAggregateLocalOrderingGuard.Validate(
             bound.Statement,
             parsed.EnforceSourceDialectSyntax,
@@ -95,7 +102,7 @@ public sealed class CoreDmlCompiler(
 
         CoreNativeBackendCompatibility.ValidateDml(profiledStatement, targetProvider);
 
-        var command = new NativeSqlRenderer(targetProvider).Lower(executable);
+        var command = new NativeSqlRenderer(targetProvider, targetProfile).Lower(executable);
         var expectedKind = parsed.Statement switch
         {
             InsertStatement => SqlStatementKind.Insert,

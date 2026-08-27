@@ -9,9 +9,18 @@ namespace HsSqlAgent.SqlCore.Core.Lowering;
 /// not translate through a query-builder IR. Capability/semantic decisions remain owned by the
 /// earlier compiler stages; this renderer deterministically prints only validated canonical nodes.
 /// </summary>
-public sealed partial class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowerer
+public sealed partial class NativeSqlRenderer(
+    SqlAgentToolType provider,
+    SqlProviderCapabilityProfile? targetProfile = null) : IProviderLowerer
 {
     public SqlAgentToolType Provider { get; } = provider;
+
+    private SqlProviderCapabilityProfile? TargetProfile { get; } =
+        targetProfile is null || targetProfile.Provider == provider
+            ? targetProfile
+            : throw new ArgumentException(
+                $"Target capability profile declares provider {targetProfile.Provider}, but renderer provider is {provider}.",
+                nameof(targetProfile));
 
     public CompiledSqlCommand Lower(ExecutableSqlPlan plan)
     {
@@ -534,7 +543,8 @@ public sealed partial class NativeSqlRenderer(SqlAgentToolType provider) : IProv
 
         var capabilityError = SqlJoinCapabilityRules.TargetValidationError(
             join.Kind,
-            Provider);
+            Provider,
+            TargetProfile);
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
 
