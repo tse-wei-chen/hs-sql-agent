@@ -142,13 +142,11 @@ internal static partial class NativeSqlExpressionRenderer
         bool dmlContext)
     {
         RequireArguments(function, 2);
-        if (provider is SqlAgentToolType.MsSqlServer
-            or SqlAgentToolType.Sqlite
-            or SqlAgentToolType.Firebird)
-        {
-            throw new SqlCompilationException(
-                "REGEXP_LIKE is not supported by this provider.");
-        }
+        var capabilityError = SqlRegexCapabilityRules.TargetValidationError(
+            provider,
+            targetProfile: null);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
 
         var value = Render(
             function.Arguments[0],

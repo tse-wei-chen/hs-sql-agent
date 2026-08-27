@@ -33,8 +33,6 @@ public static class SqlCapabilityMatrix
                 nameof(targetProfile));
         }
 
-        var sqlServerRegexEnabled = provider == SqlAgentToolType.MsSqlServer
-            && targetProfile is { CompatibilityLevel: >= 170 };
         var dmlReturningEnabled = provider == SqlAgentToolType.Postgres
             || provider == SqlAgentToolType.Sqlite
                 && targetProfile?.ServerVersion is { } sqliteVersion
@@ -151,18 +149,7 @@ public static class SqlCapabilityMatrix
             new("json.path.simple", "json", SqlCapabilityStatus.Translated,
                 "Portable JSON paths are limited to constant property chains beginning at $, for example $.user.name; root-only, array-index, wildcard, filter, quoted property names, recursive descent, and dynamic paths are rejected before lowering."),
             SqlJsonCapabilityRules.SetMatrixCapability(provider),
-            new("regex.match", "regex",
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
-                    || sqlServerRegexEnabled
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
-                    ? "REGEXP_LIKE semantics are rendered using the provider's declared regex syntax."
-                    : provider == SqlAgentToolType.MsSqlServer && sqlServerRegexEnabled
-                        ? "SQL Server REGEXP_LIKE is enabled by the declared target capability profile at compatibility level 170 or above and is emitted natively."
-                        : provider == SqlAgentToolType.MsSqlServer
-                            ? "SQL Server REGEXP_LIKE requires a declared target capability profile with compatibility level 170 or above; absent or lower compatibility profiles remain fail-closed."
-                            : "Regex matching is rejected because no reliable native equivalent is declared."),
+            SqlRegexCapabilityRules.MatrixCapability(provider, targetProfile),
             new("window.basic", "window", SqlCapabilityStatus.Translated,
                 "OVER with PARTITION BY and ORDER BY is represented structurally; provider-specific function/order requirements are validated before lowering."),
             new("window.frame", "window", SqlCapabilityStatus.Translated,
