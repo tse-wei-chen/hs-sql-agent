@@ -50,15 +50,22 @@ public class CoreSemanticDriftGuardTests
         Assert.Contains("CONCAT", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_IlikeFromNonPostgresSource_FailsAtSourceSemanticBoundary()
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_IlikeFromNonPostgresSource_FailsAtSourceSemanticBoundary(
+        SqlAgentToolType sourceDialect)
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "SELECT name FROM users WHERE name ILIKE 'a%'",
-            SqlAgentToolType.MySQL,
+            sourceDialect,
             SqlAgentToolType.Postgres));
 
         Assert.Contains("PostgreSQL-specific", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(sourceDialect.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

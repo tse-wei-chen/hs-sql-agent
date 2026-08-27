@@ -201,7 +201,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 return;
             case BinaryExpr binary:
                 if (binary.Operator.Equals("ILIKE", StringComparison.OrdinalIgnoreCase)
-                    && provider != SqlAgentToolType.Postgres)
+                    && !SqlIlikeCapabilityRules.SupportsTarget(provider))
                 {
                     throw CapabilityError(provider, "operator.ilike");
                 }
