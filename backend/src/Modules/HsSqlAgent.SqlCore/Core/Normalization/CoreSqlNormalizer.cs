@@ -474,8 +474,12 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             _ => normalized
         };
 
-        if (normalized == "ILIKE" && context.SourceDialect != SqlAgentToolType.Postgres)
-            throw new SqlCompilationException($"ILIKE is PostgreSQL-specific and is not valid for source dialect {context.SourceDialect}.");
+        if (normalized == "ILIKE")
+        {
+            var error = SqlIlikeCapabilityRules.SourceValidationError(context.SourceDialect);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+        }
         if (normalized == "||" && context.SourceDialect == SqlAgentToolType.MySQL)
             throw new SqlCompilationException(
                 "MySQL '||' semantics depend on PIPES_AS_CONCAT sql_mode; Core rejects the operator because session sql_mode is not part of the compilation plan.");
