@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore.Core.Lowering;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
