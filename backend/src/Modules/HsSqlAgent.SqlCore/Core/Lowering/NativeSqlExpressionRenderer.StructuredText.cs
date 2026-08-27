@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Text.RegularExpressions;
 
 namespace HsSqlAgent.SqlCore.Core.Lowering;
 
@@ -22,6 +21,12 @@ internal static partial class NativeSqlExpressionRenderer
             provider);
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
+        var pathError = SqlJsonCapabilityRules.PathValidationError(
+            function,
+            "CORE_JSON_EXTRACT",
+            provider);
+        if (pathError is not null)
+            throw new SqlCompilationException(pathError);
 
         var value = Render(
             function.Arguments[0],
@@ -48,7 +53,8 @@ internal static partial class NativeSqlExpressionRenderer
                 "JSON_EXTRACT is not supported losslessly by this provider.");
         }
 
-        var segments = JsonPathSegments(function.Arguments[1]);
+        var segments = SqlJsonCapabilityRules.PropertyPathSegments(
+            function);
         var bindings = value.Bindings.ToBuilder();
         var placeholders = new List<string>();
         foreach (var segment in segments)
@@ -75,6 +81,12 @@ internal static partial class NativeSqlExpressionRenderer
             provider);
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
+        var pathError = SqlJsonCapabilityRules.PathValidationError(
+            function,
+            "CORE_JSON_SET",
+            provider);
+        if (pathError is not null)
+            throw new SqlCompilationException(pathError);
 
         var value = Render(
             function.Arguments[0],
@@ -124,7 +136,10 @@ internal static partial class NativeSqlExpressionRenderer
         }
 
         var pgPath = "{" +
-            string.Join(',', JsonPathSegments(function.Arguments[1])) +
+            string.Join(
+                ',',
+                SqlJsonCapabilityRules.PropertyPathSegments(
+                    function)) +
             "}";
         return new NativeSqlFragment(
             "JSONB_SET(CAST(" + value.Sql + " AS jsonb), CAST(" + P +
@@ -170,36 +185,5 @@ internal static partial class NativeSqlExpressionRenderer
                 pattern);
     }
 
-    private static IReadOnlyList<string> JsonPathSegments(
-        SqlExpr expression)
-    {
-        if (expression is not LiteralExpr { Value: string path })
-        {
-            throw new SqlCompilationException(
-                "JSON path must be a string literal for structured PostgreSQL lowering.");
-        }
 
-        var trimmed = path.Trim();
-        if (!trimmed.StartsWith('$'))
-            throw new SqlCompilationException("Unsupported JSON path '" + path + "'.");
-
-        var remainder = trimmed[1..].TrimStart('.');
-        if (string.IsNullOrEmpty(remainder))
-            return [];
-
-        var segments = remainder.Split(
-            '.',
-            StringSplitOptions.RemoveEmptyEntries |
-            StringSplitOptions.TrimEntries);
-        if (segments.Any(segment => !Regex.IsMatch(
-                segment,
-                "^[A-Za-z_][A-Za-z0-9_]*$",
-                RegexOptions.CultureInvariant)))
-        {
-            throw new SqlCompilationException(
-                "Unsupported structured JSON path '" + path + "'.");
-        }
-
-        return segments;
-    }
 }

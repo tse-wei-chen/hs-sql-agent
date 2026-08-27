@@ -1,12 +1,18 @@
+using System.Text.RegularExpressions;
+
 namespace HsSqlAgent.SqlCore.Models;
 
 /// <summary>
-/// Single target-provider contract for the portable JSON extraction and mutation families.
-/// JSON path shape validation remains a separate semantic contract in the provider validator and
-/// renderer because path expressiveness is independent of whether a provider exposes a lowering.
+/// Single contract for portable JSON extraction/mutation target support and the shared constant
+/// property-chain path subset used by semantic validation, native lowering, and capability-matrix
+/// projection.
 /// </summary>
 internal static class SqlJsonCapabilityRules
 {
+    private static readonly Regex PortableJsonPropertyPath = new(
+        @"^\$\.[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$",
+        RegexOptions.CultureInvariant);
+
     internal static bool SupportsExtract(SqlAgentToolType provider) =>
         provider is SqlAgentToolType.Postgres
             or SqlAgentToolType.MySQL
@@ -36,6 +42,61 @@ internal static class SqlJsonCapabilityRules
             "Unsupported canonical JSON function.")
     };
 
+    internal static string? PathValidationError(
+        FunctionCallExpr function,
+        string canonicalFunctionName,
+        SqlAgentToolType provider)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+
+        if (function.Arguments.Length < 2
+            || function.Arguments[1] is not LiteralExpr { Value: string path })
+        {
+            return CapabilityError(
+                provider,
+                "json.path.constant",
+                $"{canonicalFunctionName} requires a constant JSON path in the portable Core model.");
+        }
+
+        if (!PortableJsonPropertyPath.IsMatch(path))
+        {
+            return CapabilityError(
+                provider,
+                "json.path.property_chain",
+                $"JSON path '{path}' is outside the portable Core property-chain subset. " +
+                "Only paths such as '$.user.name' are supported; root-only paths, array indexes, " +
+                "wildcards, filters, quoted property names, and recursive descent fail closed.");
+        }
+
+        return null;
+    }
+
+    internal static IReadOnlyList<string> PropertyPathSegments(
+        FunctionCallExpr function)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+
+        if (function.Arguments.Length < 2
+            || function.Arguments[1] is not LiteralExpr { Value: string path }
+            || !PortableJsonPropertyPath.IsMatch(path))
+        {
+            throw new SqlCompilationException(
+                "Canonical JSON lowering requires a validated constant property-chain path.");
+        }
+
+        return path[2..].Split(
+            '.',
+            StringSplitOptions.RemoveEmptyEntries |
+            StringSplitOptions.TrimEntries);
+    }
+
+    internal static SqlCapability PathMatrixCapability() =>
+        new(
+            "json.path.simple",
+            "json",
+            SqlCapabilityStatus.Translated,
+            "Portable JSON paths are limited to constant property chains beginning at $, for example $.user.name; root-only, array-index, wildcard, filter, quoted property names, recursive descent, and dynamic paths are rejected before lowering.");
+
     internal static SqlCapability ExtractMatrixCapability(
         SqlAgentToolType provider) =>
         new(
@@ -53,6 +114,12 @@ internal static class SqlJsonCapabilityRules
                 _ =>
                     "Constant JSON property-chain paths such as $.user.name are normalized and translated; root-only, array-index, wildcard, filter, quoted-property, recursive-descent, and dynamic paths fail closed."
             });
+
+    private static string CapabilityError(
+        SqlAgentToolType provider,
+        string capability,
+        string detail) =>
+        $"{detail.Trim()} SQL capability '{capability}' is not supported by provider {provider} for this Core plan.";
 
     internal static SqlCapability SetMatrixCapability(
         SqlAgentToolType provider) =>
