@@ -1145,6 +1145,9 @@ internal static class NativeSqlExpressionRenderer
         Func<SqlStatement, NativeSqlFragment> renderSubquery,
         bool dmlContext)
     {
+        if (@case.Branches.IsDefaultOrEmpty)
+            throw new SqlCompilationException("Searched CASE requires at least one WHEN branch.");
+
         var bindings = ImmutableArray.CreateBuilder<object?>();
         var parts = new List<string>();
         foreach (var branch in @case.Branches)
