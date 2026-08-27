@@ -209,72 +209,16 @@ internal static class CoreSourceDialectValidator
         var name = IdentifierText(function.Name).ToUpperInvariant();
         var arity = function.Arguments.Length;
 
+        if (SqlSourceFunctionRegistry.Find(name) is { } contract)
+        {
+            var error = contract.ValidationError(sourceDialect, arity);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+            return;
+        }
+
         switch (name)
         {
-            case "DATEADD":
-                Require(name, sourceDialect, sourceDialect is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Firebird && arity == 3,
-                    "DATEADD is modeled as a three-argument SQL Server/Firebird source function.");
-                return;
-
-            case "DATEDIFF":
-                Require(name, sourceDialect,
-                    sourceDialect switch
-                    {
-                        SqlAgentToolType.MsSqlServer or SqlAgentToolType.Firebird => arity == 3,
-                        SqlAgentToolType.MySQL => arity == 2,
-                        _ => false
-                    },
-                    "DATEDIFF is modeled as SQL Server/Firebird (3 arguments) or MySQL (2 arguments) source syntax.");
-                return;
-
-            case "DATE_FORMAT":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.MySQL);
-                return;
-            case "FORMAT":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.MsSqlServer,
-                    "Core models FORMAT as SQL Server date-format syntax; MySQL/SQLite FORMAT functions have different semantics.");
-                return;
-            case "TO_DATE":
-                Require(name, sourceDialect, sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle,
-                    "TO_DATE is modeled only for PostgreSQL and Oracle source syntax.");
-                return;
-
-            case "CHARINDEX":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.MsSqlServer);
-                return;
-            case "LOCATE":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.MySQL);
-                return;
-            case "STRPOS":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.Postgres);
-                return;
-            case "INSTR":
-                Require(name, sourceDialect,
-                    sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle,
-                    "INSTR is modeled for MySQL, SQLite, and Oracle source syntax.");
-                return;
-
-            case "JSON_EXTRACT":
-            case "JSON_SET":
-                Require(name, sourceDialect,
-                    sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite,
-                    $"{name} is modeled for MySQL and SQLite source syntax.");
-                return;
-
-            case "REGEXP_LIKE":
-                Require(name, sourceDialect,
-                    sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer,
-                    "REGEXP_LIKE is modeled for MySQL, Oracle, and SQL Server 2025+ source syntax.");
-                return;
-
-            case "GETDATE":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.MsSqlServer);
-                return;
-            case "NOW":
-                Require(name, sourceDialect,
-                    sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL,
-                    "NOW is modeled for PostgreSQL and MySQL source syntax.");
-                return;
             case "CURRENT_DATE":
                 ValidateCurrentTemporalSource(
                     SqlCurrentTemporalKind.Date,
@@ -289,28 +233,6 @@ internal static class CoreSourceDialectValidator
                 ValidateCurrentTemporalSource(
                     SqlCurrentTemporalKind.Timestamp,
                     sourceDialect);
-                return;
-
-            case "STRING_AGG":
-                Require(name, sourceDialect,
-                    (sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.MsSqlServer) && arity == 2,
-                    "STRING_AGG is modeled as a two-argument PostgreSQL/SQL Server source function.");
-                return;
-            case "GROUP_CONCAT":
-                Require(name, sourceDialect,
-                    sourceDialect == SqlAgentToolType.MySQL
-                    || sourceDialect == SqlAgentToolType.Sqlite && arity is 1 or 2,
-                    "GROUP_CONCAT is modeled for MySQL source syntax and SQLite with one or two arguments.");
-                return;
-            case "LISTAGG":
-                Require(name, sourceDialect,
-                    sourceDialect == SqlAgentToolType.Oracle && arity is 1 or 2,
-                    "LISTAGG is modeled for Oracle source syntax with one or two arguments.");
-                return;
-            case "LIST":
-                Require(name, sourceDialect,
-                    sourceDialect == SqlAgentToolType.Firebird && arity is 1 or 2,
-                    "LIST is modeled for Firebird source syntax with one or two arguments.");
                 return;
         }
     }
@@ -338,25 +260,6 @@ internal static class CoreSourceDialectValidator
             sourceDialect);
         if (error is not null)
             throw new SqlCompilationException(error);
-    }
-
-    private static void RequireProvider(
-        string function,
-        SqlAgentToolType actual,
-        SqlAgentToolType expected,
-        string? detail = null) =>
-        Require(function, actual, actual == expected,
-            detail ?? $"{function} is modeled as {expected} source syntax.");
-
-    private static void Require(
-        string function,
-        SqlAgentToolType sourceDialect,
-        bool condition,
-        string detail)
-    {
-        if (condition) return;
-        throw new SqlCompilationException(
-            $"Function '{function}' is not valid for declared source dialect {sourceDialect} in the Core source capability profile. {detail}");
     }
 
     private static string IdentifierText(SqlIdentifier identifier) =>
