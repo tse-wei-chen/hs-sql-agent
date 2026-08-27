@@ -17,8 +17,12 @@ internal static class CoreProviderProfileRewriter
         ArgumentNullException.ThrowIfNull(statement);
         ValidateProfile(targetProvider, targetProfile);
 
-        if (targetProvider != SqlAgentToolType.MsSqlServer)
+        if (targetProvider is not (
+                SqlAgentToolType.MsSqlServer
+                or SqlAgentToolType.Firebird))
+        {
             return statement;
+        }
 
         return RewriteStatement(statement, targetProvider, targetProfile);
     }
@@ -177,7 +181,11 @@ internal static class CoreProviderProfileRewriter
         SqlAgentToolType targetProvider,
         SqlProviderCapabilityProfile? targetProfile) => expression switch
     {
-        LiteralExpr or ColumnExpr or BoundColumnExpr or IntervalExpr => expression,
+        LiteralExpr literal => RewriteLiteral(
+            literal,
+            targetProvider,
+            targetProfile),
+        ColumnExpr or BoundColumnExpr or IntervalExpr => expression,
         UnaryExpr unary => unary with
         {
             Operand = RewriteExpression(unary.Operand, targetProvider, targetProfile)
@@ -248,6 +256,24 @@ internal static class CoreProviderProfileRewriter
         _ => throw new SqlCompilationException(
             $"Unsupported expression during provider-profile rewrite: {expression.GetType().Name}")
     };
+
+    private static LiteralExpr RewriteLiteral(
+        LiteralExpr literal,
+        SqlAgentToolType targetProvider,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        if (targetProvider == SqlAgentToolType.Firebird
+            && literal.Value is SqlOffsetDateTimeValue or DateTimeOffset)
+        {
+            var error = SqlOffsetTimestampCapabilityRules.TargetValidationError(
+                targetProvider,
+                targetProfile);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+        }
+
+        return literal;
+    }
 
     private static BinaryExpr RewriteBinary(
         BinaryExpr binary,

@@ -20,7 +20,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-27.47";
+    public const string Version = "2026-08-27.48";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -140,11 +140,7 @@ public static class SqlCapabilityMatrix
                 provider == SqlAgentToolType.Oracle
                     ? "Oracle has no standalone TIME type; standalone TIME values are rejected."
                     : "TIME values are bound using the provider's native temporal parameter type."),
-            new("temporal.offset_timestamp", "temporal",
-                provider == SqlAgentToolType.MySQL ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
-                provider == SqlAgentToolType.MySQL
-                    ? "MySQL has no native timestamp type that preserves an input UTC offset; offset values are rejected."
-                    : "Offset timestamps are bound natively; PostgreSQL and Firebird normalize the represented instant to UTC."),
+            SqlOffsetTimestampCapabilityRules.MatrixCapability(provider, targetProfile),
             SqlCurrentTemporalCapabilityRules.MatrixCapability(provider),
             new("temporal.date_arithmetic", "temporal", SqlCapabilityStatus.Translated,
                 "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering."),
