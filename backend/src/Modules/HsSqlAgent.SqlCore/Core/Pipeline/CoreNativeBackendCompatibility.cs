@@ -273,6 +273,8 @@ internal static class CoreNativeBackendCompatibility
             case FunctionCallExpr function:
                 foreach (var argument in function.Arguments)
                     VisitExpression(argument, provider, allowNestedCteFragments);
+                foreach (var item in function.AggregateOrderBy)
+                    VisitExpression(item.Expression, provider, allowNestedCteFragments);
                 return;
             case FilterExpr filter:
                 VisitExpression(filter.Expression, provider, allowNestedCteFragments);

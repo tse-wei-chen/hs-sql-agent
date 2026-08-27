@@ -198,7 +198,10 @@ internal static class CoreSourceProfileRewriter
         {
             Arguments = function.Arguments
                 .Select(argument => RewriteExpression(argument, rewriteOperator))
-                .ToImmutableArray()
+                .ToImmutableArray(),
+            AggregateOrderBy = RewriteOrderBy(
+                function.AggregateOrderBy,
+                rewriteOperator)
         },
         FilterExpr filter => filter with
         {

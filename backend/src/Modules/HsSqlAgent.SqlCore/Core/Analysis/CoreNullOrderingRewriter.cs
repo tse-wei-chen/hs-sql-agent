@@ -222,7 +222,12 @@ internal static class CoreNullOrderingRewriter
         {
             Arguments = function.Arguments
                 .Select(argument => RewriteExpression(argument, targetProvider))
-                .ToImmutableArray()
+                .ToImmutableArray(),
+            AggregateOrderBy = RewriteOrderBy(
+                function.AggregateOrderBy,
+                targetProvider,
+                allowInverseColumnRewrite: true,
+                blockedAliases: null)
         },
         FilterExpr filter => filter with
         {

@@ -285,7 +285,14 @@ internal static class CoreProviderProfileRewriter
         var arguments = function.Arguments
             .Select(argument => RewriteExpression(argument, targetProvider, targetProfile))
             .ToImmutableArray();
-        var rewritten = function with { Arguments = arguments };
+        var rewritten = function with
+        {
+            Arguments = arguments,
+            AggregateOrderBy = RewriteOrderBy(
+                function.AggregateOrderBy,
+                targetProvider,
+                targetProfile)
+        };
 
         if (!IdentifierText(function.Name).Equals("CORE_REGEX_MATCH", StringComparison.OrdinalIgnoreCase))
             return rewritten;

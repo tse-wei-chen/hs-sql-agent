@@ -4,8 +4,8 @@ namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
 /// Canonicalizes a modeled CTE column-alias list into explicit aliases on the CTE output
-/// projection. SqlKata does not model the `cte(col1, col2) AS (...)` surface directly, but the
-/// projection-alias form is semantically equivalent when the output width is statically known.
+/// projection. The native renderer consumes explicit projection aliases so the canonical AST has
+/// one provider-independent representation when the output width is statically known.
 /// Shapes whose output width depends on wildcard expansion remain fail-closed.
 /// </summary>
 internal static class CoreCteColumnAliasRewriter
@@ -164,7 +164,11 @@ internal static class CoreCteColumnAliasRewriter
         },
         FunctionCallExpr function => function with
         {
-            Arguments = function.Arguments.Select(RewriteExpression).ToImmutableArray()
+            Arguments = function.Arguments.Select(RewriteExpression).ToImmutableArray(),
+            AggregateOrderBy = function.AggregateOrderBy.Select(item => item with
+            {
+                Expression = RewriteExpression(item.Expression)
+            }).ToImmutableArray()
         },
         FilterExpr filter => filter with
         {
