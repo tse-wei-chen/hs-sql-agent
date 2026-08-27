@@ -11,9 +11,6 @@ namespace HsSqlAgent.SqlCore.Core.Lowering;
 /// </summary>
 internal static class CoreDmlConflictSqlRewriter
 {
-    private static readonly Version SqliteUpsertVersion = new(3, 24);
-    private static readonly Version MySqlProposedRowAliasVersion = new(8, 0, 19);
-
     public static CompiledSqlCommand Apply(
         CompiledSqlCommand command,
         InsertStatement insert,
@@ -114,12 +111,11 @@ internal static class CoreDmlConflictSqlRewriter
 
         ValidateMySqlUniqueKeyTarget(conflict, assurance);
 
-        if (targetProfile?.ServerVersion is not { } version
-            || version.CompareTo(MySqlProposedRowAliasVersion) < 0)
-        {
-            throw new SqlCompilationException(
-                "MySQL conflict lowering requires an explicit target capability profile with ServerVersion 8.0.19 or newer so Core can use the proposed-row alias form instead of deprecated VALUES(column) semantics.");
-        }
+        var capabilityError =
+            SqlDmlUpsertCapabilityRules.MySqlConditionalTargetValidationError(
+                targetProfile);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
 
         var aliasName = CreateMySqlProposedRowAlias(insert);
         var alias = CoreIdentifierSqlRenderer.Render(
@@ -351,23 +347,10 @@ internal static class CoreDmlConflictSqlRewriter
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? targetProfile)
     {
-        switch (provider)
-        {
-            case SqlAgentToolType.Postgres:
-                return;
-            case SqlAgentToolType.Sqlite when targetProfile?.ServerVersion is { } version
-                && version.CompareTo(SqliteUpsertVersion) >= 0:
-                return;
-            case SqlAgentToolType.Sqlite:
-                throw new SqlCompilationException(
-                    "SQLite UPSERT requires an explicit target capability profile with ServerVersion 3.24 or newer.");
-            case SqlAgentToolType.MsSqlServer:
-            case SqlAgentToolType.Oracle:
-                throw new SqlCompilationException(
-                    $"Target provider {provider} requires MERGE-style source/match semantics; portable MERGE remains fail-closed until Core models source-row cardinality and match guarantees.");
-            default:
-                throw new SqlCompilationException(
-                    $"Portable INSERT conflict handling is not represented for target provider {provider}.");
-        }
+        var error = SqlDmlUpsertCapabilityRules.DirectTargetValidationError(
+            provider,
+            targetProfile);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 }
