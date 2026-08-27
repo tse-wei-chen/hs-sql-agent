@@ -111,7 +111,10 @@ public class CoreSourceDialectValidationTests
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres);
 
-        Assert.Contains("INTERVAL '1 day'", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS interval)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("1 day", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "1 day"));
     }
 
     [Theory]

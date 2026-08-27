@@ -50,8 +50,9 @@ public sealed class CoreOracleStringAggregateOrderingTests
             new SqlExecutionPlanPolicy());
 
         Assert.Contains("STRING_AGG(", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("''", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("''", command.Sql, StringComparison.Ordinal);
         Assert.DoesNotContain("','", command.Sql, StringComparison.Ordinal);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, string.Empty));
         Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 

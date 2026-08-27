@@ -30,9 +30,11 @@ internal static class CoreDmlReturningSqlRewriter
         ValidateTargetContract(command.TargetProvider, targetProfile);
         ValidateColumns(returning);
 
-        var compiler = SqlKataProviderLowerer.CreateCompiler(command.TargetProvider);
         var projection = string.Join(", ", returning.Select(column =>
-            CoreIdentifierSqlRenderer.Render(column, compiler, allowWildcard: true)));
+            CoreIdentifierSqlRenderer.Render(
+                column,
+                command.TargetProvider,
+                allowWildcard: true)));
         var rewritten = command with
         {
             Sql = command.Sql.TrimEnd().TrimEnd(';') + " RETURNING " + projection,

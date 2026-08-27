@@ -25,9 +25,6 @@ COPY backend/src/Modules/HsSqlAgent.Provider.Sqlite/HsSqlAgent.Provider.Sqlite.c
 COPY backend/src/Modules/HsSqlAgent.Provider.SqlServer/HsSqlAgent.Provider.SqlServer.csproj ./backend/src/Modules/HsSqlAgent.Provider.SqlServer/
 COPY backend/src/Modules/HsSqlAgent.Provider.Oracle/HsSqlAgent.Provider.Oracle.csproj ./backend/src/Modules/HsSqlAgent.Provider.Oracle/
 COPY backend/src/Modules/HsSqlAgent.Provider.Firebird/HsSqlAgent.Provider.Firebird.csproj ./backend/src/Modules/HsSqlAgent.Provider.Firebird/
-COPY backend/src/Modules/SqlKata.Service/Directory.Packages.props ./backend/src/Modules/SqlKata.Service/
-COPY backend/src/Modules/SqlKata.Service/QueryBuilder/QueryBuilder.csproj ./backend/src/Modules/SqlKata.Service/QueryBuilder/
-COPY backend/src/Modules/SqlKata.Service/SqlKata.Execution/SqlKata.Execution.csproj ./backend/src/Modules/SqlKata.Service/SqlKata.Execution/
 COPY backend/src/Infrastructure/Infrastructure.csproj ./backend/src/Infrastructure/
 COPY backend/src/Modules/Auth.Service/Auth.Service.csproj ./backend/src/Modules/Auth.Service/
 COPY backend/src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj ./backend/src/Modules/HsSqlAgent.PostgresMigrations/

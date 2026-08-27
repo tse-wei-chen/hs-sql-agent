@@ -171,6 +171,8 @@ internal static class CoreSqlSemanticValidator
             case FunctionCallExpr function:
                 foreach (var argument in function.Arguments)
                     ValidateSetOrderingReferences(argument, outputNames, provider);
+                foreach (var item in function.AggregateOrderBy)
+                    ValidateSetOrderingReferences(item.Expression, outputNames, provider);
                 return;
             case FilterExpr filter:
                 ValidateSetOrderingReferences(filter.Expression, outputNames, provider);
@@ -439,6 +441,15 @@ internal static class CoreSqlSemanticValidator
         var nextInsideSetFunction = insideSetFunction || isAggregate || isWindowFunction;
         foreach (var argument in function.Arguments)
             Visit(argument, context, nextInsideSetFunction, withinWindow: false, provider);
+        foreach (var item in function.AggregateOrderBy)
+        {
+            Visit(
+                item.Expression,
+                ClauseContext.OrderBy,
+                nextInsideSetFunction,
+                withinWindow: false,
+                provider);
+        }
     }
 
     private static bool IsWildcard(SqlIdentifier identifier) =>

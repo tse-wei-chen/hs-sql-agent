@@ -42,6 +42,6 @@ immutable `CompiledSqlCommand`; this package does not open database connections 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and
   provider-specific runtime behavior.
 - Use `HsSqlAgent.Server` to embed the complete MCP SQL Agent in ASP.NET Core.
-- The bundled SqlKata fork is an internal implementation detail and requires no separate package.
+- SQL lowering is rendered directly from the validated canonical Core AST; SqlCore has no query-builder backend dependency.
 
 Project: https://github.com/tse-wei-chen/hs-sql-agent

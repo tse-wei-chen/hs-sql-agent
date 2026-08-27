@@ -36,24 +36,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SqlKata.Service/QueryBuilder/QueryBuilder.csproj" PrivateAssets="All" />
-  </ItemGroup>
-
-  <ItemGroup>
     <EmbeddedResource Include="SqlTranslation/Functions/Definitions/*.json" />
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
-
-  <!-- The compiler currently uses a small forked SqlKata build. Keep that implementation detail
-       inside the package until the fork can be upstreamed or assigned an explicit package identity. -->
-  <PropertyGroup>
-    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
-  </PropertyGroup>
-  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
-    <ItemGroup>
-      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)"
-                            Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'" />
-    </ItemGroup>
-  </Target>
 
 </Project>

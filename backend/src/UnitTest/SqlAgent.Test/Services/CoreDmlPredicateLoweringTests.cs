@@ -53,7 +53,10 @@ public class CoreDmlPredicateLoweringTests
             SqlAgentToolType.Postgres);
 
         Assert.Contains("CURRENT_TIMESTAMP", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("INTERVAL '1 day'", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS interval)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("1 day", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "1 day"));
     }
 
     [Fact]

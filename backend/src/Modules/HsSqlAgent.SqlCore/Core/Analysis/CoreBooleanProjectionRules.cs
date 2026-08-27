@@ -50,7 +50,7 @@ internal static class CoreBooleanProjectionRules
             $"SQL capability 'dml.insert.boolean_value' is not supported by provider {provider} for this Core plan.");
     }
 
-    private static bool IsDefinitelyBoolean(SqlExpr expression, SqlAgentToolType provider) => expression switch
+    internal static bool IsDefinitelyBoolean(SqlExpr expression, SqlAgentToolType provider) => expression switch
     {
         LiteralExpr { Value: bool } => true,
         IsNullExpr or InExpr or BetweenExpr or ExistsExpr => true,
@@ -63,6 +63,20 @@ internal static class CoreBooleanProjectionRules
         CaseExpr @case => IsBooleanCase(@case, provider),
         _ => false
     };
+
+    internal static bool HasOnlyLiteralBooleanCaseResults(CaseExpr @case)
+    {
+        ArgumentNullException.ThrowIfNull(@case);
+
+        foreach (var branch in @case.Branches)
+        {
+            if (!IsBooleanOrNullLiteral(branch.Value))
+                return false;
+        }
+
+        return @case.ElseExpression is null
+            || IsBooleanOrNullLiteral(@case.ElseExpression);
+    }
 
     private static bool IsBooleanCase(CaseExpr @case, SqlAgentToolType provider)
     {
@@ -89,6 +103,9 @@ internal static class CoreBooleanProjectionRules
 
         return sawBooleanResult;
     }
+
+    private static bool IsBooleanOrNullLiteral(SqlExpr expression) =>
+        expression is LiteralExpr { Value: bool or null };
 
     private static bool IsNullLiteral(SqlExpr expression) =>
         expression is LiteralExpr { Value: null };

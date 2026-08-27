@@ -15,7 +15,7 @@ public abstract class SqlProviderBase :
     public abstract SqlAgentToolType DbType { get; }
     public SqlAgentToolType Type => DbType;
     public IDbConnectionFactory Connections => this;
-    public IProviderLowerer Lowerer => _lowerer ??= new SqlKataProviderLowerer(DbType);
+    public IProviderLowerer Lowerer => _lowerer ??= new NativeSqlRenderer(DbType);
     public IProviderMetadataReader Metadata => this;
     public IProviderErrorMapper Errors => _errors ??= new ProviderExecutionErrorMapper(DbType);
     public virtual IDmlPreviewTransactionFactory PreviewTransactions =>

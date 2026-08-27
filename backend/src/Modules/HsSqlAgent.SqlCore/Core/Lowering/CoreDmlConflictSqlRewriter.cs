@@ -1,5 +1,4 @@
 using HsSqlAgent.SqlCore.Core.Execution;
-using SqlKata.Compilers;
 
 namespace HsSqlAgent.SqlCore.Core.Lowering;
 
@@ -49,8 +48,9 @@ internal static class CoreDmlConflictSqlRewriter
         }
 
         ValidateTargetContract(command.TargetProvider, targetProfile);
-        var compiler = SqlKataProviderLowerer.CreateCompiler(command.TargetProvider);
-        var suffix = RenderOnConflictSuffix(insert.Conflict, compiler);
+        var suffix = RenderOnConflictSuffix(
+            insert.Conflict,
+            command.TargetProvider);
         return RecomputeFingerprint(
             command with
             {
@@ -84,9 +84,11 @@ internal static class CoreDmlConflictSqlRewriter
                 "Firebird conflict lowering expected the Core INSERT backend to emit an INSERT INTO statement.");
         }
 
-        var compiler = SqlKataProviderLowerer.CreateCompiler(SqlAgentToolType.Firebird);
         var matching = string.Join(", ", conflict.TargetColumns.Select(column =>
-            CoreIdentifierSqlRenderer.Render(column, compiler, allowWildcard: false)));
+            CoreIdentifierSqlRenderer.Render(
+                column,
+                SqlAgentToolType.Firebird,
+                allowWildcard: false)));
         var rewritten = command with
         {
             Sql = "UPDATE OR " + sql + $" MATCHING ({matching})",
@@ -119,16 +121,21 @@ internal static class CoreDmlConflictSqlRewriter
                 "MySQL conflict lowering requires an explicit target capability profile with ServerVersion 8.0.19 or newer so Core can use the proposed-row alias form instead of deprecated VALUES(column) semantics.");
         }
 
-        var compiler = SqlKataProviderLowerer.CreateCompiler(SqlAgentToolType.MySQL);
         var aliasName = CreateMySqlProposedRowAlias(insert);
         var alias = CoreIdentifierSqlRenderer.Render(
             SqlIdentifier.Unquoted(aliasName, SourceSpan.Unknown),
-            compiler,
+            SqlAgentToolType.MySQL,
             allowWildcard: false);
         var assignments = string.Join(", ", conflict.Assignments.Select(assignment =>
-            CoreIdentifierSqlRenderer.Render(assignment.Column, compiler, allowWildcard: false)
+            CoreIdentifierSqlRenderer.Render(
+                assignment.Column,
+                SqlAgentToolType.MySQL,
+                allowWildcard: false)
             + " = " + alias + "."
-            + CoreIdentifierSqlRenderer.Render(assignment.ProposedColumn, compiler, allowWildcard: false)));
+            + CoreIdentifierSqlRenderer.Render(
+                assignment.ProposedColumn,
+                SqlAgentToolType.MySQL,
+                allowWildcard: false)));
         var sql = command.Sql.TrimEnd().TrimEnd(';');
         var rewritten = command with
         {
@@ -237,17 +244,28 @@ internal static class CoreDmlConflictSqlRewriter
         }
     }
 
-    private static string RenderOnConflictSuffix(InsertConflictClause conflict, Compiler compiler)
+    private static string RenderOnConflictSuffix(
+        InsertConflictClause conflict,
+        SqlAgentToolType provider)
     {
         var targets = string.Join(", ", conflict.TargetColumns.Select(column =>
-            CoreIdentifierSqlRenderer.Render(column, compiler, allowWildcard: false)));
+            CoreIdentifierSqlRenderer.Render(
+                column,
+                provider,
+                allowWildcard: false)));
         if (conflict.Action == InsertConflictActionKind.DoNothing)
             return $" ON CONFLICT ({targets}) DO NOTHING";
 
         var assignments = string.Join(", ", conflict.Assignments.Select(assignment =>
-            CoreIdentifierSqlRenderer.Render(assignment.Column, compiler, allowWildcard: false)
+            CoreIdentifierSqlRenderer.Render(
+                assignment.Column,
+                provider,
+                allowWildcard: false)
             + " = EXCLUDED."
-            + CoreIdentifierSqlRenderer.Render(assignment.ProposedColumn, compiler, allowWildcard: false)));
+            + CoreIdentifierSqlRenderer.Render(
+                assignment.ProposedColumn,
+                provider,
+                allowWildcard: false)));
         return $" ON CONFLICT ({targets}) DO UPDATE SET {assignments}";
     }
 

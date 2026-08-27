@@ -42,6 +42,21 @@ public class CoreMySqlStringAggregateTests
     }
 
     [Fact]
+    public void Compile_MySqlStringAggregateSeparator_WithBackslash_UsesModeIndependentUtf8HexLiteral()
+    {
+        var command = Compile(
+            "SELECT STRING_AGG(name, '\\''雪') FROM users",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL);
+
+        Assert.Contains(
+            " SEPARATOR 0x5C27E99BAA",
+            command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\\''雪", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Compile_StringAggregateDynamicSeparator_FailsAtCapabilityBoundary()
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
@@ -74,7 +89,8 @@ public class CoreMySqlStringAggregateTests
             SqlAgentToolType.Postgres);
 
         Assert.Contains("STRING_AGG(", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("','", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("','", command.Sql, StringComparison.Ordinal);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, ","));
     }
 
     private static CompiledSqlCommand Compile(

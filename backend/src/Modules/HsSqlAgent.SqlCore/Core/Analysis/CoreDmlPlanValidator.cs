@@ -145,6 +145,8 @@ public sealed class CoreDmlPlanValidator : ISqlPlanValidator
             case FunctionCallExpr function:
                 foreach (var argument in function.Arguments)
                     ValidateInsertValueScope(argument);
+                foreach (var item in function.AggregateOrderBy)
+                    ValidateInsertValueScope(item.Expression);
                 return;
             case FilterExpr filter:
                 ValidateInsertValueScope(filter.Expression);

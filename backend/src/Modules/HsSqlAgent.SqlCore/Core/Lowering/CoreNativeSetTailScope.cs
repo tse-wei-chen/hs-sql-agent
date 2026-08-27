@@ -2,11 +2,11 @@ namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Defines the portable direct-tail subset for a set-operation query. Core normally places a set
-/// query behind SELECT * FROM (...) _set so SqlKata can render ORDER/LIMIT after UNION. That wrapper
+/// query behind SELECT * FROM (...) _set to give the statement tail an explicit output scope. That wrapper
 /// is not correlation-safe inside scalar/EXISTS expressions, so only output-name and output-ordinal
 /// ordering may use the direct set-tail renderer. Richer ordering remains fail-closed there.
 /// </summary>
-internal static class CoreSqlKataSetTailScope
+internal static class CoreNativeSetTailScope
 {
     public static bool CanRenderDirectTail(QueryStatement statement) =>
         !statement.SetOperations.IsDefaultOrEmpty

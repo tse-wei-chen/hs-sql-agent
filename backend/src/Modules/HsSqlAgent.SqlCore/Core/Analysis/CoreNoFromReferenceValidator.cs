@@ -144,6 +144,13 @@ internal static class CoreNoFromReferenceValidator
                         provider,
                         allowCountWildcard: isCountStar && i == 0);
                 }
+                foreach (var item in function.AggregateOrderBy)
+                {
+                    ValidateNoFromExpression(
+                        item.Expression,
+                        provider,
+                        allowCountWildcard: false);
+                }
                 return;
             }
             case FilterExpr filter:
@@ -213,6 +220,8 @@ internal static class CoreNoFromReferenceValidator
             case FunctionCallExpr function:
                 foreach (var argument in function.Arguments)
                     VisitNestedSubqueries(argument, provider);
+                foreach (var item in function.AggregateOrderBy)
+                    VisitNestedSubqueries(item.Expression, provider);
                 return;
             case FilterExpr filter:
                 VisitNestedSubqueries(filter.Expression, provider);

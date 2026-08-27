@@ -1,10 +1,10 @@
-using SqlKata.Compilers;
-
 namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 internal static class CoreLikeEscapeSqlRenderer
 {
-    public static string RenderSuffix(BinaryExpr binary, Compiler compiler)
+    public static string RenderSuffix(
+        BinaryExpr binary,
+        SqlAgentToolType provider)
     {
         if (binary.LikeEscape is null)
             return string.Empty;
@@ -12,7 +12,8 @@ internal static class CoreLikeEscapeSqlRenderer
         if (binary.Operator is not ("LIKE" or "ILIKE"))
         {
             throw new SqlCompilationException(
-                $"LIKE ESCAPE metadata is valid only with LIKE/ILIKE, not '{binary.Operator}'.");
+                "LIKE ESCAPE metadata is valid only with LIKE/ILIKE, not '" +
+                binary.Operator + "'.");
         }
 
         var escape = binary.LikeEscape;
@@ -22,15 +23,21 @@ internal static class CoreLikeEscapeSqlRenderer
                 "LIKE ESCAPE requires exactly one non-control character.");
         }
 
-        var literal = escape[0] == '\\'
-            ? compiler switch
+        string literal;
+        if (escape[0] == '\\')
+        {
+            literal = provider switch
             {
-                PostgresCompiler => "E'\\\\'",
-                MySqlCompiler => "CHAR(92)",
+                SqlAgentToolType.Postgres => "E'\\\\'",
+                SqlAgentToolType.MySQL => "CHAR(92)",
                 _ => "'\\'"
-            }
-            : "'" + escape.Replace("'", "''", StringComparison.Ordinal) + "'";
+            };
+        }
+        else
+        {
+            literal = "'" + escape.Replace("'", "''", StringComparison.Ordinal) + "'";
+        }
 
-        return $" ESCAPE {literal}";
+        return " ESCAPE " + literal;
     }
 }

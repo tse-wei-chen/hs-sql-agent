@@ -29,10 +29,9 @@ internal static class CoreSourceProfileRewriter
     public static bool SupportsMySqlPipesAsConcat(
         SqlAgentToolType sourceDialect,
         SqlProviderCapabilityProfile? sourceProfile) =>
-        sourceDialect == SqlAgentToolType.MySQL
-        && sourceProfile is { Provider: SqlAgentToolType.MySQL }
-        && (sourceProfile.HasSessionMode("PIPES_AS_CONCAT")
-            || sourceProfile.HasSessionMode("ANSI"));
+        SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(
+            sourceDialect,
+            sourceProfile);
 
     public static SqlStatement Prepare(
         SqlStatement statement,
@@ -199,7 +198,10 @@ internal static class CoreSourceProfileRewriter
         {
             Arguments = function.Arguments
                 .Select(argument => RewriteExpression(argument, rewriteOperator))
-                .ToImmutableArray()
+                .ToImmutableArray(),
+            AggregateOrderBy = RewriteOrderBy(
+                function.AggregateOrderBy,
+                rewriteOperator)
         },
         FilterExpr filter => filter with
         {

@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore.Core.Lowering;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -13,6 +14,7 @@ public sealed class SqlCorePackageBoundaryTests
         Assert.Same(coreAssembly, typeof(CoreDmlCompiler).Assembly);
         Assert.Same(coreAssembly, typeof(CoreSqlTextParser).Assembly);
         Assert.Same(coreAssembly, typeof(SqlCapabilityMatrix).Assembly);
+        Assert.Same(coreAssembly, typeof(NativeSqlRenderer).Assembly);
         Assert.NotSame(coreAssembly, typeof(MySqlProvider).Assembly);
         Assert.Equal("HsSqlAgent.Provider.MySql", typeof(MySqlProvider).Assembly.GetName().Name);
     }
@@ -36,6 +38,7 @@ public sealed class SqlCorePackageBoundaryTests
         var forbidden = new[]
         {
             "Dapper",
+            "SqlKata",
             "MySql.Data",
             "Npgsql",
             "Microsoft.Data.Sqlite",
