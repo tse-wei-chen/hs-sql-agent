@@ -8,17 +8,6 @@ namespace HsSqlAgent.SqlCore.Core.Analysis;
 /// </summary>
 internal static class CoreSqlSemanticValidator
 {
-    private static readonly HashSet<string> AggregateFunctions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "AVG", "COUNT", "MAX", "MIN", "SUM", "CORE_STRING_AGG", "GROUP_CONCAT"
-    };
-
-    private static readonly HashSet<string> WindowFunctions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST",
-        "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE", "NTILE"
-    };
-
     public static void Validate(SqlStatement statement, SqlAgentToolType provider)
     {
         ArgumentNullException.ThrowIfNull(statement);
@@ -416,8 +405,8 @@ internal static class CoreSqlSemanticValidator
     {
         var name = IdentifierText(function.Name).ToUpperInvariant();
         CoreProviderCapabilityRules.ValidateFunction(function, provider);
-        var isAggregate = AggregateFunctions.Contains(name);
-        var isWindowFunction = WindowFunctions.Contains(name);
+        var isAggregate = SqlCanonicalFunctionRegistry.IsAggregate(name);
+        var isWindowFunction = SqlCanonicalFunctionRegistry.IsWindow(name);
 
         if (isAggregate)
         {

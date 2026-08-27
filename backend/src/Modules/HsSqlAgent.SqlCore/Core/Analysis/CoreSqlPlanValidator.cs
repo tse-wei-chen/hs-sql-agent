@@ -2,57 +2,6 @@ namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 public sealed class CoreSqlPlanValidator : ISqlPlanValidator
 {
-    private static readonly IReadOnlyDictionary<string, FunctionShape> FunctionShapes =
-        new Dictionary<string, FunctionShape>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["ABS"] = FunctionShape.Scalar(1),
-            ["ROUND"] = FunctionShape.Scalar(1, 2),
-            ["LOWER"] = FunctionShape.Scalar(1),
-            ["UPPER"] = FunctionShape.Scalar(1),
-            ["TRIM"] = FunctionShape.Scalar(1),
-            ["LTRIM"] = FunctionShape.Scalar(1),
-            ["RTRIM"] = FunctionShape.Scalar(1),
-            ["NULLIF"] = FunctionShape.Scalar(2),
-
-            ["AVG"] = FunctionShape.Aggregate(1),
-            ["COUNT"] = FunctionShape.Aggregate(1),
-            ["MAX"] = FunctionShape.Aggregate(1),
-            ["MIN"] = FunctionShape.Aggregate(1),
-            ["SUM"] = FunctionShape.Aggregate(1),
-
-            ["ROW_NUMBER"] = FunctionShape.Window(0),
-            ["RANK"] = FunctionShape.Window(0),
-            ["DENSE_RANK"] = FunctionShape.Window(0),
-            ["PERCENT_RANK"] = FunctionShape.Window(0),
-            ["CUME_DIST"] = FunctionShape.Window(0),
-            ["LAG"] = FunctionShape.Window(1, 3),
-            ["LEAD"] = FunctionShape.Window(1, 3),
-            ["FIRST_VALUE"] = FunctionShape.Window(1),
-            ["LAST_VALUE"] = FunctionShape.Window(1),
-            ["NTH_VALUE"] = FunctionShape.Window(2),
-            ["NTILE"] = FunctionShape.Window(1),
-
-            ["CORE_DATE_ADD"] = FunctionShape.Scalar(3),
-            ["CORE_DATE_DIFF"] = FunctionShape.Scalar(3),
-            ["CORE_DATE_PART"] = FunctionShape.Scalar(2),
-            ["CORE_DATE_FORMAT"] = FunctionShape.Scalar(2),
-            ["CORE_DATE_PARSE"] = FunctionShape.Scalar(2),
-            ["CORE_POSITION"] = FunctionShape.Scalar(2),
-            ["CORE_JSON_EXTRACT"] = FunctionShape.Scalar(2),
-            ["CORE_JSON_SET"] = FunctionShape.Scalar(3),
-            ["CORE_REGEX_MATCH"] = FunctionShape.Scalar(2),
-            ["CORE_CURRENT_DATE"] = FunctionShape.Scalar(0),
-            ["CORE_CURRENT_TIME"] = FunctionShape.Scalar(0),
-            ["CORE_CURRENT_TIMESTAMP"] = FunctionShape.Scalar(0),
-            ["CORE_STRING_AGG"] = new FunctionShape(
-                2,
-                2,
-                AllowDistinct: false,
-                AllowFilter: true,
-                AllowWindow: false,
-                RequireWindow: false)
-        };
-
     public ValidatedSqlPlan Validate(CanonicalStatement statement, SqlPlanValidationContext context)
     {
         ArgumentNullException.ThrowIfNull(statement);
@@ -294,10 +243,9 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         bool withinWindow)
     {
         var name = IdentifierText(function.Name).ToUpperInvariant();
-        if (FunctionShapes.TryGetValue(name, out var shape))
+        if (SqlCanonicalFunctionRegistry.Find(name) is { } shape)
         {
-            if (function.Arguments.Length < shape.MinArguments
-                || function.Arguments.Length > shape.MaxArguments)
+            if (!shape.AcceptsArgumentCount(function.Arguments.Length))
             {
                 var expected = shape.MinArguments == shape.MaxArguments
                     ? shape.MinArguments.ToString()
@@ -347,7 +295,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             throw new SqlCompilationException("FILTER must modify a directly modeled aggregate function.");
 
         var name = IdentifierText(function.Name).ToUpperInvariant();
-        if (!FunctionShapes.TryGetValue(name, out var shape) || !shape.AllowFilter)
+        if (SqlCanonicalFunctionRegistry.Find(name) is not { AllowFilter: true })
         {
             throw new SqlCompilationException(
                 $"Function '{name}' does not support FILTER in the Core pipeline.");
@@ -366,7 +314,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             throw new SqlCompilationException("OVER must modify a directly modeled aggregate or window function.");
 
         var name = IdentifierText(function.Name).ToUpperInvariant();
-        if (!FunctionShapes.TryGetValue(name, out var shape) || !shape.AllowWindow)
+        if (SqlCanonicalFunctionRegistry.Find(name) is not { AllowWindow: true })
         {
             throw new SqlCompilationException(
                 $"Function '{name}' does not support OVER in the Core pipeline.");
@@ -455,25 +403,5 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         Assignment
     }
 
-    private sealed record FunctionShape(
-        int MinArguments,
-        int MaxArguments,
-        bool AllowDistinct,
-        bool AllowFilter,
-        bool AllowWindow,
-        bool RequireWindow)
-    {
-        public static FunctionShape Scalar(int arguments) => Scalar(arguments, arguments);
 
-        public static FunctionShape Scalar(int minArguments, int maxArguments) =>
-            new(minArguments, maxArguments, false, false, false, false);
-
-        public static FunctionShape Aggregate(int arguments) =>
-            new(arguments, arguments, true, true, true, false);
-
-        public static FunctionShape Window(int arguments) => Window(arguments, arguments);
-
-        public static FunctionShape Window(int minArguments, int maxArguments) =>
-            new(minArguments, maxArguments, false, false, true, true);
-    }
 }

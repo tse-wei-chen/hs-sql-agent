@@ -5,13 +5,6 @@ namespace HsSqlAgent.SqlCore.Core.Normalization;
 public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISqlNormalizer
 {
     private static readonly DateFormatTranslator DateFormats = new();
-    private static readonly HashSet<string> PortableFunctions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "ABS", "AVG", "COUNT", "MAX", "MIN", "ROUND", "SUM",
-        "LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM", "NULLIF",
-        "ROW_NUMBER", "RANK", "DENSE_RANK", "LAG", "LEAD",
-        "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE", "NTILE", "PERCENT_RANK", "CUME_DIST"
-    };
 
     private readonly IFunctionRegistry _functionRegistry = functionRegistry;
 
@@ -185,7 +178,7 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             return function with { Name = Identifier("COALESCE"), Arguments = arguments };
         }
 
-        if (PortableFunctions.Contains(sourceName))
+        if (SqlCanonicalFunctionRegistry.IsDirectPortable(sourceName))
             return function with { Name = Identifier(sourceName), Arguments = arguments };
 
         var sourceDefinition = _functionRegistry.Find(context.SourceDialect, sourceName, arguments.Length);
