@@ -14,40 +14,37 @@ internal static class CoreBooleanProjectionRules
         "=", "<>", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE", "AND", "OR", "IN", "NOT IN"
     };
 
-    public static void Validate(SqlExpr expression, SqlAgentToolType provider)
+    public static void Validate(SqlExpr expression, SqlAgentToolType provider) =>
+        ValidateScalarBooleanCapability(
+            expression,
+            provider,
+            "expression.boolean_select");
+
+    public static void ValidateAssignment(SqlExpr expression, SqlAgentToolType provider) =>
+        ValidateScalarBooleanCapability(
+            expression,
+            provider,
+            "dml.update.boolean_assignment");
+
+    public static void ValidateInsertValue(SqlExpr expression, SqlAgentToolType provider) =>
+        ValidateScalarBooleanCapability(
+            expression,
+            provider,
+            "dml.insert.boolean_value");
+
+    private static void ValidateScalarBooleanCapability(
+        SqlExpr expression,
+        SqlAgentToolType provider,
+        string capability)
     {
-        if (provider is not (SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer)
-            || !IsDefinitelyBoolean(expression, provider))
-        {
+        if (!IsDefinitelyBoolean(expression, provider))
             return;
-        }
 
-        throw new SqlCompilationException(
-            $"SQL capability 'expression.boolean_select' is not supported by provider {provider} for this Core plan.");
-    }
-
-    public static void ValidateAssignment(SqlExpr expression, SqlAgentToolType provider)
-    {
-        if (provider is not (SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer)
-            || !IsDefinitelyBoolean(expression, provider))
-        {
-            return;
-        }
-
-        throw new SqlCompilationException(
-            $"SQL capability 'dml.update.boolean_assignment' is not supported by provider {provider} for this Core plan.");
-    }
-
-    public static void ValidateInsertValue(SqlExpr expression, SqlAgentToolType provider)
-    {
-        if (provider is not (SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer)
-            || !IsDefinitelyBoolean(expression, provider))
-        {
-            return;
-        }
-
-        throw new SqlCompilationException(
-            $"SQL capability 'dml.insert.boolean_value' is not supported by provider {provider} for this Core plan.");
+        var error = SqlScalarBooleanCapabilityRules.TargetValidationError(
+            provider,
+            capability);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     internal static bool IsDefinitelyBoolean(SqlExpr expression, SqlAgentToolType provider) => expression switch

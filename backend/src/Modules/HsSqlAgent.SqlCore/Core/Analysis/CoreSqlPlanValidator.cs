@@ -141,11 +141,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         foreach (var item in select.Select)
         {
             ValidateExpression(item.Expression, provider, ExpressionContext.Projection);
-            if (provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
-                && IsBooleanProjection(item.Expression))
-            {
-                throw CapabilityError(provider, "expression.boolean_select");
-            }
+            CoreBooleanProjectionRules.Validate(item.Expression, provider);
         }
         if (select.Where is not null)
             ValidateExpression(select.Where, provider, ExpressionContext.Predicate);
@@ -447,16 +443,6 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             column.Name.Parts[0].Value == "*" && !column.Name.Parts[0].WasQuoted,
         BoundColumnExpr { Name.Parts.Length: 1 } column =>
             column.Name.Parts[0].Value == "*" && !column.Name.Parts[0].WasQuoted,
-        _ => false
-    };
-
-    private static bool IsBooleanProjection(SqlExpr expression) => expression switch
-    {
-        IsNullExpr or InExpr or BetweenExpr or ExistsExpr => true,
-        UnaryExpr unary when unary.Operator == "NOT" => true,
-        BinaryExpr binary when binary.Operator is
-            "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or
-            "LIKE" or "ILIKE" or "AND" or "OR" or "IN" or "NOT IN" => true,
         _ => false
     };
 
