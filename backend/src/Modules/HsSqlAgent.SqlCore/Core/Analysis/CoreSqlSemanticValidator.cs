@@ -274,7 +274,7 @@ internal static class CoreSqlSemanticValidator
             throw new SqlCompilationException($"{join.Kind} JOIN requires an ON predicate.");
         }
 
-        var capabilityError = SqlJoinCapabilityRules.TargetValidationError(
+        var capabilityError = SqlJoinCapabilityRules.ProviderValidationError(
             join.Kind,
             provider);
         if (capabilityError is not null)
