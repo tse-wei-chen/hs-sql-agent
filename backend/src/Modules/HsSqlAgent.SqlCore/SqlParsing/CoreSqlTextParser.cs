@@ -210,7 +210,7 @@ public static class CoreSqlTextParser
         out Token[] normalizedTokens)
     {
         normalizedTokens = tokens;
-        if (provider != SqlAgentToolType.MsSqlServer)
+        if (!SqlSourceDialectGrammarRules.For(provider).SupportsTop)
             return null;
 
         var depth = 0;
