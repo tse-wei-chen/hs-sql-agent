@@ -64,6 +64,20 @@ internal static class CoreBooleanProjectionRules
         _ => false
     };
 
+    internal static bool HasOnlyLiteralBooleanCaseResults(CaseExpr @case)
+    {
+        ArgumentNullException.ThrowIfNull(@case);
+
+        foreach (var branch in @case.Branches)
+        {
+            if (!IsBooleanOrNullLiteral(branch.Value))
+                return false;
+        }
+
+        return @case.ElseExpression is null
+            || IsBooleanOrNullLiteral(@case.ElseExpression);
+    }
+
     private static bool IsBooleanCase(CaseExpr @case, SqlAgentToolType provider)
     {
         var sawBooleanResult = false;
@@ -89,6 +103,9 @@ internal static class CoreBooleanProjectionRules
 
         return sawBooleanResult;
     }
+
+    private static bool IsBooleanOrNullLiteral(SqlExpr expression) =>
+        expression is LiteralExpr { Value: bool or null };
 
     private static bool IsNullLiteral(SqlExpr expression) =>
         expression is LiteralExpr { Value: null };

@@ -125,6 +125,14 @@ internal static partial class NativeSqlExpressionRenderer
             if (expression is CaseExpr @case
                 && CoreBooleanProjectionRules.IsDefinitelyBoolean(@case, provider))
             {
+                if (!CoreBooleanProjectionRules.HasOnlyLiteralBooleanCaseResults(@case))
+                {
+                    throw new SqlCompilationException(
+                        "Boolean CASE predicates for " + provider +
+                        " currently require every THEN/ELSE result to be a literal TRUE, FALSE, or NULL " +
+                        "so three-valued logic is preserved without duplicating predicate evaluation.");
+                }
+
                 return @case is SimpleCaseExpr simpleCase
                     ? RenderBooleanSimpleCasePredicate(
                         simpleCase,
@@ -689,21 +697,23 @@ internal static partial class NativeSqlExpressionRenderer
         Func<SqlStatement, NativeSqlFragment> renderSubquery,
         bool dmlContext)
     {
-        if (expression is LiteralExpr { Value: null })
-        {
-            return new NativeSqlFragment(
-                "NULL",
-                ImmutableArray<object?>.Empty);
-        }
+        _ = provider;
+        _ = renderSubquery;
+        _ = dmlContext;
 
-        var predicate = RenderPredicate(
-            expression,
-            provider,
-            renderSubquery,
-            dmlContext);
-        return predicate with
+        return expression switch
         {
-            Sql = "CASE WHEN " + predicate.Sql + " THEN 1 ELSE 0 END"
+            LiteralExpr { Value: true } => new NativeSqlFragment(
+                "1",
+                ImmutableArray<object?>.Empty),
+            LiteralExpr { Value: false } => new NativeSqlFragment(
+                "0",
+                ImmutableArray<object?>.Empty),
+            LiteralExpr { Value: null } => new NativeSqlFragment(
+                "NULL",
+                ImmutableArray<object?>.Empty),
+            _ => throw new SqlCompilationException(
+                "Boolean CASE predicate lowering requires literal TRUE, FALSE, or NULL results.")
         };
     }
 

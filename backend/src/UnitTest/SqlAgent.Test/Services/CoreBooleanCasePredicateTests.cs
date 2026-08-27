@@ -71,4 +71,38 @@ public sealed class CoreBooleanCasePredicateTests
 
         return count;
     }
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_BooleanCasePredicateWithNullableTruth_PreservesUnknown(
+        SqlAgentToolType provider)
+    {
+        var command = Compile(
+            "SELECT id FROM users WHERE NOT " +
+            "(CASE WHEN id = 1 THEN NULL ELSE TRUE END)",
+            provider);
+
+        Assert.Contains("THEN NULL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ELSE 1", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("END = 1", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("NOT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(command.Parameters);
+        Assert.Equal(1, command.Parameters[0].Value);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_BooleanCasePredicateWithPredicateResult_FailsClosed(
+        SqlAgentToolType provider)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT id FROM users WHERE CASE WHEN id = 1 " +
+            "THEN score = 1 ELSE FALSE END",
+            provider));
+
+        Assert.Contains("Boolean CASE predicates", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("TRUE, FALSE, or NULL", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
 }
