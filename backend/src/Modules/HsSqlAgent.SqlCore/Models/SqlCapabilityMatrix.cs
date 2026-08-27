@@ -145,18 +145,8 @@ public static class SqlCapabilityMatrix
             SqlCurrentTemporalCapabilityRules.MatrixCapability(provider),
             SqlQuarterDatePartCapabilityRules.MatrixCapability(provider),
             SqlDateMathCapabilityRules.MatrixCapability(provider),
-            new("temporal.date_format", "temporal",
-                provider == SqlAgentToolType.Firebird ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
-                provider == SqlAgentToolType.Firebird
-                    ? "Portable date formatting is rejected because no complete translation is declared."
-                    : "Declared source date-format functions and tokens are normalized and translated to provider-native syntax."),
-            new("temporal.formatted_parse", "temporal",
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle
-                    ? "TO_DATE input and format tokens are translated to the provider-native function."
-                    : "Formatted date parsing is rejected because no complete provider translation is declared."),
+            SqlTemporalFormatCapabilityRules.DateFormatMatrixCapability(provider),
+            SqlTemporalFormatCapabilityRules.FormattedParseMatrixCapability(provider),
             new("json.extract", "json",
                 provider is SqlAgentToolType.Firebird or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle
                     ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,

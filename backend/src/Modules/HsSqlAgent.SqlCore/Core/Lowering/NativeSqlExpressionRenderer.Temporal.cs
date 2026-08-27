@@ -168,6 +168,12 @@ internal static partial class NativeSqlExpressionRenderer
         bool dmlContext)
     {
         RequireArguments(function, 2);
+        var capabilityError = SqlTemporalFormatCapabilityRules.TargetValidationError(
+            "CORE_DATE_FORMAT",
+            provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+
         var value = Render(
             function.Arguments[0],
             provider,
@@ -211,6 +217,12 @@ internal static partial class NativeSqlExpressionRenderer
         bool dmlContext)
     {
         RequireArguments(function, 2);
+        var capabilityError = SqlTemporalFormatCapabilityRules.TargetValidationError(
+            "CORE_DATE_PARSE",
+            provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+
         var value = Render(
             function.Arguments[0],
             provider,
