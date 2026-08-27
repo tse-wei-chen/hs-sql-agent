@@ -543,7 +543,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
         if (limit is null)
         {
             sql.Append(">= ").Append(NativeSqlParameterizer.Placeholder);
-            bindings.Add(offset + 1);
+            bindings.Add((long)offset + 1L);
         }
         else
         {
@@ -551,8 +551,8 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
                 .Append(NativeSqlParameterizer.Placeholder)
                 .Append(" AND ")
                 .Append(NativeSqlParameterizer.Placeholder);
-            bindings.Add(offset + 1);
-            bindings.Add(offset + limit.Value);
+            bindings.Add((long)offset + 1L);
+            bindings.Add((long)offset + limit.Value);
         }
 
         return new NativeSqlFragment(sql.ToString(), bindings.ToImmutable());
@@ -1288,7 +1288,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
                     return new NativeSqlFragment(
                         "ROWS " + NativeSqlParameterizer.Placeholder +
                         " TO " + NativeSqlParameterizer.Placeholder,
-                        [offset.Value + 1, offset.Value + limit.Value]);
+                        [(long)offset.Value + 1L, (long)offset.Value + limit.Value]);
                 }
 
                 return NativeSqlFragment.Empty;
