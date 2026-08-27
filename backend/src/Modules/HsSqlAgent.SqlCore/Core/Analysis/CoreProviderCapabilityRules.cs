@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
@@ -9,10 +7,6 @@ namespace HsSqlAgent.SqlCore.Core.Analysis;
 /// </summary>
 internal static class CoreProviderCapabilityRules
 {
-    private static readonly Regex PortableJsonPropertyPath = new(
-        @"^\$\.[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$",
-        RegexOptions.CultureInvariant);
-
     public static void ValidateLiteral(LiteralExpr literal, SqlAgentToolType provider)
     {
         if (literal.Value is SqlTimeValue)
@@ -171,23 +165,12 @@ internal static class CoreProviderCapabilityRules
         SqlAgentToolType provider,
         string functionName)
     {
-        if (function.Arguments.Length < 2
-            || function.Arguments[1] is not LiteralExpr { Value: string path })
-        {
-            throw CapabilityError(
-                provider,
-                "json.path.constant",
-                $"{functionName} requires a constant JSON path in the portable Core model.");
-        }
-
-        if (!PortableJsonPropertyPath.IsMatch(path))
-        {
-            throw CapabilityError(
-                provider,
-                "json.path.property_chain",
-                $"JSON path '{path}' is outside the portable Core property-chain subset. " +
-                "Only paths such as '$.user.name' are supported; root-only paths, array indexes, wildcards, filters, quoted property names, and recursive descent fail closed.");
-        }
+        var error = SqlJsonCapabilityRules.PathValidationError(
+            function,
+            functionName,
+            provider);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void ValidateLiteralWindowArgument(

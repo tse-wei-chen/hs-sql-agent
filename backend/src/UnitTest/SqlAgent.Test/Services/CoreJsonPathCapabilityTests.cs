@@ -32,6 +32,23 @@ public class CoreJsonPathCapabilityTests
     }
 
     [Fact]
+    public void Matrix_JsonPathSimple_RemainsTranslatedForEveryProvider()
+    {
+        foreach (var provider in Enum.GetValues<SqlAgentToolType>())
+        {
+            var capability = Assert.Single(
+                SqlCapabilityMatrix.ForProvider(provider).Capabilities,
+                item => item.Id == "json.path.simple");
+
+            Assert.Equal(SqlCapabilityStatus.Translated, capability.Status);
+            Assert.Contains(
+                "constant property chains",
+                capability.Detail,
+                StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
     public void Compile_JsonPropertyChain_RemainsSupportedForPostgres()
     {
         var command = Compile(
