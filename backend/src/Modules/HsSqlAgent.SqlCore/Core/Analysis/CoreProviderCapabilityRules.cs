@@ -242,6 +242,26 @@ internal static class CoreProviderCapabilityRules
             case LiteralExpr { Value: int v }: value = v; return true;
             case LiteralExpr { Value: uint v }: value = v; return true;
             case LiteralExpr { Value: long v }: value = v; return true;
+            case LiteralExpr { Value: decimal v }
+                when v == decimal.Truncate(v)
+                    && v >= long.MinValue
+                    && v <= long.MaxValue:
+                value = (long)v;
+                return true;
+            case LiteralExpr { Value: double v }
+                when double.IsFinite(v)
+                    && v == Math.Truncate(v)
+                    && v >= long.MinValue
+                    && v <= long.MaxValue:
+                value = (long)v;
+                return true;
+            case LiteralExpr { Value: float v }
+                when float.IsFinite(v)
+                    && v == MathF.Truncate(v)
+                    && v >= long.MinValue
+                    && v <= long.MaxValue:
+                value = (long)v;
+                return true;
             default:
                 value = default;
                 return false;
