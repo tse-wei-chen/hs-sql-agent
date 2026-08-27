@@ -51,7 +51,9 @@ public class CustomToolProxyTests
         var context = new DefaultHttpContext();
         context.Items[Common.Models.McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[Common.Models.McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[Common.Models.McpContextItemKeys.AccessKeyId] = 7;
         context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
+        context.Items[Common.Models.McpContextItemKeys.DatabaseName] = "testdb";
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
 
         _proxy = new CustomToolProxy(

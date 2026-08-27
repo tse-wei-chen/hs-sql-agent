@@ -15,6 +15,7 @@ public class DmlApprovalChallengeStoreTests
             "rows",
             2,
             "policy-v1",
+            "approval-context-v1",
             now,
             now.AddMinutes(5),
             Guid.NewGuid().ToString("N"));
@@ -36,6 +37,7 @@ public class DmlApprovalChallengeStoreTests
             "rows",
             2,
             "policy-v1",
+            "approval-context-v1",
             now,
             now.AddMinutes(5),
             Guid.NewGuid().ToString("N"));
@@ -57,6 +59,7 @@ public class DmlApprovalChallengeStoreTests
             "rows",
             1,
             "policy-v1",
+            "approval-context-v1",
             now,
             now.AddMinutes(5),
             Guid.NewGuid().ToString("N"));

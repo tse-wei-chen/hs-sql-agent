@@ -8,6 +8,8 @@ namespace SqlAgent.Test.Services;
 
 public sealed class DmlInsertApprovalCoordinatorTests
 {
+    private const string ApprovalContextFingerprint = "approval-context-v1";
+
     [Fact]
     public async Task Preview_InsertValues_UsesImmutablePayloadWithoutOpeningDatabase()
     {
@@ -18,6 +20,7 @@ public sealed class DmlInsertApprovalCoordinatorTests
         var preview = await coordinator.PreviewAsync(
             "not-opened",
             plan,
+            ApprovalContextFingerprint,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(DmlOperation.Insert, preview.Operation);
@@ -25,6 +28,9 @@ public sealed class DmlInsertApprovalCoordinatorTests
         Assert.Equal(2, preview.Rows.Length);
         Assert.Null(preview.Challenge.RowSetFingerprint);
         Assert.Equal(plan.PlanFingerprint, preview.Challenge.PlanFingerprint);
+        Assert.Equal(
+            ApprovalContextFingerprint,
+            preview.Challenge.ApprovalContextFingerprint);
         Assert.Equal(1L, Convert.ToInt64(preview.Rows[0]["id"]));
         Assert.Equal("Alice", preview.Rows[0]["name"]);
         Assert.Equal(0, factory.CreateCount);
@@ -53,12 +59,14 @@ public sealed class DmlInsertApprovalCoordinatorTests
             var preview = await coordinator.PreviewAsync(
                 connectionString,
                 plan,
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken);
 
             var result = await coordinator.CommitAsync(
                 connectionString,
                 plan,
                 preview.Challenge,
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken);
 
             Assert.True(result.Committed);
@@ -78,6 +86,7 @@ public sealed class DmlInsertApprovalCoordinatorTests
                     connectionString,
                     plan,
                     preview.Challenge,
+                    ApprovalContextFingerprint,
                     TestContext.Current.CancellationToken));
             Assert.Contains("already been consumed", replayError.Message, StringComparison.OrdinalIgnoreCase);
         }
@@ -95,6 +104,7 @@ public sealed class DmlInsertApprovalCoordinatorTests
         var preview = await coordinator.PreviewAsync(
             "not-opened",
             plan,
+            ApprovalContextFingerprint,
             TestContext.Current.CancellationToken);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -102,9 +112,34 @@ public sealed class DmlInsertApprovalCoordinatorTests
                 "not-opened",
                 plan,
                 preview.Challenge with { AffectedRows = 1 },
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("immutable payload", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Commit_InsertValues_RejectsChangedApprovalContextBeforeConnectionOpen()
+    {
+        var factory = new ThrowingConnectionFactory();
+        var coordinator = new DmlCoordinator(factory);
+        var plan = CreatePlan();
+        var preview = await coordinator.PreviewAsync(
+            "not-opened",
+            plan,
+            ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.CommitAsync(
+                "not-opened",
+                plan,
+                preview.Challenge,
+                "different-approval-context",
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("execution context", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, factory.CreateCount);
     }
 
     private static ValidatedDmlPlan CreatePlan()

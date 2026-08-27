@@ -225,6 +225,11 @@ public class CustomSqlToolControllerTests
     public async Task TestExecute_InsertValues_ReturnsTypedPreviewWithoutCommit()
     {
         var controller = CreateController();
+        controller.ControllerContext.HttpContext.User =
+            new System.Security.Claims.ClaimsPrincipal(
+                new System.Security.Claims.ClaimsIdentity(
+                    [new System.Security.Claims.Claim("sub", "admin-test")],
+                    "test"));
         var tool = new CustomSqlTool
         {
             Id = 14,

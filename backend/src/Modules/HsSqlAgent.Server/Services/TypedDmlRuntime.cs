@@ -30,6 +30,7 @@ public sealed class TypedDmlRuntime(
         ParsedStatement parsedMutation,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
+        DmlApprovalExecutionContext approvalContext,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provider);
@@ -38,6 +39,13 @@ public sealed class TypedDmlRuntime(
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         EnsureSupportedStatement(parsedMutation.Statement);
+        ValidateApprovalContextFields(approvalContext);
+        if (provider.Type != approvalContext.Provider)
+        {
+            throw new InvalidOperationException(
+                "DML approval provider does not match the current execution context.");
+        }
+        var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
 
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
@@ -66,6 +74,7 @@ public sealed class TypedDmlRuntime(
         var preview = await coordinator.PreviewAsync(
             connectionString,
             plan,
+            approvalContextFingerprint,
             cancellationToken);
 
         return new TypedDmlApprovalSession(plan, preview);
@@ -77,6 +86,7 @@ public sealed class TypedDmlRuntime(
         TypedDmlApprovalSession session,
         SecurityPolicyModel currentPolicy,
         IReadOnlySet<string>? currentAllowedTables,
+        DmlApprovalExecutionContext currentApprovalContext,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provider);
@@ -94,6 +104,24 @@ public sealed class TypedDmlRuntime(
                 "DML security policy or table authorization changed after preview; request a new preview before committing.");
         }
 
+        ValidateApprovalContextFields(currentApprovalContext);
+        var currentApprovalContextFingerprint =
+            ComputeApprovalContextFingerprint(currentApprovalContext);
+        if (!string.Equals(
+                currentApprovalContextFingerprint,
+                session.Preview.Challenge.ApprovalContextFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "DML approval execution context changed after preview; request a new preview before committing.");
+        }
+
+        if (currentApprovalContext.Provider != session.Plan.MutationCommand.TargetProvider)
+        {
+            throw new InvalidOperationException(
+                "DML approval target provider changed between preview and commit.");
+        }
+
         if (provider.Type != session.Plan.MutationCommand.TargetProvider)
         {
             throw new InvalidOperationException(
@@ -109,6 +137,7 @@ public sealed class TypedDmlRuntime(
             connectionString,
             session.Plan,
             session.Preview.Challenge,
+            currentApprovalContextFingerprint,
             cancellationToken);
     }
 
@@ -143,6 +172,34 @@ public sealed class TypedDmlRuntime(
             $"The typed DML runtime does not support statement '{statement.GetType().Name}'.");
     }
 
+    internal static string ComputeApprovalContextFingerprint(
+        DmlApprovalExecutionContext approvalContext)
+    {
+        ValidateApprovalContextFields(approvalContext);
+        var material =
+            "v1|" +
+            FingerprintComponent(approvalContext.PrincipalIdentity) + "|" +
+            FingerprintComponent(approvalContext.TargetIdentity) + "|" +
+            FingerprintComponent(approvalContext.Provider.ToString()) + "|" +
+            FingerprintComponent(approvalContext.DatabaseIdentity ?? string.Empty);
+        return Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+    }
+
+    private static void ValidateApprovalContextFields(
+        DmlApprovalExecutionContext approvalContext)
+    {
+        ArgumentNullException.ThrowIfNull(approvalContext);
+        ArgumentException.ThrowIfNullOrWhiteSpace(approvalContext.PrincipalIdentity);
+        ArgumentException.ThrowIfNullOrWhiteSpace(approvalContext.TargetIdentity);
+    }
+
+    private static string FingerprintComponent(string value)
+    {
+        value ??= string.Empty;
+        return Encoding.UTF8.GetByteCount(value) + ":" + value;
+    }
+
     internal static string ComputePolicyVersion(
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables)
@@ -166,3 +223,9 @@ public sealed class TypedDmlRuntime(
 public sealed record TypedDmlApprovalSession(
     ValidatedDmlPlan Plan,
     DmlPreview Preview);
+
+public sealed record DmlApprovalExecutionContext(
+    string PrincipalIdentity,
+    string TargetIdentity,
+    SqlAgentToolType Provider,
+    string? DatabaseIdentity);

@@ -45,6 +45,7 @@ public sealed record DmlApprovalChallenge(
     string? RowSetFingerprint,
     int AffectedRows,
     string PolicyVersion,
+    string ApprovalContextFingerprint,
     DateTimeOffset IssuedAt,
     DateTimeOffset ExpiresAt,
     string Nonce);
@@ -67,11 +68,13 @@ public interface IDmlCoordinator
     Task<DmlPreview> PreviewAsync(
         string connectionString,
         ValidatedDmlPlan plan,
+        string approvalContextFingerprint,
         CancellationToken cancellationToken = default);
 
     Task<DmlCommitResult> CommitAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
+        string approvalContextFingerprint,
         CancellationToken cancellationToken = default);
 }
