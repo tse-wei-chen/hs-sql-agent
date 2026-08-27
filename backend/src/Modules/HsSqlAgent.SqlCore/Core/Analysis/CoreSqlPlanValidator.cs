@@ -271,26 +271,17 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
         if (function.AggregateOrderBy.IsDefaultOrEmpty) return;
 
         var name = IdentifierText(function.Name).ToUpperInvariant();
-        if (provider is not (
-                SqlAgentToolType.Postgres
-                or SqlAgentToolType.Sqlite
-                or SqlAgentToolType.MsSqlServer
-                or SqlAgentToolType.Oracle
-                or SqlAgentToolType.MySQL)
-            || name != "CORE_STRING_AGG")
-        {
-            throw CapabilityError(provider, "aggregate.string.ordering");
-        }
-
-        if (provider == SqlAgentToolType.MsSqlServer
-            && function.AggregateOrderBy.Any(item =>
-                !CoreSqlAstTraversal.EnumerateExpressions(item.Expression)
-                    .Any(node => node is ColumnExpr or BoundColumnExpr)))
-        {
-            throw new SqlCompilationException(
-                "SQL Server STRING_AGG WITHIN GROUP ordering requires non-constant expressions; " +
-                "Core requires each ordering expression to reference a column.");
-        }
+        var everyOrderingExpressionReferencesColumn =
+            function.AggregateOrderBy.All(item =>
+                CoreSqlAstTraversal.EnumerateExpressions(item.Expression)
+                    .Any(node => node is ColumnExpr or BoundColumnExpr));
+        var shapeError =
+            SqlAggregateLocalOrderingCapabilityRules.CanonicalTargetShapeValidationError(
+                name,
+                provider,
+                everyOrderingExpressionReferencesColumn);
+        if (shapeError is not null)
+            throw new SqlCompilationException(shapeError);
 
         ValidateOrdering(function.AggregateOrderBy, provider);
         foreach (var item in function.AggregateOrderBy)
