@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -56,6 +57,60 @@ public class CoreSimpleCaseSemanticsTests
 
         Assert.Contains("CASE ABS(", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, CountOccurrences(command.Sql, "ABS(", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Compile_MalformedSimpleCaseWithDifferentBranchOperand_FailsClosed()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT CASE id WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM users",
+            SqlAgentToolType.Postgres);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var projection = Assert.Single(select.Select);
+        var simple = Assert.IsType<SimpleCaseExpr>(projection.Expression);
+        var branches = simple.Branches.ToArray();
+        var second = Assert.IsType<BinaryExpr>(branches[1].Condition);
+        branches[1] = branches[1] with
+        {
+            Condition = second with
+            {
+                Left = new ColumnExpr(
+                    SqlIdentifier.Unquoted("other_id", SourceSpan.Unknown),
+                    SourceSpan.Unknown)
+            }
+        };
+
+        var malformed = parsed with
+        {
+            Statement = select with
+            {
+                Select =
+                [
+                    projection with
+                    {
+                        Expression = simple with
+                        {
+                            Branches = branches.ToImmutableArray()
+                        }
+                    }
+                ]
+            },
+            EnforceSourceDialectSyntax = false
+        };
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                malformed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext(
+                    "simple-case-native-v1",
+                    new HashSet<string>(
+                        ["users"],
+                        StringComparer.OrdinalIgnoreCase)),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("Simple CASE", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("canonical operand", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

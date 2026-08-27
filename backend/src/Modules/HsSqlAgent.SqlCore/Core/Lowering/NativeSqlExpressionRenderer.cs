@@ -1091,6 +1091,17 @@ internal static class NativeSqlExpressionRenderer
         foreach (var branch in @case.Branches)
         {
             var comparison = RequireSimpleCaseComparison(branch);
+            var branchOperand = Render(
+                comparison.Left,
+                provider,
+                renderSubquery,
+                dmlContext);
+            if (!EquivalentFragment(operand, branchOperand))
+            {
+                throw new SqlCompilationException(
+                    "Simple CASE branches must preserve one canonical operand before native lowering.");
+            }
+
             var match = Render(
                 comparison.Right,
                 provider,
@@ -1389,6 +1400,25 @@ internal static class NativeSqlExpressionRenderer
         }
 
         return segments;
+    }
+
+    private static bool EquivalentFragment(
+        NativeSqlFragment left,
+        NativeSqlFragment right)
+    {
+        if (!string.Equals(left.Sql, right.Sql, StringComparison.Ordinal)
+            || left.Bindings.Length != right.Bindings.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Bindings.Length; i++)
+        {
+            if (!Equals(left.Bindings[i], right.Bindings[i]))
+                return false;
+        }
+
+        return true;
     }
 
     private static NativeSqlFragment Combine(
