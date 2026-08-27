@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -65,11 +66,10 @@ public sealed class CorePostgresRealWorldRegressionTests
         Assert.Contains("GROUP BY CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
         foreach (var parameter in command.Parameters)
         {
-            Assert.Equal(
-                2,
-                command.Sql.Split(
-                    parameter.Name,
-                    StringSplitOptions.None).Length - 1);
+            var exactParameterToken = new Regex(
+                $@"(?<![A-Za-z0-9_]){Regex.Escape(parameter.Name)}(?![A-Za-z0-9_])",
+                RegexOptions.CultureInvariant);
+            Assert.Equal(2, exactParameterToken.Matches(command.Sql).Count);
         }
     }
 
