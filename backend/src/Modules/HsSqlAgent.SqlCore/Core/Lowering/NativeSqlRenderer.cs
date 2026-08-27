@@ -532,6 +532,12 @@ public sealed partial class NativeSqlRenderer(SqlAgentToolType provider) : IProv
         if (join.Kind != "CROSS" && join.Predicate is null)
             throw new SqlCompilationException(join.Kind + " JOIN requires an ON predicate.");
 
+        var capabilityError = SqlJoinCapabilityRules.TargetValidationError(
+            join.Kind,
+            _provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+
         var source = RenderTableSource(join.Source, QueryPosition.DerivedTable);
         if (join.Predicate is null)
         {

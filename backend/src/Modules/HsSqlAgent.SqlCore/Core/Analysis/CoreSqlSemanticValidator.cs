@@ -285,9 +285,11 @@ internal static class CoreSqlSemanticValidator
             throw new SqlCompilationException($"{join.Kind} JOIN requires an ON predicate.");
         }
 
-        if (provider == SqlAgentToolType.MySQL && join.Kind == "FULL")
-            throw new SqlCompilationException(
-                "SQL capability 'join.full' is not supported by provider MySQL for this Core plan.");
+        var capabilityError = SqlJoinCapabilityRules.TargetValidationError(
+            join.Kind,
+            provider);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
     }
 
     private static void ValidateSetOperationWidths(QueryStatement query)
