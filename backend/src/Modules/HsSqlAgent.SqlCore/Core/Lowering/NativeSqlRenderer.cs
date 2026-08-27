@@ -1235,19 +1235,16 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
 
             case SqlAgentToolType.Oracle:
             {
-                var safeOrder = hasOrderBy
-                    ? string.Empty
-                    : "ORDER BY (SELECT 0 FROM DUAL) ";
                 if (limit is null)
                 {
                     return new NativeSqlFragment(
-                        safeOrder + "OFFSET " +
+                        "OFFSET " +
                         NativeSqlParameterizer.Placeholder + " ROWS",
                         [offset!.Value]);
                 }
 
                 return new NativeSqlFragment(
-                    safeOrder + "OFFSET " +
+                    "OFFSET " +
                     NativeSqlParameterizer.Placeholder +
                     " ROWS FETCH NEXT " +
                     NativeSqlParameterizer.Placeholder +
