@@ -114,13 +114,7 @@ public static class SqlCapabilityMatrix
             SqlConcatCapabilityRules.MatrixCapability(provider, targetProfile),
             new("expression.like_escape", "expression", SqlCapabilityStatus.Translated,
                 "Explicit single-character literal LIKE ESCAPE is represented structurally and emitted for all target providers while the pattern remains parameterized. Dynamic, empty, multi-character, and control-character escape specifications fail-closed. MySQL NO_BACKSLASH_ESCAPES source requires the explicit escape contract for raw LIKE; target rendering does not rely on provider-default escape semantics."),
-            new("expression.boolean_select", "expression",
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
-                    ? SqlCapabilityStatus.Rejected
-                    : SqlCapabilityStatus.Supported,
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
-                    ? "Boolean/comparison expressions in the SELECT list are rejected; predicates remain supported."
-                    : "Boolean/comparison expressions can be projected in the SELECT list."),
+            SqlScalarBooleanCapabilityRules.ProjectionMatrixCapability(provider),
             new("expression.boolean_literal_source", "expression", SqlCapabilityStatus.Translated,
                 "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available."),
             new("expression.cast", "expression", SqlCapabilityStatus.Translated,
@@ -163,13 +157,7 @@ public static class SqlCapabilityMatrix
                 "INSERT VALUES, UPDATE, and DELETE use the structured DML path."),
             new("dml.update_expression", "dml", SqlCapabilityStatus.Translated,
                 "UPDATE SET accepts structured scalar Core expressions including column arithmetic, scalar functions, CASE, CAST, and scalar subqueries. Aggregate/window placement and provider-specific expression capabilities are validated before lowering; runtime values remain parameters."),
-            new("dml.update.boolean_assignment", "dml",
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
-                    ? SqlCapabilityStatus.Rejected
-                    : SqlCapabilityStatus.Translated,
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.MsSqlServer
-                    ? "Definitely boolean UPDATE assignment expressions are rejected because the current Core target profile does not model a portable scalar SQL boolean for this provider."
-                    : "Definitely boolean UPDATE assignment expressions use the provider's scalar boolean/value semantics."),
+            SqlScalarBooleanCapabilityRules.UpdateAssignmentMatrixCapability(provider),
             new("dml.insert_select", "dml", SqlCapabilityStatus.Translated,
                 "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count. CTE-free sources render directly from the canonical AST; statement-root CTE sources use the native provider-aware CTE placement path."),
             new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Translated,
