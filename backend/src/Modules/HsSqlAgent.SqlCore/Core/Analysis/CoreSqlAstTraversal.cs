@@ -146,9 +146,15 @@ internal static class CoreSqlAstTraversal
         }
     }
 
-    private static IEnumerable<SqlExpr> EnumerateExpressionTree(SqlExpr expression)
+    /// <summary>
+    /// Enumerates the direct structural expression children of one Core AST expression without
+    /// crossing into a subquery statement. This is the single child-shape map used by recursive
+    /// expression walkers that need to retain control over statement/query-position semantics.
+    /// Unknown expression nodes fail closed here.
+    /// </summary>
+    internal static IEnumerable<SqlExpr> EnumerateDirectChildren(SqlExpr expression)
     {
-        yield return expression;
+        ArgumentNullException.ThrowIfNull(expression);
 
         switch (expression)
         {
@@ -156,89 +162,81 @@ internal static class CoreSqlAstTraversal
             case ColumnExpr:
             case BoundColumnExpr:
             case IntervalExpr:
+            case SubqueryExpr:
+            case ExistsExpr:
                 yield break;
 
             case UnaryExpr unary:
-                foreach (var descendant in EnumerateExpressionTree(unary.Operand))
-                    yield return descendant;
+                yield return unary.Operand;
                 yield break;
 
             case BinaryExpr binary:
-                foreach (var descendant in EnumerateExpressionTree(binary.Left))
-                    yield return descendant;
-                foreach (var descendant in EnumerateExpressionTree(binary.Right))
-                    yield return descendant;
+                yield return binary.Left;
+                yield return binary.Right;
                 yield break;
 
             case FunctionCallExpr function:
                 foreach (var argument in function.Arguments)
-                foreach (var descendant in EnumerateExpressionTree(argument))
-                    yield return descendant;
+                    yield return argument;
                 foreach (var item in function.AggregateOrderBy)
-                foreach (var descendant in EnumerateExpressionTree(item.Expression))
-                    yield return descendant;
+                    yield return item.Expression;
                 yield break;
 
             case FilterExpr filter:
-                foreach (var descendant in EnumerateExpressionTree(filter.Expression))
-                    yield return descendant;
-                foreach (var descendant in EnumerateExpressionTree(filter.Predicate))
-                    yield return descendant;
+                yield return filter.Expression;
+                yield return filter.Predicate;
                 yield break;
 
             case WindowedExpr windowed:
-                foreach (var descendant in EnumerateExpressionTree(windowed.Expression))
-                    yield return descendant;
+                yield return windowed.Expression;
                 foreach (var partition in windowed.Window.PartitionBy)
-                foreach (var descendant in EnumerateExpressionTree(partition))
-                    yield return descendant;
+                    yield return partition;
                 foreach (var item in windowed.Window.OrderBy)
-                foreach (var descendant in EnumerateExpressionTree(item.Expression))
-                    yield return descendant;
+                    yield return item.Expression;
                 yield break;
 
             case CastExpr cast:
-                foreach (var descendant in EnumerateExpressionTree(cast.Expression))
-                    yield return descendant;
+                yield return cast.Expression;
                 yield break;
 
             case CaseExpr @case:
                 foreach (var branch in @case.Branches)
                 {
-                    foreach (var descendant in EnumerateExpressionTree(branch.Condition))
-                        yield return descendant;
-                    foreach (var descendant in EnumerateExpressionTree(branch.Value))
-                        yield return descendant;
+                    yield return branch.Condition;
+                    yield return branch.Value;
                 }
                 if (@case.ElseExpression is not null)
-                {
-                    foreach (var descendant in EnumerateExpressionTree(@case.ElseExpression))
-                        yield return descendant;
-                }
+                    yield return @case.ElseExpression;
                 yield break;
 
             case InExpr @in:
-                foreach (var descendant in EnumerateExpressionTree(@in.Value))
-                    yield return descendant;
+                yield return @in.Value;
                 foreach (var item in @in.Items)
-                foreach (var descendant in EnumerateExpressionTree(item))
-                    yield return descendant;
+                    yield return item;
                 yield break;
 
             case BetweenExpr between:
-                foreach (var descendant in EnumerateExpressionTree(between.Value))
-                    yield return descendant;
-                foreach (var descendant in EnumerateExpressionTree(between.Lower))
-                    yield return descendant;
-                foreach (var descendant in EnumerateExpressionTree(between.Upper))
-                    yield return descendant;
+                yield return between.Value;
+                yield return between.Lower;
+                yield return between.Upper;
                 yield break;
 
             case IsNullExpr isNull:
-                foreach (var descendant in EnumerateExpressionTree(isNull.Value))
-                    yield return descendant;
+                yield return isNull.Value;
                 yield break;
 
+            default:
+                throw new SqlCompilationException(
+                    $"Unsupported expression during Core AST traversal: {expression.GetType().Name}");
+        }
+    }
+
+    private static IEnumerable<SqlExpr> EnumerateExpressionTree(SqlExpr expression)
+    {
+        yield return expression;
+
+        switch (expression)
+        {
             case SubqueryExpr subquery:
                 foreach (var descendant in EnumerateStatementExpressions(subquery.Query))
                     yield return descendant;
@@ -248,10 +246,11 @@ internal static class CoreSqlAstTraversal
                 foreach (var descendant in EnumerateStatementExpressions(exists.Query))
                     yield return descendant;
                 yield break;
-
-            default:
-                throw new SqlCompilationException(
-                    $"Unsupported expression during Core AST traversal: {expression.GetType().Name}");
         }
+
+        foreach (var child in EnumerateDirectChildren(expression))
+        foreach (var descendant in EnumerateExpressionTree(child))
+            yield return descendant;
     }
+
 }
