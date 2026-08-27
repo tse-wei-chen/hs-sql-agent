@@ -145,19 +145,9 @@ internal static class CoreDateDiffNormalizer
                 "DATEDIFF date-part unit must be an unquoted SQL keyword.")
         };
 
-        return unit.Trim().ToUpperInvariant() switch
-        {
-            "DAY" or "DD" or "D" => "DAY",
-            "WEEK" or "WK" or "WW" => "WEEK",
-            "MONTH" or "MM" or "M" => "MONTH",
-            "QUARTER" or "QQ" or "Q" => "QUARTER",
-            "YEAR" or "YY" or "YYYY" => "YEAR",
-            "HOUR" or "HH" => "HOUR",
-            "MINUTE" or "MI" or "N" => "MINUTE",
-            "SECOND" or "SS" or "S" => "SECOND",
-            _ => throw new SqlCompilationException(
-                $"Unsupported DATEDIFF date-part unit '{unit}'.")
-        };
+        return SqlDateMathCapabilityRules.NormalizeUnit(
+            unit,
+            "DATEDIFF");
     }
 
     private static SqlIdentifier Identifier(string name) =>

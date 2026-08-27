@@ -17,14 +17,12 @@ internal static partial class NativeSqlExpressionRenderer
     {
         RequireArguments(function, 3);
         var unit = LiteralKeyword(function.Arguments[0], "DATEADD unit");
-        if (unit != "DAY"
-            && provider is SqlAgentToolType.Postgres
-                or SqlAgentToolType.Oracle
-                or SqlAgentToolType.Sqlite)
-        {
-            throw new SqlCompilationException(
-                "DATEADD unit " + unit + " is not supported by " + provider + ".");
-        }
+        var capabilityError = SqlDateMathCapabilityRules.TargetValidationError(
+            unit,
+            provider,
+            "CORE_DATE_ADD");
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
 
         var amount = Render(
             function.Arguments[1],
@@ -75,14 +73,12 @@ internal static partial class NativeSqlExpressionRenderer
     {
         RequireArguments(function, 3);
         var unit = LiteralKeyword(function.Arguments[0], "DATEDIFF unit");
-        if (unit != "DAY"
-            && provider is SqlAgentToolType.Postgres
-                or SqlAgentToolType.Oracle
-                or SqlAgentToolType.Sqlite)
-        {
-            throw new SqlCompilationException(
-                "DATEDIFF unit " + unit + " is not supported by " + provider + ".");
-        }
+        var capabilityError = SqlDateMathCapabilityRules.TargetValidationError(
+            unit,
+            provider,
+            "CORE_DATE_DIFF");
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
 
         var start = Render(
             function.Arguments[1],

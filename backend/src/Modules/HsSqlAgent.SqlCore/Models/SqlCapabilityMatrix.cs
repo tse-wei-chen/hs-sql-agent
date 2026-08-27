@@ -144,8 +144,7 @@ public static class SqlCapabilityMatrix
             SqlOffsetTimestampCapabilityRules.MatrixCapability(provider, targetProfile),
             SqlCurrentTemporalCapabilityRules.MatrixCapability(provider),
             SqlQuarterDatePartCapabilityRules.MatrixCapability(provider),
-            new("temporal.date_arithmetic", "temporal", SqlCapabilityStatus.Translated,
-                "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering."),
+            SqlDateMathCapabilityRules.MatrixCapability(provider),
             new("temporal.date_format", "temporal",
                 provider == SqlAgentToolType.Firebird ? SqlCapabilityStatus.Rejected : SqlCapabilityStatus.Translated,
                 provider == SqlAgentToolType.Firebird

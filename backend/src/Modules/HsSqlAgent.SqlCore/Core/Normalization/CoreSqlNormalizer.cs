@@ -444,18 +444,9 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
             _ => throw new SqlCompilationException(
                 "DATEADD/DATEDIFF date-part unit must be an unquoted SQL keyword.")
         };
-        return unit.Trim().ToUpperInvariant() switch
-        {
-            "DAY" or "DD" or "D" => "DAY",
-            "WEEK" or "WK" or "WW" => "WEEK",
-            "MONTH" or "MM" or "M" => "MONTH",
-            "QUARTER" or "QQ" or "Q" => "QUARTER",
-            "YEAR" or "YY" or "YYYY" => "YEAR",
-            "HOUR" or "HH" => "HOUR",
-            "MINUTE" or "MI" or "N" => "MINUTE",
-            "SECOND" or "SS" or "S" => "SECOND",
-            _ => throw new SqlCompilationException($"Unsupported DATEADD/DATEDIFF date-part unit '{unit}'.")
-        };
+        return SqlDateMathCapabilityRules.NormalizeUnit(
+            unit,
+            "DATEADD/DATEDIFF");
     }
 
     private static string LiteralString(SqlExpr expression, string label) =>
