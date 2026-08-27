@@ -40,7 +40,7 @@ public sealed class CoreBooleanCasePredicateTests
         Assert.Contains("END = 1", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("TRUE", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("FALSE", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(2, command.Parameters.Count);
+        Assert.Equal(2, command.Parameters.Length);
         Assert.Equal(1, command.Parameters[0].Value);
         Assert.Equal(2, command.Parameters[1].Value);
     }
