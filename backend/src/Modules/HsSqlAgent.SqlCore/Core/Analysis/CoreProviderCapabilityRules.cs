@@ -145,22 +145,9 @@ internal static class CoreProviderCapabilityRules
                 "Canonical function 'CORE_DATE_PART' requires a literal date-part unit.");
         }
 
-        var part = rawPart.Trim().ToUpperInvariant();
-        if (part is "YEAR" or "MONTH" or "DAY")
-            return;
-
-        if (part == "QUARTER")
-        {
-            var error = SqlQuarterDatePartCapabilityRules.TargetValidationError(provider);
-            if (error is not null)
-                throw new SqlCompilationException(error);
-            return;
-        }
-
-        throw CapabilityError(
-            provider,
-            "temporal.date_part." + part.ToLowerInvariant(),
-            "Date part " + part + " is outside the declared Core date-part subset.");
+        var error = SqlDatePartCapabilityRules.TargetValidationError(rawPart, provider);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void ValidateDateMathUnit(

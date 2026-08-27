@@ -246,7 +246,8 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
     {
         "DATEADD" => CanonicalDateAdd(original, arguments),
         "DATEDIFF" => CanonicalDateDiff(original, arguments, context),
-        "YEAR" or "MONTH" or "DAY" or "QUARTER" => CanonicalDatePart(original, sourceName, arguments),
+        _ when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) =>
+            CanonicalDatePart(original, sourceName, arguments),
         "DATE_FORMAT" or "FORMAT" => CanonicalDateFormat(original, arguments, context),
         "TO_DATE" => CanonicalDateParse(original, arguments, context),
         "CHARINDEX" or "LOCATE" or "STRPOS" or "INSTR" => CanonicalPosition(original, sourceName, arguments),
