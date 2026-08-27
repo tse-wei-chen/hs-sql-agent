@@ -61,50 +61,10 @@ public static class SqlCapabilityMatrix
                 "SELECT expressions without a FROM source preserve singleton-row semantics; Oracle lowers through DUAL and Firebird through RDB$DATABASE. Free column references and wildcard projection fail closed instead of resolving against a provider dummy table, while COUNT(*) and correlated outer references remain valid."),
             new("select.cte_set", "query", SqlCapabilityStatus.Translated,
                 "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally. Root CTE set queries that need an outer ORDER BY/LIMIT/OFFSET wrapper keep the WITH definitions at statement scope while the native renderer wraps only the CTE-free set body and tail; this also covers execution-policy limits."),
-            new("select.cte_derived", "query",
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? "Derived-table-local CTEs are compiled as complete target subqueries and reattached with ordered bindings, preserving lexical scope without CTE hoisting. The Core provider compiler applies the same rewrite before every nested SELECT, so query, scalar/EXISTS, and DML subqueries share this behavior; derived CTE set queries with an outer tail are included."
-                    : provider == SqlAgentToolType.Oracle
-                        ? "Oracle rejects WITH clauses nested inside parenthesized subqueries, so derived-table-local CTEs fail closed instead of emitting ORA-32034-prone SQL."
-                        : provider == SqlAgentToolType.MsSqlServer
-                            ? "SQL Server has no declared portable WITH-at-the-start-of-a-general-derived-subquery contract in the Core target profile, so derived-table-local CTEs fail closed in query and DML contexts."
-                            : "Firebird nested CTE placement is kept fail-closed in query and DML contexts until a target-profile contract is modeled and integration-tested."),
-            new("select.cte_set_branch", "query",
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? "Set-operation branches with a statement-root CTE are fully compiled as target fragments and wrapped behind a CTE-free derived SELECT before UNION/INTERSECT/EXCEPT lowering. The provider compiler applies this to ordinary, scalar/EXISTS, and DML nested SELECT compilation while preserving branch scope, tail clauses, and ordered bindings."
-                    : provider == SqlAgentToolType.Oracle
-                        ? "Oracle rejects the nested parenthesized WITH form required by the current set-branch wrapper, so set-branch-local CTEs fail closed."
-                        : provider == SqlAgentToolType.MsSqlServer
-                            ? "SQL Server has no declared portable nested-WITH branch wrapper contract in the Core target profile, so set-branch-local CTEs fail closed in query and DML contexts."
-                            : "Firebird nested CTE placement is kept fail-closed for set branches until a target-profile contract is modeled and integration-tested."),
-            new("select.cte_scalar_root", "query",
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? "Scalar and EXISTS subqueries may own a statement-root WITH clause. Core renders those expressions through a complete provider compiler invocation, preserving the root CTE, correlated outer references, and ordered bindings. Root CTE set queries with outer ORDER BY/LIMIT/OFFSET are also lowered directly when set-result ordering references only a combined output name or output ordinal, avoiding the generated _set derived wrapper so correlated outer references stay in scope. Richer set-result ORDER BY expressions remain tracked by select.cte_scope."
-                    : provider == SqlAgentToolType.Oracle
-                        ? "Oracle rejects WITH inside the parenthesized scalar/EXISTS subquery form, so scalar-root CTEs fail closed."
-                        : provider == SqlAgentToolType.MsSqlServer
-                            ? "SQL Server does not permit a nested WITH clause in the Core general-subquery profile, so scalar/EXISTS root CTEs fail closed."
-                            : "Firebird scalar/EXISTS root CTE placement remains fail-closed until a target-profile contract is modeled and integration-tested."),
-            new("select.cte_definition_local", "query",
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? "A CTE body may declare its own local WITH scope. Core recursively validates and renders each nested scope directly from the canonical AST without hoisting local definitions. Same-name shadowing, positional binding order, and local set-operation bodies with outer ORDER BY/LIMIT/OFFSET are preserved; CTE definitions have no parent correlation scope in the Core binder."
-                    : provider == SqlAgentToolType.Oracle
-                        ? "Oracle does not support nesting a WITH clause inside another WITH query block in the Core target profile, so CTE-definition-local WITH fails closed."
-                        : provider == SqlAgentToolType.MsSqlServer
-                            ? "SQL Server has no declared portable nested-WITH-inside-a-CTE-definition contract in the Core target profile, so this shape fails closed."
-                            : "Firebird CTE-definition-local WITH remains fail-closed until a target-profile contract is modeled and integration-tested."),
+            SqlNestedCteCapabilityRules.DerivedMatrixCapability(provider),
+            SqlNestedCteCapabilityRules.SetBranchMatrixCapability(provider),
+            SqlNestedCteCapabilityRules.ScalarRootMatrixCapability(provider),
+            SqlNestedCteCapabilityRules.DefinitionLocalMatrixCapability(provider),
             new("select.cte_scope", "query", SqlCapabilityStatus.Rejected,
                 "For PostgreSQL, MySQL, and SQLite scalar/EXISTS root CTE set queries, Core preserves correlated outer scope for outer ORDER BY/LIMIT/OFFSET when ORDER BY references only combined output names or output ordinals. Richer set-result ORDER BY expressions remain fail-closed because removing the generated _set wrapper is not yet proven scope- and ordering-equivalent for those expressions. Provider-specific nested-WITH support is declared separately by select.cte_derived, select.cte_set_branch, select.cte_scalar_root, and select.cte_definition_local."),
             new("expression.arithmetic", "expression", SqlCapabilityStatus.Translated,
@@ -156,15 +116,7 @@ public static class SqlCapabilityMatrix
                 "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count. CTE-free sources render directly from the canonical AST; statement-root CTE sources use the native provider-aware CTE placement path."),
             new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Translated,
                 "Statement-root CTEs in INSERT ... SELECT are lowered with provider-aware placement across all declared target providers while preserving parameter bindings, including root CTE set queries with outer ORDER BY/LIMIT/OFFSET. A root CTE whose body declares a local WITH follows select.cte_definition_local; nested derived/set-branch CTE support follows dml.nested_cte_scope."),
-            new("dml.nested_cte_scope", "dml",
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Rejected,
-                provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? "DML nested SELECTs preserve CTE scope in four modeled forms: scalar/EXISTS root CTEs use a complete provider compile; scalar/EXISTS root CTE set queries with outer tails use scope-preserving direct lowering when ORDER BY references a combined output name or output ordinal; CTE-definition-local WITH bodies, including local set tails, are recursively compiled and reattached as raw CTE components; derived-table and set-branch CTE fragments use the Core query-graph adapter. Ordered bindings and correlated outer references remain structural; richer scalar/EXISTS set-result ORDER BY expressions remain fail-closed under select.cte_scope."
-                    : provider == SqlAgentToolType.Oracle
-                        ? "Oracle nested parenthesized or nested-definition WITH forms fail closed in DML because the target grammar rejects them; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."
-                        : "Nested WITH fragments in DML fail closed because this provider has no declared portable general-subquery or nested-CTE-definition contract; statement-root INSERT ... SELECT CTEs remain supported through the dedicated placement path."),
+            SqlNestedCteCapabilityRules.DmlNestedMatrixCapability(provider),
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
                 "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract."),
             new("dml.returning_output", "dml",

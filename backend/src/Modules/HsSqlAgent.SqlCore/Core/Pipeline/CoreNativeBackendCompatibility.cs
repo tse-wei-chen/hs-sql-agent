@@ -208,9 +208,7 @@ internal static class CoreNativeBackendCompatibility
         SqlAgentToolType provider,
         bool allowNestedCteFragments) =>
         allowNestedCteFragments
-        && provider is SqlAgentToolType.Postgres
-            or SqlAgentToolType.MySQL
-            or SqlAgentToolType.Sqlite;
+        && SqlNestedCteCapabilityRules.SupportsTarget(provider);
 
     private static SqlCompilationException CteScopeError(string capability, string detail) =>
         new($"SQL capability '{capability}' is not supported by the native SQL backend: {detail}.");
