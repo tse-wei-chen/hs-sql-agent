@@ -33,11 +33,6 @@ public static class SqlCapabilityMatrix
                 nameof(targetProfile));
         }
 
-        var dmlConflictUpsertEnabled = provider == SqlAgentToolType.Postgres
-            || provider == SqlAgentToolType.Sqlite
-                && targetProfile?.ServerVersion is { } sqliteUpsertVersion
-                && sqliteUpsertVersion.CompareTo(new Version(3, 24)) >= 0;
-
         var capabilities = new List<SqlCapability>
         {
             new("provider.target_profile", "provider", SqlCapabilityStatus.Supported,
@@ -113,19 +108,7 @@ public static class SqlCapabilityMatrix
             new("dml.advanced", "dml", SqlCapabilityStatus.Rejected,
                 "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract."),
             SqlDmlReturningCapabilityRules.MatrixCapability(provider, targetProfile),
-            new("dml.upsert_merge", "dml",
-                dmlConflictUpsertEnabled ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Rejected,
-                dmlConflictUpsertEnabled
-                    ? provider == SqlAgentToolType.Postgres
-                        ? "PostgreSQL supports the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and closed assignments of the form target = EXCLUDED.source. Arbitrary expressions, predicates, named constraints, partial-index predicates, INSERT ... SELECT upsert, and typed approval execution remain fail-closed."
-                        : "SQLite ServerVersion 3.24+ target profiles support the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and target = EXCLUDED.source assignments. The target version must be explicit; richer SQLite UPSERT grammar and typed approval execution remain fail-closed."
-                    : provider == SqlAgentToolType.Sqlite
-                        ? "SQLite UPSERT remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.24 or newer."
-                        : provider == SqlAgentToolType.MySQL
-                            ? "MySQL ON DUPLICATE KEY UPDATE can fire on any UNIQUE or PRIMARY KEY and has no explicit conflict target. Core inventories provider-native enforced unique keys, including richer partial/expression/prefix shapes. The compiler has a conditional single-row DO UPDATE path only when an explicit ServerVersion 8.0.19+ target profile and statement-level assurance prove the matched explicit conflict target is the sole enforced native conflict source; it uses a proposed-row alias rather than deprecated VALUES(column). Because this capability matrix has no per-statement assurance input, the default capability remains Rejected and fail-closed; DO NOTHING, multiple native conflict sources, richer unsupported enforced unique sources, and typed approval execution remain rejected."
-                            : provider == SqlAgentToolType.Firebird
-                                ? "Firebird raw UPDATE OR INSERT ... MATCHING is canonicalized only with an explicit MATCHING column list. Firebird target lowering is available only when DmlConflictTargetAssurance proves that the canonical conflict target equals the complete resolved primary key and the conflict update mirrors every supplied INSERT column as the same proposed-row column. Because this capability matrix has no per-statement primary-key assurance input, the default Firebird capability remains Rejected and fail-closed; DO NOTHING, partial updates, general UNIQUE-key matching, and general MERGE remain rejected."
-                                : "This provider requires MERGE-style source and match semantics. Core has not yet modeled the source-row cardinality and match guarantees needed for a portable MERGE contract, so upsert remains fail-closed.")
+            SqlDmlUpsertCapabilityRules.MatrixCapability(provider, targetProfile)
         };
 
         return new ProviderSqlCapabilities(Version, provider, capabilities);
