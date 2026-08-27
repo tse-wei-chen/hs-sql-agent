@@ -269,15 +269,19 @@ internal static class CoreSourceDialectValidator
                     "NOW is modeled for PostgreSQL and MySQL source syntax.");
                 return;
             case "CURRENT_DATE":
-                Require(name, sourceDialect, sourceDialect != SqlAgentToolType.MsSqlServer,
-                    "CURRENT_DATE is not Transact-SQL source syntax.");
+                ValidateCurrentTemporalSource(
+                    SqlCurrentTemporalKind.Date,
+                    sourceDialect);
                 return;
             case "CURRENT_TIME":
-                Require(name, sourceDialect,
-                    sourceDialect is not (SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle),
-                    "CURRENT_TIME is not modeled as SQL Server or Oracle source syntax.");
+                ValidateCurrentTemporalSource(
+                    SqlCurrentTemporalKind.Time,
+                    sourceDialect);
                 return;
             case "CURRENT_TIMESTAMP":
+                ValidateCurrentTemporalSource(
+                    SqlCurrentTemporalKind.Timestamp,
+                    sourceDialect);
                 return;
 
             case "STRING_AGG":
@@ -316,6 +320,17 @@ internal static class CoreSourceDialectValidator
             throw new SqlCompilationException(
                 "Aggregate SEPARATOR clause is modeled only for MySQL GROUP_CONCAT raw source syntax.");
         }
+    }
+
+    private static void ValidateCurrentTemporalSource(
+        SqlCurrentTemporalKind kind,
+        SqlAgentToolType sourceDialect)
+    {
+        var error = SqlCurrentTemporalCapabilityRules.SourceValidationError(
+            kind,
+            sourceDialect);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void RequireProvider(

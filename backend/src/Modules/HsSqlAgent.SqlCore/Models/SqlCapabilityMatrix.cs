@@ -153,11 +153,7 @@ public static class SqlCapabilityMatrix
                 provider == SqlAgentToolType.MySQL
                     ? "MySQL has no native timestamp type that preserves an input UTC offset; offset values are rejected."
                     : "Offset timestamps are bound natively; PostgreSQL and Firebird normalize the represented instant to UTC."),
-            new("temporal.current_keywords", "temporal",
-                provider == SqlAgentToolType.Oracle ? SqlCapabilityStatus.Translated : SqlCapabilityStatus.Supported,
-                provider == SqlAgentToolType.Oracle
-                    ? "CURRENT_DATE and CURRENT_TIMESTAMP are supported; CURRENT_TIME is rejected because Oracle has no standalone TIME type."
-                    : "CURRENT_DATE, CURRENT_TIME, and CURRENT_TIMESTAMP are emitted with provider-specific translation where needed."),
+            SqlCurrentTemporalCapabilityRules.MatrixCapability(provider),
             new("temporal.date_arithmetic", "temporal", SqlCapabilityStatus.Translated,
                 "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering."),
             new("temporal.date_format", "temporal",

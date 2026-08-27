@@ -345,8 +345,13 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 $"Function '{name}' has no Core DISTINCT capability declaration.");
         }
 
-        if (name == "CORE_CURRENT_TIME" && provider == SqlAgentToolType.Oracle)
+        if (name == "CORE_CURRENT_TIME"
+            && !SqlCurrentTemporalCapabilityRules.SupportsTarget(
+                SqlCurrentTemporalKind.Time,
+                provider))
+        {
             throw CapabilityError(provider, "function.current_time");
+        }
     }
 
     private static void ValidateFilterTarget(SqlExpr expression)
