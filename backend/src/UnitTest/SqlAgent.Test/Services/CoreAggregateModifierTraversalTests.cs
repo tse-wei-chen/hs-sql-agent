@@ -110,6 +110,76 @@ public sealed class CoreAggregateModifierTraversalTests
         Assert.DoesNotContain("recent(id)", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Compile_NoFromAggregateOrderingColumn_FailsAtCoreBoundary()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseQuery(
+                    "SELECT STRING_AGG('x', ',' ORDER BY missing_column)",
+                    SqlAgentToolType.Postgres),
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("aggregate-traversal-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("missing_column", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("requires a FROM source", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_AggregateOrderingScalarSubquery_ValidatesNestedNoFromReferences()
+    {
+        var parsed = WithAggregateOrderExpression(
+            new SubqueryExpr(
+                CoreSqlTextParser.ParseQuery(
+                    "SELECT missing_column",
+                    SqlAgentToolType.Postgres).Statement,
+                SourceSpan.Unknown));
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("aggregate-traversal-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("missing_column", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("requires a FROM source", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_NestedAggregateInsideAggregateOrdering_FailsSemanticValidation()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseQuery(
+                    "SELECT STRING_AGG(name, ',' ORDER BY SUM(score)) FROM users",
+                    SqlAgentToolType.Postgres),
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("aggregate-traversal-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("cannot be nested", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SUM", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_InsertValuesAggregateOrderingColumn_FailsScopeValidation()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseDml(
+                    "INSERT INTO audit_log (summary) VALUES " +
+                    "(STRING_AGG('x', ',' ORDER BY source_column))",
+                    SqlAgentToolType.Postgres),
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("aggregate-traversal-v1"),
+                new DmlCompilationPolicy()));
+
+        Assert.Contains("INSERT VALUES scalar expression", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source_column", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ParsedStatement WithAggregateOrderExpression(SqlExpr orderExpression)
     {
         var parsed = CoreSqlTextParser.ParseQuery(
