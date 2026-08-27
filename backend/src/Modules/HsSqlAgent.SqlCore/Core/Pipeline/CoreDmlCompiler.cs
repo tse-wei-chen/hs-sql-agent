@@ -41,7 +41,13 @@ public sealed class CoreDmlCompiler(
         ValidateMutationPolicy(parsed.Statement, policy);
 
         var bound = _binder.Bind(parsed);
-        CoreAggregateLocalOrderingGuard.Validate(bound.Statement);
+        CoreAggregateLocalOrderingGuard.Validate(
+            bound.Statement,
+            parsed.EnforceSourceDialectSyntax,
+            bound.SourceDialect,
+            parsed.SourceProfile,
+            targetProvider,
+            targetProfile);
         if (parsed.EnforceSourceDialectSyntax)
         {
             CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect);

@@ -101,6 +101,20 @@ public sealed class CoreAggregateFilterCapabilityMatrixTests
         Assert.Contains("outer references", filter.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    public void Matrix_UnsupportedFilterProviders_RemainRejectedWithDeclaredProfiles(
+        SqlAgentToolType provider)
+    {
+        var filter = Filter(SqlCapabilityMatrix.ForProvider(
+            provider,
+            Profile(provider, 99, 0)));
+
+        Assert.Equal(SqlCapabilityStatus.Rejected, filter.Status);
+        Assert.Contains("no declared portable target contract", filter.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Matrix_SqliteFilterWithoutProfile_DocumentsExplicitVersionRequirement()
     {

@@ -175,7 +175,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
 
     private static void ValidateOrdering(IEnumerable<OrderByItem> orderBy, SqlAgentToolType provider)
     {
-        if (provider is not (SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)) return;
+        if (!SqlNullOrderingCapabilityRules.RequiresTargetRewrite(provider)) return;
         if (orderBy.Any(item => item.NullOrdering != NullOrderingKind.Default))
             throw CapabilityError(provider, "ordering.nulls");
     }
@@ -193,7 +193,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             case BoundColumnExpr:
                 return;
             case IntervalExpr:
-                if (provider != SqlAgentToolType.Postgres)
+                if (!SqlIntervalLiteralCapabilityRules.IsTargetSupported(provider))
                     throw CapabilityError(provider, "expression.interval");
                 return;
             case UnaryExpr unary:
@@ -210,15 +210,13 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 return;
             case FunctionCallExpr function:
                 ValidateFunction(function, provider, withinWindow);
+                ValidateAggregateLocalOrdering(function, provider);
                 foreach (var argument in function.Arguments)
                     ValidateExpression(argument, provider, ExpressionContext.FunctionArgument);
                 return;
             case FilterExpr filter:
-                if (provider is not (
-                    SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird))
-                {
+                if (!SqlAggregateFilterCapabilityRules.CanEverSupportProvider(provider))
                     throw CapabilityError(provider, "expression.filter");
-                }
                 ValidateFilterTarget(filter.Expression);
                 ValidateExpression(filter.Expression, provider, context, withinWindow);
                 ValidateExpression(filter.Predicate, provider, ExpressionContext.Predicate);
@@ -268,6 +266,39 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 throw new SqlCompilationException(
                     $"Unsupported expression during capability validation: {expression.GetType().Name}");
         }
+    }
+
+    private static void ValidateAggregateLocalOrdering(
+        FunctionCallExpr function,
+        SqlAgentToolType provider)
+    {
+        if (function.AggregateOrderBy.IsDefaultOrEmpty) return;
+
+        var name = IdentifierText(function.Name).ToUpperInvariant();
+        if (provider is not (
+                SqlAgentToolType.Postgres
+                or SqlAgentToolType.Sqlite
+                or SqlAgentToolType.MsSqlServer
+                or SqlAgentToolType.Oracle
+                or SqlAgentToolType.MySQL)
+            || name != "CORE_STRING_AGG")
+        {
+            throw CapabilityError(provider, "aggregate.string.ordering");
+        }
+
+        if (provider == SqlAgentToolType.MsSqlServer
+            && function.AggregateOrderBy.Any(item =>
+                !CoreSqlAstTraversal.EnumerateExpressions(item.Expression)
+                    .Any(node => node is ColumnExpr or BoundColumnExpr)))
+        {
+            throw new SqlCompilationException(
+                "SQL Server STRING_AGG WITHIN GROUP ordering requires non-constant expressions; " +
+                "Core requires each ordering expression to reference a column.");
+        }
+
+        ValidateOrdering(function.AggregateOrderBy, provider);
+        foreach (var item in function.AggregateOrderBy)
+            ValidateExpression(item.Expression, provider, ExpressionContext.OrderBy);
     }
 
     private static void ValidateFunction(

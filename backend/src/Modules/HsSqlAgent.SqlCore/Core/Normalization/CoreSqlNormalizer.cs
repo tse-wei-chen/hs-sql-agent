@@ -167,6 +167,10 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
 
     private SqlExpr NormalizeFunction(FunctionCallExpr function, NormalizationContext context)
     {
+        function = function with
+        {
+            AggregateOrderBy = NormalizeOrderBy(function.AggregateOrderBy, context)
+        };
         var arguments = function.Arguments.Select(argument => NormalizeExpr(argument, context)).ToImmutableArray();
         var sourceName = IdentifierText(function.Name).Trim().ToUpperInvariant();
 
@@ -346,18 +350,53 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         if (arguments.Length is < 1 or > 2)
             throw new SqlCompilationException("String aggregate requires 1 or 2 arguments.");
 
-        if (sourceName == "GROUP_CONCAT" && context.SourceDialect == SqlAgentToolType.MySQL && arguments.Length != 1)
+        if (sourceName == "STRING_AGG" && arguments.Length != 2)
+            throw new SqlCompilationException("STRING_AGG requires exactly 2 arguments.");
+
+        if (sourceName == "GROUP_CONCAT" && context.SourceDialect == SqlAgentToolType.MySQL)
         {
-            throw new SqlCompilationException(
-                "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. " +
-                "Use portable STRING_AGG(value, separator) when an explicit separator is required.");
+            if (arguments.Length != 1)
+            {
+                throw new SqlCompilationException(
+                    "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. " +
+                    "Core currently supports exactly one value expression; use portable STRING_AGG(value, separator) " +
+                    "or native SEPARATOR 'literal' for an explicit delimiter.");
+            }
+
+            var separator = original.AggregateSeparatorClause ?? ",";
+            return CanonicalFunction(
+                original,
+                "CORE_STRING_AGG",
+                [arguments[0], new LiteralExpr(separator, original.Span)]) with
+            {
+                AggregateOrderSyntax = AggregateOrderSyntaxKind.None,
+                AggregateSeparatorClause = null
+            };
         }
 
-        var normalized = arguments.Length == 1
-            ? ImmutableArray.Create(arguments[0], (SqlExpr)new LiteralExpr(",", original.Span))
-            : arguments;
+        var normalized = arguments;
+        if (arguments.Length == 1)
+        {
+            var defaultSeparator = sourceName switch
+            {
+                // Oracle LISTAGG omits the delimiter by default (NULL, which is semantically an
+                // empty separator for concatenation). Other modeled one-argument list aggregates
+                // use comma as their documented default.
+                "LISTAGG" => string.Empty,
+                "GROUP_CONCAT" or "LIST" => ",",
+                _ => throw new SqlCompilationException(
+                    $"String aggregate '{sourceName}' requires an explicit separator.")
+            };
+            normalized = ImmutableArray.Create(
+                arguments[0],
+                (SqlExpr)new LiteralExpr(defaultSeparator, original.Span));
+        }
 
-        return CanonicalFunction(original, "CORE_STRING_AGG", normalized);
+        return CanonicalFunction(original, "CORE_STRING_AGG", normalized) with
+        {
+            AggregateOrderSyntax = AggregateOrderSyntaxKind.None,
+            AggregateSeparatorClause = null
+        };
     }
 
     private static SqlExpr NormalizeSqlServerLen(

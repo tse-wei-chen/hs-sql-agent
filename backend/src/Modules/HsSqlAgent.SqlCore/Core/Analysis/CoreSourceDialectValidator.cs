@@ -25,12 +25,12 @@ internal static class CoreSourceDialectValidator
                 foreach (var join in select.Joins)
                 {
                     VisitSource(join.Source, sourceDialect);
-                    if (join.Predicate is not null) VisitExpr(join.Predicate, sourceDialect);
+                    if (join.Predicate is not null) ValidateExpressionTree(join.Predicate, sourceDialect);
                 }
-                foreach (var item in select.Select) VisitExpr(item.Expression, sourceDialect);
-                if (select.Where is not null) VisitExpr(select.Where, sourceDialect);
-                foreach (var item in select.GroupBy) VisitExpr(item, sourceDialect);
-                if (select.Having is not null) VisitExpr(select.Having, sourceDialect);
+                foreach (var item in select.Select) ValidateExpressionTree(item.Expression, sourceDialect);
+                if (select.Where is not null) ValidateExpressionTree(select.Where, sourceDialect);
+                foreach (var item in select.GroupBy) ValidateExpressionTree(item, sourceDialect);
+                if (select.Having is not null) ValidateExpressionTree(select.Having, sourceDialect);
                 foreach (var item in select.OrderBy) VisitOrderBy(item, sourceDialect);
                 return;
 
@@ -43,12 +43,12 @@ internal static class CoreSourceDialectValidator
 
             case UpdateStatement update:
                 foreach (var assignment in update.Assignments)
-                    VisitExpr(assignment.Value, sourceDialect);
-                if (update.Predicate is not null) VisitExpr(update.Predicate, sourceDialect);
+                    ValidateExpressionTree(assignment.Value, sourceDialect);
+                if (update.Predicate is not null) ValidateExpressionTree(update.Predicate, sourceDialect);
                 return;
 
             case DeleteStatement delete:
-                if (delete.Predicate is not null) VisitExpr(delete.Predicate, sourceDialect);
+                if (delete.Predicate is not null) ValidateExpressionTree(delete.Predicate, sourceDialect);
                 return;
 
             case InsertStatement insert:
@@ -57,7 +57,7 @@ internal static class CoreSourceDialectValidator
                     case InsertValuesSource values:
                         foreach (var row in values.Rows)
                         foreach (var value in row)
-                            VisitExpr(value, sourceDialect);
+                            ValidateExpressionTree(value, sourceDialect);
                         return;
                     case InsertQuerySource querySource:
                         VisitStatement(querySource.Query, sourceDialect);
@@ -81,110 +81,120 @@ internal static class CoreSourceDialectValidator
 
     private static void VisitOrderBy(OrderByItem item, SqlAgentToolType sourceDialect)
     {
-        if (item.NullOrdering != NullOrderingKind.Default
-            && sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
-        {
-            var modifier = item.NullOrdering == NullOrderingKind.First ? "NULLS FIRST" : "NULLS LAST";
-            throw new SqlCompilationException(
-                $"ORDER BY modifier '{modifier}' is not valid for declared source dialect {sourceDialect} in the Core source capability profile.");
-        }
-
-        VisitExpr(item.Expression, sourceDialect);
+        ValidateOrderByModifier(item, sourceDialect);
+        ValidateExpressionTree(item.Expression, sourceDialect);
     }
 
-    private static void VisitExpr(SqlExpr expression, SqlAgentToolType sourceDialect)
+    private static void ValidateExpressionTree(
+        SqlExpr expression,
+        SqlAgentToolType sourceDialect)
+    {
+        foreach (var node in CoreSqlAstTraversal.EnumerateExpressions(expression))
+            ValidateExpressionNode(node, sourceDialect);
+    }
+
+    private static void ValidateExpressionNode(
+        SqlExpr expression,
+        SqlAgentToolType sourceDialect)
     {
         switch (expression)
         {
-            case LiteralExpr:
-            case ColumnExpr:
-            case BoundColumnExpr:
-                return;
-
             case IntervalExpr:
-                if (sourceDialect != SqlAgentToolType.Postgres)
-                {
-                    throw new SqlCompilationException(
-                        $"INTERVAL 'literal' is not valid for declared source dialect {sourceDialect} in the Core source capability profile. " +
-                        "Core models this interval-literal shape as PostgreSQL source syntax; other dialect interval forms require their own structured translation contract.");
-                }
-                return;
-
-            case UnaryExpr unary:
-                VisitExpr(unary.Operand, sourceDialect);
-                return;
-
-            case BinaryExpr binary:
-                VisitExpr(binary.Left, sourceDialect);
-                VisitExpr(binary.Right, sourceDialect);
+                var intervalError = SqlIntervalLiteralCapabilityRules.SourceValidationError(sourceDialect);
+                if (intervalError is not null)
+                    throw new SqlCompilationException(intervalError);
                 return;
 
             case FunctionCallExpr function:
                 ValidateFunction(function, sourceDialect);
-                foreach (var argument in function.Arguments)
-                    VisitExpr(argument, sourceDialect);
+                ValidateAggregateSeparatorClause(function, sourceDialect);
+                foreach (var item in function.AggregateOrderBy)
+                    ValidateOrderByModifier(item, sourceDialect);
                 return;
 
-            case FilterExpr filter:
-                if (sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
-                {
-                    throw new SqlCompilationException(
-                        $"Aggregate FILTER (WHERE ...) is not valid for declared source dialect {sourceDialect} " +
-                        "in the Core source capability profile.");
-                }
-                VisitExpr(filter.Expression, sourceDialect);
-                VisitExpr(filter.Predicate, sourceDialect);
+            case FilterExpr:
+                var filterSourceError = SqlAggregateFilterCapabilityRules.RawSourceSyntaxError(sourceDialect);
+                if (filterSourceError is not null)
+                    throw new SqlCompilationException(filterSourceError);
                 return;
 
             case WindowedExpr windowed:
-                VisitExpr(windowed.Expression, sourceDialect);
-                foreach (var item in windowed.Window.PartitionBy)
-                    VisitExpr(item, sourceDialect);
                 foreach (var item in windowed.Window.OrderBy)
-                    VisitOrderBy(item, sourceDialect);
-                return;
-
-            case CastExpr cast:
-                VisitExpr(cast.Expression, sourceDialect);
-                return;
-
-            case CaseExpr @case:
-                foreach (var branch in @case.Branches)
-                {
-                    VisitExpr(branch.Condition, sourceDialect);
-                    VisitExpr(branch.Value, sourceDialect);
-                }
-                if (@case.ElseExpression is not null)
-                    VisitExpr(@case.ElseExpression, sourceDialect);
-                return;
-
-            case InExpr @in:
-                VisitExpr(@in.Value, sourceDialect);
-                foreach (var item in @in.Items) VisitExpr(item, sourceDialect);
-                return;
-
-            case BetweenExpr between:
-                VisitExpr(between.Value, sourceDialect);
-                VisitExpr(between.Lower, sourceDialect);
-                VisitExpr(between.Upper, sourceDialect);
-                return;
-
-            case IsNullExpr isNull:
-                VisitExpr(isNull.Value, sourceDialect);
+                    ValidateOrderByModifier(item, sourceDialect);
                 return;
 
             case SubqueryExpr subquery:
-                VisitStatement(subquery.Query, sourceDialect);
+                ValidateStatementOrderByModifiers(subquery.Query, sourceDialect);
                 return;
 
             case ExistsExpr exists:
-                VisitStatement(exists.Query, sourceDialect);
+                ValidateStatementOrderByModifiers(exists.Query, sourceDialect);
+                return;
+
+            default:
+                return;
+        }
+    }
+
+    /// <summary>
+    /// The shared expression traversal descends through scalar/EXISTS subqueries, but ORDER BY
+    /// modifiers are statement metadata rather than SqlExpr nodes. Keep this small structural walk
+    /// only for that metadata so source validation does not reintroduce a parallel expression walker.
+    /// Deeper scalar/EXISTS subqueries are reached by CoreSqlAstTraversal and invoke this method from
+    /// their own wrapper node.
+    /// </summary>
+    private static void ValidateStatementOrderByModifiers(
+        SqlStatement statement,
+        SqlAgentToolType sourceDialect)
+    {
+        switch (statement)
+        {
+            case SelectStatement select:
+                foreach (var cte in select.Ctes)
+                    ValidateStatementOrderByModifiers(cte.Query, sourceDialect);
+                if (select.From is DerivedTableSource derived)
+                    ValidateStatementOrderByModifiers(derived.Query, sourceDialect);
+                foreach (var join in select.Joins)
+                {
+                    if (join.Source is DerivedTableSource joinedDerived)
+                        ValidateStatementOrderByModifiers(joinedDerived.Query, sourceDialect);
+                }
+                foreach (var item in select.OrderBy)
+                    ValidateOrderByModifier(item, sourceDialect);
+                return;
+
+            case QueryStatement query:
+                ValidateStatementOrderByModifiers(query.Head, sourceDialect);
+                foreach (var operation in query.SetOperations)
+                    ValidateStatementOrderByModifiers(operation.Query, sourceDialect);
+                foreach (var item in query.OrderBy)
+                    ValidateOrderByModifier(item, sourceDialect);
+                return;
+
+            case InsertStatement { Source: InsertQuerySource querySource }:
+                ValidateStatementOrderByModifiers(querySource.Query, sourceDialect);
+                return;
+
+            case InsertStatement:
+            case UpdateStatement:
+            case DeleteStatement:
                 return;
 
             default:
                 throw new SqlCompilationException(
-                    $"Unsupported expression during source-dialect validation: {expression.GetType().Name}");
+                    $"Unsupported statement during source ORDER BY metadata validation: {statement.GetType().Name}");
         }
+    }
+
+    private static void ValidateOrderByModifier(
+        OrderByItem item,
+        SqlAgentToolType sourceDialect)
+    {
+        var error = SqlNullOrderingCapabilityRules.SourceValidationError(
+            sourceDialect,
+            item.NullOrdering);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void ValidateFunction(FunctionCallExpr function, SqlAgentToolType sourceDialect)
@@ -272,20 +282,39 @@ internal static class CoreSourceDialectValidator
 
             case "STRING_AGG":
                 Require(name, sourceDialect,
-                    sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.MsSqlServer,
-                    "STRING_AGG is modeled for PostgreSQL and SQL Server source syntax.");
+                    (sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.MsSqlServer) && arity == 2,
+                    "STRING_AGG is modeled as a two-argument PostgreSQL/SQL Server source function.");
                 return;
             case "GROUP_CONCAT":
                 Require(name, sourceDialect,
-                    sourceDialect is SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite,
-                    "GROUP_CONCAT is modeled for MySQL and SQLite source syntax.");
+                    sourceDialect == SqlAgentToolType.MySQL
+                    || sourceDialect == SqlAgentToolType.Sqlite && arity is 1 or 2,
+                    "GROUP_CONCAT is modeled for MySQL source syntax and SQLite with one or two arguments.");
                 return;
             case "LISTAGG":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.Oracle);
+                Require(name, sourceDialect,
+                    sourceDialect == SqlAgentToolType.Oracle && arity is 1 or 2,
+                    "LISTAGG is modeled for Oracle source syntax with one or two arguments.");
                 return;
             case "LIST":
-                RequireProvider(name, sourceDialect, SqlAgentToolType.Firebird);
+                Require(name, sourceDialect,
+                    sourceDialect == SqlAgentToolType.Firebird && arity is 1 or 2,
+                    "LIST is modeled for Firebird source syntax with one or two arguments.");
                 return;
+        }
+    }
+
+    private static void ValidateAggregateSeparatorClause(
+        FunctionCallExpr function,
+        SqlAgentToolType sourceDialect)
+    {
+        if (function.AggregateSeparatorClause is null) return;
+
+        var name = IdentifierText(function.Name).ToUpperInvariant();
+        if (sourceDialect != SqlAgentToolType.MySQL || name != "GROUP_CONCAT")
+        {
+            throw new SqlCompilationException(
+                "Aggregate SEPARATOR clause is modeled only for MySQL GROUP_CONCAT raw source syntax.");
         }
     }
 

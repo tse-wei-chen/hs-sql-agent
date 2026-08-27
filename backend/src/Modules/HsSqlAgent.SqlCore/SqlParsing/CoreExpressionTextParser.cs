@@ -367,9 +367,50 @@ internal sealed class CoreExpressionTextParser(
             do arguments.Add(ParseExpression());
             while (_reader.Match(TokenType.Comma));
         }
+        var aggregateOrderBy = ImmutableArray<OrderByItem>.Empty;
+        var aggregateOrderSyntax = AggregateOrderSyntaxKind.None;
+        string? aggregateSeparatorClause = null;
+        if (_reader.MatchWord("ORDER"))
+        {
+            _reader.ExpectWord("BY");
+            aggregateOrderBy = ParseOrderByItems();
+            aggregateOrderSyntax = AggregateOrderSyntaxKind.Inline;
+        }
+
+        if (_reader.MatchWord("SEPARATOR"))
+        {
+            var separatorToken = _reader.Expect(
+                TokenType.String,
+                "string literal after aggregate SEPARATOR");
+            aggregateSeparatorClause = DecodeString(separatorToken.Value);
+        }
+
         _reader.Expect(TokenType.RParen, "')' after function arguments");
 
-        SqlExpr result = new FunctionCallExpr(name, arguments.ToImmutable(), distinct, _reader.SpanFrom(start));
+        if (_reader.MatchWord("WITHIN"))
+        {
+            if (!aggregateOrderBy.IsDefaultOrEmpty)
+            {
+                throw CoreTokenReader.Error(
+                    "Aggregate ordering cannot combine inline ORDER BY with WITHIN GROUP.",
+                    _reader.Peek(-1));
+            }
+
+            _reader.ExpectWord("GROUP");
+            _reader.Expect(TokenType.LParen, "'(' after WITHIN GROUP");
+            _reader.ExpectWord("ORDER");
+            _reader.ExpectWord("BY");
+            aggregateOrderBy = ParseOrderByItems();
+            aggregateOrderSyntax = AggregateOrderSyntaxKind.WithinGroup;
+            _reader.Expect(TokenType.RParen, "')' after WITHIN GROUP ordering");
+        }
+
+        SqlExpr result = new FunctionCallExpr(name, arguments.ToImmutable(), distinct, _reader.SpanFrom(start))
+        {
+            AggregateOrderBy = aggregateOrderBy,
+            AggregateOrderSyntax = aggregateOrderSyntax,
+            AggregateSeparatorClause = aggregateSeparatorClause
+        };
         if (_reader.MatchWord("FILTER"))
         {
             _reader.Expect(TokenType.LParen, "'(' after FILTER");
@@ -381,6 +422,31 @@ internal sealed class CoreExpressionTextParser(
         if (_reader.MatchWord("OVER"))
             result = new WindowedExpr(result, ParseWindowSpec(), _reader.SpanFrom(start));
         return result with { Span = _reader.SpanFrom(start) };
+    }
+
+    private ImmutableArray<OrderByItem> ParseOrderByItems()
+    {
+        var items = ImmutableArray.CreateBuilder<OrderByItem>();
+        do
+        {
+            var orderStart = _reader.Position;
+            var expression = ParseExpression();
+            var descending = false;
+            if (_reader.MatchWord("DESC")) descending = true;
+            else _reader.MatchWord("ASC");
+
+            var nullOrdering = NullOrderingKind.Default;
+            if (_reader.MatchWord("NULLS"))
+            {
+                if (_reader.MatchWord("FIRST")) nullOrdering = NullOrderingKind.First;
+                else if (_reader.MatchWord("LAST")) nullOrdering = NullOrderingKind.Last;
+                else throw CoreTokenReader.Error("Expected FIRST or LAST after NULLS.", _reader.Peek());
+            }
+
+            items.Add(new OrderByItem(expression, descending, nullOrdering, _reader.SpanFrom(orderStart)));
+        } while (_reader.Match(TokenType.Comma));
+
+        return items.ToImmutable();
     }
 
     private WindowSpec ParseWindowSpec()
@@ -401,24 +467,7 @@ internal sealed class CoreExpressionTextParser(
         if (_reader.MatchWord("ORDER"))
         {
             _reader.ExpectWord("BY");
-            var items = ImmutableArray.CreateBuilder<OrderByItem>();
-            do
-            {
-                var orderStart = _reader.Position;
-                var expression = ParseExpression();
-                var descending = false;
-                if (_reader.MatchWord("DESC")) descending = true;
-                else _reader.MatchWord("ASC");
-                var nullOrdering = NullOrderingKind.Default;
-                if (_reader.MatchWord("NULLS"))
-                {
-                    if (_reader.MatchWord("FIRST")) nullOrdering = NullOrderingKind.First;
-                    else if (_reader.MatchWord("LAST")) nullOrdering = NullOrderingKind.Last;
-                    else throw CoreTokenReader.Error("Expected FIRST or LAST after NULLS.", _reader.Peek());
-                }
-                items.Add(new OrderByItem(expression, descending, nullOrdering, _reader.SpanFrom(orderStart)));
-            } while (_reader.Match(TokenType.Comma));
-            orderBy = items.ToImmutable();
+            orderBy = ParseOrderByItems();
         }
 
         WindowFrame? frame = null;

@@ -29,10 +29,26 @@ internal static class SqlAggregateFilterCapabilityRules
     internal static readonly Version FirebirdMinimumVersion = new(4, 0);
     internal static readonly Version OracleMinimumVersion = new(26, 0);
 
+    internal static bool CanEverSupportProvider(SqlAgentToolType provider) =>
+        provider is SqlAgentToolType.Postgres
+            or SqlAgentToolType.Sqlite
+            or SqlAgentToolType.Firebird
+            or SqlAgentToolType.Oracle;
+
+    internal static string? RawSourceSyntaxError(SqlAgentToolType sourceDialect) =>
+        CanEverSupportProvider(sourceDialect)
+            ? null
+            : $"Aggregate FILTER (WHERE ...) is not valid for declared source dialect {sourceDialect} in the Core source capability profile.";
+
     internal static SqlAggregateFilterCapabilityDecision Evaluate(
         SqlAgentToolType provider,
-        SqlProviderCapabilityProfile? profile) => provider switch
+        SqlProviderCapabilityProfile? profile)
     {
+        if (!CanEverSupportProvider(provider))
+            return new(SqlAggregateFilterCapabilityReason.UnsupportedProvider);
+
+        return provider switch
+        {
         SqlAgentToolType.Postgres =>
             profile?.ServerVersion is { } postgresVersion
             && postgresVersion.CompareTo(PostgresMinimumVersion) < 0
@@ -46,14 +62,12 @@ internal static class SqlAggregateFilterCapabilityRules
         SqlAgentToolType.Firebird => EvaluateDeclaredVersion(profile, FirebirdMinimumVersion),
         SqlAgentToolType.Oracle => EvaluateDeclaredVersion(profile, OracleMinimumVersion),
 
-        SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer =>
-            new(SqlAggregateFilterCapabilityReason.UnsupportedProvider),
-
         _ => throw new ArgumentOutOfRangeException(
             nameof(provider),
             provider,
             "Unsupported SQL provider.")
-    };
+        };
+    }
 
     internal static string? ValidationError(
         SqlAgentToolType provider,
