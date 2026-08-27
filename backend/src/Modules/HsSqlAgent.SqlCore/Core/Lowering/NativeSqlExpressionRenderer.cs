@@ -121,6 +121,22 @@ internal static partial class NativeSqlExpressionRenderer
                     left,
                     right);
             }
+
+            if (expression is CaseExpr @case
+                && CoreBooleanProjectionRules.IsDefinitelyBoolean(@case, provider))
+            {
+                return @case is SimpleCaseExpr simpleCase
+                    ? RenderBooleanSimpleCasePredicate(
+                        simpleCase,
+                        provider,
+                        renderSubquery,
+                        dmlContext)
+                    : RenderBooleanCasePredicate(
+                        @case,
+                        provider,
+                        renderSubquery,
+                        dmlContext);
+            }
         }
 
         return Render(
@@ -558,6 +574,138 @@ internal static partial class NativeSqlExpressionRenderer
             ? comparison
             : throw new SqlCompilationException(
                 "Simple CASE branch lost its canonical equality shape before lowering.");
+
+    private static NativeSqlFragment RenderBooleanSimpleCasePredicate(
+        SimpleCaseExpr @case,
+        SqlAgentToolType provider,
+        Func<SqlStatement, NativeSqlFragment> renderSubquery,
+        bool dmlContext)
+    {
+        if (@case.Branches.IsDefaultOrEmpty)
+            throw new SqlCompilationException("Simple CASE requires at least one WHEN branch.");
+
+        var first = RequireSimpleCaseComparison(@case.Branches[0]);
+        var operand = Render(
+            first.Left,
+            provider,
+            renderSubquery,
+            dmlContext);
+        var bindings = ImmutableArray.CreateBuilder<object?>();
+        bindings.AddRange(operand.Bindings);
+        var parts = new List<string>();
+
+        foreach (var branch in @case.Branches)
+        {
+            var comparison = RequireSimpleCaseComparison(branch);
+            var branchOperand = Render(
+                comparison.Left,
+                provider,
+                renderSubquery,
+                dmlContext);
+            if (!EquivalentFragment(operand, branchOperand))
+            {
+                throw new SqlCompilationException(
+                    "Simple CASE branches must preserve one canonical operand before native lowering.");
+            }
+
+            var match = Render(
+                comparison.Right,
+                provider,
+                renderSubquery,
+                dmlContext);
+            var value = RenderBooleanTruthValue(
+                branch.Value,
+                provider,
+                renderSubquery,
+                dmlContext);
+            parts.Add("WHEN " + match.Sql + " THEN " + value.Sql);
+            bindings.AddRange(match.Bindings);
+            bindings.AddRange(value.Bindings);
+        }
+
+        if (@case.ElseExpression is not null)
+        {
+            var otherwise = RenderBooleanTruthValue(
+                @case.ElseExpression,
+                provider,
+                renderSubquery,
+                dmlContext);
+            parts.Add("ELSE " + otherwise.Sql);
+            bindings.AddRange(otherwise.Bindings);
+        }
+
+        return new NativeSqlFragment(
+            "(CASE " + operand.Sql + " " + string.Join(" ", parts) + " END = 1)",
+            bindings.ToImmutable());
+    }
+
+    private static NativeSqlFragment RenderBooleanCasePredicate(
+        CaseExpr @case,
+        SqlAgentToolType provider,
+        Func<SqlStatement, NativeSqlFragment> renderSubquery,
+        bool dmlContext)
+    {
+        if (@case.Branches.IsDefaultOrEmpty)
+            throw new SqlCompilationException("Searched CASE requires at least one WHEN branch.");
+
+        var bindings = ImmutableArray.CreateBuilder<object?>();
+        var parts = new List<string>();
+        foreach (var branch in @case.Branches)
+        {
+            var condition = RenderPredicate(
+                branch.Condition,
+                provider,
+                renderSubquery,
+                dmlContext);
+            var value = RenderBooleanTruthValue(
+                branch.Value,
+                provider,
+                renderSubquery,
+                dmlContext);
+            parts.Add("WHEN " + condition.Sql + " THEN " + value.Sql);
+            bindings.AddRange(condition.Bindings);
+            bindings.AddRange(value.Bindings);
+        }
+
+        if (@case.ElseExpression is not null)
+        {
+            var otherwise = RenderBooleanTruthValue(
+                @case.ElseExpression,
+                provider,
+                renderSubquery,
+                dmlContext);
+            parts.Add("ELSE " + otherwise.Sql);
+            bindings.AddRange(otherwise.Bindings);
+        }
+
+        return new NativeSqlFragment(
+            "(CASE " + string.Join(" ", parts) + " END = 1)",
+            bindings.ToImmutable());
+    }
+
+    private static NativeSqlFragment RenderBooleanTruthValue(
+        SqlExpr expression,
+        SqlAgentToolType provider,
+        Func<SqlStatement, NativeSqlFragment> renderSubquery,
+        bool dmlContext)
+    {
+        if (expression is LiteralExpr { Value: null })
+        {
+            return new NativeSqlFragment(
+                "NULL",
+                ImmutableArray<object?>.Empty);
+        }
+
+        var predicate = RenderPredicate(
+            expression,
+            provider,
+            renderSubquery,
+            dmlContext);
+        return predicate with
+        {
+            Sql = "CASE WHEN " + predicate.Sql + " THEN 1 ELSE 0 END"
+        };
+    }
 
     private static NativeSqlFragment RenderCase(
         CaseExpr @case,

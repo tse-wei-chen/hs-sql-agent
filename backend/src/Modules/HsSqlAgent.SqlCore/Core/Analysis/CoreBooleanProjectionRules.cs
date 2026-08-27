@@ -50,7 +50,7 @@ internal static class CoreBooleanProjectionRules
             $"SQL capability 'dml.insert.boolean_value' is not supported by provider {provider} for this Core plan.");
     }
 
-    private static bool IsDefinitelyBoolean(SqlExpr expression, SqlAgentToolType provider) => expression switch
+    internal static bool IsDefinitelyBoolean(SqlExpr expression, SqlAgentToolType provider) => expression switch
     {
         LiteralExpr { Value: bool } => true,
         IsNullExpr or InExpr or BetweenExpr or ExistsExpr => true,
