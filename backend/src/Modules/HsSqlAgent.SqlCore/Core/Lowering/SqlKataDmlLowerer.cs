@@ -156,8 +156,12 @@ public sealed class SqlKataDmlLowerer(SqlAgentToolType provider)
         var right = RenderExpression(binary.Right, compiler);
         var likeEscape = CoreLikeEscapeSqlRenderer.RenderSuffix(binary, compiler);
 
-        if (binary.Operator == "%" && compiler is OracleCompiler or FirebirdCompiler)
+        if (binary.Operator == "%"
+            && SqlModuloCapabilityRules.UsesFunctionSyntax(
+                SqlKataCompilerProviderClassifier.Resolve(compiler)))
+        {
             return Combine($"MOD({left.Sql}, {right.Sql})", left, right);
+        }
         if (binary.Operator == "||" && compiler is MySqlCompiler)
             return Combine($"CONCAT({left.Sql}, {right.Sql})", left, right);
         if (binary.Operator == "||" && compiler is SqlServerCompiler)

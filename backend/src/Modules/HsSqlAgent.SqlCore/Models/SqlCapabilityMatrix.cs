@@ -111,13 +111,7 @@ public static class SqlCapabilityMatrix
                 "For PostgreSQL, MySQL, and SQLite scalar/EXISTS root CTE set queries, Core preserves correlated outer scope for outer ORDER BY/LIMIT/OFFSET when ORDER BY references only combined output names or output ordinals. Richer set-result ORDER BY expressions remain fail-closed because removing the generated _set wrapper is not yet proven scope- and ordering-equivalent for those expressions. Provider-specific nested-WITH support is declared separately by select.cte_derived, select.cte_set_branch, select.cte_scalar_root, and select.cte_definition_local."),
             new("expression.arithmetic", "expression", SqlCapabilityStatus.Translated,
                 "+, -, *, and / are preserved by the AST/compiler."),
-            new("expression.modulo", "expression",
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
-                    ? SqlCapabilityStatus.Translated
-                    : SqlCapabilityStatus.Supported,
-                provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
-                    ? "Canonical modulo is rendered as MOD(left, right); source-dialect validation rejects a native % spelling where that spelling is invalid."
-                    : "The provider-native % operator is emitted."),
+            SqlModuloCapabilityRules.MatrixCapability(provider),
             new("expression.concat", "expression",
                 provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
                     ? SqlCapabilityStatus.Translated
