@@ -483,9 +483,12 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         if (normalized == "||" && context.SourceDialect == SqlAgentToolType.MySQL)
             throw new SqlCompilationException(
                 "MySQL '||' semantics depend on PIPES_AS_CONCAT sql_mode; Core rejects the operator because session sql_mode is not part of the compilation plan.");
-        if (normalized == "%" && context.SourceDialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
-            throw new SqlCompilationException(
-                $"Operator '%' is not valid portable source syntax for {context.SourceDialect}; use the provider's MOD function instead.");
+        if (normalized == "%")
+        {
+            var error = SqlModuloCapabilityRules.SourceValidationError(context.SourceDialect);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+        }
 
         return normalized;
     }
