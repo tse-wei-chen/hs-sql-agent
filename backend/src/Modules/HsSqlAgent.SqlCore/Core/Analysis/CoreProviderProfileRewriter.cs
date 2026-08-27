@@ -42,16 +42,6 @@ internal static class CoreProviderProfileRewriter
             throw new SqlCompilationException("Provider compatibility level must be non-negative.");
     }
 
-    public static bool SupportsSqlServerRegex(
-        SqlAgentToolType targetProvider,
-        SqlProviderCapabilityProfile? targetProfile) =>
-        targetProvider == SqlAgentToolType.MsSqlServer
-        && targetProfile is
-        {
-            Provider: SqlAgentToolType.MsSqlServer,
-            CompatibilityLevel: >= 170
-        };
-
     private static SqlStatement RewriteStatement(
         SqlStatement statement,
         SqlAgentToolType targetProvider,
@@ -333,12 +323,11 @@ internal static class CoreProviderProfileRewriter
         if (!IdentifierText(function.Name).Equals("CORE_REGEX_MATCH", StringComparison.OrdinalIgnoreCase))
             return rewritten;
 
-        if (!SupportsSqlServerRegex(targetProvider, targetProfile))
-        {
-            throw new SqlCompilationException(
-                "SQL capability 'function.regex_match' requires a declared SQL Server target " +
-                "capability profile with compatibility level 170 or above.");
-        }
+        var capabilityError = SqlRegexCapabilityRules.TargetValidationError(
+            targetProvider,
+            targetProfile);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
 
         return rewritten with
         {

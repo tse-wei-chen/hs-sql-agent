@@ -63,11 +63,9 @@ internal static class CoreProviderCapabilityRules
                 ValidateJsonCapability(name, provider);
                 break;
 
-            // SQL Server 2025 can expose REGEXP_LIKE at compatibility level 170+. The provider-wide
-            // semantic pass therefore lets SQL Server reach the target-profile stage, which still
-            // fails closed unless that runtime contract is declared explicitly.
-            case "CORE_REGEX_MATCH" when provider is SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird:
-                throw CapabilityError(provider, "function.regex_match");
+            case "CORE_REGEX_MATCH":
+                ValidateRegexCapability(provider);
+                break;
 
             case "CORE_DATE_PART":
                 ValidateDatePart(function, provider);
@@ -129,6 +127,14 @@ internal static class CoreProviderCapabilityRules
         var error = SqlTemporalFormatCapabilityRules.TargetValidationError(
             functionName,
             provider);
+        if (error is not null)
+            throw new SqlCompilationException(error);
+    }
+
+    private static void ValidateRegexCapability(
+        SqlAgentToolType provider)
+    {
+        var error = SqlRegexCapabilityRules.ProviderValidationError(provider);
         if (error is not null)
             throw new SqlCompilationException(error);
     }
