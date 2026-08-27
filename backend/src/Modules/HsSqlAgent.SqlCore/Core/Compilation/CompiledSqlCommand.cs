@@ -17,7 +17,7 @@ public sealed record SqlParameterValue(string Name, object? Value);
 
 /// <summary>
 /// Immutable execution boundary. Executors should receive this type rather than parser DTOs,
-/// semantic nodes, or SqlKata queries so the command that was validated is the command executed.
+/// semantic nodes, or renderer-specific intermediates so the command that was validated is the command executed.
 /// </summary>
 public sealed record CompiledSqlCommand(
     string Sql,

@@ -20,7 +20,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-27.46";
+    public const string Version = "2026-08-27.47";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -62,7 +62,7 @@ public static class SqlCapabilityMatrix
             new("select.singleton", "query", SqlCapabilityStatus.Translated,
                 "SELECT expressions without a FROM source preserve singleton-row semantics; Oracle lowers through DUAL and Firebird through RDB$DATABASE. Free column references and wildcard projection fail closed instead of resolving against a provider dummy table, while COUNT(*) and correlated outer references remain valid."),
             new("select.cte_set", "query", SqlCapabilityStatus.Translated,
-                "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally. Root CTE set queries that need an outer ORDER BY/LIMIT/OFFSET wrapper move only the root CTE definitions to that generated wrapper so SqlKata cannot drop their scope; this also covers execution-policy limits."),
+                "Statement-root CTEs and UNION/INTERSECT/EXCEPT are represented structurally. Root CTE set queries that need an outer ORDER BY/LIMIT/OFFSET wrapper keep the WITH definitions at statement scope while the native renderer wraps only the CTE-free set body and tail; this also covers execution-policy limits."),
             new("select.cte_derived", "query",
                 provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
                     ? SqlCapabilityStatus.Translated
@@ -101,7 +101,7 @@ public static class SqlCapabilityMatrix
                     ? SqlCapabilityStatus.Translated
                     : SqlCapabilityStatus.Rejected,
                 provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite
-                    ? "A CTE body may declare its own local WITH scope. Core recursively prepares deeper scopes, fully compiles the CTE body, and reattaches it as a raw CTE component so SqlKata CteFinder cannot hoist local definitions. Same-name shadowing, positional binding order, and local set-operation bodies with outer ORDER BY/LIMIT/OFFSET are preserved; CTE definitions have no parent correlation scope in the Core binder."
+                    ? "A CTE body may declare its own local WITH scope. Core recursively validates and renders each nested scope directly from the canonical AST without hoisting local definitions. Same-name shadowing, positional binding order, and local set-operation bodies with outer ORDER BY/LIMIT/OFFSET are preserved; CTE definitions have no parent correlation scope in the Core binder."
                     : provider == SqlAgentToolType.Oracle
                         ? "Oracle does not support nesting a WITH clause inside another WITH query block in the Core target profile, so CTE-definition-local WITH fails closed."
                         : provider == SqlAgentToolType.MsSqlServer
@@ -209,7 +209,7 @@ public static class SqlCapabilityMatrix
                     ? "Definitely boolean UPDATE assignment expressions are rejected because the current Core target profile does not model a portable scalar SQL boolean for this provider."
                     : "Definitely boolean UPDATE assignment expressions use the provider's scalar boolean/value semantics."),
             new("dml.insert_select", "dml", SqlCapabilityStatus.Translated,
-                "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count. CTE-free sources use SqlKata's structured insert-query path; statement-root CTE sources use the Core provider-aware CTE placement path."),
+                "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count. CTE-free sources render directly from the canonical AST; statement-root CTE sources use the native provider-aware CTE placement path."),
             new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Translated,
                 "Statement-root CTEs in INSERT ... SELECT are lowered with provider-aware placement across all declared target providers while preserving parameter bindings, including root CTE set queries with outer ORDER BY/LIMIT/OFFSET. A root CTE whose body declares a local WITH follows select.cte_definition_local; nested derived/set-branch CTE support follows dml.nested_cte_scope."),
             new("dml.nested_cte_scope", "dml",
