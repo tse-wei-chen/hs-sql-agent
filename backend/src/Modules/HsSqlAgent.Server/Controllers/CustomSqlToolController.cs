@@ -338,12 +338,18 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
                 TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
+                var approvalContext = DmlApprovalExecutionContextResolver.FromAdmin(
+                    User,
+                    tool.DbManagementId.Value,
+                    dbType,
+                    dbPwd.Database);
                 var session = await new TypedDmlRuntime().PreviewAsync(
                     provider,
                     connectionString,
                     parsedDml,
                     runtimePolicy,
                     allowedTables: null,
+                    approvalContext,
                     cancellationToken);
                 result = JsonSerializer.Serialize(new
                 {

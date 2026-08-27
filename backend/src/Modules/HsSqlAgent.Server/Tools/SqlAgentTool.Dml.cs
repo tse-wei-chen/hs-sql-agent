@@ -44,6 +44,9 @@ public partial class SqlAgentTool
             TypedDmlRuntime.EnsureSupportedStatement(parsedMutation.Statement);
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
+            var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(
+                _httpContextAccessor.HttpContext,
+                dbType);
             var flow = new TypedDmlApprovalFlow(
                 _typedDmlRuntime,
                 _securityPolicyRuntimeState,
@@ -53,6 +56,7 @@ public partial class SqlAgentTool
                 provider,
                 sqlConfig.ConnectionString,
                 parsedMutation,
+                approvalContext,
                 new McpDmlApprovalClient(server),
                 $"{descriptor.Operation} on `{descriptor.Table}`",
                 cancellationToken);

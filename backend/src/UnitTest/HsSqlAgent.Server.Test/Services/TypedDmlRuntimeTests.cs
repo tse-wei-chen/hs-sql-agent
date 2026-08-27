@@ -10,6 +10,12 @@ namespace HsSqlAgent.Server.Test.Services;
 
 public class TypedDmlRuntimeTests
 {
+    private static readonly DmlApprovalExecutionContext DefaultApprovalContext = new(
+        "mcp-key:7",
+        "db-management:11",
+        SqlAgentToolType.Postgres,
+        "appdb");
+
     [Fact]
     public async Task PreviewAsync_InsertSelectFailsClosedBeforeProviderAccess()
     {
@@ -26,6 +32,7 @@ public class TypedDmlRuntimeTests
                 parsed,
                 new SecurityPolicyModel(),
                 null,
+                DefaultApprovalContext,
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("INSERT", error.Message, StringComparison.OrdinalIgnoreCase);
@@ -68,6 +75,7 @@ public class TypedDmlRuntimeTests
             parsed,
             policy,
             allowedTables,
+            DefaultApprovalContext,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(DmlApprovalMode.InsertValues, session.Plan.ApprovalMode);
@@ -82,6 +90,9 @@ public class TypedDmlRuntimeTests
         Assert.Equal("Alice", session.Preview.Rows[0]["name"]);
         Assert.Null(session.Preview.Challenge.RowSetFingerprint);
         Assert.Equal(session.Plan.PlanFingerprint, session.Preview.Challenge.PlanFingerprint);
+        Assert.Equal(
+            TypedDmlRuntime.ComputeApprovalContextFingerprint(DefaultApprovalContext),
+            session.Preview.Challenge.ApprovalContextFingerprint);
         Assert.Equal(
             TypedDmlRuntime.ComputePolicyVersion(policy, allowedTables),
             session.Plan.PolicyVersion);
@@ -110,6 +121,7 @@ public class TypedDmlRuntimeTests
                 session,
                 changedPolicy,
                 null,
+                DefaultApprovalContext,
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("security policy", error.Message, StringComparison.OrdinalIgnoreCase);
@@ -141,9 +153,38 @@ public class TypedDmlRuntimeTests
                 session,
                 policy,
                 changedTables,
+                DefaultApprovalContext,
                 TestContext.Current.CancellationToken));
 
         Assert.Contains("table authorization", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("new preview", error.Message, StringComparison.OrdinalIgnoreCase);
+        provider.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CommitAsync_RejectsApprovalContextChangeBeforeProviderAccess()
+    {
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 25 };
+        var session = BuildSession(
+            TypedDmlRuntime.ComputePolicyVersion(policy, null),
+            DefaultApprovalContext);
+        var changedContext = DefaultApprovalContext with
+        {
+            TargetIdentity = "db-management:12"
+        };
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TypedDmlRuntime().CommitAsync(
+                provider.Object,
+                "connection",
+                session,
+                policy,
+                null,
+                changedContext,
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("execution context", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("new preview", error.Message, StringComparison.OrdinalIgnoreCase);
         provider.VerifyNoOtherCalls();
     }
@@ -160,6 +201,10 @@ public class TypedDmlRuntimeTests
         var parameters = commit.GetParameters();
         Assert.Contains(parameters, parameter => parameter.ParameterType == typeof(SecurityPolicyModel));
         Assert.Contains(parameters, parameter => parameter.Name == "currentAllowedTables");
+        Assert.Contains(
+            parameters,
+            parameter => parameter.ParameterType == typeof(DmlApprovalExecutionContext)
+                         && parameter.Name == "currentApprovalContext");
     }
 
     [Fact]
@@ -230,8 +275,11 @@ public class TypedDmlRuntimeTests
         Assert.NotEqual(before, after);
     }
 
-    private static TypedDmlApprovalSession BuildSession(string policyVersion)
+    private static TypedDmlApprovalSession BuildSession(
+        string policyVersion,
+        DmlApprovalExecutionContext? approvalContext = null)
     {
+        approvalContext ??= DefaultApprovalContext;
         var command = new CompiledSqlCommand(
             "UPDATE public.users SET status = @p0 WHERE id = @p1",
             ImmutableArray<SqlParameterValue>.Empty,
@@ -261,6 +309,7 @@ public class TypedDmlRuntimeTests
             "rowset-fingerprint",
             1,
             policyVersion,
+            TypedDmlRuntime.ComputeApprovalContextFingerprint(approvalContext),
             now,
             now.AddMinutes(5),
             "nonce");

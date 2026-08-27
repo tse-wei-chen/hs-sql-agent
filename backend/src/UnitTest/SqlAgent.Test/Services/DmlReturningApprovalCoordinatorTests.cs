@@ -8,6 +8,8 @@ namespace SqlAgent.Test.Services;
 
 public sealed class DmlReturningApprovalCoordinatorTests
 {
+    private const string ApprovalContextFingerprint = "approval-context-v1";
+
     [Fact]
     public async Task Commit_InsertReturning_MaterializesRowsAndPreservesApprovedCount()
     {
@@ -37,11 +39,13 @@ public sealed class DmlReturningApprovalCoordinatorTests
             var preview = await coordinator.PreviewAsync(
                 connectionString,
                 plan,
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken);
             var result = await coordinator.CommitAsync(
                 connectionString,
                 plan,
                 preview.Challenge,
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken);
 
             Assert.True(command.ReturnsRows);
@@ -89,11 +93,13 @@ public sealed class DmlReturningApprovalCoordinatorTests
             var preview = await coordinator.PreviewAsync(
                 connectionString,
                 plan,
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken);
             var result = await coordinator.CommitAsync(
                 connectionString,
                 plan,
                 preview.Challenge,
+                ApprovalContextFingerprint,
                 TestContext.Current.CancellationToken);
 
             Assert.False(result.Committed);

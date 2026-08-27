@@ -140,6 +140,9 @@ public class CustomToolProxy(
                 auditDml = parsedDml;
                 TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
+                var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(
+                    _httpContextAccessor.HttpContext,
+                    dbType);
                 var flow = new TypedDmlApprovalFlow(
                     _typedDmlRuntime,
                     _securityPolicyRuntimeState,
@@ -149,6 +152,7 @@ public class CustomToolProxy(
                     provider,
                     sqlConfig.ConnectionString,
                     parsedDml,
+                    approvalContext,
                     approvalClient,
                     $"Custom tool `{_name}`",
                     cancellationToken);

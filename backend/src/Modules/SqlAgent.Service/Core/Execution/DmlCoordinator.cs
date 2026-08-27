@@ -30,13 +30,15 @@ public sealed class DmlCoordinator(
     public async Task<DmlPreview> PreviewAsync(
         string connectionString,
         ValidatedDmlPlan plan,
+        string approvalContextFingerprint,
         CancellationToken cancellationToken = default)
     {
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
 
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
-            return await PreviewInsertValuesAsync(plan, cancellationToken);
+            return await PreviewInsertValuesAsync(plan, approvalContextFingerprint, cancellationToken);
 
         var matchCommand = RequireMatchCommand(plan);
         await using var connection = _connectionFactory.Create(connectionString);
@@ -62,7 +64,11 @@ public sealed class DmlCoordinator(
         }
 
         var rowSetFingerprint = ComputeRowSetFingerprint(plan, rows);
-        var challenge = CreateChallenge(plan, rowSetFingerprint, rows.Count);
+        var challenge = CreateChallenge(
+            plan,
+            rowSetFingerprint,
+            rows.Count,
+            approvalContextFingerprint);
         await _challengeStore.RegisterAsync(challenge, cancellationToken);
 
         return new DmlPreview(
@@ -77,10 +83,12 @@ public sealed class DmlCoordinator(
         string connectionString,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
+        string approvalContextFingerprint,
         CancellationToken cancellationToken = default)
     {
         ValidatePlan(plan);
-        ValidateChallenge(plan, approvedChallenge);
+        ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
+        ValidateChallenge(plan, approvedChallenge, approvalContextFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         if (!await _challengeStore.TryConsumeAsync(approvedChallenge, cancellationToken))
@@ -172,6 +180,7 @@ public sealed class DmlCoordinator(
 
     private async Task<DmlPreview> PreviewInsertValuesAsync(
         ValidatedDmlPlan plan,
+        string approvalContextFingerprint,
         CancellationToken cancellationToken)
     {
         var affectedRows = plan.InsertRows.Length;
@@ -181,7 +190,11 @@ public sealed class DmlCoordinator(
                 $"Security policy denied INSERT: rowCount={affectedRows} exceeds maximum {plan.MaxAffectedRows}.");
         }
 
-        var challenge = CreateChallenge(plan, rowSetFingerprint: null, affectedRows);
+        var challenge = CreateChallenge(
+            plan,
+            rowSetFingerprint: null,
+            affectedRows,
+            approvalContextFingerprint);
         await _challengeStore.RegisterAsync(challenge, cancellationToken);
 
         return new DmlPreview(
@@ -231,7 +244,8 @@ public sealed class DmlCoordinator(
     private DmlApprovalChallenge CreateChallenge(
         ValidatedDmlPlan plan,
         string? rowSetFingerprint,
-        int affectedRows)
+        int affectedRows,
+        string approvalContextFingerprint)
     {
         var now = _timeProvider.GetUtcNow();
         var ttl = plan.ApprovalTtl > TimeSpan.Zero
@@ -242,6 +256,7 @@ public sealed class DmlCoordinator(
             rowSetFingerprint,
             affectedRows,
             plan.PolicyVersion,
+            approvalContextFingerprint,
             now,
             now.Add(ttl),
             Guid.NewGuid().ToString("N"));
@@ -249,7 +264,8 @@ public sealed class DmlCoordinator(
 
     private void ValidateChallenge(
         ValidatedDmlPlan plan,
-        DmlApprovalChallenge challenge)
+        DmlApprovalChallenge challenge,
+        string approvalContextFingerprint)
     {
         ArgumentNullException.ThrowIfNull(challenge);
         var now = _timeProvider.GetUtcNow();
@@ -263,6 +279,14 @@ public sealed class DmlCoordinator(
             throw new InvalidOperationException("DML policy changed after approval.");
         if (!string.Equals(plan.PlanFingerprint, challenge.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("DML plan changed after approval.");
+        if (!string.Equals(
+                challenge.ApprovalContextFingerprint,
+                approvalContextFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "DML approval execution context changed after preview; request a new preview before committing.");
+        }
         if (plan.MaxAffectedRows > 0 && challenge.AffectedRows > plan.MaxAffectedRows)
             throw new InvalidOperationException("DML approval exceeds the validated maximum affected row count.");
 

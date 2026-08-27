@@ -142,6 +142,7 @@ public class RedisDmlApprovalChallengeStoreTests
             "rows",
             2,
             "policy-v1",
+            "approval-context-v1",
             now,
             now.AddMinutes(5),
             nonce);

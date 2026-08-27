@@ -23,6 +23,7 @@ internal sealed class TypedDmlApprovalFlow(
         ISqlProvider provider,
         string connectionString,
         ParsedStatement parsedMutation,
+        DmlApprovalExecutionContext approvalContext,
         IDmlApprovalClient? approvalClient,
         string approvalTitle,
         CancellationToken cancellationToken)
@@ -59,6 +60,7 @@ internal sealed class TypedDmlApprovalFlow(
                 parsedMutation,
                 previewPolicy,
                 previewAllowedTables,
+                approvalContext,
                 cancellationToken);
         }
 
@@ -125,6 +127,7 @@ internal sealed class TypedDmlApprovalFlow(
                 session,
                 currentPolicy,
                 currentAllowedTables,
+                approvalContext,
                 cancellationToken);
             var result = commit.Committed
                 ? $"Success | affectedRows={commit.AffectedRows} | {commit.Message}"
