@@ -82,6 +82,22 @@ public sealed class CoreDmlReturningTests
     [Theory]
     [InlineData(SqlAgentToolType.MySQL, "MySQL")]
     [InlineData(SqlAgentToolType.Oracle, "RETURNING INTO")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "OUTPUT")]
+    public void Parse_ReturningFromUnsupportedRawSource_FailsClosed(
+        SqlAgentToolType sourceDialect,
+        string expectedMessage)
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(
+                "DELETE FROM users WHERE id = 1 RETURNING id",
+                sourceDialect));
+
+        Assert.Contains(expectedMessage, error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL, "MySQL")]
+    [InlineData(SqlAgentToolType.Oracle, "RETURNING INTO")]
     [InlineData(SqlAgentToolType.MsSqlServer, "trigger")]
     public void Compile_ReturningToUnsupportedTarget_FailsClosed(
         SqlAgentToolType target,
