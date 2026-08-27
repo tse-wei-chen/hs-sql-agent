@@ -1,15 +1,60 @@
 namespace HsSqlAgent.SqlCore.Models;
 
 /// <summary>
-/// Single target-provider/runtime-profile contract for deterministic INSERT conflict lowering.
-/// PostgreSQL is directly declared. SQLite requires ServerVersion 3.24+. MySQL and Firebird expose
-/// conditional statement-assured lowering paths, so their provider matrix remains rejected even
-/// when an individual statement can be proven safe. SQL Server and Oracle remain MERGE-gated.
+/// Single source/target provider-runtime contract for deterministic INSERT conflict handling.
+/// PostgreSQL ON CONFLICT is directly declared and SQLite requires ServerVersion 3.24+. MySQL and
+/// Firebird expose distinct native source forms and conditional statement-assured target lowering,
+/// while SQL Server and Oracle remain MERGE-gated.
 /// </summary>
 internal static class SqlDmlUpsertCapabilityRules
 {
     private static readonly Version SqliteUpsertVersion = new(3, 24);
     private static readonly Version MySqlProposedRowAliasVersion = new(8, 0, 19);
+
+    internal static bool SupportsOnConflictSource(
+        SqlAgentToolType sourceDialect,
+        Version? sourceServerVersion) => sourceDialect switch
+    {
+        SqlAgentToolType.Postgres => true,
+        SqlAgentToolType.Sqlite =>
+            IsAtLeast(sourceServerVersion, SqliteUpsertVersion),
+        SqlAgentToolType.MySQL
+            or SqlAgentToolType.Firebird
+            or SqlAgentToolType.MsSqlServer
+            or SqlAgentToolType.Oracle => false,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(sourceDialect),
+            sourceDialect,
+            "Unsupported SQL source dialect.")
+    };
+
+    internal static string? OnConflictSourceValidationError(
+        SqlAgentToolType sourceDialect,
+        Version? sourceServerVersion)
+    {
+        if (SupportsOnConflictSource(sourceDialect, sourceServerVersion))
+            return null;
+
+        return sourceDialect switch
+        {
+            SqlAgentToolType.Sqlite =>
+                "Raw SQLite UPSERT requires a source capability profile with ServerVersion 3.24 or newer.",
+            SqlAgentToolType.MySQL =>
+                "MySQL ON DUPLICATE KEY UPDATE has no explicit conflict target and is not represented by the deterministic portable upsert contract.",
+            SqlAgentToolType.Firebird =>
+                "Firebird source upsert uses UPDATE OR INSERT ... MATCHING rather than ON CONFLICT; use the native explicit MATCHING form so Core can preserve source semantics.",
+            SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle =>
+                $"Source dialect {sourceDialect} uses MERGE-style upsert semantics, which require a separate source-row cardinality contract and remain fail-closed.",
+            _ =>
+                $"Portable INSERT conflict handling is not represented for source dialect {sourceDialect}."
+        };
+    }
+
+    internal static string? FirebirdUpdateOrInsertSourceValidationError(
+        SqlAgentToolType sourceDialect) =>
+        sourceDialect == SqlAgentToolType.Firebird
+            ? null
+            : $"UPDATE OR INSERT is Firebird source syntax and is not valid for source dialect {sourceDialect}.";
 
     internal static bool SupportsDirectTarget(
         SqlAgentToolType provider,
@@ -87,6 +132,11 @@ internal static class SqlDmlUpsertCapabilityRules
                         "This provider requires MERGE-style source and match semantics. Core has not yet modeled the source-row cardinality and match guarantees needed for a portable MERGE contract, so upsert remains fail-closed."
                 });
     }
+
+    private static bool IsAtLeast(
+        Version? actual,
+        Version required) =>
+        actual is not null && actual.CompareTo(required) >= 0;
 
     private static bool IsAtLeast(
         SqlProviderCapabilityProfile? profile,
