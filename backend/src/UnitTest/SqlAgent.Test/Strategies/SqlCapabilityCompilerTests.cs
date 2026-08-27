@@ -231,6 +231,24 @@ public class SqlCapabilityCompilerTests
     }
 
     [Fact]
+    public void DateFormat_ReusesSemanticBindingAcrossProjectionAndGroupBy()
+    {
+        var definition = SqlDefinitionParser.ParseQuery(
+            "SELECT DATE_FORMAT(created_at, '%Y-%m') FROM orders " +
+            "GROUP BY DATE_FORMAT(created_at, '%Y-%m')");
+        var command = Compile(
+            definition,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres);
+
+        var parameter = Assert.Single(command.Parameters);
+        Assert.Equal("YYYY-MM", parameter.Value);
+        Assert.Equal(
+            2,
+            command.Sql.Split(parameter.Name, StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
     public void DateFormat_AndDateParse_FailClosedForUnsupportedProviders()
     {
         var format = SqlDefinitionParser.ParseQuery(

@@ -16,6 +16,10 @@ internal sealed record NativeSqlFragment(
         new(string.Empty, ImmutableArray<object?>.Empty);
 }
 
+internal sealed record NativeSharedSqlBinding(
+    string Key,
+    object? Value);
+
 internal static class NativeSqlParameterizer
 {
     // A control character cannot be produced by any accepted SQL identifier, operator, function,
@@ -33,6 +37,8 @@ internal static class NativeSqlParameterizer
 
         var sql = new StringBuilder(fragment.Sql.Length + fragment.Bindings.Length * 4);
         var parameters = ImmutableArray.CreateBuilder<SqlParameterValue>(fragment.Bindings.Length);
+        var sharedParameters = new Dictionary<string, (string Name, object? Value)>(
+            StringComparer.Ordinal);
         var bindingIndex = 0;
         var prefix = provider == SqlAgentToolType.Oracle ? ":p" : "@p";
 
@@ -50,10 +56,32 @@ internal static class NativeSqlParameterizer
                     "Native SQL renderer produced more parameter markers than bindings.");
             }
 
-            var name = prefix + bindingIndex;
+            var binding = fragment.Bindings[bindingIndex++];
+            if (binding is NativeSharedSqlBinding shared)
+            {
+                if (sharedParameters.TryGetValue(shared.Key, out var existing))
+                {
+                    if (!Equals(existing.Value, shared.Value))
+                    {
+                        throw new SqlCompilationException(
+                            "Native SQL renderer reused semantic binding key '" +
+                            shared.Key + "' for different values.");
+                    }
+
+                    sql.Append(existing.Name);
+                    continue;
+                }
+
+                var sharedName = prefix + parameters.Count;
+                sharedParameters.Add(shared.Key, (sharedName, shared.Value));
+                sql.Append(sharedName);
+                parameters.Add(new SqlParameterValue(sharedName, shared.Value));
+                continue;
+            }
+
+            var name = prefix + parameters.Count;
             sql.Append(name);
-            parameters.Add(new SqlParameterValue(name, fragment.Bindings[bindingIndex]));
-            bindingIndex++;
+            parameters.Add(new SqlParameterValue(name, binding));
         }
 
         if (bindingIndex != fragment.Bindings.Length)

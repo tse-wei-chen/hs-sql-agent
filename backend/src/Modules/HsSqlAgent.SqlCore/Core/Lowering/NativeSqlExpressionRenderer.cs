@@ -135,6 +135,11 @@ internal static class NativeSqlExpressionRenderer
     private static NativeSqlFragment Bind(object? value) =>
         new(P, [value]);
 
+    private static NativeSqlFragment BindShared(
+        string key,
+        object? value) =>
+        new(P, [new NativeSharedSqlBinding(key, value)]);
+
     private static NativeSqlFragment CastBinding(string type, object? value) =>
         new("CAST(" + P + " AS " + type + ")", [value]);
 
@@ -516,9 +521,12 @@ internal static class NativeSqlExpressionRenderer
             provider,
             renderSubquery,
             dmlContext);
-        var format = Bind(StringLiteralValue(
+        var formatValue = StringLiteralValue(
             function.Arguments[1],
-            "date format"));
+            "date format");
+        var format = BindShared(
+            "date-format:" + formatValue,
+            formatValue);
 
         return provider switch
         {
@@ -556,9 +564,12 @@ internal static class NativeSqlExpressionRenderer
             provider,
             renderSubquery,
             dmlContext);
-        var format = Bind(StringLiteralValue(
+        var formatValue = StringLiteralValue(
             function.Arguments[1],
-            "date parse format"));
+            "date parse format");
+        var format = BindShared(
+            "date-parse-format:" + formatValue,
+            formatValue);
 
         return provider switch
         {
