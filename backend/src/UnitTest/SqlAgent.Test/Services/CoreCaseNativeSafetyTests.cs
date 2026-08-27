@@ -9,6 +9,9 @@ public sealed class CoreCaseNativeSafetyTests
     public void Compile_MalformedSearchedCaseWithoutBranches_FailsClosed()
     {
         var select = new SelectStatement(
+            Ctes: ImmutableArray<CteDefinition>.Empty,
+            Distinct: false,
+            Select:
             [
                 new SelectItem(
                     new CaseExpr(
@@ -19,16 +22,14 @@ public sealed class CoreCaseNativeSafetyTests
                     SourceSpan.Unknown)
             ],
             From: null,
-            ImmutableArray<JoinSource>.Empty,
-            Predicate: null,
-            ImmutableArray<SqlExpr>.Empty,
+            Joins: ImmutableArray<JoinSource>.Empty,
+            Where: null,
+            GroupBy: ImmutableArray<SqlExpr>.Empty,
             Having: null,
-            ImmutableArray<OrderByItem>.Empty,
+            OrderBy: ImmutableArray<OrderByItem>.Empty,
             Limit: null,
             Offset: null,
-            Distinct: false,
-            ImmutableArray<CteDefinition>.Empty,
-            SourceSpan.Unknown);
+            Span: SourceSpan.Unknown);
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(
