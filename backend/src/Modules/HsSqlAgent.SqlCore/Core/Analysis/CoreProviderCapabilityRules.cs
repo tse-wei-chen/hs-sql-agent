@@ -53,18 +53,10 @@ internal static class CoreProviderCapabilityRules
             case "NTH_VALUE" when provider == SqlAgentToolType.MsSqlServer:
                 throw CapabilityError(provider, "function.nth_value");
 
-            case "CORE_DATE_FORMAT" when provider == SqlAgentToolType.Firebird:
-                throw CapabilityError(
-                    provider,
-                    "function.date_format",
-                    "portable date formatting is not supported by Firebird.");
-
-            case "CORE_DATE_PARSE" when provider is not (
-                SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle):
-                throw CapabilityError(
-                    provider,
-                    "function.date_parse",
-                    "formatted date parsing is not supported by this provider.");
+            case "CORE_DATE_FORMAT":
+            case "CORE_DATE_PARSE":
+                ValidateTemporalFormatCapability(name, provider);
+                break;
 
             case "CORE_JSON_EXTRACT" when provider is not (
                 SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite):
@@ -132,6 +124,17 @@ internal static class CoreProviderCapabilityRules
         {
             throw CapabilityError(provider, "window.range_offset");
         }
+    }
+
+    private static void ValidateTemporalFormatCapability(
+        string functionName,
+        SqlAgentToolType provider)
+    {
+        var error = SqlTemporalFormatCapabilityRules.TargetValidationError(
+            functionName,
+            provider);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void ValidateDatePart(
