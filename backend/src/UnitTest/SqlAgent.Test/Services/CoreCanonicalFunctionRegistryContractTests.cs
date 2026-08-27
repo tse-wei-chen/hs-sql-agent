@@ -5,82 +5,102 @@ namespace SqlAgent.Test.Services;
 public sealed class CoreCanonicalFunctionRegistryContractTests
 {
     [Theory]
-    [InlineData("ABS", SqlCanonicalFunctionKind.Scalar, 1, 1, true)]
-    [InlineData("ROUND", SqlCanonicalFunctionKind.Scalar, 1, 2, true)]
-    [InlineData("SUM", SqlCanonicalFunctionKind.Aggregate, 1, 1, true)]
-    [InlineData("LAG", SqlCanonicalFunctionKind.Window, 1, 3, true)]
-    [InlineData("CORE_DATE_ADD", SqlCanonicalFunctionKind.Scalar, 3, 3, false)]
-    [InlineData("CORE_STRING_AGG", SqlCanonicalFunctionKind.Aggregate, 2, 2, false)]
-    public void Registry_DeclaresCanonicalRoleArityAndNormalizationSurface(
-        string name,
-        SqlCanonicalFunctionKind expectedKind,
-        int expectedMinArguments,
-        int expectedMaxArguments,
-        bool expectedDirectPortable)
+    [InlineData("SELECT ABS(amount) FROM orders")]
+    [InlineData("SELECT ROUND(amount, 2) FROM orders")]
+    [InlineData("SELECT SUM(amount) FROM orders")]
+    [InlineData("SELECT ROW_NUMBER() OVER (ORDER BY id) FROM orders")]
+    public void Compile_RepresentativeDirectPortableFunctions_RemainSupported(string sql)
     {
-        var contract = Assert.IsType<SqlCanonicalFunctionContract>(
-            SqlCanonicalFunctionRegistry.Find(name));
+        var command = Compile(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
 
-        Assert.Equal(expectedKind, contract.Kind);
-        Assert.Equal(expectedMinArguments, contract.MinArguments);
-        Assert.Equal(expectedMaxArguments, contract.MaxArguments);
-        Assert.Equal(expectedDirectPortable, contract.IsDirectPortable);
+        Assert.False(string.IsNullOrWhiteSpace(command.Sql));
     }
 
     [Fact]
-    public void Registry_DoesNotTreatRawStringAggregateAliasesAsCanonicalNames()
+    public void Compile_DirectPortableFunctionArity_RemainsCanonicalPlanContract()
     {
-        Assert.Null(SqlCanonicalFunctionRegistry.Find("STRING_AGG"));
-        Assert.Null(SqlCanonicalFunctionRegistry.Find("GROUP_CONCAT"));
-        Assert.Null(SqlCanonicalFunctionRegistry.Find("LISTAGG"));
-        Assert.Null(SqlCanonicalFunctionRegistry.Find("LIST"));
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT ROUND(amount, 1, 2) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres));
 
-        var canonical = Assert.IsType<SqlCanonicalFunctionContract>(
-            SqlCanonicalFunctionRegistry.Find("CORE_STRING_AGG"));
-        Assert.Equal(SqlCanonicalFunctionKind.Aggregate, canonical.Kind);
-        Assert.False(canonical.AllowDistinct);
-        Assert.True(canonical.AllowFilter);
-        Assert.False(canonical.AllowWindow);
+        Assert.Contains("ROUND", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1-2", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Registry_WindowContracts_RequireOverAndRemainDirectPortable()
+    public void Compile_WindowFunction_StillRequiresOver()
     {
-        foreach (var contract in SqlCanonicalFunctionRegistry.All
-                     .Where(item => item.Kind == SqlCanonicalFunctionKind.Window))
-        {
-            Assert.True(contract.RequireWindow);
-            Assert.True(contract.AllowWindow);
-            Assert.True(contract.IsDirectPortable);
-        }
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT LAG(amount) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("LAG", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("requires an OVER clause", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Registry_DirectPortableContracts_AreNeverCoreInternalNames()
+    public void Compile_ScalarFunction_StillRejectsOver()
     {
-        foreach (var contract in SqlCanonicalFunctionRegistry.All
-                     .Where(item => item.IsDirectPortable))
-        {
-            Assert.False(
-                contract.Name.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase));
-        }
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT ABS(amount) OVER (ORDER BY id) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("ABS", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("does not support OVER", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_AggregateRole_StillRejectsWherePlacement()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT id FROM orders WHERE SUM(amount) > 0",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains(
+            "Aggregate function 'SUM'",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_FilterModifier_RemainsEnabledForCanonicalAggregate()
+    {
+        var command = Compile(
+            "SELECT SUM(amount) FILTER (WHERE amount > 0) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("FILTER", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void Compile_MySqlGroupConcatInWhere_StillUsesCanonicalAggregatePlacement()
     {
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            CoreSqlCompiler.CreateDefault().Compile(
-                CoreSqlTextParser.ParseQuery(
-                    "SELECT name FROM users WHERE GROUP_CONCAT(name) = 'x'",
-                    SqlAgentToolType.MySQL),
-                SqlAgentToolType.MySQL,
-                new SqlPlanValidationContext("canonical-function-registry-v1"),
-                new SqlExecutionPlanPolicy()));
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT name FROM users WHERE GROUP_CONCAT(name) = 'x'",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.MySQL));
 
         Assert.Contains(
             "Aggregate function 'CORE_STRING_AGG'",
             error.Message,
             StringComparison.OrdinalIgnoreCase);
     }
+
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider) =>
+        CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(sql, sourceDialect),
+            targetProvider,
+            new SqlPlanValidationContext("canonical-function-registry-v1"),
+            new SqlExecutionPlanPolicy());
 }
