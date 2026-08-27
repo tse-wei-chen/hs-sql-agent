@@ -214,7 +214,7 @@ public sealed class NativeSqlRenderer(SqlAgentToolType provider) : IProviderLowe
         if (!statement.GroupBy.IsDefaultOrEmpty)
         {
             var groupItems = statement.GroupBy
-                .Select(RenderExpression)
+                .Select(item => RenderExpression(item))
                 .ToArray();
             sql.Append(" GROUP BY ")
                 .Append(string.Join(", ", groupItems.Select(item => item.Sql)));
