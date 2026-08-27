@@ -19,8 +19,8 @@ public static class CoreSqlTextParser
             new SqlTokenizer(
                 sql,
                 sourceDialect,
-                mysqlAnsiQuotes: SupportsMySqlAnsiQuotes(sourceDialect, sourceProfile),
-                mysqlNoBackslashEscapes: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).Tokenize(),
+                mysqlAnsiQuotes: SqlSourceDialectGrammarRules.UsesMySqlAnsiQuotedIdentifiers(sourceDialect, sourceProfile),
+                mysqlNoBackslashEscapes: SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).Tokenize(),
             sourceDialect,
             sourceProfile);
         ValidateStatementTokens(tokens, sourceDialect);
@@ -29,7 +29,7 @@ public static class CoreSqlTextParser
         var statement = new CoreQueryTextParser(
             new CoreTokenReader(normalizedTokens),
             sourceDialect,
-            requireExplicitLikeEscape: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).ParseComplete(topLimit);
+            requireExplicitLikeEscape: SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).ParseComplete(topLimit);
         return new ParsedStatement(
             statement,
             sourceDialect,
@@ -48,8 +48,8 @@ public static class CoreSqlTextParser
             new SqlTokenizer(
                 sql,
                 sourceDialect,
-                mysqlAnsiQuotes: SupportsMySqlAnsiQuotes(sourceDialect, sourceProfile),
-                mysqlNoBackslashEscapes: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).Tokenize(),
+                mysqlAnsiQuotes: SqlSourceDialectGrammarRules.UsesMySqlAnsiQuotedIdentifiers(sourceDialect, sourceProfile),
+                mysqlNoBackslashEscapes: SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(sourceDialect, sourceProfile)).Tokenize(),
             sourceDialect,
             sourceProfile);
         ValidateStatementTokens(tokens, sourceDialect);
@@ -60,7 +60,7 @@ public static class CoreSqlTextParser
         var statement = new CoreDmlTextParser(
             new CoreTokenReader(conflictExtraction.Tokens),
             sourceDialect,
-            requireExplicitLikeEscape: SupportsMySqlNoBackslashEscapes(sourceDialect, sourceProfile),
+            requireExplicitLikeEscape: SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(sourceDialect, sourceProfile),
             sourceServerVersion: sourceProfile?.ServerVersion).ParseComplete();
         if (conflictExtraction.Conflict is not null)
         {
@@ -99,30 +99,14 @@ public static class CoreSqlTextParser
         }
     }
 
-    private static bool SupportsMySqlAnsiQuotes(
-        SqlAgentToolType sourceDialect,
-        SqlProviderCapabilityProfile? sourceProfile) =>
-        sourceDialect == SqlAgentToolType.MySQL
-        && sourceProfile is { Provider: SqlAgentToolType.MySQL }
-        && (sourceProfile.HasSessionMode("ANSI_QUOTES")
-            || sourceProfile.HasSessionMode("ANSI"));
-
-    private static bool SupportsMySqlNoBackslashEscapes(
-        SqlAgentToolType sourceDialect,
-        SqlProviderCapabilityProfile? sourceProfile) =>
-        sourceDialect == SqlAgentToolType.MySQL
-        && sourceProfile is { Provider: SqlAgentToolType.MySQL }
-        && sourceProfile.HasSessionMode("NO_BACKSLASH_ESCAPES");
-
     private static Token[] ApplySourceProfileTokens(
         Token[] tokens,
         SqlAgentToolType sourceDialect,
         SqlProviderCapabilityProfile? sourceProfile)
     {
-        if (sourceDialect != SqlAgentToolType.MySQL
-            || sourceProfile is null
-            || (!sourceProfile.HasSessionMode("PIPES_AS_CONCAT")
-                && !sourceProfile.HasSessionMode("ANSI")))
+        if (!SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(
+                sourceDialect,
+                sourceProfile))
         {
             return tokens;
         }
@@ -143,6 +127,7 @@ public static class CoreSqlTextParser
         SqlAgentToolType sourceDialect)
     {
         var content = tokens.Where(token => token.Type != TokenType.EOF).ToArray();
+        var grammar = SqlSourceDialectGrammarRules.For(sourceDialect);
         for (var i = 0; i < content.Length; i++)
         {
             var token = content[i];
@@ -154,7 +139,7 @@ public static class CoreSqlTextParser
             }
             if (token.Type == TokenType.Operator
                 && token.Value == "::"
-                && sourceDialect != SqlAgentToolType.Postgres)
+                && !grammar.SupportsDoubleColonCast)
             {
                 throw new SqlParseException(
                     $"PostgreSQL '::' cast syntax is not valid for source dialect {sourceDialect} at position {token.Pos}; " +
@@ -162,14 +147,14 @@ public static class CoreSqlTextParser
             }
             if (token.Type == TokenType.Keyword
                 && token.Value.Equals("LIMIT", StringComparison.OrdinalIgnoreCase)
-                && sourceDialect is not (SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                && !grammar.SupportsLimitKeyword)
             {
                 throw new SqlParseException(
                     $"LIMIT is not valid raw source syntax for dialect {sourceDialect} at position {token.Pos}; " +
                     "use the source provider's native row-limiting form or a structured Core row limit.");
             }
             if (token.Type == TokenType.Keyword
-                && sourceDialect == SqlAgentToolType.MsSqlServer
+                && !grammar.SupportsBareBooleanKeywords
                 && (token.Value.Equals("TRUE", StringComparison.OrdinalIgnoreCase)
                     || token.Value.Equals("FALSE", StringComparison.OrdinalIgnoreCase)))
             {
@@ -178,7 +163,7 @@ public static class CoreSqlTextParser
                     "SQL Server bit constants use 0 or 1, and Core does not reinterpret bare TRUE/FALSE tokens as identifiers.");
             }
             if (TryGetTypedTemporalLiteralStart(content, i, out var temporalType, out var hasZoneQualifier)
-                && !SupportsRawTypedTemporalLiteral(sourceDialect, temporalType, hasZoneQualifier))
+                && !grammar.SupportsTypedTemporalLiteral(temporalType, hasZoneQualifier))
             {
                 throw new SqlParseException(
                     $"{temporalType} typed temporal literal spelling is not valid for raw source dialect {sourceDialect} in the Core source profile at position {token.Pos}; " +
@@ -218,21 +203,6 @@ public static class CoreSqlTextParser
                 || CoreTokenReader.IsWord(next, "WITHOUT"));
         return hasZoneQualifier;
     }
-
-    private static bool SupportsRawTypedTemporalLiteral(
-        SqlAgentToolType sourceDialect,
-        string temporalType,
-        bool hasZoneQualifier) =>
-        sourceDialect switch
-        {
-            SqlAgentToolType.Postgres => true,
-            SqlAgentToolType.MySQL => !hasZoneQualifier,
-            SqlAgentToolType.MsSqlServer => false,
-            SqlAgentToolType.Sqlite => false,
-            SqlAgentToolType.Oracle => temporalType != "TIME" && !hasZoneQualifier,
-            SqlAgentToolType.Firebird => !hasZoneQualifier,
-            _ => false
-        };
 
     private static int? NormalizeSqlServerTop(
         Token[] tokens,
