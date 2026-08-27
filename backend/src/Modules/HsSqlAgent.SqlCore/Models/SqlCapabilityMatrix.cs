@@ -20,7 +20,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-27.48";
+    public const string Version = "2026-08-27.49";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -143,6 +143,7 @@ public static class SqlCapabilityMatrix
                     : "TIME values are bound using the provider's native temporal parameter type."),
             SqlOffsetTimestampCapabilityRules.MatrixCapability(provider, targetProfile),
             SqlCurrentTemporalCapabilityRules.MatrixCapability(provider),
+            SqlQuarterDatePartCapabilityRules.MatrixCapability(provider),
             new("temporal.date_arithmetic", "temporal", SqlCapabilityStatus.Translated,
                 "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering."),
             new("temporal.date_format", "temporal",

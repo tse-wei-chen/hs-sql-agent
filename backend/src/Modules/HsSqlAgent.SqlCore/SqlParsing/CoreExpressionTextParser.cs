@@ -332,9 +332,9 @@ internal sealed class CoreExpressionTextParser(
         var value = ParseExpression();
         _reader.Expect(TokenType.RParen, "')' after EXTRACT expression");
 
-        // YEAR/MONTH/DAY already have canonical portable semantics in CoreSqlNormalizer. Other
-        // units remain fail-closed until the canonical date-part family accepts them directly.
-        if (part is not ("YEAR" or "MONTH" or "DAY"))
+        // YEAR/MONTH/DAY and PostgreSQL QUARTER are represented by the canonical date-part
+        // family. Other units remain fail-closed until their target semantics are declared.
+        if (part is not ("YEAR" or "MONTH" or "DAY" or "QUARTER"))
             throw CoreTokenReader.Error($"EXTRACT({part} ...) is not yet represented by the canonical date-part family.", partToken);
 
         return new FunctionCallExpr(

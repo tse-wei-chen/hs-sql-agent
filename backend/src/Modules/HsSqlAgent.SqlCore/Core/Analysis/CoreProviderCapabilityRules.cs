@@ -81,6 +81,10 @@ internal static class CoreProviderCapabilityRules
             case "CORE_REGEX_MATCH" when provider is SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird:
                 throw CapabilityError(provider, "function.regex_match");
 
+            case "CORE_DATE_PART":
+                ValidateDatePart(function, provider);
+                break;
+
             case "CORE_DATE_ADD":
             case "CORE_DATE_DIFF":
                 ValidateDateMathUnit(function, provider, name);
@@ -128,6 +132,35 @@ internal static class CoreProviderCapabilityRules
         {
             throw CapabilityError(provider, "window.range_offset");
         }
+    }
+
+    private static void ValidateDatePart(
+        FunctionCallExpr function,
+        SqlAgentToolType provider)
+    {
+        if (function.Arguments.IsDefaultOrEmpty
+            || function.Arguments[0] is not LiteralExpr { Value: string rawPart })
+        {
+            throw new SqlCompilationException(
+                "Canonical function 'CORE_DATE_PART' requires a literal date-part unit.");
+        }
+
+        var part = rawPart.Trim().ToUpperInvariant();
+        if (part is "YEAR" or "MONTH" or "DAY")
+            return;
+
+        if (part == "QUARTER")
+        {
+            var error = SqlQuarterDatePartCapabilityRules.TargetValidationError(provider);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+            return;
+        }
+
+        throw CapabilityError(
+            provider,
+            "temporal.date_part." + part.ToLowerInvariant(),
+            "Date part " + part + " is outside the declared Core date-part subset.");
     }
 
     private static void ValidateDateMathUnit(
