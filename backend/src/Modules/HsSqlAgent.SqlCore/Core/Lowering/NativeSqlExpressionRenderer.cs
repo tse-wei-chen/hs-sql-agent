@@ -1299,14 +1299,14 @@ internal static class NativeSqlExpressionRenderer
 
         // MySQL interprets backslash escape sequences unless NO_BACKSLASH_ESCAPES is active.
         // Core cannot assume a target session mode at this low-level rendering boundary, and
-        // GROUP_CONCAT SEPARATOR cannot use a bound parameter. Use a UTF-8 hexadecimal string
-        // literal whenever the value contains a backslash or control character so the emitted
-        // value is independent of sql_mode and cannot change lexical structure.
+        // GROUP_CONCAT SEPARATOR cannot use a bound parameter. Use a hexadecimal string
+        // literal containing the UTF-8 bytes whenever the value contains a backslash or control
+        // character so the emitted value is independent of sql_mode and cannot change lexical structure.
         if (provider == SqlAgentToolType.MySQL
             && value.Any(character => character == '\\' || char.IsControl(character)))
         {
             var bytes = Encoding.UTF8.GetBytes(value);
-            return "_utf8mb4 X'" + Convert.ToHexString(bytes) + "'";
+            return "0x" + Convert.ToHexString(bytes);
         }
 
         return "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";

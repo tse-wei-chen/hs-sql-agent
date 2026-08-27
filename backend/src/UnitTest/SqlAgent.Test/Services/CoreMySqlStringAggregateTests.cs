@@ -50,7 +50,7 @@ public class CoreMySqlStringAggregateTests
             SqlAgentToolType.MySQL);
 
         Assert.Contains(
-            " SEPARATOR _utf8mb4 X'5C27E99BAA'",
+            " SEPARATOR 0x5C27E99BAA",
             command.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\\''雪", command.Sql, StringComparison.Ordinal);
