@@ -66,7 +66,7 @@ type SqlCoreFacade private () =
     static member ParseQuery(
         sql: string,
         sourceDialect: SqlAgentToolType) : ParsedStatement =
-        let parsed = CoreSqlTextParser.ParseQuery(sql, sourceDialect, null)
+        let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
         FunctionalAst.verify parsed.Statement |> ignore
         parsed
 
@@ -74,14 +74,18 @@ type SqlCoreFacade private () =
         sql: string,
         sourceDialect: SqlAgentToolType,
         sourceProfile: SqlProviderCapabilityProfile) : ParsedStatement =
-        let parsed = CoreSqlTextParser.ParseQuery(sql, sourceDialect, sourceProfile)
+        let parsed =
+            FunctionalSqlTextParser.parseQuery
+                sql
+                sourceDialect
+                sourceProfile
         FunctionalAst.verify parsed.Statement |> ignore
         parsed
 
     static member ParseDml(
         sql: string,
         sourceDialect: SqlAgentToolType) : ParsedStatement =
-        let parsed = CoreSqlTextParser.ParseDml(sql, sourceDialect, null)
+        let parsed = FunctionalSqlTextParser.parseDml sql sourceDialect null
         FunctionalAst.verify parsed.Statement |> ignore
         parsed
 
@@ -89,7 +93,11 @@ type SqlCoreFacade private () =
         sql: string,
         sourceDialect: SqlAgentToolType,
         sourceProfile: SqlProviderCapabilityProfile) : ParsedStatement =
-        let parsed = CoreSqlTextParser.ParseDml(sql, sourceDialect, sourceProfile)
+        let parsed =
+            FunctionalSqlTextParser.parseDml
+                sql
+                sourceDialect
+                sourceProfile
         FunctionalAst.verify parsed.Statement |> ignore
         parsed
 

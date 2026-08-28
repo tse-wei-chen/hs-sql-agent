@@ -400,6 +400,87 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    public static IEnumerable<object[]> ParserFailureParityCases()
+    {
+        yield return new object[]
+        {
+            "SELECT id FROM users WHERE id = @p",
+            SqlAgentToolType.Postgres
+        };
+        yield return new object[]
+        {
+            "SELECT 1; SELECT 2",
+            SqlAgentToolType.Postgres
+        };
+        yield return new object[]
+        {
+            "SELECT id FROM users LIMIT 1",
+            SqlAgentToolType.MsSqlServer
+        };
+        yield return new object[]
+        {
+            "SELECT id FROM users WHERE active = TRUE",
+            SqlAgentToolType.MsSqlServer
+        };
+        yield return new object[]
+        {
+            "SELECT DATE '2026-08-23'",
+            SqlAgentToolType.MsSqlServer
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(ParserFailureParityCases))]
+    public void Facade_FunctionalParserEntry_MatchesLegacyFailures(
+        string sql,
+        SqlAgentToolType sourceDialect)
+    {
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlTextParser.ParseQuery(sql, sourceDialect));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.ParseQuery(sql, sourceDialect));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_FunctionalParserEntry_MatchesSqlServerTop()
+    {
+        const string sql =
+            "SELECT TOP (5) id FROM users ORDER BY id";
+
+        var validation = new SqlPlanValidationContext(
+            "fsharp-parser-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+
+        var legacyParsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.MsSqlServer);
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                legacyParsed,
+                SqlAgentToolType.MsSqlServer,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
     [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {
