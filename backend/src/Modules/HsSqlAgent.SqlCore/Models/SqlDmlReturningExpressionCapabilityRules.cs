@@ -82,11 +82,7 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 return;
             case UnaryExpr { Operator: "NOT" }:
             case BinaryExpr { Operator: "AND" or "OR", LikeEscape: null }:
-            case BinaryExpr
-                {
-                    Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=",
-                    LikeEscape: null
-                }:
+            case BinaryExpr { Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or "LIKE" or "ILIKE", LikeEscape: null }:
             case IsNullExpr:
             case BetweenExpr:
             case InExpr:
@@ -125,22 +121,12 @@ internal static class SqlDmlReturningExpressionCapabilityRules
     private static void ValidateSimpleCase(SimpleCaseExpr simpleCase)
     {
         if (simpleCase.Branches.IsDefaultOrEmpty)
-        {
-            throw new SqlCompilationException(
-                $"SQL capability '{CapabilityId}' requires simple CASE to contain at least one WHEN branch.");
-        }
+            throw new SqlCompilationException($"SQL capability '{CapabilityId}' requires simple CASE to contain at least one WHEN branch.");
 
         foreach (var branch in simpleCase.Branches)
         {
-            if (branch.Condition is not BinaryExpr
-                {
-                    Operator: "=",
-                    LikeEscape: null
-                } equality)
-            {
-                throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' accepts only canonical simple CASE equality branches.");
-            }
+            if (branch.Condition is not BinaryExpr { Operator: "=", LikeEscape: null } equality)
+                throw new SqlCompilationException($"SQL capability '{CapabilityId}' accepts only canonical simple CASE equality branches.");
 
             ValidateNode(equality.Left);
             ValidateNode(equality.Right);
@@ -154,10 +140,7 @@ internal static class SqlDmlReturningExpressionCapabilityRules
     private static void ValidateSearchedCase(CaseExpr searchedCase)
     {
         if (searchedCase.Branches.IsDefaultOrEmpty)
-        {
-            throw new SqlCompilationException(
-                $"SQL capability '{CapabilityId}' requires searched CASE to contain at least one WHEN branch.");
-        }
+            throw new SqlCompilationException($"SQL capability '{CapabilityId}' requires searched CASE to contain at least one WHEN branch.");
 
         foreach (var branch in searchedCase.Branches)
         {
@@ -180,13 +163,13 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 ValidatePredicate(boolean.Left);
                 ValidatePredicate(boolean.Right);
                 return;
-            case BinaryExpr
-                {
-                    Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=",
-                    LikeEscape: null
-                } comparison:
+            case BinaryExpr { Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=", LikeEscape: null } comparison:
                 ValidateNode(comparison.Left);
                 ValidateNode(comparison.Right);
+                return;
+            case BinaryExpr { Operator: "LIKE" or "ILIKE", LikeEscape: null } like:
+                ValidateNode(like.Left);
+                ValidateNode(like.Right);
                 return;
             case IsNullExpr isNull:
                 ValidateNode(isNull.Value);
@@ -203,16 +186,13 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 return;
             default:
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' accepts only comparison, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates over the proven target-row expression subset; predicate node {expression.GetType().Name} remains fail-closed.");
+                    $"SQL capability '{CapabilityId}' accepts only comparison, LIKE/ILIKE without explicit ESCAPE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates over the proven target-row expression subset; predicate node {expression.GetType().Name} remains fail-closed.");
         }
     }
 
     private static void ValidateTargetColumn(SqlIdentifier identifier)
     {
         if (identifier.Parts.Length != 1)
-        {
-            throw new SqlCompilationException(
-                $"SQL capability '{CapabilityId}' accepts unqualified target-row columns only; qualified/source-table references remain fail-closed.");
-        }
+            throw new SqlCompilationException($"SQL capability '{CapabilityId}' accepts unqualified target-row columns only; qualified/source-table references remain fail-closed.");
     }
 }
