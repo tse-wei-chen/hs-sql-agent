@@ -29,6 +29,7 @@
     <Compile Include="FunctionalDmlBinder.fs" />
     <Compile Include="FunctionalAstRewriter.fs" />
     <Compile Include="FunctionalSourceProfileRewriter.fs" />
+    <Compile Include="FunctionalProviderProfileRewriter.fs" />
     <Compile Include="FunctionalNullOrderingRewriter.fs" />
     <Compile Include="FunctionalSqlPlanValidator.fs" />
     <Compile Include="FunctionalDmlPlanValidator.fs" />

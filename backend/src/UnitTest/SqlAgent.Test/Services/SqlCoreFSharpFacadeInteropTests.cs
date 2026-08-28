@@ -487,6 +487,85 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    [Fact]
+    public void Facade_FunctionalProviderProfileRewrite_MatchesLegacySqlServerConcat()
+    {
+        const string sql =
+            "WITH names AS (" +
+            "SELECT first_name || last_name AS full_name FROM users" +
+            ") SELECT full_name FROM names";
+
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer,
+            ServerVersion: new Version(14, 0),
+            CompatibilityLevel: 140);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-provider-profile-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.MsSqlServer,
+                validation,
+                policy,
+                targetProfile);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains(" + ", migrated.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain(" || ", migrated.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Facade_FunctionalProviderProfileValidation_MatchesLegacyFailure()
+    {
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Oracle);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-provider-profile-failure-v1");
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT 1",
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Postgres,
+                    validation,
+                    policy,
+                    targetProfile));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                targetProfile));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> NullOrderingParityCases()
     {
         yield return new object[]

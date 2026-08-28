@@ -101,6 +101,16 @@ internal static class CoreBindingAstClone
             AggregateOrderBy = aggregateOrderBy
         };
 
+    internal static BinaryExpr BinaryOperator(
+        BinaryExpr source,
+        string @operator) =>
+        source with { Operator = @operator };
+
+    internal static FunctionCallExpr FunctionName(
+        FunctionCallExpr source,
+        SqlIdentifier name) =>
+        source with { Name = name };
+
     internal static FilterExpr Filter(
         FilterExpr source,
         SqlExpr expression,

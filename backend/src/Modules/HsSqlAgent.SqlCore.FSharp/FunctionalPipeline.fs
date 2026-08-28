@@ -59,7 +59,9 @@ module internal FunctionalPipeline =
         (targetProvider: SqlAgentToolType)
         (targetProfile: SqlProviderCapabilityProfile | null) =
 
-        CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile)
+        FunctionalProviderProfileRewriter.validateProfile
+            targetProvider
+            targetProfile
         FunctionalSourceProfileRewriter.validateProfile
             parsed.SourceDialect
             parsed.SourceProfile
@@ -174,10 +176,10 @@ module internal FunctionalPipeline =
                 executionPolicy)
 
         let profiled =
-            CoreProviderProfileRewriter.Rewrite(
-                policyApplied.Statement,
-                context.TargetProvider,
-                context.TargetProfile)
+            FunctionalProviderProfileRewriter.rewrite
+                policyApplied.Statement
+                context.TargetProvider
+                context.TargetProfile
 
         let scoped =
             CoreRootCteSetTailRewriter.Rewrite(profiled)
@@ -278,7 +280,9 @@ module internal FunctionalPipeline =
             | nonNullPolicy ->
                 nonNullPolicy
 
-        CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile)
+        FunctionalProviderProfileRewriter.validateProfile
+            targetProvider
+            targetProfile
         FunctionalSourceProfileRewriter.validateProfile
             parsed.SourceDialect
             parsed.SourceProfile
@@ -390,10 +394,10 @@ module internal FunctionalPipeline =
 
     let private authorizeDml (ValidatedDml(context, validated)) =
         let profiled =
-            CoreProviderProfileRewriter.Rewrite(
-                validated.Statement,
-                context.TargetProvider,
-                context.TargetProfile)
+            FunctionalProviderProfileRewriter.rewrite
+                validated.Statement
+                context.TargetProvider
+                context.TargetProfile
 
         let executable =
             ExecutableSqlPlan(
