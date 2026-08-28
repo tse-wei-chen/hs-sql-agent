@@ -397,8 +397,8 @@ internal static class CoreSqlSemanticValidator
         {
             if (!withinWindow
                 && context is not (ClauseContext.Projection or ClauseContext.Having or ClauseContext.OrderBy)
-                && !(provider == SqlAgentToolType.Postgres
-                    && context == ClauseContext.WindowSpecification))
+                && !(context == ClauseContext.WindowSpecification
+                    && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(provider)))
             {
                 throw new SqlCompilationException(
                     $"Aggregate function '{name}' is not allowed in SQL clause '{ContextName(context)}'.");

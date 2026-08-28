@@ -7,6 +7,10 @@ namespace HsSqlAgent.SqlCore.Models;
 /// </summary>
 internal static class SqlWindowCapabilityRules
 {
+    internal static bool SupportsAggregateInWindowSpecification(
+        SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.Postgres;
+
     internal static string? FunctionValidationError(
         string functionName,
         SqlAgentToolType provider) =>
