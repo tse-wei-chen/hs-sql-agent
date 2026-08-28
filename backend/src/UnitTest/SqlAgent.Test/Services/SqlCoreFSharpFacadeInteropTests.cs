@@ -532,6 +532,41 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    [Fact]
+    public void Facade_FunctionalCommaFromNormalizer_MatchesLegacyCompiler()
+    {
+        const string sql =
+            "SELECT u.id, r.id FROM users u, roles r WHERE r.id = u.role_id";
+
+        var validation = new SqlPlanValidationContext(
+            "fsharp-comma-from-v1",
+            new HashSet<string>(
+                new[] { "users", "roles" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                CoreSqlTextParser.ParseQuery(
+                    sql,
+                    SqlAgentToolType.Postgres),
+                SqlAgentToolType.Postgres,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
     public static IEnumerable<object[]> QueryGrammarCompileParityCases()
     {
         yield return new object[]

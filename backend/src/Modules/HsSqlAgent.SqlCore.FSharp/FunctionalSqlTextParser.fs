@@ -329,7 +329,8 @@ module internal FunctionalSqlTextParser =
             normalizeSqlServerTop tokens sourceDialect
 
         let normalizedTokens =
-            CommaFromNormalizer.Normalize(normalizedTokens)
+            FunctionalCommaFromNormalizer.normalize
+                normalizedTokens
 
         let statement =
             FunctionalQueryTextParser.parseComplete
