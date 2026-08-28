@@ -148,7 +148,7 @@ module internal FunctionalExpressionTextParser =
 
                 BinaryExpr(
                     left,
-                    if raw = "!=" then "<>" else raw,
+                    (if raw = "!=" then "<>" else raw),
                     right,
                     reader.SpanFrom(start))
                 :> SqlExpr
@@ -197,10 +197,10 @@ module internal FunctionalExpressionTextParser =
 
                         BinaryExpr(
                             left,
-                            if negatedModifier then
+                            (if negatedModifier then
                                 "NOT IN"
-                            else
-                                "IN",
+                             else
+                                "IN"),
                             SubqueryExpr(
                                 query,
                                 query.Span),
@@ -1072,13 +1072,13 @@ module internal FunctionalExpressionTextParser =
             parts.Add(reader.Advance().Value)
 
             while reader.Match(TokenType.Dot) do
-                let component = reader.Peek()
+                let typeComponent = reader.Peek()
 
-                if component.Type <> TokenType.Identifier
-                   && component.Type <> TokenType.Keyword then
+                if typeComponent.Type <> TokenType.Identifier
+                   && typeComponent.Type <> TokenType.Keyword then
                     raise (CoreTokenReader.Error(
                         "Expected cast type component.",
-                        component))
+                        typeComponent))
 
                 let lastIndex = parts.Count - 1
                 parts[lastIndex] <-
@@ -1250,16 +1250,13 @@ module internal FunctionalExpressionTextParser =
 
                 if success then
                     if withTimeZone = Some true
-                       && not (
-                           timestamp
-                           :? SqlOffsetDateTimeValue) then
+                       && not (timestamp :? SqlOffsetDateTimeValue) then
                         raise (CoreTokenReader.Error(
                             "TIMESTAMP WITH TIME ZONE requires an explicit UTC offset or Z suffix.",
                             literalToken))
 
                     if withTimeZone = Some false
-                       && timestamp
-                          :? SqlOffsetDateTimeValue then
+                       && (timestamp :? SqlOffsetDateTimeValue) then
                         raise (CoreTokenReader.Error(
                             "TIMESTAMP WITHOUT TIME ZONE must not include a UTC offset.",
                             literalToken))
