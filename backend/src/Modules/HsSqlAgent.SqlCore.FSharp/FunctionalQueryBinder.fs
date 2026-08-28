@@ -307,7 +307,8 @@ module internal FunctionalQueryBinder =
         (statement: SqlStatement)
         (parentScope: BindingScope option)
         visibleCtes
-        state =
+        state
+        : SqlStatement * BindingState =
 
         match statement with
         | :? SelectStatement as select ->
@@ -326,7 +327,8 @@ module internal FunctionalQueryBinder =
         (query: QueryStatement)
         parentScope
         inheritedCtes
-        state =
+        state
+        : QueryStatement * BindingState =
 
         let head, stateAfterHead =
             bindSelect query.Head parentScope inheritedCtes state
@@ -372,7 +374,8 @@ module internal FunctionalQueryBinder =
         (select: SelectStatement)
         parentScope
         inheritedCtes
-        state =
+        state
+        : SelectStatement * BindingState =
 
         let boundCtesRev, localCtes, stateAfterCtes =
             (([], inheritedCtes, state), select.Ctes)
@@ -504,7 +507,8 @@ module internal FunctionalQueryBinder =
         (source: TableSource)
         scope
         visibleCtes
-        state =
+        state
+        : TableSource * BindingScope * BindingState =
 
         match source with
         | :? NamedTableSource as named ->
@@ -597,7 +601,8 @@ module internal FunctionalQueryBinder =
         (items: ImmutableArray<SelectItem>)
         scope
         visibleCtes
-        state =
+        state
+        : ImmutableArray<SelectItem> * BindingState =
 
         let reversed, finalState =
             (([], state), items)
@@ -621,7 +626,8 @@ module internal FunctionalQueryBinder =
         (items: ImmutableArray<OrderByItem>)
         scope
         visibleCtes
-        state =
+        state
+        : ImmutableArray<OrderByItem> * BindingState =
 
         let reversed, finalState =
             (([], state), items)
@@ -645,7 +651,8 @@ module internal FunctionalQueryBinder =
         (items: ImmutableArray<SqlExpr>)
         scope
         visibleCtes
-        state =
+        state
+        : ImmutableArray<SqlExpr> * BindingState =
 
         let reversed, finalState =
             (([], state), items)
@@ -668,7 +675,8 @@ module internal FunctionalQueryBinder =
         (expression: SqlExpr)
         scope
         visibleCtes
-        state =
+        state
+        : SqlExpr * BindingState =
 
         match expression with
         | :? BoundColumnExpr ->
@@ -894,7 +902,8 @@ module internal FunctionalQueryBinder =
         (window: WindowSpec)
         scope
         visibleCtes
-        state =
+        state
+        : WindowSpec * BindingState =
 
         let partitionBy, stateAfterPartition =
             bindExprItems
@@ -919,7 +928,8 @@ module internal FunctionalQueryBinder =
     and private bindColumn
         (column: ColumnExpr)
         scope
-        state =
+        state
+        : BoundColumnExpr =
 
         match scope with
         | None ->
