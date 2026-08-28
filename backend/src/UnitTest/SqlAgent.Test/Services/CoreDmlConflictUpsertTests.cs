@@ -177,7 +177,7 @@ public sealed class CoreDmlConflictUpsertTests
                 new SqlPlanValidationContext("policy-v1")));
 
         Assert.Contains("exactly one", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("collation", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("assurance", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
