@@ -127,13 +127,44 @@ internal sealed class CoreDmlTextParser
             assignments.Add(new Assignment(column, ParseUpdateAssignmentValue(), _reader.SpanFrom(assignmentStart)));
         } while (_reader.Match(TokenType.Comma));
 
+        var from = ParseUpdateFromIfPresent();
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
         var returning = ParseReturningColumnsIfPresent();
         return new UpdateStatement(target, assignments.ToImmutable(), predicate, _reader.SpanFrom(start))
         {
+            From = from,
             Returning = returning
         };
+    }
+
+    private ImmutableArray<NamedTableSource> ParseUpdateFromIfPresent()
+    {
+        if (!_reader.MatchWord("FROM"))
+            return ImmutableArray<NamedTableSource>.Empty;
+
+        var fromToken = _reader.Peek(-1);
+        if (_sourceDialect != SqlAgentToolType.Postgres)
+        {
+            throw CoreTokenReader.Error(
+                "UPDATE ... FROM source syntax is currently declared only for the PostgreSQL source dialect.",
+                fromToken);
+        }
+
+        var sources = ImmutableArray.CreateBuilder<NamedTableSource>();
+        do
+        {
+            var name = _reader.ParseIdentifierPath("UPDATE FROM source table");
+            sources.Add(new NamedTableSource(name, null, name.Span));
+            if (_reader.PeekWord("AS") || (_reader.Peek().Type == TokenType.Identifier && !_reader.PeekWord("WHERE") && !_reader.PeekWord("RETURNING")))
+            {
+                throw CoreTokenReader.Error(
+                    "UPDATE ... FROM aliases are not represented by the first canonical milestone slice.",
+                    _reader.Peek());
+            }
+        } while (_reader.Match(TokenType.Comma));
+
+        return sources.ToImmutable();
     }
 
     private DeleteStatement ParseDelete()

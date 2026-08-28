@@ -115,6 +115,12 @@ public sealed record UpdateStatement(
     SqlExpr? Predicate,
     SourceSpan Span) : SqlStatement(Span)
 {
+    /// <summary>
+    /// Canonical source tables for PostgreSQL-style UPDATE ... FROM. The first milestone only
+    /// parses this shape and keeps compilation fail-closed until binder/capability/lowering support
+    /// is installed in the next vertical slice.
+    /// </summary>
+    public ImmutableArray<NamedTableSource> From { get; init; } = ImmutableArray<NamedTableSource>.Empty;
     public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
 }
 
