@@ -39,6 +39,9 @@ public sealed class CoreDmlCompiler(
         CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile);
         CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile);
         ValidateMutationPolicy(parsed.Statement, policy);
+        SqlDmlReturningExpressionCapabilityRules.ValidateSource(
+            parsed.Statement,
+            parsed.SourceDialect);
 
         var bound = _binder.Bind(parsed);
         CoreJoinProfileValidator.Validate(

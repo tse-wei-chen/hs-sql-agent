@@ -4,9 +4,10 @@ using HsSqlAgent.SqlCore.Core.Execution;
 namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
-/// Adds the portable DML result-row clause after the provider-specific mutation has been lowered.
-/// Projection semantics are represented directly by Core AST DmlReturningItem kinds so future
-/// expression, OLD/NEW, and SQL Server OUTPUT work cannot silently overload SqlIdentifier shape.
+/// Adds DML result-row clauses after provider-specific mutation lowering. Portable target-column and
+/// wildcard items use the existing cross-provider RETURNING contract. Richer expression items are a
+/// separate capability and currently lower only for PostgreSQL when rendering introduces no new
+/// runtime bindings after native parameter finalization.
 /// </summary>
 internal static class CoreDmlReturningSqlRewriter
 {
@@ -61,7 +62,36 @@ internal static class CoreDmlReturningSqlRewriter
             provider,
             allowWildcard: false),
         DmlReturningWildcardItem => "*",
+        DmlReturningExpressionItem expression => RenderExpressionItem(expression, provider),
         _ => throw new InvalidOperationException(
             $"Unsupported DML returning projection item {item.GetType().Name}.")
     };
+
+    private static string RenderExpressionItem(
+        DmlReturningExpressionItem item,
+        SqlAgentToolType provider)
+    {
+        var targetError = SqlDmlReturningExpressionCapabilityRules.TargetValidationError(provider);
+        if (targetError is not null)
+            throw new SqlCompilationException(targetError);
+
+        SqlDmlReturningExpressionCapabilityRules.ValidateExpression(item);
+        var fragment = NativeSqlExpressionRenderer.Render(
+            item.Expression,
+            provider,
+            static _ => throw new SqlCompilationException(
+                "DML RETURNING expression subqueries are not represented by the current PostgreSQL target-row expression contract."),
+            dmlContext: true);
+
+        if (!fragment.Bindings.IsDefaultOrEmpty)
+        {
+            throw new SqlCompilationException(
+                $"SQL capability '{SqlDmlReturningExpressionCapabilityRules.CapabilityId}' cannot append runtime bindings after native parameter finalization. Literal-bearing RETURNING expressions remain fail-closed until RETURNING lowering moves before parameter finalization.");
+        }
+
+        if (item.Alias is null)
+            return fragment.Sql;
+
+        return fragment.Sql + " AS " + CoreIdentifierSqlRenderer.RenderAlias(item.Alias, provider);
+    }
 }
