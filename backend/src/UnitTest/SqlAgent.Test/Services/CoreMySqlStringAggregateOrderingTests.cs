@@ -104,6 +104,22 @@ public sealed class CoreMySqlStringAggregateOrderingTests
     }
 
     [Fact]
+    public void Compile_SqliteGroupConcatSeparatorClause_FailsAtSourceBoundary()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseQuery(
+                    "SELECT GROUP_CONCAT(name SEPARATOR '|') FROM users",
+                    SqlAgentToolType.Sqlite),
+                SqlAgentToolType.Sqlite,
+                new SqlPlanValidationContext("policy-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("SEPARATOR", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MySQL GROUP_CONCAT", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_StructuredOrdering_ToMySql_DoesNotRequireSourceProfile()
     {
         var parsed = CoreSqlTextParser.ParseQuery(

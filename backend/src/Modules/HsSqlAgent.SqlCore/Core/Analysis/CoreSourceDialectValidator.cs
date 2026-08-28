@@ -243,8 +243,9 @@ internal static class CoreSourceDialectValidator
     {
         if (function.AggregateSeparatorClause is null) return;
 
-        var name = IdentifierText(function.Name).ToUpperInvariant();
-        if (sourceDialect != SqlAgentToolType.MySQL || name != "GROUP_CONCAT")
+        var contract = SqlSourceFunctionRegistry.Find(
+            IdentifierText(function.Name));
+        if (contract?.SupportsAggregateSeparatorClause(sourceDialect) != true)
         {
             throw new SqlCompilationException(
                 "Aggregate SEPARATOR clause is modeled only for MySQL GROUP_CONCAT raw source syntax.");
