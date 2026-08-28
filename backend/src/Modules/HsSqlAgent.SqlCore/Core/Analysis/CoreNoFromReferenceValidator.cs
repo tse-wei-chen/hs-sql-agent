@@ -312,22 +312,8 @@ internal static class CoreNoFromReferenceValidator
     private static bool IdentifiersEquivalent(
         IdentifierPart left,
         IdentifierPart right,
-        SqlAgentToolType provider)
-    {
-        if (provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite)
-            return string.Equals(left.Value, right.Value, StringComparison.OrdinalIgnoreCase);
-
-        static string Normalize(IdentifierPart part, SqlAgentToolType target) => part.WasQuoted
-            ? part.Value
-            : target == SqlAgentToolType.Postgres
-                ? part.Value.ToLowerInvariant()
-                : part.Value.ToUpperInvariant();
-
-        return string.Equals(
-            Normalize(left, provider),
-            Normalize(right, provider),
-            StringComparison.Ordinal);
-    }
+        SqlAgentToolType provider) =>
+        SqlIdentifierDialectRules.Equivalent(left, right, provider);
 
     private static bool IsUnqualifiedWildcard(SqlExpr expression) => expression switch
     {

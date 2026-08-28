@@ -110,17 +110,8 @@ internal static class CoreIdentifierSqlRenderer
 
     private static string NormalizePart(
         IdentifierPart part,
-        SqlAgentToolType provider)
-    {
-        if (part.WasQuoted || part.PreserveSpelling)
-            return part.Value;
-
-        return provider switch
-        {
-            SqlAgentToolType.Postgres => part.Value.ToLowerInvariant(),
-            SqlAgentToolType.Oracle or SqlAgentToolType.Firebird =>
-                part.Value.ToUpperInvariant(),
-            _ => part.Value
-        };
-    }
+        SqlAgentToolType provider) =>
+        part.PreserveSpelling
+            ? part.Value
+            : SqlIdentifierDialectRules.CanonicalPart(part, provider);
 }

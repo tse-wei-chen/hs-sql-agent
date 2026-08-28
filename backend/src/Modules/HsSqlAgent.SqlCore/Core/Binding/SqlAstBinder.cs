@@ -374,9 +374,7 @@ public sealed class SqlAstBinder : ISqlBinder
         public BindingState(SqlAgentToolType sourceDialect)
         {
             SourceDialect = sourceDialect;
-            IdentifierComparer = sourceDialect is SqlAgentToolType.Postgres or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
-                ? StringComparer.Ordinal
-                : StringComparer.OrdinalIgnoreCase;
+            IdentifierComparer = SqlIdentifierDialectRules.Comparer(sourceDialect);
         }
 
         private SqlAgentToolType SourceDialect { get; }
@@ -394,22 +392,14 @@ public sealed class SqlAstBinder : ISqlBinder
             var builder = new System.Text.StringBuilder();
             foreach (var part in parts)
             {
-                var value = CanonicalPart(part);
+                var value = SqlIdentifierDialectRules.CanonicalPart(
+                    part,
+                    SourceDialect);
                 builder.Append(value.Length).Append(':').Append(value).Append(';');
             }
             return builder.ToString();
         }
 
-        private string CanonicalPart(IdentifierPart part)
-        {
-            if (part.WasQuoted) return part.Value;
-            return SourceDialect switch
-            {
-                SqlAgentToolType.Postgres => part.Value.ToLowerInvariant(),
-                SqlAgentToolType.Oracle or SqlAgentToolType.Firebird => part.Value.ToUpperInvariant(),
-                _ => part.Value
-            };
-        }
     }
 
     private sealed class BindingScope(int id, BindingScope? parent, BindingState state)
