@@ -30,7 +30,7 @@ module internal FunctionalQueryTextParser =
 
         let expressions =
             lazy (
-                CoreExpressionTextParser(
+                FunctionalExpressionTextParser.ExpressionGrammar(
                     reader,
                     Func<SqlStatement>(fun () ->
                         this.ParseQueryExpression()),

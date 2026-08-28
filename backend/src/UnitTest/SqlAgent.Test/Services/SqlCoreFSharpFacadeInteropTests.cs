@@ -679,6 +679,99 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    public static IEnumerable<object[]> ExpressionGrammarCompileParityCases()
+    {
+        yield return new object[]
+        {
+            "SELECT CASE id WHEN 1 THEN CAST(id AS DECIMAL(10,2)) ELSE 0 END FROM users WHERE name NOT LIKE 'A%' ESCAPE '!' AND id IN (1, 2, 3)"
+        };
+        yield return new object[]
+        {
+            "SELECT DATE '2026-08-23', TIMESTAMP '2026-08-23 12:34:56', -1, id::bigint FROM users"
+        };
+        yield return new object[]
+        {
+            "SELECT COALESCE(name, 'x'), EXTRACT(YEAR FROM created_at) FROM users"
+        };
+        yield return new object[]
+        {
+            "SELECT id FROM users WHERE id BETWEEN 1 AND 10 AND EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = users.id)"
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(ExpressionGrammarCompileParityCases))]
+    public void Facade_FunctionalExpressionGrammar_MatchesLegacyCompiler(
+        string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-expression-grammar-v1",
+            new HashSet<string>(
+                new[] { "users", "audit_log" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                CoreSqlTextParser.ParseQuery(
+                    sql,
+                    SqlAgentToolType.Postgres),
+                SqlAgentToolType.Postgres,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    public static IEnumerable<object[]> ExpressionGrammarFailureParityCases()
+    {
+        yield return new object[]
+        {
+            "SELECT -id FROM users"
+        };
+        yield return new object[]
+        {
+            "SELECT id FROM users WHERE name LIKE 'A%' ESCAPE 'xx'"
+        };
+        yield return new object[]
+        {
+            "SELECT CASE END FROM users"
+        };
+        yield return new object[]
+        {
+            "SELECT CAST(id AS DECIMAL(MAX,2)) FROM users"
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(ExpressionGrammarFailureParityCases))]
+    public void Facade_FunctionalExpressionGrammar_MatchesLegacyFailures(
+        string sql)
+    {
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlTextParser.ParseQuery(
+                sql,
+                SqlAgentToolType.Postgres));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.ParseQuery(
+                sql,
+                SqlAgentToolType.Postgres));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {

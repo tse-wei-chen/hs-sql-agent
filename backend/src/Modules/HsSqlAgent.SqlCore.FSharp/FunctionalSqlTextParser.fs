@@ -89,7 +89,7 @@ module internal FunctionalSqlTextParser =
                    && token.Value = "||" then
                     Token(
                         TokenType.Operator,
-                        CoreExpressionTextParser.MySqlPipesConcatToken,
+                        FunctionalExpressionTextParser.MySqlPipesConcatToken,
                         token.Pos,
                         Nullable<int>(token.Length))
                 else

@@ -21,6 +21,26 @@ internal static class CoreParserAstClone
         };
 
 
+    internal static SqlExpr WithSpan(
+        SqlExpr source,
+        SourceSpan span) =>
+        source with { Span = span };
+
+    internal static FunctionCallExpr Function(
+        SqlIdentifier name,
+        System.Collections.Immutable.ImmutableArray<SqlExpr> arguments,
+        bool distinct,
+        SourceSpan span,
+        System.Collections.Immutable.ImmutableArray<OrderByItem> aggregateOrderBy,
+        AggregateOrderSyntaxKind aggregateOrderSyntax,
+        string? aggregateSeparatorClause) =>
+        new(name, arguments, distinct, span)
+        {
+            AggregateOrderBy = aggregateOrderBy,
+            AggregateOrderSyntax = aggregateOrderSyntax,
+            AggregateSeparatorClause = aggregateSeparatorClause
+        };
+
     internal static SqlStatement AttachInsertConflict(
         SqlStatement statement,
         InsertConflictClause? conflict)
