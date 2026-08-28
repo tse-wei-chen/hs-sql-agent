@@ -7,24 +7,13 @@ namespace HsSqlAgent.SqlCore.Models;
 /// </summary>
 internal static class SqlOffsetTimestampCapabilityRules
 {
-    private static readonly Version FirebirdTimeZoneVersion = new(4, 0);
-
-    internal static bool RequiresTargetProfileValidation(
-        SqlAgentToolType provider) =>
-        provider == SqlAgentToolType.Firebird;
-
     internal static bool SupportsTarget(
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? targetProfile) => provider switch
     {
         SqlAgentToolType.MySQL => false,
         SqlAgentToolType.Firebird =>
-            targetProfile is
-            {
-                Provider: SqlAgentToolType.Firebird,
-                ServerVersion: { } version
-            }
-            && version.CompareTo(FirebirdTimeZoneVersion) >= 0,
+            SqlFirebirdTimeZoneTypeCapabilityRules.SupportsTargetProfile(targetProfile),
         SqlAgentToolType.Postgres
             or SqlAgentToolType.Sqlite
             or SqlAgentToolType.MsSqlServer
@@ -53,7 +42,8 @@ internal static class SqlOffsetTimestampCapabilityRules
             SqlAgentToolType.MySQL =>
                 "SQL capability 'temporal.offset_timestamp' is not supported by MySQL because it has no native timestamp type that preserves an input UTC offset.",
             SqlAgentToolType.Firebird =>
-                "SQL capability 'temporal.offset_timestamp' requires an explicit Firebird target capability profile with ServerVersion 4.0 or newer because TIMESTAMP WITH TIME ZONE was introduced in Firebird 4.0.",
+                "SQL capability 'temporal.offset_timestamp' requires an explicit Firebird target capability profile with ServerVersion " +
+                $"{SqlFirebirdTimeZoneTypeCapabilityRules.MinimumVersion} or newer because TIMESTAMP WITH TIME ZONE was introduced in Firebird 4.0.",
             _ => "SQL capability 'temporal.offset_timestamp' is not supported by the declared target profile."
         };
     }
