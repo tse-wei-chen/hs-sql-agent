@@ -263,14 +263,7 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
             if (shape.RequireWindow && !withinWindow)
                 throw new SqlCompilationException($"Function '{name}' requires an OVER clause.");
 
-            if (name == "COUNT" && function.IsDistinct && IsWildcard(function.Arguments[0]))
-                throw new SqlCompilationException("COUNT(DISTINCT *) is not a valid Core aggregate shape.");
-
-            if (name == "CORE_STRING_AGG"
-                && function.Arguments[1] is not LiteralExpr { Value: string })
-            {
-                throw CapabilityError(provider, "aggregate.string.dynamic_separator");
-            }
+            ValidatePlanShapeRules(shape, function, provider);
         }
         else if (function.IsDistinct)
         {
@@ -280,12 +273,52 @@ public sealed class CoreSqlPlanValidator : ISqlPlanValidator
                 $"Function '{name}' has no Core DISTINCT capability declaration.");
         }
 
-        if (name == "CORE_CURRENT_TIME"
-            && !SqlCurrentTemporalCapabilityRules.SupportsTarget(
-                SqlCurrentTemporalKind.Time,
-                provider))
+    }
+
+    private static void ValidatePlanShapeRules(
+        SqlCanonicalFunctionContract contract,
+        FunctionCallExpr function,
+        SqlAgentToolType provider)
+    {
+        foreach (var rule in contract.PlanShapeRules)
         {
-            throw CapabilityError(provider, "function.current_time");
+            if (rule.ArgumentIndex < 0
+                || function.Arguments.Length <= rule.ArgumentIndex)
+            {
+                throw new SqlCompilationException(
+                    $"Canonical function '{contract.Name}' declares an invalid plan-shape argument index {rule.ArgumentIndex}.");
+            }
+
+            var argument = function.Arguments[rule.ArgumentIndex];
+            switch (rule.Kind)
+            {
+                case SqlCanonicalPlanShapeValidationKind.DistinctWildcardForbidden:
+                    if (function.IsDistinct && IsWildcard(argument))
+                    {
+                        throw new SqlCompilationException(
+                            rule.ValidationMessage
+                            ?? $"Canonical function '{contract.Name}' does not allow DISTINCT wildcard arguments.");
+                    }
+                    break;
+
+                case SqlCanonicalPlanShapeValidationKind.LiteralStringRequired:
+                    if (argument is not LiteralExpr { Value: string })
+                    {
+                        if (string.IsNullOrWhiteSpace(rule.CapabilityId))
+                        {
+                            throw new SqlCompilationException(
+                                rule.ValidationMessage
+                                ?? $"Canonical function '{contract.Name}' requires a literal string argument at position {rule.ArgumentIndex + 1}.");
+                        }
+
+                        throw CapabilityError(provider, rule.CapabilityId);
+                    }
+                    break;
+
+                default:
+                    throw new SqlCompilationException(
+                        $"Unsupported canonical plan-shape rule '{rule.Kind}' for function '{contract.Name}'.");
+            }
         }
     }
 

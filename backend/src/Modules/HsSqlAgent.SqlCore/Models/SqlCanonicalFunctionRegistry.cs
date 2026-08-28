@@ -23,7 +23,11 @@ internal static class SqlCanonicalFunctionRegistry
             ["NULLIF"] = Scalar("NULLIF", 2),
 
             ["AVG"] = Aggregate("AVG", 1),
-            ["COUNT"] = Aggregate("COUNT", 1),
+            ["COUNT"] = WithPlanShapeRules(
+                Aggregate("COUNT", 1),
+                DistinctWildcardForbidden(
+                    0,
+                    "COUNT(DISTINCT *) is not a valid Core aggregate shape.")),
             ["MAX"] = Aggregate("MAX", 1),
             ["MIN"] = Aggregate("MIN", 1),
             ["SUM"] = Aggregate("SUM", 1),
@@ -96,26 +100,36 @@ internal static class SqlCanonicalFunctionRegistry
                     SqlCanonicalTargetCapabilityFamily.Regex),
                 SqlCanonicalNativeLoweringKind.RegexMatch),
             ["CORE_CURRENT_DATE"] = WithNativeLowering(
-                Scalar("CORE_CURRENT_DATE", 0, directPortable: false),
+                WithCurrentTemporalTarget(
+                    Scalar("CORE_CURRENT_DATE", 0, directPortable: false),
+                    SqlCurrentTemporalKind.Date),
                 SqlCanonicalNativeLoweringKind.CurrentDate),
             ["CORE_CURRENT_TIME"] = WithNativeLowering(
-                Scalar("CORE_CURRENT_TIME", 0, directPortable: false),
+                WithCurrentTemporalTarget(
+                    Scalar("CORE_CURRENT_TIME", 0, directPortable: false),
+                    SqlCurrentTemporalKind.Time),
                 SqlCanonicalNativeLoweringKind.CurrentTime),
             ["CORE_CURRENT_TIMESTAMP"] = WithNativeLowering(
-                Scalar("CORE_CURRENT_TIMESTAMP", 0, directPortable: false),
+                WithCurrentTemporalTarget(
+                    Scalar("CORE_CURRENT_TIMESTAMP", 0, directPortable: false),
+                    SqlCurrentTemporalKind.Timestamp),
                 SqlCanonicalNativeLoweringKind.CurrentTimestamp),
-            ["CORE_STRING_AGG"] = WithNativeLowering(
-                new(
-                    "CORE_STRING_AGG",
-                    2,
-                    2,
-                    SqlCanonicalFunctionKind.Aggregate,
-                    AllowDistinct: false,
-                    AllowFilter: true,
-                    AllowWindow: false,
-                    RequireWindow: false,
-                    IsDirectPortable: false),
-                SqlCanonicalNativeLoweringKind.StringAggregate)
+            ["CORE_STRING_AGG"] = WithPlanShapeRules(
+                WithNativeLowering(
+                    new(
+                        "CORE_STRING_AGG",
+                        2,
+                        2,
+                        SqlCanonicalFunctionKind.Aggregate,
+                        AllowDistinct: false,
+                        AllowFilter: true,
+                        AllowWindow: false,
+                        RequireWindow: false,
+                        IsDirectPortable: false),
+                    SqlCanonicalNativeLoweringKind.StringAggregate),
+                LiteralStringRequired(
+                    1,
+                    "aggregate.string.dynamic_separator"))
         };
 
     internal static IEnumerable<SqlCanonicalFunctionContract> All =>
@@ -214,6 +228,38 @@ internal static class SqlCanonicalFunctionRegistry
         SqlCanonicalNativeLoweringKind nativeLoweringKind) =>
         contract with { NativeLoweringKind = nativeLoweringKind };
 
+    private static SqlCanonicalFunctionContract WithCurrentTemporalTarget(
+        SqlCanonicalFunctionContract contract,
+        SqlCurrentTemporalKind currentTemporalKind) =>
+        contract with
+        {
+            TargetCapabilityFamily = SqlCanonicalTargetCapabilityFamily.CurrentTemporal,
+            CurrentTemporalKind = currentTemporalKind
+        };
+
+    private static SqlCanonicalFunctionContract WithPlanShapeRules(
+        SqlCanonicalFunctionContract contract,
+        params SqlCanonicalPlanShapeRule[] planShapeRules) =>
+        contract with { PlanShapeRules = planShapeRules.ToImmutableArray() };
+
+    private static SqlCanonicalPlanShapeRule DistinctWildcardForbidden(
+        int argumentIndex,
+        string validationMessage) =>
+        new(
+            SqlCanonicalPlanShapeValidationKind.DistinctWildcardForbidden,
+            argumentIndex,
+            validationMessage,
+            CapabilityId: null);
+
+    private static SqlCanonicalPlanShapeRule LiteralStringRequired(
+        int argumentIndex,
+        string capabilityId) =>
+        new(
+            SqlCanonicalPlanShapeValidationKind.LiteralStringRequired,
+            argumentIndex,
+            ValidationMessage: null,
+            capabilityId);
+
     private static SqlCanonicalLiteralArgumentRule PositiveInteger(
         int argumentIndex,
         string validationMessage) =>
@@ -244,7 +290,8 @@ internal enum SqlCanonicalTargetCapabilityFamily
     Json,
     Regex,
     DatePart,
-    DateMath
+    DateMath,
+    CurrentTemporal
 }
 
 internal enum SqlCanonicalNativeLoweringKind
@@ -264,6 +311,18 @@ internal enum SqlCanonicalNativeLoweringKind
     CurrentTimestamp,
     StringAggregate
 }
+
+internal enum SqlCanonicalPlanShapeValidationKind
+{
+    DistinctWildcardForbidden,
+    LiteralStringRequired
+}
+
+internal sealed record SqlCanonicalPlanShapeRule(
+    SqlCanonicalPlanShapeValidationKind Kind,
+    int ArgumentIndex,
+    string? ValidationMessage,
+    string? CapabilityId);
 
 internal enum SqlCanonicalLiteralArgumentValidationKind
 {
@@ -297,6 +356,11 @@ internal sealed record SqlCanonicalFunctionContract(
 
     internal SqlCanonicalNativeLoweringKind NativeLoweringKind { get; init; } =
         SqlCanonicalNativeLoweringKind.Ordinary;
+
+    internal SqlCurrentTemporalKind? CurrentTemporalKind { get; init; }
+
+    internal ImmutableArray<SqlCanonicalPlanShapeRule> PlanShapeRules { get; init; } =
+        ImmutableArray<SqlCanonicalPlanShapeRule>.Empty;
 
     internal bool AcceptsArgumentCount(int argumentCount) =>
         argumentCount >= MinArguments && argumentCount <= MaxArguments;

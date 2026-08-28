@@ -40,6 +40,25 @@ internal static class SqlCurrentTemporalCapabilityRules
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 
+    internal static string? TargetValidationError(
+        SqlCurrentTemporalKind kind,
+        SqlAgentToolType provider)
+    {
+        if (SupportsTarget(kind, provider))
+            return null;
+
+        var capability = kind switch
+        {
+            SqlCurrentTemporalKind.Date => "function.current_date",
+            SqlCurrentTemporalKind.Time => "function.current_time",
+            SqlCurrentTemporalKind.Timestamp => "function.current_timestamp",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+        };
+
+        return
+            $"SQL capability '{capability}' is not supported by provider {provider} for this Core plan.";
+    }
+
     internal static string? SourceValidationError(
         SqlCurrentTemporalKind kind,
         SqlAgentToolType sourceDialect)
