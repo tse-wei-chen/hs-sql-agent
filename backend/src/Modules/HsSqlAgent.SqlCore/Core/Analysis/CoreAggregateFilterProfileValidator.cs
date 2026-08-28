@@ -1,11 +1,11 @@
 namespace HsSqlAgent.SqlCore.Core.Analysis;
 
 /// <summary>
-/// Enforces runtime-version boundaries for aggregate FILTER after binding has exposed the complete
-/// query graph. Source and target profiles remain independent: a source profile never authorizes a
-/// target capability, even when both sides name the same provider. Oracle 26ai additionally limits
-/// FILTER conditions, so those predicates are checked while bound outer-reference provenance is
-/// still available.
+/// Enforces runtime-version and predicate-shape boundaries for aggregate FILTER after binding has
+/// exposed the complete query graph. Source and target profiles remain independent: a source
+/// profile never authorizes a target capability, even when both sides name the same provider.
+/// Structural predicate features are discovered here while bound outer-reference provenance is
+/// available; provider-specific restrictions remain owned by SqlAggregateFilterCapabilityRules.
 /// </summary>
 internal static class CoreAggregateFilterProfileValidator
 {
@@ -24,13 +24,11 @@ internal static class CoreAggregateFilterProfileValidator
         if (enforceSourceDialectSyntax)
         {
             ValidateRuntime("source", sourceDialect, sourceProfile);
-            if (SqlAggregateFilterCapabilityRules.RequiresRestrictedPredicateShape(sourceDialect))
-                ValidateOracleFilterPredicates(statement, "source");
+            ValidateFilterPredicates(statement, sourceDialect, "source");
         }
 
         ValidateRuntime("target", targetProvider, targetProfile);
-        if (SqlAggregateFilterCapabilityRules.RequiresRestrictedPredicateShape(targetProvider))
-            ValidateOracleFilterPredicates(statement, "target");
+        ValidateFilterPredicates(statement, targetProvider, "target");
     }
 
     private static void ValidateRuntime(
@@ -43,36 +41,45 @@ internal static class CoreAggregateFilterProfileValidator
             throw new SqlCompilationException(error);
     }
 
-    private static void ValidateOracleFilterPredicates(SqlStatement statement, string side)
+    private static void ValidateFilterPredicates(
+        SqlStatement statement,
+        SqlAgentToolType provider,
+        string side)
     {
         foreach (var expression in CoreSqlAstTraversal.EnumerateExpressions(statement))
         {
             if (expression is FilterExpr filter)
-                ValidateOraclePredicate(filter.Predicate, side);
+                ValidatePredicate(filter.Predicate, provider, side);
         }
     }
 
-    private static void ValidateOraclePredicate(SqlExpr expression, string side)
+    private static void ValidatePredicate(
+        SqlExpr expression,
+        SqlAgentToolType provider,
+        string side)
     {
         foreach (var node in CoreSqlAstTraversal.EnumerateExpressions(expression))
         {
-            switch (node)
+            var feature = node switch
             {
-                case BoundColumnExpr { IsOuterReference: true }:
-                    throw OraclePredicateError(side, "outer references");
+                BoundColumnExpr { IsOuterReference: true } =>
+                    SqlAggregateFilterPredicateFeature.OuterReference,
+                SubqueryExpr or ExistsExpr =>
+                    SqlAggregateFilterPredicateFeature.Subquery,
+                WindowedExpr =>
+                    SqlAggregateFilterPredicateFeature.WindowFunction,
+                _ => (SqlAggregateFilterPredicateFeature?)null
+            };
 
-                case SubqueryExpr:
-                case ExistsExpr:
-                    throw OraclePredicateError(side, "subqueries");
+            if (feature is null)
+                continue;
 
-                case WindowedExpr:
-                    throw OraclePredicateError(side, "window functions");
-            }
+            var error = SqlAggregateFilterCapabilityRules.PredicateValidationError(
+                provider,
+                side,
+                feature.Value);
+            if (error is not null)
+                throw new SqlCompilationException(error);
         }
     }
-
-    private static SqlCompilationException OraclePredicateError(string side, string restriction) =>
-        new(
-            $"SQL capability 'expression.filter' requires an Oracle 26ai {side} FILTER condition " +
-            $"without {restriction}.");
 }

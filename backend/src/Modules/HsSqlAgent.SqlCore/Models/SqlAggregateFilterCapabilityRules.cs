@@ -8,6 +8,13 @@ internal enum SqlAggregateFilterCapabilityReason
     UnsupportedProvider
 }
 
+internal enum SqlAggregateFilterPredicateFeature
+{
+    OuterReference,
+    Subquery,
+    WindowFunction
+}
+
 internal sealed record SqlAggregateFilterCapabilityDecision(
     SqlAggregateFilterCapabilityReason Reason,
     Version? MinimumVersion = null,
@@ -17,10 +24,10 @@ internal sealed record SqlAggregateFilterCapabilityDecision(
 }
 
 /// <summary>
-/// Single provider/version contract for aggregate FILTER. Compiler validation and the public
-/// capability matrix both consume this rule so runtime behavior cannot drift from advertised
-/// capabilities. Provider-specific predicate-shape restrictions are enforced separately after
-/// binding, where structural scope provenance is available.
+/// Single provider/version and predicate-shape contract for aggregate FILTER. Compiler validation
+/// and the public capability matrix both consume this rule so runtime behavior cannot drift from
+/// advertised capabilities. Structural predicate traversal remains in analysis after binding,
+/// where outer-reference provenance is available.
 /// </summary>
 internal static class SqlAggregateFilterCapabilityRules
 {
@@ -39,10 +46,6 @@ internal static class SqlAggregateFilterCapabilityRules
         CanEverSupportProvider(sourceDialect)
             ? null
             : $"Aggregate FILTER (WHERE ...) is not valid for declared source dialect {sourceDialect} in the Core source capability profile.";
-
-    internal static bool RequiresRestrictedPredicateShape(
-        SqlAgentToolType provider) =>
-        provider == SqlAgentToolType.Oracle;
 
     internal static SqlAggregateFilterCapabilityDecision Evaluate(
         SqlAgentToolType provider,
@@ -97,6 +100,30 @@ internal static class SqlAggregateFilterCapabilityRules
             _ => throw new InvalidOperationException(
                 $"Unsupported aggregate FILTER capability decision '{decision.Reason}'.")
         };
+    }
+
+    internal static string? PredicateValidationError(
+        SqlAgentToolType provider,
+        string side,
+        SqlAggregateFilterPredicateFeature feature)
+    {
+        if (provider != SqlAgentToolType.Oracle)
+            return null;
+
+        var restriction = feature switch
+        {
+            SqlAggregateFilterPredicateFeature.OuterReference => "outer references",
+            SqlAggregateFilterPredicateFeature.Subquery => "subqueries",
+            SqlAggregateFilterPredicateFeature.WindowFunction => "window functions",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(feature),
+                feature,
+                "Unsupported aggregate FILTER predicate feature.")
+        };
+
+        return
+            $"SQL capability 'expression.filter' requires an Oracle 26ai {side} FILTER condition " +
+            $"without {restriction}.";
     }
 
     internal static SqlCapability MatrixCapability(
