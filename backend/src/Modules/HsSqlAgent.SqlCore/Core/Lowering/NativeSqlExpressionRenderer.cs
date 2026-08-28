@@ -339,71 +339,83 @@ internal static partial class NativeSqlExpressionRenderer
         bool dmlContext)
     {
         var name = IdentifierText(function.Name).ToUpperInvariant();
-        if (dmlContext && name == "CORE_STRING_AGG")
+        var loweringKind =
+            SqlCanonicalFunctionRegistry.Find(name)?.NativeLoweringKind
+            ?? SqlCanonicalNativeLoweringKind.Ordinary;
+
+        if (dmlContext && loweringKind == SqlCanonicalNativeLoweringKind.StringAggregate)
         {
             throw new SqlCompilationException(
                 "Aggregate function CORE_STRING_AGG is not valid in a DML expression.");
         }
 
-        return name switch
+        return loweringKind switch
         {
-            "CORE_DATE_ADD" => RenderDateAdd(
+            SqlCanonicalNativeLoweringKind.Ordinary => RenderOrdinaryFunction(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_DATE_DIFF" => RenderDateDiff(
+            SqlCanonicalNativeLoweringKind.DateAdd => RenderDateAdd(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_DATE_PART" => RenderDatePart(
+            SqlCanonicalNativeLoweringKind.DateDiff => RenderDateDiff(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_DATE_FORMAT" => RenderDateFormat(
+            SqlCanonicalNativeLoweringKind.DatePart => RenderDatePart(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_DATE_PARSE" => RenderDateParse(
+            SqlCanonicalNativeLoweringKind.DateFormat => RenderDateFormat(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_POSITION" => RenderPosition(
+            SqlCanonicalNativeLoweringKind.DateParse => RenderDateParse(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_JSON_EXTRACT" => RenderJsonExtract(
+            SqlCanonicalNativeLoweringKind.Position => RenderPosition(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_JSON_SET" => RenderJsonSet(
+            SqlCanonicalNativeLoweringKind.JsonExtract => RenderJsonExtract(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_REGEX_MATCH" => RenderRegexMatch(
+            SqlCanonicalNativeLoweringKind.JsonSet => RenderJsonSet(
                 function,
                 provider,
                 renderSubquery,
                 dmlContext),
-            "CORE_CURRENT_DATE" => RenderCurrentDate(function, provider),
-            "CORE_CURRENT_TIME" => RenderCurrentTime(function, provider),
-            "CORE_CURRENT_TIMESTAMP" => RenderCurrentTimestamp(function),
-            "CORE_STRING_AGG" => RenderStringAggregate(
+            SqlCanonicalNativeLoweringKind.RegexMatch => RenderRegexMatch(
+                function,
+                provider,
+                renderSubquery,
+                dmlContext),
+            SqlCanonicalNativeLoweringKind.CurrentDate => RenderCurrentDate(
+                function,
+                provider),
+            SqlCanonicalNativeLoweringKind.CurrentTime => RenderCurrentTime(
+                function,
+                provider),
+            SqlCanonicalNativeLoweringKind.CurrentTimestamp => RenderCurrentTimestamp(
+                function),
+            SqlCanonicalNativeLoweringKind.StringAggregate => RenderStringAggregate(
                 function,
                 provider,
                 renderSubquery),
-            _ => RenderOrdinaryFunction(
-                function,
-                provider,
-                renderSubquery,
-                dmlContext)
+            _ => throw new SqlCompilationException(
+                "Unsupported canonical native lowering kind '" + loweringKind +
+                "' for function '" + name + "'.")
         };
     }
 

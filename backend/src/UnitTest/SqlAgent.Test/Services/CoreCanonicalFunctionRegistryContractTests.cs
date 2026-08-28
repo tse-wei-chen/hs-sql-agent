@@ -94,6 +94,70 @@ public sealed class CoreCanonicalFunctionRegistryContractTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(
+        "SELECT DATEADD(DAY, 1, created_at) FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        "DATEADD(")]
+    [InlineData(
+        "SELECT DATEDIFF(DAY, created_at, completed_at) FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        "DATEDIFF(")]
+    [InlineData(
+        "SELECT EXTRACT(YEAR FROM created_at) FROM orders",
+        SqlAgentToolType.Postgres,
+        "EXTRACT(")]
+    [InlineData(
+        "SELECT DATE_FORMAT(created_at, '%Y-%m-%d') FROM orders",
+        SqlAgentToolType.MySQL,
+        "DATE_FORMAT(")]
+    [InlineData(
+        "SELECT TO_DATE(value, 'YYYY-MM-DD') FROM records",
+        SqlAgentToolType.Postgres,
+        "TO_DATE(")]
+    [InlineData(
+        "SELECT CHARINDEX('x', name) FROM users",
+        SqlAgentToolType.MsSqlServer,
+        "CHARINDEX(")]
+    [InlineData(
+        "SELECT JSON_EXTRACT(payload, '$.id') FROM events",
+        SqlAgentToolType.MySQL,
+        "JSON_EXTRACT(")]
+    [InlineData(
+        "SELECT JSON_SET(payload, '$.id', 1) FROM events",
+        SqlAgentToolType.MySQL,
+        "JSON_SET(")]
+    [InlineData(
+        "SELECT REGEXP_LIKE(name, '^a') FROM users",
+        SqlAgentToolType.MySQL,
+        "REGEXP_LIKE(")]
+    [InlineData(
+        "SELECT CURRENT_DATE FROM users",
+        SqlAgentToolType.Postgres,
+        "CURRENT_DATE")]
+    [InlineData(
+        "SELECT CURRENT_TIME FROM users",
+        SqlAgentToolType.Postgres,
+        "CURRENT_TIME")]
+    [InlineData(
+        "SELECT CURRENT_TIMESTAMP FROM users",
+        SqlAgentToolType.Postgres,
+        "CURRENT_TIMESTAMP")]
+    [InlineData(
+        "SELECT STRING_AGG(name, ',') FROM users",
+        SqlAgentToolType.Postgres,
+        "STRING_AGG(")]
+    public void Compile_SpecializedCanonicalFunction_NativeLoweringRegistryPreservesDispatch(
+        string sql,
+        SqlAgentToolType provider,
+        string expectedSql)
+    {
+        var command = Compile(sql, provider, provider);
+
+        Assert.Contains(expectedSql, command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CORE_", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType sourceDialect,
