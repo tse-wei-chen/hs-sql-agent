@@ -401,6 +401,92 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    [Fact]
+    public void Facade_FunctionalSourceProfileRewrite_MatchesLegacyCompiler()
+    {
+        const string sql =
+            "SELECT first_name || last_name AS full_name FROM users";
+
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 4),
+            SessionModes: new HashSet<string>(
+                new[] { "PIPES_AS_CONCAT" },
+                StringComparer.OrdinalIgnoreCase));
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-source-profile-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.MySQL,
+            sourceProfile);
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                targetProfile);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.DoesNotContain(
+            "__CORE_MYSQL_PIPES_AS_CONCAT__",
+            migrated.Sql,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_FunctionalSourceProfileValidation_MatchesLegacyCompilationFailure()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT 1",
+            SqlAgentToolType.MySQL) with
+        {
+            SourceProfile = new SqlProviderCapabilityProfile(
+                SqlAgentToolType.Oracle)
+        };
+        var validation = new SqlPlanValidationContext(
+            "fsharp-source-profile-failure-v1");
+        var policy = new SqlExecutionPlanPolicy();
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Postgres,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> NullOrderingParityCases()
     {
         yield return new object[]

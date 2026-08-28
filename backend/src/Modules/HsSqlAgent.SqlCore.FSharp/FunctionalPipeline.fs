@@ -60,7 +60,9 @@ module internal FunctionalPipeline =
         (targetProfile: SqlProviderCapabilityProfile | null) =
 
         CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile)
-        CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile)
+        FunctionalSourceProfileRewriter.validateProfile
+            parsed.SourceDialect
+            parsed.SourceProfile
         ensureQueryRoot parsed.Statement
         FunctionalAst.verify parsed.Statement |> ignore
 
@@ -97,10 +99,10 @@ module internal FunctionalPipeline =
                     bound.SourceDialect)
 
                 BoundStatement(
-                    CoreSourceProfileRewriter.Prepare(
-                        bound.Statement,
-                        bound.SourceDialect,
-                        context.Parsed.SourceProfile),
+                    FunctionalSourceProfileRewriter.prepare
+                        bound.Statement
+                        bound.SourceDialect
+                        context.Parsed.SourceProfile,
                     bound.Facts,
                     bound.SourceDialect)
             else
@@ -126,7 +128,8 @@ module internal FunctionalPipeline =
         let sourceRestored =
             if context.Parsed.EnforceSourceDialectSyntax then
                 CanonicalStatement(
-                    CoreSourceProfileRewriter.Restore(normalized.Statement),
+                    FunctionalSourceProfileRewriter.restore
+                        normalized.Statement,
                     normalized.Facts,
                     normalized.SourceDialect,
                     normalized.TargetProvider)
@@ -276,7 +279,9 @@ module internal FunctionalPipeline =
                 nonNullPolicy
 
         CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile)
-        CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile)
+        FunctionalSourceProfileRewriter.validateProfile
+            parsed.SourceDialect
+            parsed.SourceProfile
         ensureDmlRoot parsed.Statement
         validateMutationPolicy parsed.Statement effectivePolicy
         SqlDmlReturningExpressionCapabilityRules.ValidateSource(
@@ -318,10 +323,10 @@ module internal FunctionalPipeline =
                     bound.SourceDialect)
 
                 BoundStatement(
-                    CoreSourceProfileRewriter.Prepare(
-                        bound.Statement,
-                        bound.SourceDialect,
-                        context.Parsed.SourceProfile),
+                    FunctionalSourceProfileRewriter.prepare
+                        bound.Statement
+                        bound.SourceDialect
+                        context.Parsed.SourceProfile,
                     bound.Facts,
                     bound.SourceDialect)
             else
@@ -347,7 +352,8 @@ module internal FunctionalPipeline =
         let sourceRestored =
             if context.Parsed.EnforceSourceDialectSyntax then
                 CanonicalStatement(
-                    CoreSourceProfileRewriter.Restore(normalized.Statement),
+                    FunctionalSourceProfileRewriter.restore
+                        normalized.Statement,
                     normalized.Facts,
                     normalized.SourceDialect,
                     normalized.TargetProvider)
