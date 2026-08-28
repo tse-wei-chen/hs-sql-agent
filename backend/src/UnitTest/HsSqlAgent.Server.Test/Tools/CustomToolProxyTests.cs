@@ -54,6 +54,8 @@ public class CustomToolProxyTests
         context.Items[Common.Models.McpContextItemKeys.AccessKeyId] = 7;
         context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
         context.Items[Common.Models.McpContextItemKeys.DatabaseName] = "testdb";
+        context.Items[Common.Models.McpContextItemKeys.AllowedTools] = string.Empty;
+        context.Items[Common.Models.McpContextItemKeys.TableWhitelist] = string.Empty;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
 
         _proxy = new CustomToolProxy(
@@ -79,6 +81,21 @@ public class CustomToolProxyTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("not available", result);
+    }
+
+    [Fact]
+    public async Task Execute_MissingToolAuthorizationContext_FailsClosed()
+    {
+        _httpContextAccessorMock.Object.HttpContext!.Items.Remove(Common.Models.McpContextItemKeys.AllowedTools);
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("tool authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
+        _toolServiceMock.Verify(
+            x => x.GetPublishedToolByNameAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -134,10 +151,40 @@ public class CustomToolProxyTests
     }
 
     [Fact]
+    public async Task Execute_QueryTool_MissingTableAuthorizationContext_FailsClosed()
+    {
+        var tool = new CustomSqlTool
+        {
+            Name = "test_tool",
+            Type = "Query",
+            SqlTemplate = "SELECT * FROM users"
+        };
+        _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tool);
+        SetupPostgresProvider();
+        _httpContextAccessorMock.Object.HttpContext!.Items.Remove(Common.Models.McpContextItemKeys.TableWhitelist);
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("table authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
+        _typedQueryRuntimeMock.Verify(x => x.ExecuteAsync(
+            It.IsAny<ISqlProvider>(),
+            It.IsAny<string>(),
+            It.IsAny<ParsedStatement>(),
+            It.IsAny<SecurityPolicyModel>(),
+            It.IsAny<IReadOnlySet<string>?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Execute_ShouldReturnError_WhenSqlConfigMissing()
     {
         var emptyContext = new DefaultHttpContext();
         emptyContext.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
+        emptyContext.Items[Common.Models.McpContextItemKeys.AllowedTools] = string.Empty;
+        emptyContext.Items[Common.Models.McpContextItemKeys.TableWhitelist] = string.Empty;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(emptyContext);
 
         var tool = new CustomSqlTool

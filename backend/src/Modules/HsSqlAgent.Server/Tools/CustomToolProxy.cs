@@ -326,9 +326,14 @@ public class CustomToolProxy(
 
     private HashSet<string>? ResolveTableWhitelist()
     {
-        var context = _httpContextAccessor.HttpContext;
-        if (context == null) return null;
-        var tableWhitelist = context.Items[McpContextItemKeys.TableWhitelist] as string;
+        var context = _httpContextAccessor.HttpContext
+            ?? throw new UnauthorizedAccessException("MCP table authorization context is missing.");
+        if (!context.Items.TryGetValue(McpContextItemKeys.TableWhitelist, out var whitelistValue))
+        {
+            throw new UnauthorizedAccessException("MCP table authorization context is missing.");
+        }
+
+        var tableWhitelist = whitelistValue?.ToString();
         if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
         return tableWhitelist
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -337,9 +342,14 @@ public class CustomToolProxy(
 
     private void ValidateToolAccess()
     {
-        var context = _httpContextAccessor.HttpContext;
-        if (context == null) return;
-        var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string;
+        var context = _httpContextAccessor.HttpContext
+            ?? throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
+        if (!context.Items.TryGetValue(McpContextItemKeys.AllowedTools, out var allowedToolsValue))
+        {
+            throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
+        }
+
+        var allowedTools = allowedToolsValue?.ToString();
         if (string.IsNullOrWhiteSpace(allowedTools)) return;
         var allowed = allowedTools
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
