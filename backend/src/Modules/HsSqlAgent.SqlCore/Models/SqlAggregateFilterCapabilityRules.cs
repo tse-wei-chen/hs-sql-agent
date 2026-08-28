@@ -56,15 +56,7 @@ internal static class SqlAggregateFilterCapabilityRules
 
         return provider switch
         {
-        SqlAgentToolType.Postgres =>
-            profile?.ServerVersion is { } postgresVersion
-            && postgresVersion.CompareTo(PostgresMinimumVersion) < 0
-                ? new(
-                    SqlAggregateFilterCapabilityReason.VersionTooLow,
-                    PostgresMinimumVersion,
-                    postgresVersion)
-                : new(SqlAggregateFilterCapabilityReason.Supported, PostgresMinimumVersion),
-
+        SqlAgentToolType.Postgres => EvaluateDeclaredVersion(profile, PostgresMinimumVersion),
         SqlAgentToolType.Sqlite => EvaluateDeclaredVersion(profile, SqliteMinimumVersion),
         SqlAgentToolType.Firebird => EvaluateDeclaredVersion(profile, FirebirdMinimumVersion),
         SqlAgentToolType.Oracle => EvaluateDeclaredVersion(profile, OracleMinimumVersion),
@@ -138,8 +130,8 @@ internal static class SqlAggregateFilterCapabilityRules
         var detail = decision.Reason switch
         {
             SqlAggregateFilterCapabilityReason.Supported when provider == SqlAgentToolType.Postgres =>
-                "Native aggregate FILTER is supported by PostgreSQL 9.4+. An explicitly declared older " +
-                "target ServerVersion is rejected; an omitted version retains Core's current-supported-release baseline.",
+                $"Native aggregate FILTER is enabled by the declared PostgreSQL target ServerVersion " +
+                $"{targetProfile!.ServerVersion}, satisfying the {PostgresMinimumVersion}+ runtime contract.",
 
             SqlAggregateFilterCapabilityReason.Supported when provider == SqlAgentToolType.Oracle =>
                 "Oracle AI Database 26ai+ target profiles support native aggregate FILTER. Core additionally " +
