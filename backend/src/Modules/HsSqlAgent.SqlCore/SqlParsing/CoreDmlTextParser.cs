@@ -93,10 +93,10 @@ internal sealed class CoreDmlTextParser
         else
             throw CoreTokenReader.Error("INSERT requires VALUES or a SELECT source.", _reader.Peek());
 
-        var returning = ParseReturningColumnsIfPresent();
+        var returning = ParseReturningItemsIfPresent();
         return new InsertStatement(target, columns.ToImmutable(), source, _reader.SpanFrom(start))
         {
-            Returning = DmlReturningProjection.FromColumns(returning)
+            Returning = returning
         };
     }
 
@@ -130,11 +130,11 @@ internal sealed class CoreDmlTextParser
         var from = ParseUpdateFromIfPresent();
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
-        var returning = ParseReturningColumnsIfPresent();
+        var returning = ParseReturningItemsIfPresent();
         return new UpdateStatement(target, assignments.ToImmutable(), predicate, _reader.SpanFrom(start))
         {
             From = from,
-            Returning = DmlReturningProjection.FromColumns(returning)
+            Returning = returning
         };
     }
 
@@ -166,11 +166,11 @@ internal sealed class CoreDmlTextParser
         var usingSources = ParseDeleteUsingIfPresent();
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
-        var returning = ParseReturningColumnsIfPresent();
+        var returning = ParseReturningItemsIfPresent();
         return new DeleteStatement(target, predicate, _reader.SpanFrom(start))
         {
             Using = usingSources,
-            Returning = DmlReturningProjection.FromColumns(returning)
+            Returning = returning
         };
     }
 
@@ -211,52 +211,52 @@ internal sealed class CoreDmlTextParser
         return sources.ToImmutable();
     }
 
-    private ImmutableArray<SqlIdentifier> ParseReturningColumnsIfPresent()
+    private ImmutableArray<DmlReturningItem> ParseReturningItemsIfPresent()
     {
         if (!_reader.MatchWord("RETURNING"))
-            return ImmutableArray<SqlIdentifier>.Empty;
+            return ImmutableArray<DmlReturningItem>.Empty;
 
         var returningToken = _reader.Peek(-1);
         ValidateReturningSourceContract(returningToken);
 
-        var columns = ImmutableArray.CreateBuilder<SqlIdentifier>();
+        var items = ImmutableArray.CreateBuilder<DmlReturningItem>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var hasWildcard = false;
         do
         {
-            SqlIdentifier column;
             var token = _reader.Peek();
             if (token.Type == TokenType.Operator && token.Value == "*")
             {
                 _reader.Advance();
-                column = SqlIdentifier.Unquoted("*", CoreTokenReader.Span(token));
+                if (!seen.Add("*"))
+                    throw CoreTokenReader.Error("RETURNING column '*' is declared more than once.", token);
                 hasWildcard = true;
+                items.Add(new DmlReturningWildcardItem(CoreTokenReader.Span(token)));
+                continue;
             }
-            else
+
+            var column = _reader.ParseIdentifierPath("RETURNING column");
+            if (column.Parts.Length != 1)
             {
-                column = _reader.ParseIdentifierPath("RETURNING column");
-                if (column.Parts.Length != 1)
-                {
-                    throw CoreTokenReader.Error(
-                        "Portable DML RETURNING accepts unqualified target columns only; OLD/NEW/table-qualified and expression result items remain fail-closed.",
-                        token);
-                }
+                throw CoreTokenReader.Error(
+                    "Portable DML RETURNING accepts unqualified target columns only; OLD/NEW/table-qualified and expression result items remain fail-closed.",
+                    token);
             }
 
             var name = column.Parts[0].Value;
             if (!seen.Add(name))
                 throw CoreTokenReader.Error($"RETURNING column '{name}' is declared more than once.", token);
-            columns.Add(column);
+            items.Add(new DmlReturningColumnItem(column, column.Span));
         } while (_reader.Match(TokenType.Comma));
 
-        if (hasWildcard && columns.Count != 1)
+        if (hasWildcard && items.Count != 1)
         {
             throw CoreTokenReader.Error(
                 "RETURNING * cannot be mixed with explicit RETURNING columns in the portable Core contract.",
                 returningToken);
         }
 
-        return columns.ToImmutable();
+        return items.ToImmutable();
     }
 
     private void ValidateReturningSourceContract(Token returningToken)
