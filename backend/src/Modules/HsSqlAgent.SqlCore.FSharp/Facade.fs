@@ -129,15 +129,13 @@ type SqlCoreFacade private () =
         targetProvider: SqlAgentToolType,
         validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         let parsed = SqlCoreFacade.ParseDml(sql, sourceDialect)
-        CoreDmlCompiler
-            .CreateDefault()
-            .Compile(
-                parsed,
-                targetProvider,
-                validationContext,
-                null,
-                null,
-                null)
+        FunctionalPipeline.compileDml
+            parsed
+            targetProvider
+            validationContext
+            null
+            null
+            null
 
     static member CompileDml(
         sql: string,
@@ -149,15 +147,13 @@ type SqlCoreFacade private () =
         targetProfile: SqlProviderCapabilityProfile,
         conflictTargetAssurance: DmlConflictTargetAssurance) : CompiledSqlCommand =
         let parsed = SqlCoreFacade.ParseDml(sql, sourceDialect, sourceProfile)
-        CoreDmlCompiler
-            .CreateDefault()
-            .Compile(
-                parsed,
-                targetProvider,
-                validationContext,
-                policy,
-                targetProfile,
-                conflictTargetAssurance)
+        FunctionalPipeline.compileDml
+            parsed
+            targetProvider
+            validationContext
+            policy
+            targetProfile
+            conflictTargetAssurance
 
     static member TryParseQuery(
         sql: string,

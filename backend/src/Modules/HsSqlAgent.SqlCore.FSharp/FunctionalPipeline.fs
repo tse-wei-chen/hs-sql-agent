@@ -1,5 +1,6 @@
 namespace HsSqlAgent.SqlCore.Internal
 
+open System
 open HsSqlAgent.SqlCore.Core.Analysis
 open HsSqlAgent.SqlCore.Core.Ast
 open HsSqlAgent.SqlCore.Core.Binding
@@ -199,6 +200,248 @@ module internal FunctionalPipeline =
             context.TargetProfile)
             .Lower(executable)
 
+    type private DmlContext =
+        {
+            Parsed: ParsedStatement
+            TargetProvider: SqlAgentToolType
+            TargetProfile: SqlProviderCapabilityProfile | null
+            ConflictTargetAssurance: DmlConflictTargetAssurance | null
+        }
+
+    type private ParsedDml =
+        | ParsedDml of DmlContext
+
+    type private BoundDml =
+        | BoundDml of DmlContext * BoundStatement
+
+    type private CanonicalDml =
+        | CanonicalDml of DmlContext * CanonicalStatement
+
+    type private ValidatedDml =
+        | ValidatedDml of DmlContext * ValidatedSqlPlan
+
+    type private ExecutableDml =
+        | ExecutableDml of DmlContext * ExecutableSqlPlan
+
+    let private ensureDmlRoot (statement: SqlStatement) =
+        match statement with
+        | :? InsertStatement
+        | :? UpdateStatement
+        | :? DeleteStatement ->
+            ()
+        | other ->
+            raise (SqlCompilationException(
+                $"F# DML pipeline requires INSERT/UPDATE/DELETE AST, not {other.GetType().Name}."))
+
+    let private validateMutationPolicy
+        (statement: SqlStatement)
+        (policy: DmlCompilationPolicy) =
+
+        match statement with
+        | :? UpdateStatement as update ->
+            if isNull update.Predicate
+               && (policy.RequireWhereForUpdate || not policy.AllowFullTableUpdate) then
+                raise (UnauthorizedAccessException(
+                    "Security policy denies UPDATE without WHERE."))
+
+        | :? DeleteStatement as delete ->
+            if isNull delete.Predicate
+               && (policy.RequireWhereForDelete || not policy.AllowFullTableDelete) then
+                raise (UnauthorizedAccessException(
+                    "Security policy denies DELETE without WHERE."))
+
+        | :? InsertStatement ->
+            ()
+
+        | other ->
+            raise (SqlCompilationException(
+                $"Unsupported DML statement '{other.GetType().Name}'."))
+
+    let private startDml
+        (parsed: ParsedStatement)
+        (targetProvider: SqlAgentToolType)
+        (policy: DmlCompilationPolicy | null)
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
+
+        let effectivePolicy =
+            if isNull policy then
+                DmlCompilationPolicy(
+                    RequireWhereForUpdate = true,
+                    RequireWhereForDelete = true,
+                    AllowFullTableUpdate = false,
+                    AllowFullTableDelete = false)
+            else
+                policy
+
+        CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile)
+        CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile)
+        ensureDmlRoot parsed.Statement
+        validateMutationPolicy parsed.Statement effectivePolicy
+        SqlDmlReturningExpressionCapabilityRules.ValidateSource(
+            parsed.Statement,
+            parsed.SourceDialect)
+        FunctionalAst.verify parsed.Statement |> ignore
+
+        ParsedDml
+            {
+                Parsed = parsed
+                TargetProvider = targetProvider
+                TargetProfile = targetProfile
+                ConflictTargetAssurance = conflictTargetAssurance
+            }
+
+    let private bindDml (ParsedDml context) =
+        let bound = CoreDmlBinder().Bind(context.Parsed)
+
+        CoreJoinProfileValidator.Validate(
+            bound.Statement,
+            context.Parsed.EnforceSourceDialectSyntax,
+            bound.SourceDialect,
+            context.Parsed.SourceProfile,
+            context.TargetProvider,
+            context.TargetProfile)
+
+        CoreAggregateLocalOrderingGuard.Validate(
+            bound.Statement,
+            context.Parsed.EnforceSourceDialectSyntax,
+            bound.SourceDialect,
+            context.Parsed.SourceProfile,
+            context.TargetProvider,
+            context.TargetProfile)
+
+        let sourcePrepared =
+            if context.Parsed.EnforceSourceDialectSyntax then
+                CoreSourceDialectValidator.Validate(
+                    bound.Statement,
+                    bound.SourceDialect)
+
+                BoundStatement(
+                    CoreSourceProfileRewriter.Prepare(
+                        bound.Statement,
+                        bound.SourceDialect,
+                        context.Parsed.SourceProfile),
+                    bound.Facts,
+                    bound.SourceDialect)
+            else
+                bound
+
+        CoreAggregateFilterProfileValidator.Validate(
+            sourcePrepared.Statement,
+            context.Parsed.EnforceSourceDialectSyntax,
+            sourcePrepared.SourceDialect,
+            context.Parsed.SourceProfile,
+            context.TargetProvider,
+            context.TargetProfile)
+
+        FunctionalAst.verify sourcePrepared.Statement |> ignore
+        BoundDml(context, sourcePrepared)
+
+    let private normalizeDml (BoundDml(context, bound)) =
+        let normalized =
+            CoreDmlNormalizer().Normalize(
+                bound,
+                context.TargetProvider)
+
+        let sourceRestored =
+            if context.Parsed.EnforceSourceDialectSyntax then
+                CanonicalStatement(
+                    CoreSourceProfileRewriter.Restore(normalized.Statement),
+                    normalized.Facts,
+                    normalized.SourceDialect,
+                    normalized.TargetProvider)
+            else
+                normalized
+
+        let nullOrderingCanonical =
+            CanonicalStatement(
+                CoreNullOrderingRewriter.Rewrite(
+                    sourceRestored.Statement,
+                    context.TargetProvider),
+                sourceRestored.Facts,
+                sourceRestored.SourceDialect,
+                sourceRestored.TargetProvider)
+
+        CoreNoFromReferenceValidator.Validate(
+            nullOrderingCanonical.Statement,
+            context.TargetProvider)
+
+        FunctionalAst.verify nullOrderingCanonical.Statement |> ignore
+        CanonicalDml(context, nullOrderingCanonical)
+
+    let private validateDml
+        (validationContext: SqlPlanValidationContext)
+        (CanonicalDml(context, canonical)) =
+
+        let validated =
+            CoreDmlPlanValidator().Validate(
+                canonical,
+                validationContext)
+
+        FunctionalAst.verify validated.Statement |> ignore
+        ValidatedDml(context, validated)
+
+    let private authorizeDml (ValidatedDml(context, validated)) =
+        let profiled =
+            CoreProviderProfileRewriter.Rewrite(
+                validated.Statement,
+                context.TargetProvider,
+                context.TargetProfile)
+
+        let executable =
+            ExecutableSqlPlan(
+                profiled,
+                validated.Facts,
+                validated.SourceDialect,
+                validated.TargetProvider,
+                validated.PolicyVersion)
+
+        CoreNativeBackendCompatibility.ValidateDml(
+            executable.Statement,
+            context.TargetProvider)
+
+        FunctionalAst.verify executable.Statement |> ignore
+        ExecutableDml(context, executable)
+
+    let private expectedDmlKind (statement: SqlStatement) =
+        match statement with
+        | :? InsertStatement -> SqlStatementKind.Insert
+        | :? UpdateStatement -> SqlStatementKind.Update
+        | :? DeleteStatement -> SqlStatementKind.Delete
+        | other ->
+            raise (SqlCompilationException(
+                $"Statement '{other.GetType().Name}' is not supported by the F# DML pipeline."))
+
+    let private lowerDml (ExecutableDml(context, executable)) =
+        let lowered =
+            NativeSqlRenderer(
+                context.TargetProvider,
+                context.TargetProfile)
+                .Lower(executable)
+
+        let expectedKind = expectedDmlKind context.Parsed.Statement
+        if lowered.Kind <> expectedKind then
+            raise (SqlCompilationException(
+                $"F# DML lowerer produced {lowered.Kind} for expected {expectedKind} statement."))
+
+        let conflictApplied =
+            match executable.Statement with
+            | :? InsertStatement as insert ->
+                CoreDmlConflictSqlRewriter.Apply(
+                    lowered,
+                    insert,
+                    context.TargetProfile,
+                    context.ConflictTargetAssurance,
+                    executable.PolicyVersion)
+            | _ ->
+                lowered
+
+        CoreDmlReturningSqlRewriter.Apply(
+            conflictApplied,
+            executable.Statement,
+            context.TargetProfile,
+            executable.PolicyVersion)
+
     /// Compile a query through the private F# stage graph.
     ///
     /// There is deliberately no API that accepts BoundStatement,
@@ -218,3 +461,25 @@ module internal FunctionalPipeline =
         |> validateQuery validationContext
         |> authorizeExecution executionPolicy
         |> lowerQuery
+
+    /// Compile INSERT/UPDATE/DELETE through the same private stage discipline.
+    let compileDml
+        (parsed: ParsedStatement)
+        (targetProvider: SqlAgentToolType)
+        (validationContext: SqlPlanValidationContext)
+        (policy: DmlCompilationPolicy | null)
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        (conflictTargetAssurance: DmlConflictTargetAssurance | null)
+        : CompiledSqlCommand =
+
+        startDml
+            parsed
+            targetProvider
+            policy
+            targetProfile
+            conflictTargetAssurance
+        |> bindDml
+        |> normalizeDml
+        |> validateDml validationContext
+        |> authorizeDml
+        |> lowerDml

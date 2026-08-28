@@ -144,6 +144,74 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    public static IEnumerable<object[]> DmlParityCases()
+    {
+        foreach (var targetProvider in Enum.GetValues<SqlAgentToolType>())
+        {
+            yield return new object[]
+            {
+                targetProvider,
+                "INSERT INTO users (id, name) VALUES (1, 'a')"
+            };
+            yield return new object[]
+            {
+                targetProvider,
+                "UPDATE users SET name = 'b' WHERE id = 1"
+            };
+            yield return new object[]
+            {
+                targetProvider,
+                "DELETE FROM users WHERE id = 1"
+            };
+        }
+
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "UPDATE users SET name = 'b' WHERE id = 1 RETURNING id"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "INSERT INTO users (id, name) VALUES (1, 'a') ON CONFLICT (id) DO NOTHING RETURNING id"
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(DmlParityCases))]
+    public void Facade_FunctionalDmlPipeline_MatchesLegacyCompiler(
+        SqlAgentToolType targetProvider,
+        string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-dml-typestate-v1",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" });
+
+        var parsed = CoreSqlTextParser.ParseDml(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = CoreDmlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                targetProvider,
+                validation);
+
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Postgres,
+            targetProvider,
+            validation);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Kind, migrated.Kind);
+        Assert.Equal(legacy.TargetProvider, migrated.TargetProvider);
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Equal(legacy.ReturnsRows, migrated.ReturnsRows);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+    }
+
     [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {
