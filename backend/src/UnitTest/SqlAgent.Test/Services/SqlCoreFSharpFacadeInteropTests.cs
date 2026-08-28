@@ -514,7 +514,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             migrated.Conflict.Assignments.Select(
                 x => (
                     string.Join(".", x.Column.Parts.Select(p => p.Value)),
-                    string.Join(".", x.ProposedColumn.Parts.Select(p => p.Value))));
+                    string.Join(".", x.ProposedColumn.Parts.Select(p => p.Value)))));
     }
 
     [Fact]
