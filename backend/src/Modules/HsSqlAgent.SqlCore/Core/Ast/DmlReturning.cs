@@ -4,9 +4,9 @@ namespace HsSqlAgent.SqlCore.Core.Ast;
 
 /// <summary>
 /// Canonical semantic model for rows produced by DML RETURNING/OUTPUT-style clauses.
-/// The first portable slice deliberately models only target columns and a lone wildcard.
-/// Future expression, OLD/NEW, and provider-native OUTPUT semantics must add explicit item kinds
-/// rather than overloading SqlIdentifier shape.
+/// Target columns and a lone wildcard form the currently proven portable lowering subset.
+/// Richer result expressions have an explicit semantic node so provider capability work can evolve
+/// without overloading SqlIdentifier shape or accidentally treating expressions as portable.
 /// </summary>
 public abstract record DmlReturningItem(SourceSpan Span) : SqlNode(Span);
 
@@ -15,6 +15,16 @@ public sealed record DmlReturningColumnItem(
     SourceSpan Span) : DmlReturningItem(Span);
 
 public sealed record DmlReturningWildcardItem(SourceSpan Span) : DmlReturningItem(Span);
+
+/// <summary>
+/// A canonical DML result expression. Merely representing this node does not authorize a provider
+/// lowering: the current portable RETURNING contract remains column/wildcard-only and lowering must
+/// fail closed until expression semantics are proven for the source/target provider profile.
+/// </summary>
+public sealed record DmlReturningExpressionItem(
+    SqlExpr Expression,
+    IdentifierPart? Alias,
+    SourceSpan Span) : DmlReturningItem(Span);
 
 public static class DmlReturningProjection
 {
