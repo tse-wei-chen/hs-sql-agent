@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Reflection;
 using HsSqlAgent.Server.Services;
 using SqlAgent.Service.Core.Execution;
@@ -16,6 +17,32 @@ public class ProviderRuntimeBoundaryTests
             typeof(TypedQueryRuntime).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
                 .SelectMany(method => method.GetParameters()),
             parameter => typeof(ISqlStrategy).IsAssignableFrom(parameter.ParameterType));
+    }
+
+    [Fact]
+    public void QueryExecutorContract_RequiresCallerOwnedOpenConnection()
+    {
+        var execute = Assert.Single(typeof(ISqlCommandExecutor).GetMethods());
+        var parameters = execute.GetParameters();
+
+        Assert.Contains(parameters, parameter =>
+            parameter.Name == "openConnection"
+            && parameter.ParameterType == typeof(DbConnection));
+        Assert.DoesNotContain(parameters, parameter =>
+            parameter.ParameterType == typeof(string)
+            && parameter.Name?.Contains("connection", StringComparison.OrdinalIgnoreCase) == true);
+
+        var executorMethods = typeof(CompiledSqlCommandExecutor)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Where(method => method.Name == nameof(CompiledSqlCommandExecutor.ExecuteQueryAsync))
+            .ToArray();
+        Assert.Single(executorMethods);
+        Assert.Contains(executorMethods[0].GetParameters(), parameter =>
+            parameter.Name == "openConnection"
+            && parameter.ParameterType == typeof(DbConnection));
+        Assert.Empty(typeof(CompiledSqlCommandExecutor).GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Where(parameter => parameter.ParameterType == typeof(IDbConnectionFactory)));
     }
 
     [Fact]

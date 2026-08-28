@@ -75,7 +75,7 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
                 policy,
                 allowedTables,
                 verifiedProfile.TargetProfile);
-            var executor = new CompiledSqlCommandExecutor(provider.Connections);
+            var executor = new CompiledSqlCommandExecutor();
             return await executor.ExecuteQueryAsync(
                 command,
                 connection,

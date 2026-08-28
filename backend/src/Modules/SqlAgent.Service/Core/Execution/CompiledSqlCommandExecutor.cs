@@ -8,55 +8,29 @@ namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
 /// Execution boundary for SELECT commands. It knows nothing about QueryDefinition, Core AST,
-/// translation registries or SqlKata; it executes exactly the immutable command it receives.
+/// translation registries or SqlKata; it executes exactly the immutable command it receives on an
+/// already-open connection whose runtime profile has been verified by the caller.
 /// </summary>
-public sealed class CompiledSqlCommandExecutor(IDbConnectionFactory connectionFactory)
-    : ISqlCommandExecutor
+public sealed class CompiledSqlCommandExecutor : ISqlCommandExecutor
 {
     static CompiledSqlCommandExecutor()
     {
         DapperTemporalTypeHandlerRegistry.EnsureRegistered();
     }
 
-    private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
-
-    public Task<QueryExecutionResult> ExecuteQueryAsync(
-        CompiledSqlCommand command,
-        string connectionString,
-        CancellationToken cancellationToken = default) =>
-        ExecuteQueryAsync(command, connectionString, 30, cancellationToken);
-
     public async Task<QueryExecutionResult> ExecuteQueryAsync(
         CompiledSqlCommand command,
-        string connectionString,
+        DbConnection openConnection,
         int commandTimeoutSeconds,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(command);
-        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-
-        await using var connection = _connectionFactory.Create(connectionString);
-        await connection.OpenAsync(cancellationToken);
-        return await ExecuteQueryAsync(
-            command,
-            connection,
-            commandTimeoutSeconds,
-            cancellationToken);
-    }
-
-    public async Task<QueryExecutionResult> ExecuteQueryAsync(
-        CompiledSqlCommand command,
-        DbConnection connection,
-        int commandTimeoutSeconds,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(command);
-        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(openConnection);
 
         if (command.Kind != SqlStatementKind.Select)
             throw new InvalidOperationException(
                 $"Query executor cannot execute command kind {command.Kind}.");
-        if (connection.State != ConnectionState.Open)
+        if (openConnection.State != ConnectionState.Open)
             throw new InvalidOperationException(
                 "Query executor requires an already-open database connection.");
 
@@ -65,7 +39,7 @@ public sealed class CompiledSqlCommandExecutor(IDbConnectionFactory connectionFa
             parameters.Add(NormalizeParameterName(parameter.Name), parameter.Value);
 
         var stopwatch = Stopwatch.StartNew();
-        var rows = await connection.QueryAsync(
+        var rows = await openConnection.QueryAsync(
             new CommandDefinition(
                 command.Sql,
                 parameters,
