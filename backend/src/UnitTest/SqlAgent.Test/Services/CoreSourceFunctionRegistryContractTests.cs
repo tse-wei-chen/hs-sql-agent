@@ -120,6 +120,109 @@ public sealed class CoreSourceFunctionRegistryContractTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(
+        "SELECT DATEADD(DAY, 1, created_at) FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        SqlAgentToolType.MsSqlServer,
+        "DATEADD(")]
+    [InlineData(
+        "SELECT DATEDIFF(DAY, created_at, completed_at) FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        SqlAgentToolType.MsSqlServer,
+        "DATEDIFF(")]
+    [InlineData(
+        "SELECT DATE_FORMAT(created_at, '%Y-%m-%d') FROM orders",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MySQL,
+        "DATE_FORMAT(")]
+    [InlineData(
+        "SELECT FORMAT(created_at, 'yyyy-MM-dd') FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        SqlAgentToolType.MsSqlServer,
+        "FORMAT(")]
+    [InlineData(
+        "SELECT TO_DATE(value, 'YYYY-MM-DD') FROM records",
+        SqlAgentToolType.Postgres,
+        SqlAgentToolType.Postgres,
+        "TO_DATE(")]
+    [InlineData(
+        "SELECT CHARINDEX('x', name) FROM users",
+        SqlAgentToolType.MsSqlServer,
+        SqlAgentToolType.Postgres,
+        "STRPOS(")]
+    [InlineData(
+        "SELECT LOCATE('x', name) FROM users",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.Postgres,
+        "STRPOS(")]
+    [InlineData(
+        "SELECT STRPOS(name, 'x') FROM users",
+        SqlAgentToolType.Postgres,
+        SqlAgentToolType.Postgres,
+        "STRPOS(")]
+    [InlineData(
+        "SELECT INSTR(name, 'x') FROM users",
+        SqlAgentToolType.Sqlite,
+        SqlAgentToolType.Postgres,
+        "STRPOS(")]
+    [InlineData(
+        "SELECT JSON_EXTRACT(payload, '$.id') FROM events",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MySQL,
+        "JSON_EXTRACT(")]
+    [InlineData(
+        "SELECT JSON_SET(payload, '$.id', 1) FROM events",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MySQL,
+        "JSON_SET(")]
+    [InlineData(
+        "SELECT REGEXP_LIKE(name, '^a') FROM users",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MySQL,
+        "REGEXP_LIKE(")]
+    [InlineData(
+        "SELECT GETDATE() FROM users",
+        SqlAgentToolType.MsSqlServer,
+        SqlAgentToolType.MsSqlServer,
+        "CURRENT_TIMESTAMP")]
+    [InlineData(
+        "SELECT NOW() FROM users",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MySQL,
+        "CURRENT_TIMESTAMP")]
+    [InlineData(
+        "SELECT STRING_AGG(name, ',') FROM users",
+        SqlAgentToolType.Postgres,
+        SqlAgentToolType.Postgres,
+        "STRING_AGG(")]
+    [InlineData(
+        "SELECT GROUP_CONCAT(name) FROM users",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.Postgres,
+        "STRING_AGG(")]
+    [InlineData(
+        "SELECT LISTAGG(name, ',') FROM users",
+        SqlAgentToolType.Oracle,
+        SqlAgentToolType.Postgres,
+        "STRING_AGG(")]
+    [InlineData(
+        "SELECT LIST(name, ',') FROM users",
+        SqlAgentToolType.Firebird,
+        SqlAgentToolType.Postgres,
+        "STRING_AGG(")]
+    public void Compile_StaticSourceFunctionCanonicalization_UsesRegistryMetadata(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider,
+        string expectedSql)
+    {
+        var command = Compile(sql, sourceDialect, targetProvider);
+
+        Assert.Contains(expectedSql, command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CORE_", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_CurrentTemporalSourceRules_RemainOwnedByDedicatedCapabilityContract()
     {

@@ -235,31 +235,72 @@ public sealed class CoreSqlNormalizer(IFunctionRegistry functionRegistry) : ISql
         FunctionCallExpr original,
         string sourceName,
         ImmutableArray<SqlExpr> arguments,
-        NormalizationContext context) => sourceName switch
+        NormalizationContext context)
     {
-        "DATEADD" => CanonicalDateAdd(original, arguments),
-        "DATEDIFF" => CanonicalDateDiff(original, arguments, context),
-        _ when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) =>
-            CanonicalDatePart(original, sourceName, arguments),
-        "DATE_FORMAT" or "FORMAT" => CanonicalDateFormat(original, arguments, context),
-        "TO_DATE" => CanonicalDateParse(original, arguments, context),
-        "CHARINDEX" or "LOCATE" or "STRPOS" or "INSTR" => CanonicalPosition(original, sourceName, arguments),
-        "JSON_EXTRACT" => CanonicalFunction(original, "CORE_JSON_EXTRACT", arguments),
-        "JSON_SET" => CanonicalFunction(original, "CORE_JSON_SET", arguments),
-        "REGEXP_LIKE" => CanonicalFunction(original, "CORE_REGEX_MATCH", arguments),
-        "CURRENT_DATE" => arguments.Length == 0
-            ? CanonicalFunction(original, "CORE_CURRENT_DATE", arguments)
-            : throw new SqlCompilationException("CURRENT_DATE does not accept arguments."),
-        "CURRENT_TIME" => arguments.Length == 0
-            ? CanonicalFunction(original, "CORE_CURRENT_TIME", arguments)
-            : throw new SqlCompilationException("CURRENT_TIME does not accept arguments."),
-        "GETDATE" or "NOW" or "CURRENT_TIMESTAMP" => arguments.Length == 0
-            ? CanonicalFunction(original, "CORE_CURRENT_TIMESTAMP", arguments)
-            : throw new SqlCompilationException($"{sourceName} does not accept arguments."),
-        "STRING_AGG" or "GROUP_CONCAT" or "LISTAGG" or "LIST" =>
-            CanonicalStringAggregate(original, sourceName, arguments, context),
-        _ => null
-    };
+        if (SqlSourceFunctionRegistry.Find(sourceName) is { } sourceContract)
+        {
+            return NormalizeRegisteredPortableFamily(
+                sourceContract.CanonicalizationKind,
+                original,
+                sourceName,
+                arguments,
+                context);
+        }
+
+        if (SqlDatePartCapabilityRules.IsRepresentedPart(sourceName))
+            return CanonicalDatePart(original, sourceName, arguments);
+
+        return sourceName switch
+        {
+            "CURRENT_DATE" => arguments.Length == 0
+                ? CanonicalFunction(original, "CORE_CURRENT_DATE", arguments)
+                : throw new SqlCompilationException("CURRENT_DATE does not accept arguments."),
+            "CURRENT_TIME" => arguments.Length == 0
+                ? CanonicalFunction(original, "CORE_CURRENT_TIME", arguments)
+                : throw new SqlCompilationException("CURRENT_TIME does not accept arguments."),
+            "CURRENT_TIMESTAMP" => arguments.Length == 0
+                ? CanonicalFunction(original, "CORE_CURRENT_TIMESTAMP", arguments)
+                : throw new SqlCompilationException(
+                    "CURRENT_TIMESTAMP does not accept arguments."),
+            _ => null
+        };
+    }
+
+    private static SqlExpr NormalizeRegisteredPortableFamily(
+        SqlSourceFunctionCanonicalizationKind canonicalizationKind,
+        FunctionCallExpr original,
+        string sourceName,
+        ImmutableArray<SqlExpr> arguments,
+        NormalizationContext context) =>
+        canonicalizationKind switch
+        {
+            SqlSourceFunctionCanonicalizationKind.DateAdd =>
+                CanonicalDateAdd(original, arguments),
+            SqlSourceFunctionCanonicalizationKind.DateDiff =>
+                CanonicalDateDiff(original, arguments, context),
+            SqlSourceFunctionCanonicalizationKind.DateFormat =>
+                CanonicalDateFormat(original, arguments, context),
+            SqlSourceFunctionCanonicalizationKind.DateParse =>
+                CanonicalDateParse(original, arguments, context),
+            SqlSourceFunctionCanonicalizationKind.Position =>
+                CanonicalPosition(original, sourceName, arguments),
+            SqlSourceFunctionCanonicalizationKind.JsonExtract =>
+                CanonicalFunction(original, "CORE_JSON_EXTRACT", arguments),
+            SqlSourceFunctionCanonicalizationKind.JsonSet =>
+                CanonicalFunction(original, "CORE_JSON_SET", arguments),
+            SqlSourceFunctionCanonicalizationKind.RegexMatch =>
+                CanonicalFunction(original, "CORE_REGEX_MATCH", arguments),
+            SqlSourceFunctionCanonicalizationKind.CurrentTimestamp =>
+                arguments.Length == 0
+                    ? CanonicalFunction(original, "CORE_CURRENT_TIMESTAMP", arguments)
+                    : throw new SqlCompilationException(
+                        sourceName + " does not accept arguments."),
+            SqlSourceFunctionCanonicalizationKind.StringAggregate =>
+                CanonicalStringAggregate(original, sourceName, arguments, context),
+            _ => throw new SqlCompilationException(
+                "Unsupported source function canonicalization kind '" +
+                canonicalizationKind + "' for function '" + sourceName + "'.")
+        };
 
     private static SqlExpr CanonicalDateAdd(FunctionCallExpr original, ImmutableArray<SqlExpr> arguments)
     {
