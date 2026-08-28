@@ -57,11 +57,7 @@ export default defineNuxtConfig({
         "@codemirror/view",
         "@codemirror/commands",
         "@codemirror/theme-one-dark",
-        "@codemirror/search",
-        "@codemirror/autocomplete",
-        "@codemirror/language",
-        "@codemirror/lint",
-        "@codemirror/theme-one-dark",
+        "codemirror",
         "@lucide/vue",
         "vue-sonner"
       ],
@@ -71,7 +67,6 @@ export default defineNuxtConfig({
   modules: [
     "shadcn-nuxt",
     '@vee-validate/nuxt',
-    "nuxt-codemirror",
     "@nuxtjs/color-mode",
     "@nuxt/eslint",
   ],
