@@ -47,6 +47,14 @@ module internal FunctionalQueryBinder =
     let private toImmutableArray<'T> (items: seq<'T>) =
         ImmutableArray.CreateRange<'T>(items)
 
+    let private requireExpr context (value: SqlExpr | null) : SqlExpr =
+        match value with
+        | null ->
+            raise (InvalidOperationException(
+                $"{context} cannot be null at the F# binder boundary."))
+        | expression ->
+            expression
+
     let private identifierName (identifier: SqlIdentifier) =
         identifier.Parts
         |> Seq.map (fun part -> part.Value)
@@ -180,7 +188,7 @@ module internal FunctionalQueryBinder =
         (alias: IdentifierPart option)
         scope =
 
-        let registered = registerAlias state (Some alias) symbol scope
+        let registered = registerAlias state alias symbol scope
 
         let withSource =
             { registered with Sources = symbol :: registered.Sources }
@@ -214,7 +222,7 @@ module internal FunctionalQueryBinder =
         (alias: IdentifierPart)
         scope =
 
-        let registered = registerAlias state alias symbol scope
+        let registered = registerAlias state (Some alias) symbol scope
         let withSource =
             { registered with Sources = symbol :: registered.Sources }
 
@@ -593,10 +601,13 @@ module internal FunctionalQueryBinder =
 
         let reversed, finalState =
             (([], state), items)
-            ||> Seq.fold (fun (acc, currentState) item ->
+            ||> Seq.fold (fun (acc, currentState) (item: SelectItem) ->
+                let sourceExpression =
+                    requireExpr "SELECT item expression" item.Expression
+
                 let expression, nextState =
                     bindExpr
-                        item.Expression
+                        sourceExpression
                         scope
                         visibleCtes
                         currentState
@@ -614,10 +625,13 @@ module internal FunctionalQueryBinder =
 
         let reversed, finalState =
             (([], state), items)
-            ||> Seq.fold (fun (acc, currentState) item ->
+            ||> Seq.fold (fun (acc, currentState) (item: OrderByItem) ->
+                let sourceExpression =
+                    requireExpr "ORDER BY expression" item.Expression
+
                 let expression, nextState =
                     bindExpr
-                        item.Expression
+                        sourceExpression
                         scope
                         visibleCtes
                         currentState
@@ -636,9 +650,12 @@ module internal FunctionalQueryBinder =
         let reversed, finalState =
             (([], state), items)
             ||> Seq.fold (fun (acc, currentState) expression ->
+                let sourceExpression =
+                    requireExpr "SQL expression collection item" expression
+
                 let bound, nextState =
                     bindExpr
-                        expression
+                        sourceExpression
                         scope
                         visibleCtes
                         currentState
