@@ -206,7 +206,7 @@ internal static class CoreSourceDialectValidator
 
     private static void ValidateFunction(FunctionCallExpr function, SqlAgentToolType sourceDialect)
     {
-        var name = IdentifierText(function.Name).ToUpperInvariant();
+        var name = IdentifierText(function.Name);
         var arity = function.Arguments.Length;
 
         if (SqlSourceFunctionRegistry.Find(name) is { } contract)
@@ -217,24 +217,8 @@ internal static class CoreSourceDialectValidator
             return;
         }
 
-        switch (name)
-        {
-            case "CURRENT_DATE":
-                ValidateCurrentTemporalSource(
-                    SqlCurrentTemporalKind.Date,
-                    sourceDialect);
-                return;
-            case "CURRENT_TIME":
-                ValidateCurrentTemporalSource(
-                    SqlCurrentTemporalKind.Time,
-                    sourceDialect);
-                return;
-            case "CURRENT_TIMESTAMP":
-                ValidateCurrentTemporalSource(
-                    SqlCurrentTemporalKind.Timestamp,
-                    sourceDialect);
-                return;
-        }
+        if (SqlCurrentTemporalCapabilityRules.TryParseRawSourceName(name, out var currentTemporalKind))
+            ValidateCurrentTemporalSource(currentTemporalKind, sourceDialect);
     }
 
     private static void ValidateAggregateSeparatorClause(

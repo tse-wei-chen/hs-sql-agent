@@ -15,6 +15,27 @@ internal enum SqlCurrentTemporalKind
 /// </summary>
 internal static class SqlCurrentTemporalCapabilityRules
 {
+    internal static bool TryParseRawSourceName(
+        string name,
+        out SqlCurrentTemporalKind kind)
+    {
+        switch (name.Trim().ToUpperInvariant())
+        {
+            case "CURRENT_DATE":
+                kind = SqlCurrentTemporalKind.Date;
+                return true;
+            case "CURRENT_TIME":
+                kind = SqlCurrentTemporalKind.Time;
+                return true;
+            case "CURRENT_TIMESTAMP":
+                kind = SqlCurrentTemporalKind.Timestamp;
+                return true;
+            default:
+                kind = default;
+                return false;
+        }
+    }
+
     internal static bool SupportsRawSource(
         SqlCurrentTemporalKind kind,
         SqlAgentToolType sourceDialect) => kind switch
