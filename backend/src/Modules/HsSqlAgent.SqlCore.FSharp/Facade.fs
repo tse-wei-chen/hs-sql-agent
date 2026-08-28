@@ -6,7 +6,7 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
-open HsSqlAgent.SqlCore.SqlParsing
+open HsSqlAgent.SqlCore.SqlParsing\nopen HsSqlAgent.SqlCore.Internal
 
 /// CLR-friendly result returned by SqlCoreFacade Try... methods.
 /// The public signature intentionally contains no FSharpOption, FSharpResult,
@@ -65,24 +65,32 @@ type SqlCoreFacade private () =
     static member ParseQuery(
         sql: string,
         sourceDialect: SqlAgentToolType) : ParsedStatement =
-        CoreSqlTextParser.ParseQuery(sql, sourceDialect, null)
+        let parsed = CoreSqlTextParser.ParseQuery(sql, sourceDialect, null)
+        FunctionalAst.verify parsed.Statement |> ignore
+        parsed
 
     static member ParseQuery(
         sql: string,
         sourceDialect: SqlAgentToolType,
         sourceProfile: SqlProviderCapabilityProfile) : ParsedStatement =
-        CoreSqlTextParser.ParseQuery(sql, sourceDialect, sourceProfile)
+        let parsed = CoreSqlTextParser.ParseQuery(sql, sourceDialect, sourceProfile)
+        FunctionalAst.verify parsed.Statement |> ignore
+        parsed
 
     static member ParseDml(
         sql: string,
         sourceDialect: SqlAgentToolType) : ParsedStatement =
-        CoreSqlTextParser.ParseDml(sql, sourceDialect, null)
+        let parsed = CoreSqlTextParser.ParseDml(sql, sourceDialect, null)
+        FunctionalAst.verify parsed.Statement |> ignore
+        parsed
 
     static member ParseDml(
         sql: string,
         sourceDialect: SqlAgentToolType,
         sourceProfile: SqlProviderCapabilityProfile) : ParsedStatement =
-        CoreSqlTextParser.ParseDml(sql, sourceDialect, sourceProfile)
+        let parsed = CoreSqlTextParser.ParseDml(sql, sourceDialect, sourceProfile)
+        FunctionalAst.verify parsed.Statement |> ignore
+        parsed
 
     static member CompileQuery(
         sql: string,

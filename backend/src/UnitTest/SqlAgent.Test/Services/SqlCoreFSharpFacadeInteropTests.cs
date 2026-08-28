@@ -62,6 +62,43 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_FunctionalAstAudit_CoversRepresentativeQueryAndDmlShapes()
+    {
+        var query = SqlCoreFacade.ParseQuery(
+            """
+            WITH active_users AS (
+                SELECT id, role_id
+                FROM users
+                WHERE active = true
+            )
+            SELECT
+                u.id,
+                CASE WHEN r.id IS NULL THEN 0 ELSE 1 END AS has_role
+            FROM active_users u
+            LEFT JOIN roles r ON r.id = u.role_id
+            WHERE u.id IN (SELECT user_id FROM audit_log)
+            ORDER BY u.id
+            """,
+            SqlAgentToolType.Postgres);
+
+        Assert.NotNull(query);
+
+        var insert = SqlCoreFacade.ParseDml(
+            "INSERT INTO users (id, name) VALUES (1, 'a') RETURNING id",
+            SqlAgentToolType.Postgres);
+        var update = SqlCoreFacade.ParseDml(
+            "UPDATE users SET name = 'b' WHERE id = 1 RETURNING id",
+            SqlAgentToolType.Postgres);
+        var delete = SqlCoreFacade.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING id",
+            SqlAgentToolType.Postgres);
+
+        Assert.NotNull(insert);
+        Assert.NotNull(update);
+        Assert.NotNull(delete);
+    }
+
+    [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {
         var assembly = typeof(SqlCoreFacade).Assembly;
