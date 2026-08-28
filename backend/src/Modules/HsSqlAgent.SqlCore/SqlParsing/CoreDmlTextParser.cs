@@ -235,6 +235,12 @@ internal sealed class CoreDmlTextParser
                 continue;
             }
 
+            if (_sourceDialect == SqlAgentToolType.Postgres)
+            {
+                ParsePostgresReturningItem(items, seen, token);
+                continue;
+            }
+
             var column = _reader.ParseIdentifierPath("RETURNING column");
             if (column.Parts.Length != 1)
             {
@@ -252,11 +258,43 @@ internal sealed class CoreDmlTextParser
         if (hasWildcard && items.Count != 1)
         {
             throw CoreTokenReader.Error(
-                "RETURNING * cannot be mixed with explicit RETURNING columns in the portable Core contract.",
+                "RETURNING * cannot be mixed with explicit RETURNING columns or expressions in the Core contract.",
                 returningToken);
         }
 
         return items.ToImmutable();
+    }
+
+    private void ParsePostgresReturningItem(
+        ImmutableArray<DmlReturningItem>.Builder items,
+        HashSet<string> seen,
+        Token startToken)
+    {
+        var expression = _expressions.ParseExpression();
+        IdentifierPart? alias = null;
+        if (_reader.MatchWord("AS"))
+            alias = CoreTokenReader.ToIdentifierPart(_reader.ExpectIdentifier("RETURNING expression alias"));
+
+        if (expression is ColumnExpr column && alias is null)
+        {
+            if (column.Name.Parts.Length != 1)
+            {
+                throw CoreTokenReader.Error(
+                    "PostgreSQL expression RETURNING currently accepts unqualified target-row columns only; qualified/source-table references remain fail-closed.",
+                    startToken);
+            }
+
+            var name = column.Name.Parts[0].Value;
+            if (!seen.Add(name))
+                throw CoreTokenReader.Error($"RETURNING column '{name}' is declared more than once.", startToken);
+            items.Add(new DmlReturningColumnItem(column.Name, column.Span));
+            return;
+        }
+
+        items.Add(new DmlReturningExpressionItem(
+            expression,
+            alias,
+            expression.Span));
     }
 
     private void ValidateReturningSourceContract(Token returningToken)
