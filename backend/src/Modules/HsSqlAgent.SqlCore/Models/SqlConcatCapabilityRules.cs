@@ -17,6 +17,10 @@ internal static class SqlConcatCapabilityRules
     private static readonly Version SqlServerAlwaysNullConcatVersion = new(14, 0);
     private static readonly Version SqlServerNativePipesVersion = new(17, 0);
 
+    internal static bool RequiresTargetProfileRewrite(
+        SqlAgentToolType targetProvider) =>
+        targetProvider == SqlAgentToolType.MsSqlServer;
+
     internal static bool SupportsMySqlPipesAsConcat(
         SqlAgentToolType sourceDialect,
         SqlProviderCapabilityProfile? sourceProfile) =>
