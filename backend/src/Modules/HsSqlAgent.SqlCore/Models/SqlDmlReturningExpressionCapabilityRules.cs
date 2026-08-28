@@ -82,7 +82,7 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 return;
             case UnaryExpr { Operator: "NOT" }:
             case BinaryExpr { Operator: "AND" or "OR", LikeEscape: null }:
-            case BinaryExpr { Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or "LIKE" or "ILIKE", LikeEscape: null }:
+            case BinaryExpr { Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=" or "LIKE" or "ILIKE" }:
             case IsNullExpr:
             case BetweenExpr:
             case InExpr:
@@ -167,9 +167,8 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 ValidateNode(comparison.Left);
                 ValidateNode(comparison.Right);
                 return;
-            case BinaryExpr { Operator: "LIKE" or "ILIKE", LikeEscape: null } like:
-                ValidateNode(like.Left);
-                ValidateNode(like.Right);
+            case BinaryExpr { Operator: "LIKE" or "ILIKE" } like:
+                ValidateLike(like);
                 return;
             case IsNullExpr isNull:
                 ValidateNode(isNull.Value);
@@ -186,7 +185,22 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 return;
             default:
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' accepts only comparison, LIKE/ILIKE without explicit ESCAPE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates over the proven target-row expression subset; predicate node {expression.GetType().Name} remains fail-closed.");
+                    $"SQL capability '{CapabilityId}' accepts only comparison, LIKE/ILIKE with a validated optional ESCAPE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates over the proven target-row expression subset; predicate node {expression.GetType().Name} remains fail-closed.");
+        }
+    }
+
+    private static void ValidateLike(BinaryExpr like)
+    {
+        ValidateNode(like.Left);
+        ValidateNode(like.Right);
+
+        if (like.LikeEscape is null)
+            return;
+
+        if (like.LikeEscape.Length != 1 || char.IsControl(like.LikeEscape[0]))
+        {
+            throw new SqlCompilationException(
+                $"SQL capability '{CapabilityId}' LIKE/ILIKE ESCAPE requires exactly one non-control character.");
         }
     }
 
