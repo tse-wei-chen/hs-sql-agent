@@ -24,12 +24,12 @@ internal static class CoreAggregateFilterProfileValidator
         if (enforceSourceDialectSyntax)
         {
             ValidateRuntime("source", sourceDialect, sourceProfile);
-            if (sourceDialect == SqlAgentToolType.Oracle)
+            if (SqlAggregateFilterCapabilityRules.RequiresRestrictedPredicateShape(sourceDialect))
                 ValidateOracleFilterPredicates(statement, "source");
         }
 
         ValidateRuntime("target", targetProvider, targetProfile);
-        if (targetProvider == SqlAgentToolType.Oracle)
+        if (SqlAggregateFilterCapabilityRules.RequiresRestrictedPredicateShape(targetProvider))
             ValidateOracleFilterPredicates(statement, "target");
     }
 

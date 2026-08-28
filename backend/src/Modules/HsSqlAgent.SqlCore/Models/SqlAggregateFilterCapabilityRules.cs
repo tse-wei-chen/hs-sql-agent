@@ -40,6 +40,10 @@ internal static class SqlAggregateFilterCapabilityRules
             ? null
             : $"Aggregate FILTER (WHERE ...) is not valid for declared source dialect {sourceDialect} in the Core source capability profile.";
 
+    internal static bool RequiresRestrictedPredicateShape(
+        SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.Oracle;
+
     internal static SqlAggregateFilterCapabilityDecision Evaluate(
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? profile)
