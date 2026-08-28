@@ -7,38 +7,24 @@ namespace HsSqlAgent.SqlCore.Models;
 /// </summary>
 internal static class SqlWindowCapabilityRules
 {
-    private static readonly HashSet<string> ModeledWindowFunctions =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST",
-            "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE", "NTILE"
-        };
-
-    private static readonly HashSet<string> FrameInsensitiveWindowFunctions =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST",
-            "LAG", "LEAD", "NTILE"
-        };
-
     internal static string? FunctionValidationError(
         string functionName,
         SqlAgentToolType provider) =>
         provider == SqlAgentToolType.MsSqlServer
-        && functionName.Equals("NTH_VALUE", StringComparison.OrdinalIgnoreCase)
-            ? CapabilityError(provider, "function.nth_value")
+            ? CapabilityError(
+                provider,
+                $"function.{functionName.Trim().ToLowerInvariant()}")
             : null;
 
     internal static string? LiteralOffsetValidationError(
         string functionName,
         long offset,
         SqlAgentToolType provider) =>
-        functionName is "LAG" or "LEAD"
-        && offset < 0
+        offset < 0
         && provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.MySQL
             ? CapabilityError(
                 provider,
-                $"function.{functionName.ToLowerInvariant()}.negative_offset")
+                $"function.{functionName.Trim().ToLowerInvariant()}.negative_offset")
             : null;
 
     internal static string? WindowValidationError(
@@ -52,13 +38,17 @@ internal static class SqlWindowCapabilityRules
             return null;
 
         var name = IdentifierText(function.Name).ToUpperInvariant();
+        var contract = SqlCanonicalFunctionRegistry.Find(name);
 
-        var functionError = FunctionValidationError(name, provider);
-        if (functionError is not null)
-            return functionError;
+        if (contract?.TargetCapabilityFamily == SqlCanonicalTargetCapabilityFamily.WindowFunction)
+        {
+            var functionError = FunctionValidationError(name, provider);
+            if (functionError is not null)
+                return functionError;
+        }
 
         if (windowed.Window.Frame is not null
-            && FrameInsensitiveWindowFunctions.Contains(name)
+            && contract?.IsWindowFrameInsensitive == true
             && provider is SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle)
         {
             return CapabilityError(
@@ -67,7 +57,7 @@ internal static class SqlWindowCapabilityRules
         }
 
         if (provider == SqlAgentToolType.MsSqlServer
-            && ModeledWindowFunctions.Contains(name)
+            && contract?.Kind == SqlCanonicalFunctionKind.Window
             && windowed.Window.OrderBy.IsDefaultOrEmpty)
         {
             return CapabilityError(provider, "window.order_by");
