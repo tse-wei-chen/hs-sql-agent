@@ -82,20 +82,25 @@ public static class CoreSqlTextParser
         SqlAgentToolType sourceDialect,
         SqlProviderCapabilityProfile? sourceProfile)
     {
-        if (sourceProfile is null) return;
-        if (sourceProfile.Provider != sourceDialect)
+        switch (SqlProviderCapabilityProfileRules.ValidationIssue(
+                    sourceProfile,
+                    sourceDialect))
         {
-            throw new ArgumentException(
-                $"Source capability profile declares provider {sourceProfile.Provider}, " +
-                $"but parser source dialect is {sourceDialect}.",
-                nameof(sourceProfile));
-        }
-        if (sourceProfile.CompatibilityLevel is < 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(sourceProfile),
-                sourceProfile.CompatibilityLevel,
-                "Provider compatibility level must be non-negative.");
+            case SqlProviderCapabilityProfileValidationIssue.None:
+                return;
+            case SqlProviderCapabilityProfileValidationIssue.ProviderMismatch:
+                throw new ArgumentException(
+                    $"Source capability profile declares provider {sourceProfile!.Provider}, " +
+                    $"but parser source dialect is {sourceDialect}.",
+                    nameof(sourceProfile));
+            case SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel:
+                throw new ArgumentOutOfRangeException(
+                    nameof(sourceProfile),
+                    sourceProfile!.CompatibilityLevel,
+                    "Provider compatibility level must be non-negative.");
+            default:
+                throw new InvalidOperationException(
+                    "Unsupported source capability profile validation issue.");
         }
     }
 

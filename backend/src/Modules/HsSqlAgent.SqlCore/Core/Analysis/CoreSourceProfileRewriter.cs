@@ -13,15 +13,23 @@ internal static class CoreSourceProfileRewriter
         SqlAgentToolType sourceDialect,
         SqlProviderCapabilityProfile? sourceProfile)
     {
-        if (sourceProfile is null) return;
-        if (sourceProfile.Provider != sourceDialect)
+        switch (SqlProviderCapabilityProfileRules.ValidationIssue(
+                    sourceProfile,
+                    sourceDialect))
         {
-            throw new SqlCompilationException(
-                $"Source capability profile declares provider {sourceProfile.Provider}, " +
-                $"but parsed SQL declares source dialect {sourceDialect}.");
+            case SqlProviderCapabilityProfileValidationIssue.None:
+                return;
+            case SqlProviderCapabilityProfileValidationIssue.ProviderMismatch:
+                throw new SqlCompilationException(
+                    $"Source capability profile declares provider {sourceProfile!.Provider}, " +
+                    $"but parsed SQL declares source dialect {sourceDialect}.");
+            case SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel:
+                throw new SqlCompilationException(
+                    "Provider compatibility level must be non-negative.");
+            default:
+                throw new SqlCompilationException(
+                    "Unsupported source capability profile validation issue.");
         }
-        if (sourceProfile.CompatibilityLevel is < 0)
-            throw new SqlCompilationException("Provider compatibility level must be non-negative.");
     }
 
     public static bool SupportsMySqlPipesAsConcat(
