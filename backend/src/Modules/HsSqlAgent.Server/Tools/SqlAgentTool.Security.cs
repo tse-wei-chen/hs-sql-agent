@@ -59,9 +59,14 @@ public partial class SqlAgentTool
 
     private HashSet<string>? ResolveTableWhitelist()
     {
-        var context = _httpContextAccessor.HttpContext;
-        if (context == null) return null;
-        var tableWhitelist = context.Items[McpContextItemKeys.TableWhitelist] as string;
+        var context = _httpContextAccessor.HttpContext
+            ?? throw new UnauthorizedAccessException("MCP table authorization context is missing.");
+        if (!context.Items.TryGetValue(McpContextItemKeys.TableWhitelist, out var whitelistValue))
+        {
+            throw new UnauthorizedAccessException("MCP table authorization context is missing.");
+        }
+
+        var tableWhitelist = whitelistValue?.ToString();
         if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
         return tableWhitelist
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
