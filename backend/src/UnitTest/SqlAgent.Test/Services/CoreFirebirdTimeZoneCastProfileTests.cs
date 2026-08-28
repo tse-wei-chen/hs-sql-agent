@@ -77,7 +77,7 @@ public sealed class CoreFirebirdTimeZoneCastProfileTests
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
             CompileQuery(
-                "SELECT CAST(CURRENT_TIMESTAMP AS TIMESTAMP WITH TIME ZONE)",
+                "SELECT CAST('2026-08-28 00:00:00+00:00' AS TIMESTAMP WITH TIME ZONE)",
                 SqlAgentToolType.Firebird,
                 targetProfile: null));
 
