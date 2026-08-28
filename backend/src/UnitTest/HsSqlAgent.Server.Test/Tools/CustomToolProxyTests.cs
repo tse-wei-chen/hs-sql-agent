@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
@@ -255,7 +256,13 @@ public class CustomToolProxyTests
             .ReturnsAsync([
                 new DatabaseColumnMetadata("public", "users", "name", "text", false)
             ]);
+        var verificationConnection = new Mock<DbConnection>();
+        verificationConnection.SetupGet(x => x.State).Returns(System.Data.ConnectionState.Open);
+        verificationConnection.SetupGet(x => x.ServerVersion).Returns("17.5");
+        verificationConnection.Setup(x => x.OpenAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var connections = new Mock<IDbConnectionFactory>(MockBehavior.Strict);
+        connections.Setup(x => x.Create("Host=localhost;Database=testdb"))
+            .Returns(verificationConnection.Object);
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         provider.SetupGet(x => x.Metadata).Returns(metadata.Object);
@@ -281,7 +288,7 @@ public class CustomToolProxyTests
 
         Assert.Contains("cancelled by user", result, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, approval.ElicitCount);
-        connections.Verify(x => x.Create(It.IsAny<string>()), Times.Never);
+        connections.Verify(x => x.Create("Host=localhost;Database=testdb"), Times.Once);
         metadata.VerifyAll();
     }
 

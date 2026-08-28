@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
+using SqlAgent.Service.Core.Execution;
 
 namespace HsSqlAgent.Server.Services;
 
@@ -47,6 +48,12 @@ public sealed class TypedDmlRuntime(
         }
         var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
 
+        await using var verificationConnection = provider.Connections.Create(connectionString);
+        await verificationConnection.OpenAsync(cancellationToken);
+        var verifiedProfile = RuntimeServerProfileVerifier.Capture(
+            provider.Type,
+            verificationConnection);
+
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
@@ -64,7 +71,8 @@ public sealed class TypedDmlRuntime(
             compilationPolicy,
             DmlRowIdentityAssurance.Strict,
             policy.DmlMaxAffectedRows,
-            cancellationToken: cancellationToken);
+            cancellationToken: cancellationToken,
+            targetProfile: verifiedProfile.TargetProfile);
 
         var coordinator = new DmlCoordinator(
             provider.Connections,
@@ -75,9 +83,13 @@ public sealed class TypedDmlRuntime(
             connectionString,
             plan,
             approvalContextFingerprint,
-            cancellationToken);
+            cancellationToken,
+            verifiedProfile.ServerVersionIdentity);
 
-        return new TypedDmlApprovalSession(plan, preview);
+        return new TypedDmlApprovalSession(
+            plan,
+            preview,
+            verifiedProfile.ServerVersionIdentity);
     }
 
     public async Task<DmlCommitResult> CommitAsync(
@@ -128,6 +140,12 @@ public sealed class TypedDmlRuntime(
                 "DML provider changed between preview and commit.");
         }
 
+        if (session.VerifiedServerVersionIdentity is null)
+        {
+            throw new InvalidOperationException(
+                "DML approval session is missing verified runtime server-version identity; request a new preview before committing.");
+        }
+
         var coordinator = new DmlCoordinator(
             provider.Connections,
             _timeProvider,
@@ -138,7 +156,8 @@ public sealed class TypedDmlRuntime(
             session.Plan,
             session.Preview.Challenge,
             currentApprovalContextFingerprint,
-            cancellationToken);
+            cancellationToken,
+            session.VerifiedServerVersionIdentity);
     }
 
     private IDmlPreviewTransactionFactory ResolvePreviewTransactions(ISqlProvider provider) =>
@@ -223,7 +242,8 @@ public sealed class TypedDmlRuntime(
 
 public sealed record TypedDmlApprovalSession(
     ValidatedDmlPlan Plan,
-    DmlPreview Preview);
+    DmlPreview Preview,
+    string? VerifiedServerVersionIdentity = null);
 
 public sealed record DmlApprovalExecutionContext(
     string PrincipalIdentity,

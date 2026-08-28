@@ -1,7 +1,7 @@
-using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
+using SqlAgent.Service.Core.Execution;
 
 namespace HsSqlAgent.Server.Services;
 
@@ -68,8 +68,13 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         {
             await using var connection = provider.Connections.Create(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var targetProfile = CreateVerifiedTargetProfile(provider.Type, connection);
-            var command = Compile(provider, parsed, policy, allowedTables, targetProfile);
+            var verifiedProfile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
+            var command = Compile(
+                provider,
+                parsed,
+                policy,
+                allowedTables,
+                verifiedProfile.TargetProfile);
             var executor = new CompiledSqlCommandExecutor(provider.Connections);
             return await executor.ExecuteQueryAsync(
                 command,
@@ -85,37 +90,8 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
 
     internal static SqlProviderCapabilityProfile CreateVerifiedTargetProfile(
         SqlAgentToolType provider,
-        DbConnection openConnection)
-    {
-        ArgumentNullException.ThrowIfNull(openConnection);
-        if (openConnection.State != System.Data.ConnectionState.Open)
-            throw new InvalidOperationException(
-                "Verified runtime capability profile requires an open database connection.");
-
-        return new SqlProviderCapabilityProfile(
-            provider,
-            ServerVersion: ParseServerVersion(openConnection.ServerVersion));
-    }
-
-    private static Version? ParseServerVersion(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var trimmed = value.Trim();
-        if (Version.TryParse(trimmed, out var exact)) return exact;
-
-        var tokenLength = 0;
-        while (tokenLength < trimmed.Length)
-        {
-            var ch = trimmed[tokenLength];
-            if (!(char.IsDigit(ch) || ch == '.')) break;
-            tokenLength++;
-        }
-
-        return tokenLength > 0
-               && Version.TryParse(trimmed[..tokenLength].TrimEnd('.'), out var prefix)
-            ? prefix
-            : null;
-    }
+        System.Data.Common.DbConnection openConnection) =>
+        RuntimeServerProfileVerifier.Capture(provider, openConnection).TargetProfile;
 
     internal static string ComputePolicyVersion(
         SecurityPolicyModel policy,
