@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
@@ -41,14 +42,23 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         ArgumentNullException.ThrowIfNull(parsed);
         ArgumentNullException.ThrowIfNull(policy);
 
-        return CoreSqlCompiler.CreateDefault().Compile(
-            parsed,
-            provider.Type,
-            new SqlPlanValidationContext(
-                ComputePolicyVersion(policy, allowedTables),
-                allowedTables),
-            new SqlExecutionPlanPolicy(policy.QueryMaxRows),
-            targetProfile);
+        var validationContext = new SqlPlanValidationContext(
+            ComputePolicyVersion(policy, allowedTables),
+            allowedTables);
+        var executionPolicy = new SqlExecutionPlanPolicy(policy.QueryMaxRows);
+
+        return targetProfile is null
+            ? SqlCoreFacade.CompileQuery(
+                parsed,
+                provider.Type,
+                validationContext,
+                executionPolicy)
+            : SqlCoreFacade.CompileQuery(
+                parsed,
+                provider.Type,
+                validationContext,
+                executionPolicy,
+                targetProfile);
     }
 
     public async Task<QueryExecutionResult> ExecuteAsync(

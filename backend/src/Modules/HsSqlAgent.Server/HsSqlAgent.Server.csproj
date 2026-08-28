@@ -35,6 +35,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+		<PackageReference Include="FSharp.Core" />
 		<PackageReference Include="ModelContextProtocol.AspNetCore" />
 		<PackageReference Include="ModelContextProtocol" />
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
@@ -71,6 +72,7 @@
 		<ProjectReference Include="..\HsSqlAgent.PostgresMigrations\HsSqlAgent.PostgresMigrations.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\HsSqlAgent.SqliteMigrations\HsSqlAgent.SqliteMigrations.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.csproj" />
+		<ProjectReference Include="..\HsSqlAgent.SqlCore.FSharp\HsSqlAgent.SqlCore.FSharp.fsproj" PrivateAssets="All" />
 		<ProjectReference Include="..\HsSqlAgent.Provider.Abstractions\HsSqlAgent.Provider.Abstractions.csproj" />
 		<ProjectReference Include="..\HsSqlAgent.Provider.PostgreSql\HsSqlAgent.Provider.PostgreSql.csproj" />
 		<ProjectReference Include="..\HsSqlAgent.Provider.MySql\HsSqlAgent.Provider.MySql.csproj" />

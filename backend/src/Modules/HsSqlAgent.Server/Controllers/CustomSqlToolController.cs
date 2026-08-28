@@ -6,6 +6,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using HsSqlAgent.SqlCore;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
@@ -205,7 +206,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
                 TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
-                _ = CoreDmlCompiler.CreateDefault().Compile(
+                _ = SqlCoreFacade.CompileDml(
                     parsedDml,
                     dbType,
                     new SqlPlanValidationContext("custom-tool-definition-validation"),
@@ -213,12 +214,14 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                         policy?.RequireWhereForUpdate ?? true,
                         policy?.RequireWhereForDelete ?? true,
                         policy?.AllowFullTableUpdate ?? false,
-                        policy?.AllowFullTableDelete ?? false));
+                        policy?.AllowFullTableDelete ?? false),
+                    targetProfile: null,
+                    conflictTargetAssurance: null);
                 return null;
             }
 
             var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
-            _ = CoreSqlCompiler.CreateDefault().Compile(
+            _ = SqlCoreFacade.CompileQuery(
                 parsed,
                 dbType,
                 new SqlPlanValidationContext("custom-tool-definition-validation"),

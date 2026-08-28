@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Collections.Immutable;
 using System.Text.Json;
 
@@ -15,8 +16,10 @@ public sealed class DmlPlanFactory(
     CoreSqlCompiler? queryCompiler = null)
 {
     private readonly DmlRowIdentityResolver _rowIdentityResolver = new(metadataReader);
-    private readonly CoreDmlCompiler _dmlCompiler = dmlCompiler ?? CoreDmlCompiler.CreateDefault();
-    private readonly CoreSqlCompiler _queryCompiler = queryCompiler ?? CoreSqlCompiler.CreateDefault();
+    // Explicit legacy compilers remain an opt-in compatibility seam for tests/custom hosts.
+    // The default production path is the F# typestate facade.
+    private readonly CoreDmlCompiler? _dmlCompiler = dmlCompiler;
+    private readonly CoreSqlCompiler? _queryCompiler = queryCompiler;
 
     public async Task<ValidatedDmlPlan> CreateAsync(
         string connectionString,
@@ -68,7 +71,7 @@ public sealed class DmlPlanFactory(
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
         var resolvedMutation = parsedMutation with { Statement = resolvedStatement };
 
-        var mutationCommand = _dmlCompiler.Compile(
+        var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
             validationContext,
@@ -105,11 +108,10 @@ public sealed class DmlPlanFactory(
             SourceSpan.Unknown);
         var parsedMatch = new ParsedStatement(matchStatement, parsedMutation.SourceDialect);
 
-        var matchCommand = _queryCompiler.Compile(
+        var matchCommand = CompileMatchQuery(
             parsedMatch,
             targetProvider,
             validationContext,
-            new SqlExecutionPlanPolicy(),
             targetProfile);
 
         var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
@@ -165,7 +167,7 @@ public sealed class DmlPlanFactory(
         var resolvedInsert = insert with { Target = resolvedTarget };
         var resolvedMutation = parsedMutation with { Statement = resolvedInsert };
 
-        var mutationCommand = _dmlCompiler.Compile(
+        var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
             validationContext,
@@ -196,6 +198,56 @@ public sealed class DmlPlanFactory(
             MaxAffectedRows: maxAffectedRows,
             ApprovalMode: DmlApprovalMode.InsertValues,
             InsertRows: previewRows);
+    }
+
+    private CompiledSqlCommand CompileMutation(
+        ParsedStatement parsed,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? compilationPolicy,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        if (_dmlCompiler is not null)
+        {
+            return _dmlCompiler.Compile(
+                parsed,
+                targetProvider,
+                validationContext,
+                compilationPolicy,
+                targetProfile);
+        }
+
+        return SqlCoreFacade.CompileDml(
+            parsed,
+            targetProvider,
+            validationContext,
+            compilationPolicy,
+            targetProfile,
+            conflictTargetAssurance: null);
+    }
+
+    private CompiledSqlCommand CompileMatchQuery(
+        ParsedStatement parsed,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        if (_queryCompiler is not null)
+        {
+            return _queryCompiler.Compile(
+                parsed,
+                targetProvider,
+                validationContext,
+                new SqlExecutionPlanPolicy(),
+                targetProfile);
+        }
+
+        return SqlCoreFacade.CompileQuery(
+            parsed,
+            targetProvider,
+            validationContext,
+            new SqlExecutionPlanPolicy(),
+            targetProfile);
     }
 
     private static ImmutableArray<ImmutableDictionary<string, object?>> BuildInsertPreviewRows(
