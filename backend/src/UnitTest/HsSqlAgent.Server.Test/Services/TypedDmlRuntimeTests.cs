@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Data;
 using System.Data.Common;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
@@ -54,7 +55,7 @@ public class TypedDmlRuntimeTests
                 new DatabaseColumnMetadata("public", "users", "id", "integer", false),
                 new DatabaseColumnMetadata("public", "users", "name", "text", false)
             ]);
-        var connections = new ThrowingConnectionFactory();
+        var connections = new VersionedConnectionFactory("17.5 (Debian 17.5-1)");
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
         provider.SetupGet(x => x.Metadata).Returns(metadata.Object);
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
@@ -90,13 +91,14 @@ public class TypedDmlRuntimeTests
         Assert.Equal("Alice", session.Preview.Rows[0]["name"]);
         Assert.Null(session.Preview.Challenge.RowSetFingerprint);
         Assert.Equal(session.Plan.PlanFingerprint, session.Preview.Challenge.PlanFingerprint);
+        Assert.Equal("17.5 (Debian 17.5-1)", session.VerifiedServerVersionIdentity);
         Assert.Equal(
             TypedDmlRuntime.ComputeApprovalContextFingerprint(DefaultApprovalContext),
             session.Preview.Challenge.ApprovalContextFingerprint);
         Assert.Equal(
             TypedDmlRuntime.ComputePolicyVersion(policy, allowedTables),
             session.Plan.PolicyVersion);
-        Assert.Equal(0, connections.CreateCount);
+        Assert.Equal(1, connections.CreateCount);
         metadata.VerifyAll();
     }
 
@@ -324,14 +326,47 @@ public class TypedDmlRuntimeTests
                 challenge));
     }
 
-    private sealed class ThrowingConnectionFactory : IDbConnectionFactory
+    private sealed class VersionedConnectionFactory(string serverVersion) : IDbConnectionFactory
     {
+        private readonly string _serverVersion = serverVersion;
         public int CreateCount { get; private set; }
 
         public DbConnection Create(string connectionString)
         {
             CreateCount++;
-            throw new InvalidOperationException("INSERT VALUES preview must not open a database connection.");
+            return new VersionedConnection(_serverVersion, connectionString);
         }
+    }
+
+    private sealed class VersionedConnection(string serverVersion, string connectionString) : DbConnection
+    {
+        private readonly string _serverVersion = serverVersion;
+        private string _connectionString = connectionString;
+        private ConnectionState _state = ConnectionState.Closed;
+
+        public override string ConnectionString
+        {
+            get => _connectionString;
+            set => _connectionString = value;
+        }
+
+        public override string Database => "test";
+        public override string DataSource => "test";
+        public override string ServerVersion => _serverVersion;
+        public override ConnectionState State => _state;
+
+        public override void ChangeDatabase(string databaseName) { }
+        public override void Close() => _state = ConnectionState.Closed;
+        public override void Open() => _state = ConnectionState.Open;
+        public override Task OpenAsync(CancellationToken cancellationToken)
+        {
+            _state = ConnectionState.Open;
+            return Task.CompletedTask;
+        }
+
+        protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
+            throw new NotSupportedException();
+
+        protected override DbCommand CreateDbCommand() => throw new NotSupportedException();
     }
 }

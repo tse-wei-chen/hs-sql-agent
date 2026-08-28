@@ -27,11 +27,24 @@ public sealed class DmlCoordinator(
     private readonly IDmlPreviewTransactionFactory _previewTransactionFactory =
         previewTransactionFactory ?? new ProviderDmlPreviewTransactionFactory();
 
+    public Task<DmlPreview> PreviewAsync(
+        string connectionString,
+        ValidatedDmlPlan plan,
+        string approvalContextFingerprint,
+        CancellationToken cancellationToken = default) =>
+        PreviewAsync(
+            connectionString,
+            plan,
+            approvalContextFingerprint,
+            cancellationToken,
+            expectedServerVersionIdentity: null);
+
     public async Task<DmlPreview> PreviewAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         string approvalContextFingerprint,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken,
+        string? expectedServerVersionIdentity)
     {
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -43,6 +56,8 @@ public sealed class DmlCoordinator(
         var matchCommand = RequireMatchCommand(plan);
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
+        if (expectedServerVersionIdentity is not null)
+            RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
         await using var transaction = await _previewTransactionFactory.BeginAsync(
             connection,
             matchCommand.TargetProvider,
@@ -79,12 +94,27 @@ public sealed class DmlCoordinator(
             challenge);
     }
 
+    public Task<DmlCommitResult> CommitAsync(
+        string connectionString,
+        ValidatedDmlPlan plan,
+        DmlApprovalChallenge approvedChallenge,
+        string approvalContextFingerprint,
+        CancellationToken cancellationToken = default) =>
+        CommitAsync(
+            connectionString,
+            plan,
+            approvedChallenge,
+            approvalContextFingerprint,
+            cancellationToken,
+            expectedServerVersionIdentity: null);
+
     public async Task<DmlCommitResult> CommitAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
         string approvalContextFingerprint,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken,
+        string? expectedServerVersionIdentity)
     {
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
@@ -99,6 +129,8 @@ public sealed class DmlCoordinator(
 
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
+        if (expectedServerVersionIdentity is not null)
+            RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
         await using var transaction = await connection.BeginTransactionAsync(
             _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
             cancellationToken);
