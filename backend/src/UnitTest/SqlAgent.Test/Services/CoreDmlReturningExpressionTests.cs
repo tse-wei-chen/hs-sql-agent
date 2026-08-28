@@ -26,7 +26,7 @@ public sealed class CoreDmlReturningExpressionTests
         Assert.True(command.ReturnsRows);
         Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("doubled_id", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, command.Parameters.Count);
+        Assert.Single(command.Parameters);
         Assert.Equal(1, command.Parameters[0].Value);
     }
 
