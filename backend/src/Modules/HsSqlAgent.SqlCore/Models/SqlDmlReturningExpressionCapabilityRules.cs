@@ -77,9 +77,12 @@ internal static class SqlDmlReturningExpressionCapabilityRules
             case SimpleCaseExpr simpleCase:
                 ValidateSimpleCase(simpleCase);
                 return;
+            case CaseExpr searchedCase:
+                ValidateSearchedCase(searchedCase);
+                return;
             default:
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/-, CAST, registered direct-portable scalar functions, and simple CASE. Expression node {expression.GetType().Name} remains fail-closed.");
+                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/-, CAST, registered direct-portable scalar functions, and validated CASE expressions. Expression node {expression.GetType().Name} remains fail-closed.");
         }
     }
 
@@ -124,7 +127,7 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 } equality)
             {
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' accepts only canonical simple CASE equality branches; searched CASE predicates remain fail-closed.");
+                    $"SQL capability '{CapabilityId}' accepts only canonical simple CASE equality branches.");
             }
 
             ValidateNode(equality.Left);
@@ -134,6 +137,62 @@ internal static class SqlDmlReturningExpressionCapabilityRules
 
         if (simpleCase.ElseExpression is not null)
             ValidateNode(simpleCase.ElseExpression);
+    }
+
+    private static void ValidateSearchedCase(CaseExpr searchedCase)
+    {
+        if (searchedCase.Branches.IsDefaultOrEmpty)
+        {
+            throw new SqlCompilationException(
+                $"SQL capability '{CapabilityId}' requires searched CASE to contain at least one WHEN branch.");
+        }
+
+        foreach (var branch in searchedCase.Branches)
+        {
+            ValidatePredicate(branch.Condition);
+            ValidateNode(branch.Value);
+        }
+
+        if (searchedCase.ElseExpression is not null)
+            ValidateNode(searchedCase.ElseExpression);
+    }
+
+    private static void ValidatePredicate(SqlExpr expression)
+    {
+        switch (expression)
+        {
+            case UnaryExpr { Operator: "NOT" } unary:
+                ValidatePredicate(unary.Operand);
+                return;
+            case BinaryExpr { Operator: "AND" or "OR", LikeEscape: null } boolean:
+                ValidatePredicate(boolean.Left);
+                ValidatePredicate(boolean.Right);
+                return;
+            case BinaryExpr
+                {
+                    Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=",
+                    LikeEscape: null
+                } comparison:
+                ValidateNode(comparison.Left);
+                ValidateNode(comparison.Right);
+                return;
+            case IsNullExpr isNull:
+                ValidateNode(isNull.Value);
+                return;
+            case BetweenExpr between:
+                ValidateNode(between.Value);
+                ValidateNode(between.Lower);
+                ValidateNode(between.Upper);
+                return;
+            case InExpr @in when !@in.Items.IsDefaultOrEmpty:
+                ValidateNode(@in.Value);
+                foreach (var item in @in.Items)
+                    ValidateNode(item);
+                return;
+            default:
+                throw new SqlCompilationException(
+                    $"SQL capability '{CapabilityId}' searched CASE accepts only comparison, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates over the proven target-row expression subset; predicate node {expression.GetType().Name} remains fail-closed.");
+        }
     }
 
     private static void ValidateTargetColumn(SqlIdentifier identifier)
