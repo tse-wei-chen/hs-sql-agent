@@ -75,10 +75,17 @@ public sealed class CoreFirebirdTimeZoneCastProfileTests
     [Fact]
     public void Compile_SameDialectFirebirdTimeZoneCast_CannotBypassTargetProfile()
     {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT CAST('2026-08-28 00:00:00+00:00' AS TIMESTAMP WITH TIME ZONE)",
+            SqlAgentToolType.Firebird,
+            FirebirdProfile(4));
+
         var error = Assert.Throws<SqlCompilationException>(() =>
-            CompileQuery(
-                "SELECT CAST('2026-08-28 00:00:00+00:00' AS TIMESTAMP WITH TIME ZONE)",
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
                 SqlAgentToolType.Firebird,
+                new SqlPlanValidationContext("firebird-time-zone-cast-v1"),
+                new SqlExecutionPlanPolicy(),
                 targetProfile: null));
 
         Assert.Contains(
