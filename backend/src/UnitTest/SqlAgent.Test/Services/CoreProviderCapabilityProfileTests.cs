@@ -85,6 +85,21 @@ public sealed class CoreProviderCapabilityProfileTests
     }
 
     [Fact]
+    public void NativeRenderer_NegativeCompatibilityProfile_FailsClosed()
+    {
+        var error = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new HsSqlAgent.SqlCore.Core.Lowering.NativeSqlRenderer(
+                SqlAgentToolType.MsSqlServer,
+                SqlServerProfile(-1)));
+
+        Assert.Equal("targetProfile", error.ParamName);
+        Assert.Contains(
+            "Provider compatibility level must be non-negative",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Profile_SessionMetadataLookup_IsCaseInsensitive()
     {
         var profile = new SqlProviderCapabilityProfile(

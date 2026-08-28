@@ -20,17 +20,30 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-27.51";
+    public const string Version = "2026-08-28.52";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? targetProfile = null)
     {
-        if (targetProfile is not null && targetProfile.Provider != provider)
+        switch (SqlProviderCapabilityProfileRules.ValidationIssue(
+                    targetProfile,
+                    provider))
         {
-            throw new ArgumentException(
-                $"Target capability profile declares provider {targetProfile.Provider}, but matrix provider is {provider}.",
-                nameof(targetProfile));
+            case SqlProviderCapabilityProfileValidationIssue.None:
+                break;
+            case SqlProviderCapabilityProfileValidationIssue.ProviderMismatch:
+                throw new ArgumentException(
+                    $"Target capability profile declares provider {targetProfile!.Provider}, but matrix provider is {provider}.",
+                    nameof(targetProfile));
+            case SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel:
+                throw new ArgumentOutOfRangeException(
+                    nameof(targetProfile),
+                    targetProfile!.CompatibilityLevel,
+                    "Provider compatibility level must be non-negative.");
+            default:
+                throw new InvalidOperationException(
+                    "Unsupported target capability profile validation issue.");
         }
 
         var capabilities = new List<SqlCapability>

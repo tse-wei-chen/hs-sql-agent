@@ -16,11 +16,30 @@ public sealed partial class NativeSqlRenderer(
     public SqlAgentToolType Provider { get; } = provider;
 
     private SqlProviderCapabilityProfile? TargetProfile { get; } =
-        targetProfile is null || targetProfile.Provider == provider
-            ? targetProfile
-            : throw new ArgumentException(
-                $"Target capability profile declares provider {targetProfile.Provider}, but renderer provider is {provider}.",
-                nameof(targetProfile));
+        ValidateTargetProfile(provider, targetProfile);
+
+    private static SqlProviderCapabilityProfile? ValidateTargetProfile(
+        SqlAgentToolType provider,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        return SqlProviderCapabilityProfileRules.ValidationIssue(
+            targetProfile,
+            provider) switch
+        {
+            SqlProviderCapabilityProfileValidationIssue.None => targetProfile,
+            SqlProviderCapabilityProfileValidationIssue.ProviderMismatch =>
+                throw new ArgumentException(
+                    $"Target capability profile declares provider {targetProfile!.Provider}, but renderer provider is {provider}.",
+                    nameof(targetProfile)),
+            SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel =>
+                throw new ArgumentOutOfRangeException(
+                    nameof(targetProfile),
+                    targetProfile!.CompatibilityLevel,
+                    "Provider compatibility level must be non-negative."),
+            _ => throw new InvalidOperationException(
+                "Unsupported target capability profile validation issue.")
+        };
+    }
 
     public CompiledSqlCommand Lower(ExecutableSqlPlan plan)
     {
