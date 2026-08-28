@@ -1,3 +1,5 @@
+using System.Data.Common;
+
 namespace HsSqlAgent.SqlCore.Core.Pipeline;
 
 public sealed record ParsedStatement(
@@ -72,7 +74,8 @@ public interface ISqlCommandExecutor
 {
     Task<QueryExecutionResult> ExecuteQueryAsync(
         CompiledSqlCommand command,
-        string connectionString,
+        DbConnection openConnection,
+        int commandTimeoutSeconds,
         CancellationToken cancellationToken = default);
 }
 

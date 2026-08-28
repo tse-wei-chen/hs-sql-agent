@@ -14,12 +14,11 @@ public sealed class CoreStrategyTestHarness<TStrategy>
 {
     private readonly TStrategy _provider;
     private readonly CoreSqlCompiler _compiler = CoreSqlCompiler.CreateDefault();
-    private readonly CompiledSqlCommandExecutor _executor;
+    private readonly CompiledSqlCommandExecutor _executor = new();
 
     public CoreStrategyTestHarness(TStrategy provider)
     {
         _provider = provider ?? throw new ArgumentNullException(nameof(provider));
-        _executor = new CompiledSqlCommandExecutor(_provider.Connections);
     }
 
     public SqlAgentToolType DbType => _provider.Type;
@@ -74,17 +73,30 @@ public sealed class CoreStrategyTestHarness<TStrategy>
         var parsed = new ParsedStatement(
             QueryDefinitionCoreMapper.Map(definition),
             definition.SourceDialect ?? DbType);
+
+        await using var connection = _provider.Connections.Create(connectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw _provider.Errors.Map(ex, "query");
+        }
+
+        var verifiedProfile = RuntimeServerProfileVerifier.Capture(DbType, connection);
         var command = _compiler.Compile(
             parsed,
             DbType,
             new SqlPlanValidationContext("provider-integration-test"),
-            new SqlExecutionPlanPolicy(policy.QueryMaxRows));
+            new SqlExecutionPlanPolicy(policy.QueryMaxRows),
+            verifiedProfile.TargetProfile);
 
         try
         {
             var execution = await _executor.ExecuteQueryAsync(
                 command,
-                connectionString,
+                connection,
                 policy.QueryTimeoutSeconds,
                 cancellationToken);
             return JsonSerializer.Serialize(execution.Rows);
