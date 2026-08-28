@@ -105,11 +105,11 @@ module internal FunctionalSqlTextParser =
             let token = tokens[index]
 
             let temporalType =
-                if CoreTokenReader.IsWord(token, "DATE") then
+                if FunctionalTokenReader.IsWord(token, "DATE") then
                     Some "DATE"
-                elif CoreTokenReader.IsWord(token, "TIME") then
+                elif FunctionalTokenReader.IsWord(token, "TIME") then
                     Some "TIME"
-                elif CoreTokenReader.IsWord(token, "TIMESTAMP") then
+                elif FunctionalTokenReader.IsWord(token, "TIMESTAMP") then
                     Some "TIMESTAMP"
                 else
                     None
@@ -123,12 +123,12 @@ module internal FunctionalSqlTextParser =
                 if next.Type = TokenType.String then
                     Some(temporalType, false)
                 elif temporalType = "DATE"
-                     || (not (CoreTokenReader.IsWord(next, "WITH"))
-                         && not (CoreTokenReader.IsWord(next, "WITHOUT"))) then
+                     || (not (FunctionalTokenReader.IsWord(next, "WITH"))
+                         && not (FunctionalTokenReader.IsWord(next, "WITHOUT"))) then
                     None
                 elif index + 4 >= tokens.Length
-                     || not (CoreTokenReader.IsWord(tokens[index + 2], "TIME"))
-                     || not (CoreTokenReader.IsWord(tokens[index + 3], "ZONE"))
+                     || not (FunctionalTokenReader.IsWord(tokens[index + 2], "TIME"))
+                     || not (FunctionalTokenReader.IsWord(tokens[index + 3], "ZONE"))
                      || tokens[index + 4].Type <> TokenType.String then
                     None
                 else
@@ -216,7 +216,7 @@ module internal FunctionalSqlTextParser =
                 elif token.Type = TokenType.RParen then
                     depth <- Math.Max(0, depth - 1)
                 elif depth = 0
-                     && CoreTokenReader.IsWord(token, "SELECT") then
+                     && FunctionalTokenReader.IsWord(token, "SELECT") then
                     selectIndex <- index
 
                 index <- index + 1
@@ -227,12 +227,12 @@ module internal FunctionalSqlTextParser =
                 let mutable cursor = selectIndex + 1
 
                 if cursor < tokens.Length
-                   && (CoreTokenReader.IsWord(tokens[cursor], "DISTINCT")
-                       || CoreTokenReader.IsWord(tokens[cursor], "ALL")) then
+                   && (FunctionalTokenReader.IsWord(tokens[cursor], "DISTINCT")
+                       || FunctionalTokenReader.IsWord(tokens[cursor], "ALL")) then
                     cursor <- cursor + 1
 
                 if cursor >= tokens.Length
-                   || not (CoreTokenReader.IsWord(tokens[cursor], "TOP")) then
+                   || not (FunctionalTokenReader.IsWord(tokens[cursor], "TOP")) then
                     None, tokens
                 else
                     let topStart = cursor
@@ -271,8 +271,8 @@ module internal FunctionalSqlTextParser =
                         cursor <- cursor + 1
 
                     if cursor < tokens.Length
-                       && (CoreTokenReader.IsWord(tokens[cursor], "PERCENT")
-                           || CoreTokenReader.IsWord(tokens[cursor], "WITH")) then
+                       && (FunctionalTokenReader.IsWord(tokens[cursor], "PERCENT")
+                           || FunctionalTokenReader.IsWord(tokens[cursor], "WITH")) then
                         raise (SqlParseException(
                             $"SQL Server TOP PERCENT/WITH TIES is not represented by the Core AST at position {tokens[cursor].Pos}."))
 
@@ -334,7 +334,7 @@ module internal FunctionalSqlTextParser =
 
         let statement =
             FunctionalQueryTextParser.parseComplete
-                (CoreTokenReader(normalizedTokens))
+                (FunctionalTokenReader(normalizedTokens))
                 sourceDialect
                 (usesMySqlNoBackslashEscapes
                     sourceDialect
@@ -372,7 +372,7 @@ module internal FunctionalSqlTextParser =
 
         let statement =
             FunctionalDmlTextParser.parseComplete
-                (CoreTokenReader(conflictTokens))
+                (FunctionalTokenReader(conflictTokens))
                 sourceDialect
                 (usesMySqlNoBackslashEscapes
                     sourceDialect

@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Compile Include="FunctionalAst.fs" />
+    <Compile Include="FunctionalTokenReader.fs" />
     <Compile Include="FunctionalDmlConflictParser.fs" />
     <Compile Include="FunctionalCommaFromNormalizer.fs" />
     <Compile Include="FunctionalExpressionTextParser.fs" />

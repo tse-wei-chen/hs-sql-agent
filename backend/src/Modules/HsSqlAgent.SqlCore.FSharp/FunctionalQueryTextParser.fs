@@ -24,7 +24,7 @@ module internal FunctionalQueryTextParser =
         | None -> Nullable<int>()
 
     type private QueryGrammar(
-        reader: CoreTokenReader,
+        reader: FunctionalTokenReader,
         sourceDialect: SqlAgentToolType,
         requireExplicitLikeEscape: bool) as this =
 
@@ -50,11 +50,11 @@ module internal FunctionalQueryTextParser =
         member private this.ParseOptionalAlias() =
             if reader.MatchWord("AS") then
                 Some(
-                    CoreTokenReader.ToIdentifierPart(
+                    FunctionalTokenReader.ToIdentifierPart(
                         reader.ExpectIdentifier("table alias")))
             elif this.CanConsumeImplicitAlias() then
                 Some(
-                    CoreTokenReader.ToIdentifierPart(
+                    FunctionalTokenReader.ToIdentifierPart(
                         reader.Advance()))
             else
                 None
@@ -65,9 +65,9 @@ module internal FunctionalQueryTextParser =
                 ImmutableArray.Create(
                     IdentifierPart(
                         token.Value,
-                        CoreTokenReader.IsQuotedIdentifier(token),
-                        CoreTokenReader.Span(token))),
-                CoreTokenReader.Span(token))
+                        FunctionalTokenReader.IsQuotedIdentifier(token),
+                        FunctionalTokenReader.Span(token))),
+                FunctionalTokenReader.Span(token))
 
         member private this.ParseExpressionList() =
             let values = ResizeArray<SqlExpr>()
@@ -91,12 +91,12 @@ module internal FunctionalQueryTextParser =
                 let alias =
                     if reader.MatchWord("AS") then
                         Some(
-                            CoreTokenReader.ToIdentifierPart(
+                            FunctionalTokenReader.ToIdentifierPart(
                                 reader.ExpectIdentifier(
                                     "projection alias")))
                     elif this.CanConsumeImplicitAlias() then
                         Some(
-                            CoreTokenReader.ToIdentifierPart(
+                            FunctionalTokenReader.ToIdentifierPart(
                                 reader.Advance()))
                     else
                         None
@@ -115,7 +115,7 @@ module internal FunctionalQueryTextParser =
             let start = reader.Position
 
             if reader.MatchWord("LATERAL") then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "LATERAL sources are not represented by the Core AST and are rejected explicitly.",
                     reader.Peek(-1)))
 
@@ -128,7 +128,7 @@ module internal FunctionalQueryTextParser =
 
                 let alias = this.ParseOptionalAlias()
                 if requireDerivedAlias && Option.isNone alias then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "A derived table requires an explicit alias.",
                         reader.Peek()))
 
@@ -142,7 +142,7 @@ module internal FunctionalQueryTextParser =
                 | None ->
                     // The only current caller requires aliases. Retain a
                     // fail-closed branch rather than fabricate one.
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "A derived table requires an explicit alias.",
                         reader.Peek()))
             else
@@ -159,7 +159,7 @@ module internal FunctionalQueryTextParser =
             let start = reader.Position
 
             if reader.MatchWord("NATURAL") then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "NATURAL JOIN is rejected because its schema-dependent implicit predicate is not represented in the Core AST.",
                     reader.Peek(-1)))
 
@@ -188,18 +188,18 @@ module internal FunctionalQueryTextParser =
                 if kind = "CROSS" then
                     if reader.PeekWord("ON")
                        || reader.PeekWord("USING") then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "CROSS JOIN must not have ON/USING predicates.",
                             reader.Peek()))
                     None
                 elif reader.MatchWord("ON") then
                     Some(this.Expressions.ParseExpression())
                 elif reader.PeekWord("USING") then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "JOIN USING is rejected until using-column semantics are represented explicitly in the Core AST.",
                         reader.Peek()))
                 else
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"{kind} JOIN requires an ON predicate.",
                         reader.Peek()))
 
@@ -210,18 +210,18 @@ module internal FunctionalQueryTextParser =
                 reader.SpanFrom(start))
 
         member private _.IsJoinStart(token: Token) =
-            CoreTokenReader.IsWord(token, "JOIN")
-            || CoreTokenReader.IsWord(token, "LEFT")
-            || CoreTokenReader.IsWord(token, "RIGHT")
-            || CoreTokenReader.IsWord(token, "INNER")
-            || CoreTokenReader.IsWord(token, "FULL")
-            || CoreTokenReader.IsWord(token, "CROSS")
-            || CoreTokenReader.IsWord(token, "NATURAL")
+            FunctionalTokenReader.IsWord(token, "JOIN")
+            || FunctionalTokenReader.IsWord(token, "LEFT")
+            || FunctionalTokenReader.IsWord(token, "RIGHT")
+            || FunctionalTokenReader.IsWord(token, "INNER")
+            || FunctionalTokenReader.IsWord(token, "FULL")
+            || FunctionalTokenReader.IsWord(token, "CROSS")
+            || FunctionalTokenReader.IsWord(token, "NATURAL")
 
         member private _.IsSetOperation(token: Token) =
-            CoreTokenReader.IsWord(token, "UNION")
-            || CoreTokenReader.IsWord(token, "INTERSECT")
-            || CoreTokenReader.IsWord(token, "EXCEPT")
+            FunctionalTokenReader.IsWord(token, "UNION")
+            || FunctionalTokenReader.IsWord(token, "INTERSECT")
+            || FunctionalTokenReader.IsWord(token, "EXCEPT")
 
         member private _.ParseSetOperationKind() =
             if reader.MatchWord("UNION") then
@@ -233,7 +233,7 @@ module internal FunctionalQueryTextParser =
 
             elif reader.MatchWord("INTERSECT") then
                 if reader.MatchWord("ALL") then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "INTERSECT ALL is not represented by the Core set-operation model.",
                         reader.Peek(-1)))
 
@@ -242,7 +242,7 @@ module internal FunctionalQueryTextParser =
 
             elif reader.MatchWord("EXCEPT") then
                 if reader.MatchWord("ALL") then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "EXCEPT ALL is not represented by the Core set-operation model.",
                         reader.Peek(-1)))
 
@@ -250,7 +250,7 @@ module internal FunctionalQueryTextParser =
                 SetOperationKind.Except
 
             else
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "Expected set operation.",
                     reader.Peek()))
 
@@ -268,7 +268,7 @@ module internal FunctionalQueryTextParser =
                     CultureInfo.InvariantCulture,
                     &value))
                || value < 0 then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"{description} requires a non-negative integer.",
                     token))
 
@@ -288,7 +288,7 @@ module internal FunctionalQueryTextParser =
                  || reader.MatchWord("ROWS") then
                 ()
             else
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"{sourceDialect} OFFSET requires ROW or ROWS after the offset count in the modeled raw Core grammar.",
                     reader.Peek()))
 
@@ -300,26 +300,26 @@ module internal FunctionalQueryTextParser =
                     sourceDialect)
 
             let fetchToken = reader.Advance()
-            if not (CoreTokenReader.IsWord(fetchToken, "FETCH")) then
-                raise (CoreTokenReader.Error(
+            if not (FunctionalTokenReader.IsWord(fetchToken, "FETCH")) then
+                raise (FunctionalTokenReader.Error(
                     "Expected FETCH.",
                     fetchToken))
 
             if grammar.FetchRequiresPrecedingOffset
                && not hasPrecedingOffset then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "SQL Server FETCH requires a preceding OFFSET clause.",
                     fetchToken))
 
             if not grammar.SupportsFetch then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"FETCH FIRST/NEXT is not valid raw row-limiting syntax for {sourceDialect}.",
                     fetchToken))
 
             if not (
                 reader.MatchWord("FIRST")
                 || reader.MatchWord("NEXT")) then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "FETCH requires FIRST or NEXT.",
                     reader.Peek()))
 
@@ -327,7 +327,7 @@ module internal FunctionalQueryTextParser =
                 if reader.Peek().Type = TokenType.Number then
                     this.ParseNonNegativeInt("FETCH")
                 elif not grammar.FetchCountOptional then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "SQL Server FETCH requires an explicit positive integer row count.",
                         reader.Peek()))
                 else
@@ -335,24 +335,24 @@ module internal FunctionalQueryTextParser =
 
             if grammar.FetchCountMustBePositive
                && count = 0 then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "SQL Server FETCH row count must be greater than zero.",
                     reader.Peek(-1)))
 
             if reader.PeekWord("PERCENT") then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "FETCH PERCENT is not represented by the canonical Core row-limit model.",
                     reader.Peek()))
 
             if not (
                 reader.MatchWord("ROW")
                 || reader.MatchWord("ROWS")) then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "FETCH requires ROW or ROWS after the row count.",
                     reader.Peek()))
 
             if reader.PeekWord("WITH") then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "FETCH WITH TIES is not represented by the canonical Core row-limit model.",
                     reader.Peek()))
 
@@ -376,7 +376,7 @@ module internal FunctionalQueryTextParser =
 
                 if reader.MatchWord("ALL") then
                     if not grammar.SupportsLimitAll then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             $"LIMIT ALL raw source syntax is valid only for PostgreSQL, not {sourceDialect}.",
                             reader.Peek(-1)))
                 else
@@ -387,7 +387,7 @@ module internal FunctionalQueryTextParser =
                         let comma = reader.Advance()
 
                         if not grammar.SupportsCommaLimit then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 $"LIMIT offset,row_count raw source syntax is valid only for MySQL and SQLite, not {sourceDialect}.",
                                 comma))
 
@@ -404,19 +404,19 @@ module internal FunctionalQueryTextParser =
                 let offsetToken = reader.Peek()
 
                 if usedCommaLimit then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "LIMIT offset,row_count cannot be combined with a separate OFFSET clause.",
                         offsetToken))
 
                 if grammar.OffsetRequiresLimit
                    && not usedLimitClause then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"OFFSET without a preceding LIMIT is not valid raw source syntax for {sourceDialect}.",
                         offsetToken))
 
                 if grammar.OffsetRequiresOrderBy
                    && not hasOrderBy then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "SQL Server OFFSET/FETCH raw source syntax requires a statement-level ORDER BY clause.",
                         offsetToken))
 
@@ -429,7 +429,7 @@ module internal FunctionalQueryTextParser =
 
                 if reader.PeekWord("FETCH") then
                     if usedLimitClause then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "LIMIT and FETCH cannot be combined in the same raw query tail.",
                             reader.Peek()))
 
@@ -439,17 +439,17 @@ module internal FunctionalQueryTextParser =
 
             elif reader.PeekWord("FETCH") then
                 if usedLimitClause then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "LIMIT and FETCH cannot be combined in the same raw query tail.",
                         reader.Peek()))
 
                 if grammar.FetchRequiresPrecedingOffset then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "SQL Server FETCH requires a preceding OFFSET clause inside ORDER BY.",
                         reader.Peek()))
 
                 if not grammar.SupportsFetch then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"FETCH FIRST/NEXT is not valid raw row-limiting syntax for {sourceDialect}; use LIMIT instead.",
                         reader.Peek()))
 
@@ -490,7 +490,7 @@ module internal FunctionalQueryTextParser =
                                     NumberStyles.None,
                                     CultureInfo.InvariantCulture,
                                     &ordinal)) then
-                                raise (CoreTokenReader.Error(
+                                raise (FunctionalTokenReader.Error(
                                     "ORDER BY output position exceeds the supported integer range.",
                                     firstToken))
 
@@ -515,7 +515,7 @@ module internal FunctionalQueryTextParser =
                             elif reader.MatchWord("LAST") then
                                 NullOrderingKind.Last
                             else
-                                raise (CoreTokenReader.Error(
+                                raise (FunctionalTokenReader.Error(
                                     "Expected FIRST or LAST after NULLS.",
                                     reader.Peek()))
                         else
@@ -538,7 +538,7 @@ module internal FunctionalQueryTextParser =
                 ImmutableArray<CteDefinition>.Empty
             else
                 if reader.MatchWord("RECURSIVE") then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "WITH RECURSIVE is not yet represented by the Core AST and is rejected rather than downgraded to non-recursive CTE semantics.",
                         reader.Peek(-1)))
 
@@ -554,7 +554,7 @@ module internal FunctionalQueryTextParser =
 
                     if reader.Match(TokenType.LParen) then
                         if reader.Peek().Type = TokenType.RParen then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 "CTE column alias list cannot be empty.",
                                 reader.Peek()))
 
@@ -754,14 +754,14 @@ module internal FunctionalQueryTextParser =
 
             if reader.Peek().Type <> TokenType.EOF then
                 let token = reader.Peek()
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"Unexpected token '{token.Value}'; the complete query statement was not consumed.",
                     token))
 
             statement
 
     let parseQueryExpression
-        (reader: CoreTokenReader)
+        (reader: FunctionalTokenReader)
         sourceDialect
         requireExplicitLikeEscape =
 
@@ -772,7 +772,7 @@ module internal FunctionalQueryTextParser =
             .ParseQueryExpression()
 
     let parseComplete
-        (reader: CoreTokenReader)
+        (reader: FunctionalTokenReader)
         sourceDialect
         requireExplicitLikeEscape
         topLimit =

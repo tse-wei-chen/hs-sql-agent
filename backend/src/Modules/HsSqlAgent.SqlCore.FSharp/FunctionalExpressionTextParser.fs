@@ -21,7 +21,7 @@ module internal FunctionalExpressionTextParser =
         ImmutableArray.CreateRange<'T>(items)
 
     type internal ExpressionGrammar(
-        reader: CoreTokenReader,
+        reader: FunctionalTokenReader,
         parseSubquery: Func<SqlStatement>,
         requireExplicitLikeEscape: bool) =
 
@@ -41,8 +41,8 @@ module internal FunctionalExpressionTextParser =
         member private this.IdentifierFromToken(token: Token) =
             this.Identifier(
                 token.Value,
-                CoreTokenReader.Span(token),
-                CoreTokenReader.IsQuotedIdentifier(token))
+                FunctionalTokenReader.Span(token),
+                FunctionalTokenReader.IsQuotedIdentifier(token))
 
         member private _.IsTemporalType(value: string) =
             value.Equals("DATE", StringComparison.OrdinalIgnoreCase)
@@ -164,7 +164,7 @@ module internal FunctionalExpressionTextParser =
                 let negated = reader.MatchWord("NOT")
 
                 if not (reader.MatchWord("NULL")) then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "Core predicates currently support IS [NOT] NULL only.",
                         reader.Peek()))
 
@@ -215,7 +215,7 @@ module internal FunctionalExpressionTextParser =
                         :> SqlExpr
                     else
                         if reader.Peek().Type = TokenType.RParen then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 "IN expression list cannot be empty.",
                                 reader.Peek()))
 
@@ -265,7 +265,7 @@ module internal FunctionalExpressionTextParser =
                             let escapeToken = reader.Peek()
 
                             if escapeToken.Type <> TokenType.String then
-                                raise (CoreTokenReader.Error(
+                                raise (FunctionalTokenReader.Error(
                                     "LIKE ESCAPE requires a single-character string literal in the portable Core grammar.",
                                     escapeToken))
 
@@ -277,7 +277,7 @@ module internal FunctionalExpressionTextParser =
 
                             if value.Length <> 1
                                || Char.IsControl(value[0]) then
-                                raise (CoreTokenReader.Error(
+                                raise (FunctionalTokenReader.Error(
                                     "LIKE ESCAPE requires exactly one non-control character.",
                                     escapeToken))
 
@@ -288,7 +288,7 @@ module internal FunctionalExpressionTextParser =
                     if requireExplicitLikeEscape
                        && op = "LIKE"
                        && Option.isNone likeEscape then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "MySQL LIKE under NO_BACKSLASH_ESCAPES requires an explicit single-character ESCAPE clause so Core does not guess pattern escape semantics.",
                             reader.Peek(-1)))
 
@@ -310,7 +310,7 @@ module internal FunctionalExpressionTextParser =
                         binary :> SqlExpr
 
                 elif negatedModifier then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "NOT must be followed by IN, BETWEEN, LIKE, or ILIKE in this predicate position.",
                         reader.Peek()))
 
@@ -410,7 +410,7 @@ module internal FunctionalExpressionTextParser =
                 let numberToken = reader.Peek()
 
                 if numberToken.Type <> TokenType.Number then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"Unary '{sign.Value}' is accepted only for numeric literals; general unary arithmetic is not represented by the Core lowerer.",
                         numberToken))
 
@@ -431,7 +431,7 @@ module internal FunctionalExpressionTextParser =
                         | :? decimal as number ->
                             box (-number)
                         | _ ->
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 "Unsupported signed numeric literal.",
                                 sign))
 
@@ -441,7 +441,7 @@ module internal FunctionalExpressionTextParser =
                 :> SqlExpr
 
         member private this.IsTemporalLiteralStart(token: Token) =
-            if CoreTokenReader.IsQuotedIdentifier(token)
+            if FunctionalTokenReader.IsQuotedIdentifier(token)
                || not (this.IsTemporalType(token.Value)) then
                 false
             elif reader.Peek(1).Type = TokenType.String then
@@ -542,7 +542,7 @@ module internal FunctionalExpressionTextParser =
                 :> SqlExpr
 
             elif token.Type = TokenType.Parameter then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"Unbound SQL parameter '{token.Value}'.",
                     token))
 
@@ -592,7 +592,7 @@ module internal FunctionalExpressionTextParser =
                  && token.Value = "*" then
 
                 reader.Advance() |> ignore
-                let span = CoreTokenReader.Span(token)
+                let span = FunctionalTokenReader.Span(token)
 
                 ColumnExpr(
                     SqlIdentifier(
@@ -617,7 +617,7 @@ module internal FunctionalExpressionTextParser =
                 :> SqlExpr
 
             else
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"Unexpected token '{token.Value}' in SQL expression.",
                     token))
 
@@ -632,7 +632,7 @@ module internal FunctionalExpressionTextParser =
 
             if partToken.Type <> TokenType.Identifier
                && partToken.Type <> TokenType.Keyword then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "EXTRACT requires a date-part keyword.",
                     partToken))
 
@@ -650,14 +650,14 @@ module internal FunctionalExpressionTextParser =
             if not (
                 SqlDatePartCapabilityRules.IsRepresentedPart(
                     part)) then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"EXTRACT({part} ...) is not yet represented by the canonical date-part family.",
                     partToken))
 
             FunctionCallExpr(
                 this.Identifier(
                     part,
-                    CoreTokenReader.Span(partToken),
+                    FunctionalTokenReader.Span(partToken),
                     false),
                 ImmutableArray.Create(value),
                 false,
@@ -686,7 +686,7 @@ module internal FunctionalExpressionTextParser =
                         elif reader.MatchWord("LAST") then
                             NullOrderingKind.Last
                         else
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 "Expected FIRST or LAST after NULLS.",
                                 reader.Peek()))
                     else
@@ -724,7 +724,7 @@ module internal FunctionalExpressionTextParser =
                && reader.Peek().Value = "*" then
 
                 let star = reader.Advance()
-                let span = CoreTokenReader.Span(star)
+                let span = FunctionalTokenReader.Span(star)
 
                 arguments.Add(
                     ColumnExpr(
@@ -779,7 +779,7 @@ module internal FunctionalExpressionTextParser =
 
             if reader.MatchWord("WITHIN") then
                 if not aggregateOrderBy.IsDefaultOrEmpty then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "Aggregate ordering cannot combine inline ORDER BY with WITHIN GROUP.",
                         reader.Peek(-1)))
 
@@ -897,7 +897,7 @@ module internal FunctionalExpressionTextParser =
             let unitToken = reader.Advance()
 
             let unitKind =
-                if CoreTokenReader.IsWord(
+                if FunctionalTokenReader.IsWord(
                     unitToken,
                     "ROWS") then
                     WindowFrameUnitKind.Rows
@@ -964,7 +964,7 @@ module internal FunctionalExpressionTextParser =
                         CultureInfo.InvariantCulture,
                         &offset))
                    || offset < 0 then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "Window frame offset must be a non-negative integer.",
                         token))
 
@@ -1017,7 +1017,7 @@ module internal FunctionalExpressionTextParser =
                         this.ParseExpression()))
 
             if branches.Count = 0 then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "CASE requires at least one WHEN branch.",
                     reader.Peek()))
 
@@ -1075,7 +1075,7 @@ module internal FunctionalExpressionTextParser =
 
             if token.Type <> TokenType.Identifier
                && token.Type <> TokenType.Keyword then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "Expected cast type.",
                     token))
 
@@ -1086,7 +1086,7 @@ module internal FunctionalExpressionTextParser =
 
                 if typeComponent.Type <> TokenType.Identifier
                    && typeComponent.Type <> TokenType.Keyword then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "Expected cast type component.",
                         typeComponent))
 
@@ -1130,7 +1130,7 @@ module internal FunctionalExpressionTextParser =
                             NumberStyles.None,
                             CultureInfo.InvariantCulture,
                             &parsedPrecision)) then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "Cast type precision must be an integer or MAX.",
                             precision))
 
@@ -1139,7 +1139,7 @@ module internal FunctionalExpressionTextParser =
 
                 if reader.Match(TokenType.Comma) then
                     if isMax then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "Cast type MAX does not accept a scale.",
                             reader.Peek(-1)))
 
@@ -1156,7 +1156,7 @@ module internal FunctionalExpressionTextParser =
                             NumberStyles.None,
                             CultureInfo.InvariantCulture,
                             &parsedScale)) then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "Cast type scale must be an integer.",
                             scale))
 
@@ -1229,7 +1229,7 @@ module internal FunctionalExpressionTextParser =
                         reader.SpanFrom(start))
                     :> SqlExpr
                 else
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"Invalid {temporalType} literal '{literal}'.",
                         literalToken))
 
@@ -1240,7 +1240,7 @@ module internal FunctionalExpressionTextParser =
 
                 if success then
                     if withTimeZone = Some true then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "TIME WITH TIME ZONE is not represented by the canonical temporal model.",
                             typeToken))
 
@@ -1249,7 +1249,7 @@ module internal FunctionalExpressionTextParser =
                         reader.SpanFrom(start))
                     :> SqlExpr
                 else
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"Invalid {temporalType} literal '{literal}'.",
                         literalToken))
 
@@ -1261,13 +1261,13 @@ module internal FunctionalExpressionTextParser =
                 if success then
                     if withTimeZone = Some true
                        && not (timestamp :? SqlOffsetDateTimeValue) then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "TIMESTAMP WITH TIME ZONE requires an explicit UTC offset or Z suffix.",
                             literalToken))
 
                     if withTimeZone = Some false
                        && (timestamp :? SqlOffsetDateTimeValue) then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "TIMESTAMP WITHOUT TIME ZONE must not include a UTC offset.",
                             literalToken))
 
@@ -1276,12 +1276,12 @@ module internal FunctionalExpressionTextParser =
                         reader.SpanFrom(start))
                     :> SqlExpr
                 else
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"Invalid {temporalType} literal '{literal}'.",
                         literalToken))
 
             else
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"Invalid {temporalType} literal '{literal}'.",
                     literalToken))
 

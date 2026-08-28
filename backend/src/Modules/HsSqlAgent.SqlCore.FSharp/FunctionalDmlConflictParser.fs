@@ -31,9 +31,9 @@ module internal FunctionalDmlConflictParser =
         (tokens: Token array) =
 
         tokens.Length >= 3
-        && CoreTokenReader.IsWord(tokens[0], "UPDATE")
-        && CoreTokenReader.IsWord(tokens[1], "OR")
-        && CoreTokenReader.IsWord(tokens[2], "INSERT")
+        && FunctionalTokenReader.IsWord(tokens[0], "UPDATE")
+        && FunctionalTokenReader.IsWord(tokens[1], "OR")
+        && FunctionalTokenReader.IsWord(tokens[2], "INSERT")
 
     let private findRootConflictClause
         (tokens: Token array) =
@@ -50,9 +50,9 @@ module internal FunctionalDmlConflictParser =
             elif token.Type = TokenType.RParen then
                 depth <- Math.Max(0, depth - 1)
             elif depth = 0
-                 && CoreTokenReader.IsWord(token, "ON")
-                 && (CoreTokenReader.IsWord(tokens[index + 1], "CONFLICT")
-                     || CoreTokenReader.IsWord(tokens[index + 1], "DUPLICATE")) then
+                 && FunctionalTokenReader.IsWord(token, "ON")
+                 && (FunctionalTokenReader.IsWord(tokens[index + 1], "CONFLICT")
+                     || FunctionalTokenReader.IsWord(tokens[index + 1], "DUPLICATE")) then
                 result <- index
 
             index <- index + 1
@@ -78,14 +78,14 @@ module internal FunctionalDmlConflictParser =
                 depth <- Math.Max(0, depth - 1)
             elif depth = 0 then
                 if not sawValues
-                   && CoreTokenReader.IsWord(token, "VALUES") then
+                   && FunctionalTokenReader.IsWord(token, "VALUES") then
                     sawValues <- true
                 elif sawValues
-                     && CoreTokenReader.IsWord(token, word) then
+                     && FunctionalTokenReader.IsWord(token, word) then
                     result <- index
                     doneSearching <- true
                 elif sawValues
-                     && (CoreTokenReader.IsWord(token, "RETURNING")
+                     && (FunctionalTokenReader.IsWord(token, "RETURNING")
                          || token.Type = TokenType.Semicolon
                          || token.Type = TokenType.EOF) then
                     doneSearching <- true
@@ -95,7 +95,7 @@ module internal FunctionalDmlConflictParser =
         result
 
     let private parseUniqueSinglePartColumns
-        (reader: CoreTokenReader)
+        (reader: FunctionalTokenReader)
         description =
 
         let columns = ResizeArray<SqlIdentifier>()
@@ -107,13 +107,13 @@ module internal FunctionalDmlConflictParser =
             let column = reader.ParseIdentifierPath(description)
 
             if column.Parts.Length <> 1 then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"{description} must be unqualified.",
                     token))
 
             let name = column.Parts[0].Value
             if not (seen.Add(name)) then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"{description} '{name}' is declared more than once.",
                     token))
 
@@ -123,7 +123,7 @@ module internal FunctionalDmlConflictParser =
         columns |> toImmutableArray
 
     let private validateTrailer
-        (reader: CoreTokenReader) =
+        (reader: FunctionalTokenReader) =
 
         let token = reader.Peek()
 
@@ -132,7 +132,7 @@ module internal FunctionalDmlConflictParser =
            || reader.PeekWord("RETURNING") then
             ()
         else
-            raise (CoreTokenReader.Error(
+            raise (FunctionalTokenReader.Error(
                 "Portable conflict handling supports only the canonical conflict clause followed directly by optional RETURNING; provider-specific predicates, ORDER BY, ROWS, and extra clauses remain fail-closed.",
                 token))
 
@@ -148,12 +148,12 @@ module internal FunctionalDmlConflictParser =
 
         match Option.ofObj error with
         | Some message ->
-            raise (CoreTokenReader.Error(message, token))
+            raise (FunctionalTokenReader.Error(message, token))
         | None ->
             ()
 
     let private parseAssignments
-        (reader: CoreTokenReader) =
+        (reader: FunctionalTokenReader) =
 
         let assignments = ResizeArray<InsertConflictAssignment>()
         let seenTargets = HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -167,20 +167,20 @@ module internal FunctionalDmlConflictParser =
                     "ON CONFLICT UPDATE target column")
 
             if target.Parts.Length <> 1 then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "ON CONFLICT UPDATE target columns must be unqualified.",
                     targetToken))
 
             let targetName = target.Parts[0].Value
             if not (seenTargets.Add(targetName)) then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"ON CONFLICT UPDATE assigns column '{targetName}' more than once.",
                     targetToken))
 
             let equalsToken = reader.Peek()
             if equalsToken.Type <> TokenType.Operator
                || equalsToken.Value <> "=" then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "Expected '=' in ON CONFLICT UPDATE assignment.",
                     equalsToken))
 
@@ -198,8 +198,8 @@ module internal FunctionalDmlConflictParser =
             let source =
                 SqlIdentifier(
                     ImmutableArray.Create(
-                        CoreTokenReader.ToIdentifierPart(sourceToken)),
-                    CoreTokenReader.Span(sourceToken))
+                        FunctionalTokenReader.ToIdentifierPart(sourceToken)),
+                    FunctionalTokenReader.Span(sourceToken))
 
             assignments.Add(
                 InsertConflictAssignment(
@@ -210,7 +210,7 @@ module internal FunctionalDmlConflictParser =
             keepReading <- reader.Match(TokenType.Comma)
 
         if assignments.Count = 0 then
-            raise (CoreTokenReader.Error(
+            raise (FunctionalTokenReader.Error(
                 "ON CONFLICT DO UPDATE requires at least one assignment.",
                 reader.Peek()))
 
@@ -232,7 +232,7 @@ module internal FunctionalDmlConflictParser =
             if depth = 0 && token.Type = TokenType.LParen then
                 listStart <- index
                 doneSearching <- true
-            elif CoreTokenReader.IsWord(token, "VALUES") then
+            elif FunctionalTokenReader.IsWord(token, "VALUES") then
                 doneSearching <- true
             else
                 if token.Type = TokenType.LParen then
@@ -243,12 +243,12 @@ module internal FunctionalDmlConflictParser =
             index <- index + 1
 
         if listStart < 0 then
-            raise (CoreTokenReader.Error(
+            raise (FunctionalTokenReader.Error(
                 "Portable Firebird UPDATE OR INSERT requires an explicit INSERT column list.",
                 normalizedInsertTokens[0]))
 
         let reader =
-            CoreTokenReader(
+            FunctionalTokenReader(
                 normalizedInsertTokens[(listStart + 1)..])
 
         let columns =
@@ -262,7 +262,7 @@ module internal FunctionalDmlConflictParser =
         |> ignore
 
         if columns.IsDefaultOrEmpty then
-            raise (CoreTokenReader.Error(
+            raise (FunctionalTokenReader.Error(
                 "Firebird UPDATE OR INSERT requires at least one explicit column.",
                 reader.Peek()))
 
@@ -278,7 +278,7 @@ module internal FunctionalDmlConflictParser =
 
         match Option.ofObj sourceError with
         | Some message ->
-            raise (CoreTokenReader.Error(message, tokens[0]))
+            raise (FunctionalTokenReader.Error(message, tokens[0]))
         | None ->
             ()
 
@@ -291,12 +291,12 @@ module internal FunctionalDmlConflictParser =
                 "MATCHING"
 
         if matchingIndex < 0 then
-            raise (CoreTokenReader.Error(
+            raise (FunctionalTokenReader.Error(
                 "Portable Firebird UPDATE OR INSERT requires an explicit MATCHING column list; implicit primary-key matching is not canonicalized without source metadata.",
                 tokens[0]))
 
         let reader =
-            CoreTokenReader(
+            FunctionalTokenReader(
                 normalizedPrefix[matchingIndex..])
 
         let start = reader.Position
@@ -319,7 +319,7 @@ module internal FunctionalDmlConflictParser =
         |> ignore
 
         if targetColumns.IsDefaultOrEmpty then
-            raise (CoreTokenReader.Error(
+            raise (FunctionalTokenReader.Error(
                 "Firebird MATCHING requires at least one explicit column.",
                 matchingToken))
 
@@ -368,7 +368,7 @@ module internal FunctionalDmlConflictParser =
             struct (normalized, Some conflict)
 
         elif tokens.Length = 0
-             || not (CoreTokenReader.IsWord(tokens[0], "INSERT")) then
+             || not (FunctionalTokenReader.IsWord(tokens[0], "INSERT")) then
             struct (tokens, None)
 
         else
@@ -378,7 +378,7 @@ module internal FunctionalDmlConflictParser =
                 struct (tokens, None)
             else
                 let reader =
-                    CoreTokenReader(tokens[onIndex..])
+                    FunctionalTokenReader(tokens[onIndex..])
 
                 let start = reader.Position
                 let onToken = reader.ExpectWord("ON")
@@ -390,11 +390,11 @@ module internal FunctionalDmlConflictParser =
 
                     if sourceGrammar.SupportsOnDuplicateKeyUpsertSyntax
                        && reader.PeekWord("DUPLICATE") then
-                        raise (CoreTokenReader.Error(
+                        raise (FunctionalTokenReader.Error(
                             "MySQL ON DUPLICATE KEY UPDATE has no explicit conflict target, so Core cannot translate it to the deterministic portable ON CONFLICT contract.",
                             onToken))
 
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "Portable INSERT conflict handling requires an explicit ON CONFLICT clause.",
                         onToken))
 
@@ -419,7 +419,7 @@ module internal FunctionalDmlConflictParser =
                 |> ignore
 
                 if targetColumns.IsDefaultOrEmpty then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "ON CONFLICT requires at least one explicit target column.",
                         onToken))
 

@@ -19,7 +19,7 @@ module internal FunctionalDmlTextParser =
         ImmutableArray.CreateRange<'T>(items)
 
     type private DmlGrammar(
-        reader: CoreTokenReader,
+        reader: FunctionalTokenReader,
         sourceDialect: SqlAgentToolType,
         requireExplicitLikeEscape: bool,
         sourceServerVersion: Version | null) as this =
@@ -59,7 +59,7 @@ module internal FunctionalDmlTextParser =
 
             match Option.ofObj error with
             | Some message ->
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     message,
                     returningToken))
             | None ->
@@ -93,7 +93,7 @@ module internal FunctionalDmlTextParser =
                 if reader.PeekWord("AS")
                    || (reader.Peek().Type = TokenType.Identifier
                        && not currentIsTerminator) then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"{context} aliases are not represented by the current canonical milestone slice.",
                         reader.Peek()))
 
@@ -109,7 +109,7 @@ module internal FunctionalDmlTextParser =
                 let fromToken = reader.Peek(-1)
 
                 if sourceDialect <> SqlAgentToolType.Postgres then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "UPDATE ... FROM source syntax is currently declared only for the PostgreSQL source dialect.",
                         fromToken))
 
@@ -124,7 +124,7 @@ module internal FunctionalDmlTextParser =
                 let usingToken = reader.Peek(-1)
 
                 if sourceDialect <> SqlAgentToolType.Postgres then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "DELETE ... USING source syntax is currently declared only for the PostgreSQL source dialect.",
                         usingToken))
 
@@ -143,7 +143,7 @@ module internal FunctionalDmlTextParser =
             let alias =
                 if reader.MatchWord("AS") then
                     Some(
-                        CoreTokenReader.ToIdentifierPart(
+                        FunctionalTokenReader.ToIdentifierPart(
                             reader.ExpectIdentifier(
                                 "RETURNING expression alias")))
                 else
@@ -152,14 +152,14 @@ module internal FunctionalDmlTextParser =
             match expression, alias with
             | (:? ColumnExpr as column), None ->
                 if column.Name.Parts.Length <> 1 then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "PostgreSQL expression RETURNING currently accepts unqualified target-row columns only; qualified/source-table references remain fail-closed.",
                         startToken))
 
                 let name = column.Name.Parts[0].Value
 
                 if not (seen.Add(name)) then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"RETURNING column '{name}' is declared more than once.",
                         startToken))
 
@@ -204,7 +204,7 @@ module internal FunctionalDmlTextParser =
                         reader.Advance() |> ignore
 
                         if not (seen.Add("*")) then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 "RETURNING column '*' is declared more than once.",
                                 token))
 
@@ -212,7 +212,7 @@ module internal FunctionalDmlTextParser =
 
                         items.Add(
                             DmlReturningWildcardItem(
-                                CoreTokenReader.Span(token)))
+                                FunctionalTokenReader.Span(token)))
 
                     elif sourceDialect = SqlAgentToolType.Postgres then
                         this.ParsePostgresReturningItem(
@@ -226,14 +226,14 @@ module internal FunctionalDmlTextParser =
                                 "RETURNING column")
 
                         if column.Parts.Length <> 1 then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 "Portable DML RETURNING accepts unqualified target columns only; OLD/NEW/table-qualified and expression result items remain fail-closed.",
                                 token))
 
                         let name = column.Parts[0].Value
 
                         if not (seen.Add(name)) then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 $"RETURNING column '{name}' is declared more than once.",
                                 token))
 
@@ -246,7 +246,7 @@ module internal FunctionalDmlTextParser =
                         reader.Match(TokenType.Comma)
 
                 if hasWildcard && items.Count <> 1 then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "RETURNING * cannot be mixed with explicit RETURNING columns or expressions in the Core contract.",
                         returningToken))
 
@@ -275,7 +275,7 @@ module internal FunctionalDmlTextParser =
                                 cast.Span)
                             :> SqlExpr
                         | false, _ ->
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 $"Invalid DATE literal '{text}'.",
                                 token))
                     | _ ->
@@ -326,14 +326,14 @@ module internal FunctionalDmlTextParser =
                         "INSERT target column")
 
                 if column.Parts.Length <> 1 then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "INSERT target columns must be unqualified.",
                         reader.Peek(-1)))
 
                 let name = column.Parts[0].Value
 
                 if not (seen.Add(name)) then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"INSERT target column '{name}' is declared more than once.",
                         reader.Peek(-1)))
 
@@ -348,7 +348,7 @@ module internal FunctionalDmlTextParser =
             |> ignore
 
             if columns.Count = 0 then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "INSERT requires at least one target column.",
                     reader.Peek()))
 
@@ -366,7 +366,7 @@ module internal FunctionalDmlTextParser =
                         |> ignore
 
                         if reader.Peek().Type = TokenType.RParen then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 "INSERT VALUES row cannot be empty.",
                                 reader.Peek()))
 
@@ -388,7 +388,7 @@ module internal FunctionalDmlTextParser =
                         |> ignore
 
                         if values.Count <> columns.Count then
-                            raise (CoreTokenReader.Error(
+                            raise (FunctionalTokenReader.Error(
                                 $"INSERT row has {values.Count} values but {columns.Count} columns were declared.",
                                 reader.Peek(-1)))
 
@@ -412,7 +412,7 @@ module internal FunctionalDmlTextParser =
                     :> InsertSource
 
                 else
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "INSERT requires VALUES or a SELECT source.",
                         reader.Peek()))
 
@@ -440,7 +440,7 @@ module internal FunctionalDmlTextParser =
 
             if reader.Peek().Type = TokenType.Identifier
                || reader.PeekWord("AS") then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "UPDATE target aliases are not represented by the Core DML AST.",
                     reader.Peek()))
 
@@ -463,7 +463,7 @@ module internal FunctionalDmlTextParser =
                         "UPDATE assignment column")
 
                 if column.Parts.Length <> 1 then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "UPDATE assignment columns must be unqualified.",
                         reader.Peek(-1)))
 
@@ -471,7 +471,7 @@ module internal FunctionalDmlTextParser =
                     column.Parts[0].Value
 
                 if not (seen.Add(columnName)) then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         $"UPDATE assigns column '{columnName}' more than once.",
                         reader.Peek(-1)))
 
@@ -479,7 +479,7 @@ module internal FunctionalDmlTextParser =
 
                 if equalsToken.Type <> TokenType.Operator
                    || equalsToken.Value <> "=" then
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "Expected '=' in UPDATE assignment.",
                         equalsToken))
 
@@ -530,7 +530,7 @@ module internal FunctionalDmlTextParser =
 
             if reader.Peek().Type = TokenType.Identifier
                || reader.PeekWord("AS") then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     "DELETE target aliases are not represented by the Core DML AST.",
                     reader.Peek()))
 
@@ -563,7 +563,7 @@ module internal FunctionalDmlTextParser =
                 elif reader.PeekWord("DELETE") then
                     this.ParseDelete() :> SqlStatement
                 else
-                    raise (CoreTokenReader.Error(
+                    raise (FunctionalTokenReader.Error(
                         "Expected INSERT, UPDATE, or DELETE DML statement.",
                         reader.Peek()))
 
@@ -571,14 +571,14 @@ module internal FunctionalDmlTextParser =
             |> ignore
 
             if reader.Peek().Type <> TokenType.EOF then
-                raise (CoreTokenReader.Error(
+                raise (FunctionalTokenReader.Error(
                     $"Unexpected token '{reader.Peek().Value}'; the complete DML statement was not consumed.",
                     reader.Peek()))
 
             statement
 
     let parseComplete
-        (reader: CoreTokenReader)
+        (reader: FunctionalTokenReader)
         sourceDialect
         requireExplicitLikeEscape
         (sourceServerVersion: Version | null) =
