@@ -31,6 +31,22 @@ public sealed class CoreCurrentTemporalCapabilityTests
         Assert.Equal(expected, capability.Status);
     }
 
+    [Theory]
+    [InlineData("current_date", "CURRENT_DATE")]
+    [InlineData("Current_Time", "CURRENT_TIME")]
+    [InlineData("cUrReNt_TiMeStAmP", "CURRENT_TIMESTAMP")]
+    public void RawCurrentTemporalNameClassification_IsCaseInsensitive(
+        string sourceName,
+        string expectedSqlName)
+    {
+        var command = CompileQuery(
+            $"SELECT {sourceName} FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains(expectedSqlName, command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void RawCurrentDate_IsRejectedOnlyForSqlServerSource()
     {
