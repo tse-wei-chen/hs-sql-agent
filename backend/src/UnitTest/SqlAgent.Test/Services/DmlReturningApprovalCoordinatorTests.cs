@@ -21,6 +21,7 @@ public sealed class DmlReturningApprovalCoordinatorTests
         try
         {
             await CreateUsersTableAsync(connectionString);
+            var serverVersionIdentity = await GetServerVersionIdentityAsync(connectionString);
             var profile = new SqlProviderCapabilityProfile(
                 SqlAgentToolType.Sqlite,
                 ServerVersion: new Version(3, 35));
@@ -40,13 +41,15 @@ public sealed class DmlReturningApprovalCoordinatorTests
                 connectionString,
                 plan,
                 ApprovalContextFingerprint,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken,
+                serverVersionIdentity);
             var result = await coordinator.CommitAsync(
                 connectionString,
                 plan,
                 preview.Challenge,
                 ApprovalContextFingerprint,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken,
+                serverVersionIdentity);
 
             Assert.True(command.ReturnsRows);
             Assert.True(result.Committed);
@@ -75,6 +78,7 @@ public sealed class DmlReturningApprovalCoordinatorTests
         try
         {
             await CreateUsersTableAsync(connectionString);
+            var serverVersionIdentity = await GetServerVersionIdentityAsync(connectionString);
             var profile = new SqlProviderCapabilityProfile(
                 SqlAgentToolType.Sqlite,
                 ServerVersion: new Version(3, 35));
@@ -94,13 +98,15 @@ public sealed class DmlReturningApprovalCoordinatorTests
                 connectionString,
                 plan,
                 ApprovalContextFingerprint,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken,
+                serverVersionIdentity);
             var result = await coordinator.CommitAsync(
                 connectionString,
                 plan,
                 preview.Challenge,
                 ApprovalContextFingerprint,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken,
+                serverVersionIdentity);
 
             Assert.False(result.Committed);
             Assert.Equal(0, result.AffectedRows);
@@ -150,6 +156,13 @@ public sealed class DmlReturningApprovalCoordinatorTests
         await using var command = connection.CreateCommand();
         command.CommandText = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)";
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<string> GetServerVersionIdentityAsync(string connectionString)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        return connection.ServerVersion.Trim();
     }
 
     private static async Task<int> CountUsersAsync(string connectionString)

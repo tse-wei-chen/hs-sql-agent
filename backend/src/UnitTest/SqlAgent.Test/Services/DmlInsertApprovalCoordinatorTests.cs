@@ -9,6 +9,7 @@ namespace SqlAgent.Test.Services;
 public sealed class DmlInsertApprovalCoordinatorTests
 {
     private const string ApprovalContextFingerprint = "approval-context-v1";
+    private const string TestServerVersionIdentity = "test-server-version";
 
     [Fact]
     public async Task Preview_InsertValues_UsesImmutablePayloadWithoutOpeningDatabase()
@@ -21,7 +22,8 @@ public sealed class DmlInsertApprovalCoordinatorTests
             "not-opened",
             plan,
             ApprovalContextFingerprint,
-            TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken,
+            TestServerVersionIdentity);
 
         Assert.Equal(DmlOperation.Insert, preview.Operation);
         Assert.Equal(2, preview.AffectedRows);
@@ -46,9 +48,11 @@ public sealed class DmlInsertApprovalCoordinatorTests
         var connectionString = $"Data Source={databasePath};Pooling=False";
         try
         {
+            string serverVersionIdentity;
             await using (var setup = new SqliteConnection(connectionString))
             {
                 await setup.OpenAsync(TestContext.Current.CancellationToken);
+                serverVersionIdentity = setup.ServerVersion.Trim();
                 await using var command = setup.CreateCommand();
                 command.CommandText = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)";
                 await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
@@ -60,14 +64,16 @@ public sealed class DmlInsertApprovalCoordinatorTests
                 connectionString,
                 plan,
                 ApprovalContextFingerprint,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken,
+                serverVersionIdentity);
 
             var result = await coordinator.CommitAsync(
                 connectionString,
                 plan,
                 preview.Challenge,
                 ApprovalContextFingerprint,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken,
+                serverVersionIdentity);
 
             Assert.True(result.Committed);
             Assert.Equal(2, result.AffectedRows);
@@ -87,7 +93,8 @@ public sealed class DmlInsertApprovalCoordinatorTests
                     plan,
                     preview.Challenge,
                     ApprovalContextFingerprint,
-                    TestContext.Current.CancellationToken));
+                    TestContext.Current.CancellationToken,
+                    serverVersionIdentity));
             Assert.Contains("already been consumed", replayError.Message, StringComparison.OrdinalIgnoreCase);
         }
         finally
@@ -105,7 +112,8 @@ public sealed class DmlInsertApprovalCoordinatorTests
             "not-opened",
             plan,
             ApprovalContextFingerprint,
-            TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken,
+            TestServerVersionIdentity);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             coordinator.CommitAsync(
@@ -113,7 +121,8 @@ public sealed class DmlInsertApprovalCoordinatorTests
                 plan,
                 preview.Challenge with { AffectedRows = 1 },
                 ApprovalContextFingerprint,
-                TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken,
+                TestServerVersionIdentity));
 
         Assert.Contains("immutable payload", error.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -128,7 +137,8 @@ public sealed class DmlInsertApprovalCoordinatorTests
             "not-opened",
             plan,
             ApprovalContextFingerprint,
-            TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken,
+            TestServerVersionIdentity);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             coordinator.CommitAsync(
@@ -136,7 +146,8 @@ public sealed class DmlInsertApprovalCoordinatorTests
                 plan,
                 preview.Challenge,
                 "different-approval-context",
-                TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken,
+                TestServerVersionIdentity));
 
         Assert.Contains("execution context", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, factory.CreateCount);

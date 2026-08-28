@@ -69,12 +69,14 @@ public interface IDmlCoordinator
         string connectionString,
         ValidatedDmlPlan plan,
         string approvalContextFingerprint,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken,
+        string expectedServerVersionIdentity);
 
     Task<DmlCommitResult> CommitAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
         string approvalContextFingerprint,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken,
+        string expectedServerVersionIdentity);
 }
