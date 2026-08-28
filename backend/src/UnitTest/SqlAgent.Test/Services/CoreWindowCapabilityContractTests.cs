@@ -73,6 +73,21 @@ public sealed class CoreWindowCapabilityContractTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_FrameSensitiveWindowFunction_WithFrame_RemainsAccepted(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "SELECT FIRST_VALUE(amount) OVER (" +
+            "ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM orders",
+            SqlAgentToolType.Postgres,
+            targetProvider);
+
+        Assert.False(string.IsNullOrWhiteSpace(command.Sql));
+    }
+
     [Fact]
     public void Compile_SqlServerRangeOffset_RemainsFailClosed()
     {

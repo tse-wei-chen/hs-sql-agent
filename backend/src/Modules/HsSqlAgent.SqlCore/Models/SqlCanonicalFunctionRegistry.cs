@@ -28,17 +28,17 @@ internal static class SqlCanonicalFunctionRegistry
             ["MIN"] = Aggregate("MIN", 1),
             ["SUM"] = Aggregate("SUM", 1),
 
-            ["ROW_NUMBER"] = Window("ROW_NUMBER", 0),
-            ["RANK"] = Window("RANK", 0),
-            ["DENSE_RANK"] = Window("DENSE_RANK", 0),
-            ["PERCENT_RANK"] = Window("PERCENT_RANK", 0),
-            ["CUME_DIST"] = Window("CUME_DIST", 0),
+            ["ROW_NUMBER"] = Window("ROW_NUMBER", 0, frameInsensitive: true),
+            ["RANK"] = Window("RANK", 0, frameInsensitive: true),
+            ["DENSE_RANK"] = Window("DENSE_RANK", 0, frameInsensitive: true),
+            ["PERCENT_RANK"] = Window("PERCENT_RANK", 0, frameInsensitive: true),
+            ["CUME_DIST"] = Window("CUME_DIST", 0, frameInsensitive: true),
             ["LAG"] = WithTargetMetadata(
-                Window("LAG", 1, 3),
+                Window("LAG", 1, 3, frameInsensitive: true),
                 SqlCanonicalTargetCapabilityFamily.None,
                 WindowOffset(1)),
             ["LEAD"] = WithTargetMetadata(
-                Window("LEAD", 1, 3),
+                Window("LEAD", 1, 3, frameInsensitive: true),
                 SqlCanonicalTargetCapabilityFamily.None,
                 WindowOffset(1)),
             ["FIRST_VALUE"] = Window("FIRST_VALUE", 1),
@@ -48,7 +48,7 @@ internal static class SqlCanonicalFunctionRegistry
                 SqlCanonicalTargetCapabilityFamily.WindowFunction,
                 PositiveInteger(1, "NTH_VALUE index must be a positive integer.")),
             ["NTILE"] = WithTargetMetadata(
-                Window("NTILE", 1),
+                Window("NTILE", 1, frameInsensitive: true),
                 SqlCanonicalTargetCapabilityFamily.None,
                 PositiveInteger(0, "NTILE bucket count must be a positive integer.")),
 
@@ -150,13 +150,15 @@ internal static class SqlCanonicalFunctionRegistry
 
     private static SqlCanonicalFunctionContract Window(
         string name,
-        int arguments) =>
-        Window(name, arguments, arguments);
+        int arguments,
+        bool frameInsensitive = false) =>
+        Window(name, arguments, arguments, frameInsensitive);
 
     private static SqlCanonicalFunctionContract Window(
         string name,
         int minArguments,
-        int maxArguments) =>
+        int maxArguments,
+        bool frameInsensitive = false) =>
         new(
             name,
             minArguments,
@@ -166,7 +168,10 @@ internal static class SqlCanonicalFunctionRegistry
             AllowFilter: false,
             AllowWindow: true,
             RequireWindow: true,
-            IsDirectPortable: true);
+            IsDirectPortable: true)
+        {
+            IsWindowFrameInsensitive = frameInsensitive
+        };
 
     private static SqlCanonicalFunctionContract WithTargetMetadata(
         SqlCanonicalFunctionContract contract,
@@ -238,6 +243,8 @@ internal sealed record SqlCanonicalFunctionContract(
 
     internal ImmutableArray<SqlCanonicalLiteralArgumentRule> LiteralArgumentRules { get; init; } =
         ImmutableArray<SqlCanonicalLiteralArgumentRule>.Empty;
+
+    internal bool IsWindowFrameInsensitive { get; init; }
 
     internal bool AcceptsArgumentCount(int argumentCount) =>
         argumentCount >= MinArguments && argumentCount <= MaxArguments;
