@@ -144,6 +144,165 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    public static IEnumerable<object[]> QueryBinderParityCases()
+    {
+        yield return new object[]
+        {
+            """
+            WITH active_users AS (
+                SELECT id, role_id
+                FROM users
+                WHERE active = true
+            )
+            SELECT u.id
+            FROM active_users u
+            LEFT JOIN roles r ON r.id = u.role_id
+            WHERE EXISTS (
+                SELECT 1
+                FROM audit_log a
+                WHERE a.user_id = u.id
+            )
+            ORDER BY u.id
+            """,
+            new[] { "users", "roles", "audit_log" }
+        };
+
+        yield return new object[]
+        {
+            """
+            SELECT d.id
+            FROM (
+                SELECT id
+                FROM users
+                WHERE id > 0
+            ) d
+            WHERE d.id < 10
+            """,
+            new[] { "users" }
+        };
+
+        yield return new object[]
+        {
+            """
+            SELECT id FROM users
+            UNION ALL
+            SELECT user_id FROM audit_log
+            ORDER BY 1
+            """,
+            new[] { "users", "audit_log" }
+        };
+
+        yield return new object[]
+        {
+            """
+            SELECT
+                u.id,
+                (SELECT MAX(a.id) FROM audit_log a WHERE a.user_id = u.id) AS last_audit_id
+            FROM users u
+            """,
+            new[] { "users", "audit_log" }
+        };
+
+        yield return new object[]
+        {
+            """
+            SELECT u.id, r.id
+            FROM users u
+            INNER JOIN roles r ON r.id = u.role_id
+            WHERE r.id > 0
+            """,
+            new[] { "users", "roles" }
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(QueryBinderParityCases))]
+    public void Facade_FunctionalQueryBinder_MatchesLegacyCompilerOnRichScopes(
+        string sql,
+        string[] allowedTables)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-binder-v1",
+            new HashSet<string>(
+                allowedTables,
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 11);
+
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Kind, migrated.Kind);
+        Assert.Equal(legacy.TargetProvider, migrated.TargetProvider);
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+    }
+
+    public static IEnumerable<object[]> QueryBinderFailureParityCases()
+    {
+        yield return new object[]
+        {
+            "SELECT x.id FROM users u"
+        };
+
+        yield return new object[]
+        {
+            "SELECT a.id FROM users a INNER JOIN roles a ON a.id = a.id"
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(QueryBinderFailureParityCases))]
+    public void Facade_FunctionalQueryBinder_MatchesLegacyBindingFailures(
+        string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-binder-failure-v1",
+            new HashSet<string>(
+                new[] { "users", "roles" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 11);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Postgres,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> DmlParityCases()
     {
         foreach (var targetProvider in Enum.GetValues<SqlAgentToolType>())

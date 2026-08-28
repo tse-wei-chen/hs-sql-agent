@@ -72,7 +72,7 @@ module internal FunctionalPipeline =
             }
 
     let private bindQuery (ParsedQuery context) =
-        let bound = SqlAstBinder().Bind(context.Parsed)
+        let bound = FunctionalQueryBinder.bind context.Parsed
 
         CoreJoinProfileValidator.Validate(
             bound.Statement,

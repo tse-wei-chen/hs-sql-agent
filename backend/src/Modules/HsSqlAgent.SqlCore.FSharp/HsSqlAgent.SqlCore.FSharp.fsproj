@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Compile Include="FunctionalAst.fs" />
+    <Compile Include="FunctionalQueryBinder.fs" />
     <Compile Include="FunctionalPipeline.fs" />
     <Compile Include="Facade.fs" />
   </ItemGroup>
