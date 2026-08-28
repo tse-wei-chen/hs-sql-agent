@@ -22,6 +22,7 @@
     <Compile Include="FunctionalCommaFromNormalizer.fs" />
     <Compile Include="FunctionalExpressionTextParser.fs" />
     <Compile Include="FunctionalQueryTextParser.fs" />
+    <Compile Include="FunctionalDmlTextParser.fs" />
     <Compile Include="FunctionalSqlTextParser.fs" />
     <Compile Include="FunctionalQueryBinder.fs" />
     <Compile Include="FunctionalDmlBinder.fs" />

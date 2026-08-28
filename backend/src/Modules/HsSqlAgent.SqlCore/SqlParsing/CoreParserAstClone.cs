@@ -41,6 +41,42 @@ internal static class CoreParserAstClone
             AggregateSeparatorClause = aggregateSeparatorClause
         };
 
+    internal static InsertStatement Insert(
+        NamedTableSource target,
+        System.Collections.Immutable.ImmutableArray<SqlIdentifier> columns,
+        InsertSource source,
+        System.Collections.Immutable.ImmutableArray<DmlReturningItem> returning,
+        SourceSpan span) =>
+        new(target, columns, source, span)
+        {
+            Returning = returning
+        };
+
+    internal static UpdateStatement Update(
+        NamedTableSource target,
+        System.Collections.Immutable.ImmutableArray<Assignment> assignments,
+        SqlExpr? predicate,
+        System.Collections.Immutable.ImmutableArray<NamedTableSource> from,
+        System.Collections.Immutable.ImmutableArray<DmlReturningItem> returning,
+        SourceSpan span) =>
+        new(target, assignments, predicate, span)
+        {
+            From = from,
+            Returning = returning
+        };
+
+    internal static DeleteStatement Delete(
+        NamedTableSource target,
+        SqlExpr? predicate,
+        System.Collections.Immutable.ImmutableArray<NamedTableSource> usingSources,
+        System.Collections.Immutable.ImmutableArray<DmlReturningItem> returning,
+        SourceSpan span) =>
+        new(target, predicate, span)
+        {
+            Using = usingSources,
+            Returning = returning
+        };
+
     internal static SqlStatement AttachInsertConflict(
         SqlStatement statement,
         InsertConflictClause? conflict)

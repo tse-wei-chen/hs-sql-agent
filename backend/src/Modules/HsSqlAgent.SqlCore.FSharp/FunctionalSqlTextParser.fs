@@ -371,14 +371,13 @@ module internal FunctionalSqlTextParser =
                 (sourceServerVersion sourceProfile)
 
         let statement =
-            CoreDmlTextParser(
-                CoreTokenReader(conflictTokens),
-                sourceDialect,
-                usesMySqlNoBackslashEscapes
+            FunctionalDmlTextParser.parseComplete
+                (CoreTokenReader(conflictTokens))
+                sourceDialect
+                (usesMySqlNoBackslashEscapes
                     sourceDialect
-                    sourceProfile,
-                sourceServerVersion sourceProfile)
-                .ParseComplete()
+                    sourceProfile)
+                (sourceServerVersion sourceProfile)
 
         let statement =
             CoreParserAstClone.AttachInsertConflict(

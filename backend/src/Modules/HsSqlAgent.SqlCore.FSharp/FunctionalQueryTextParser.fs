@@ -760,6 +760,17 @@ module internal FunctionalQueryTextParser =
 
             statement
 
+    let parseQueryExpression
+        (reader: CoreTokenReader)
+        sourceDialect
+        requireExplicitLikeEscape =
+
+        QueryGrammar(
+            reader,
+            sourceDialect,
+            requireExplicitLikeEscape)
+            .ParseQueryExpression()
+
     let parseComplete
         (reader: CoreTokenReader)
         sourceDialect

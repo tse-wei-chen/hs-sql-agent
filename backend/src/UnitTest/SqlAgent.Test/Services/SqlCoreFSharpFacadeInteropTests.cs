@@ -401,6 +401,60 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    public static IEnumerable<object[]> DmlGrammarFailureParityCases()
+    {
+        yield return new object[]
+        {
+            "INSERT INTO users (id, id) VALUES (1, 2)",
+            SqlAgentToolType.Postgres
+        };
+        yield return new object[]
+        {
+            "UPDATE users u SET name = 'b'",
+            SqlAgentToolType.Postgres
+        };
+        yield return new object[]
+        {
+            "UPDATE users SET name = 'b' FROM roles WHERE users.role_id = roles.id",
+            SqlAgentToolType.MySQL
+        };
+        yield return new object[]
+        {
+            "DELETE FROM users USING roles WHERE users.role_id = roles.id",
+            SqlAgentToolType.MySQL
+        };
+        yield return new object[]
+        {
+            "DELETE FROM users WHERE id = 1 RETURNING *, id",
+            SqlAgentToolType.Postgres
+        };
+        yield return new object[]
+        {
+            "UPDATE users SET created_at = CAST('not-a-date' AS DATE)",
+            SqlAgentToolType.Postgres
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(DmlGrammarFailureParityCases))]
+    public void Facade_FunctionalDmlGrammar_MatchesLegacyFailures(
+        string sql,
+        SqlAgentToolType sourceDialect)
+    {
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlTextParser.ParseDml(
+                sql,
+                sourceDialect));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.ParseDml(
+                sql,
+                sourceDialect));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> ParserFailureParityCases()
     {
         yield return new object[]
