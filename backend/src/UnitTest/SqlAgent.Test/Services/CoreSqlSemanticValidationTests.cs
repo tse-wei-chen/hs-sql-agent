@@ -27,6 +27,26 @@ public class CoreSqlSemanticValidationTests
         Assert.Contains("HAVING", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_AggregateInWindowSpecification_ForNonPostgresTarget_RemainsRejected(
+        SqlAgentToolType targetProvider)
+    {
+        const string sql =
+            "SELECT customer_id, ship_country, " +
+            "ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY SUM(net_order_value) DESC) AS country_rank " +
+            "FROM order_value GROUP BY customer_id, ship_country";
+
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, SqlAgentToolType.Postgres, targetProvider));
+
+        Assert.Contains("window specification", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Aggregate function 'SUM'", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_FullJoinForMySqlTarget_FailsAtCapabilityBoundary()
     {
@@ -57,10 +77,18 @@ public class CoreSqlSemanticValidationTests
         Assert.Contains("UNION", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider) =>
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType provider) =>
+        Compile(sql, provider, provider);
+
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        SqlAgentToolType targetProvider) =>
         CoreSqlCompiler.CreateDefault().Compile(
-            CoreSqlTextParser.ParseQuery(sql, provider),
-            provider,
+            CoreSqlTextParser.ParseQuery(sql, sourceDialect),
+            targetProvider,
             new SqlPlanValidationContext("policy-v1"),
             new SqlExecutionPlanPolicy());
 }
