@@ -401,6 +401,97 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    public static IEnumerable<object[]> NullOrderingParityCases()
+    {
+        yield return new object[]
+        {
+            SqlAgentToolType.MySQL,
+            "SELECT u.id FROM users u ORDER BY u.id NULLS LAST"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.MySQL,
+            "SELECT u.id FROM users u ORDER BY u.id NULLS FIRST"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.MsSqlServer,
+            "SELECT u.id FROM users u ORDER BY u.id DESC NULLS FIRST"
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(NullOrderingParityCases))]
+    public void Facade_FunctionalNullOrderingRewrite_MatchesLegacyCompiler(
+        SqlAgentToolType targetProvider,
+        string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-null-ordering-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                targetProvider,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            targetProvider,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Fact]
+    public void Facade_FunctionalNullOrderingRewrite_MatchesLegacySetTailFailure()
+    {
+        const string sql =
+            "SELECT id FROM users UNION ALL SELECT id FROM users ORDER BY id NULLS LAST";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-null-ordering-failure-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.MySQL,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> QueryValidatorFailureParityCases()
     {
         yield return new object[]

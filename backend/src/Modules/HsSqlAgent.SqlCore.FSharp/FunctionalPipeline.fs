@@ -135,9 +135,9 @@ module internal FunctionalPipeline =
 
         let nullOrderingCanonical =
             CanonicalStatement(
-                CoreNullOrderingRewriter.Rewrite(
-                    sourceRestored.Statement,
-                    context.TargetProvider),
+                FunctionalNullOrderingRewriter.rewrite
+                    sourceRestored.Statement
+                    context.TargetProvider,
                 sourceRestored.Facts,
                 sourceRestored.SourceDialect,
                 sourceRestored.TargetProvider)
@@ -356,9 +356,9 @@ module internal FunctionalPipeline =
 
         let nullOrderingCanonical =
             CanonicalStatement(
-                CoreNullOrderingRewriter.Rewrite(
-                    sourceRestored.Statement,
-                    context.TargetProvider),
+                FunctionalNullOrderingRewriter.rewrite
+                    sourceRestored.Statement
+                    context.TargetProvider,
                 sourceRestored.Facts,
                 sourceRestored.SourceDialect,
                 sourceRestored.TargetProvider)
