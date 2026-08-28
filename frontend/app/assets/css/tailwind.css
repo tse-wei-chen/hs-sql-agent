@@ -174,3 +174,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+    display: none;
+}
