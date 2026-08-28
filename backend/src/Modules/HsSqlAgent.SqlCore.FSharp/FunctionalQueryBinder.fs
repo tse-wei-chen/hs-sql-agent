@@ -180,7 +180,7 @@ module internal FunctionalQueryBinder =
         (alias: IdentifierPart option)
         scope =
 
-        let registered = registerAlias state alias symbol scope
+        let registered = registerAlias state (Some alias) symbol scope
 
         let withSource =
             { registered with Sources = symbol :: registered.Sources }
@@ -586,7 +586,7 @@ module internal FunctionalQueryBinder =
                 $"Unsupported table source while binding: {other.GetType().Name}"))
 
     and private bindSelectItems
-        items
+        (items: ImmutableArray<SelectItem>)
         scope
         visibleCtes
         state =
@@ -607,7 +607,7 @@ module internal FunctionalQueryBinder =
         reversed |> List.rev |> toImmutableArray, finalState
 
     and private bindOrderByItems
-        items
+        (items: ImmutableArray<OrderByItem>)
         scope
         visibleCtes
         state =
@@ -628,7 +628,7 @@ module internal FunctionalQueryBinder =
         reversed |> List.rev |> toImmutableArray, finalState
 
     and private bindExprItems
-        items
+        (items: ImmutableArray<SqlExpr>)
         scope
         visibleCtes
         state =
