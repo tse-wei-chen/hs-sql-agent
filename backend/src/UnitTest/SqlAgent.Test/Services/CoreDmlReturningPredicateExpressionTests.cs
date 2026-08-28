@@ -40,18 +40,21 @@ public sealed class CoreDmlReturningPredicateExpressionTests
     }
 
     [Fact]
-    public void Compile_PostgresTopLevelLikeReturning_RemainsFailClosed()
+    public void Compile_PostgresTopLevelLikeReturning_ParameterizesPatternLiteral()
     {
         var parsed = CoreSqlTextParser.ParseDml(
-            "DELETE FROM users WHERE id = 9 RETURNING name LIKE 'a%'",
+            "DELETE FROM users WHERE id = 9 RETURNING name LIKE 'a%' AS matches_name",
             SqlAgentToolType.Postgres);
 
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
-                parsed,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("policy-v1")));
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
 
-        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(command.ReturnsRows);
+        Assert.Contains(" LIKE ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("matches_name", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("a%", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(new object?[] { 9, "a%" }, command.Parameters.Select(x => x.Value).ToArray());
     }
 }
