@@ -65,8 +65,11 @@ module internal FunctionalSqlPlanValidator =
                 |> Seq.toArray
 
             if violations.Length > 0 then
+                let joined =
+                    String.Join(", ", violations)
+
                 raise (UnauthorizedAccessException(
-                    $"SQL plan is not authorized to access table(s): {String.Join(", ", violations)}"))
+                    $"SQL plan is not authorized to access table(s): {joined}"))
 
     let private validateJoinKind kind =
         match kind with
