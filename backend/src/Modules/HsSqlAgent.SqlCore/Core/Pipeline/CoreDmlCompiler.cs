@@ -39,7 +39,6 @@ public sealed class CoreDmlCompiler(
         CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile);
         CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile);
         ValidateMutationPolicy(parsed.Statement, policy);
-        ValidateIncrementalDmlSurface(parsed.Statement);
 
         var bound = _binder.Bind(parsed);
         CoreJoinProfileValidator.Validate(
@@ -131,15 +130,6 @@ public sealed class CoreDmlCompiler(
             profiledStatement,
             targetProfile,
             validated.PolicyVersion);
-    }
-
-    private static void ValidateIncrementalDmlSurface(SqlStatement statement)
-    {
-        if (statement is UpdateStatement { From.IsDefaultOrEmpty: false })
-        {
-            throw new SqlCompilationException(
-                "UPDATE ... FROM is represented by the canonical DML AST but remains fail-closed until binder, capability validation, and native lowering support are installed.");
-        }
     }
 
     private static void ValidateMutationPolicy(

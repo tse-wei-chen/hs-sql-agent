@@ -43,7 +43,31 @@ public class CoreUpdateFromMilestoneTests
     }
 
     [Fact]
-    public void CompileUpdateFrom_RemainsFailClosedUntilSemanticPipelineSupportsNewNode()
+    public void CompileUpdateFrom_Postgres_BindsSourcesAndLowersNativeSyntax()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE inventory SET quantity = quantity + 1 FROM warehouse WHERE inventory.id = warehouse.inventory_id",
+            SqlAgentToolType.Postgres);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.Contains("UPDATE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FROM", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("warehouse", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, Assert.Single(command.Parameters).Value);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void CompileUpdateFrom_NonPostgresTarget_RemainsFailClosed(SqlAgentToolType targetProvider)
     {
         var parsed = CoreSqlTextParser.ParseDml(
             "UPDATE inventory SET quantity = quantity + 1 FROM warehouse WHERE inventory.id = warehouse.inventory_id",
@@ -51,12 +75,11 @@ public class CoreUpdateFromMilestoneTests
 
         var error = Assert.Throws<SqlCompilationException>(() => CoreDmlCompiler.CreateDefault().Compile(
             parsed,
-            SqlAgentToolType.Postgres,
+            targetProvider,
             new SqlPlanValidationContext("policy-v1")));
 
-        Assert.Contains("remains fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("binder", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("native lowering", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("dml.update.from", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -11,6 +11,8 @@ public sealed class CoreDmlBinder : ISqlBinder
     public BoundStatement Bind(ParsedStatement statement)
     {
         ArgumentNullException.ThrowIfNull(statement);
+        if (statement.Statement is UpdateStatement { From.IsDefaultOrEmpty: false } updateFrom)
+            return new CoreUpdateFromBinder(_queryBinder).Bind(statement, updateFrom);
         if (statement.Statement is not InsertStatement insert)
             return _queryBinder.Bind(statement);
 

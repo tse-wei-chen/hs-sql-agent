@@ -164,6 +164,12 @@ public sealed partial class NativeSqlRenderer
     {
         if (update.Assignments.IsDefaultOrEmpty)
             throw new SqlCompilationException("UPDATE requires at least one assignment.");
+        if (!update.From.IsDefaultOrEmpty && Provider != SqlAgentToolType.Postgres)
+        {
+            throw new SqlCompilationException(
+                "SQL capability 'dml.update.from' is currently declared only for PostgreSQL native lowering; provider " +
+                Provider + " remains fail-closed until equivalent mutation semantics are proven.");
+        }
 
         var table = CoreIdentifierSqlRenderer.Render(
             update.Target.Name,
@@ -189,6 +195,15 @@ public sealed partial class NativeSqlRenderer
             .Append(table)
             .Append(" SET ")
             .Append(string.Join(", ", assignments));
+
+        if (!update.From.IsDefaultOrEmpty)
+        {
+            var sources = update.From.Select(RenderNamedTableSource).ToArray();
+            sql.Append(" FROM ")
+                .Append(string.Join(", ", sources.Select(source => source.Sql)));
+            foreach (var source in sources)
+                bindings.AddRange(source.Bindings);
+        }
 
         if (update.Predicate is not null)
         {
