@@ -265,14 +265,15 @@ module internal FunctionalPipeline =
         (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
 
         let effectivePolicy =
-            if isNull policy then
+            match policy with
+            | null ->
                 DmlCompilationPolicy(
                     RequireWhereForUpdate = true,
                     RequireWhereForDelete = true,
                     AllowFullTableUpdate = false,
                     AllowFullTableDelete = false)
-            else
-                policy
+            | nonNullPolicy ->
+                nonNullPolicy
 
         CoreProviderProfileRewriter.ValidateProfile(targetProvider, targetProfile)
         CoreSourceProfileRewriter.ValidateProfile(parsed.SourceDialect, parsed.SourceProfile)
