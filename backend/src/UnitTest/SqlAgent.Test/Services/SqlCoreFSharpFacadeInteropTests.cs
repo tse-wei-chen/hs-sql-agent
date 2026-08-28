@@ -401,6 +401,60 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    public static IEnumerable<object[]> DmlValidatorFailureParityCases()
+    {
+        yield return new object[]
+        {
+            "INSERT INTO archive (id, name) SELECT id FROM users",
+            new[] { "archive", "users" }
+        };
+        yield return new object[]
+        {
+            "INSERT INTO archive (id) SELECT * FROM users",
+            new[] { "archive", "users" }
+        };
+        yield return new object[]
+        {
+            "INSERT INTO users (id) VALUES (other_id)",
+            new[] { "users" }
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(DmlValidatorFailureParityCases))]
+    public void Facade_FunctionalDmlValidator_MatchesLegacyFailures(
+        string sql,
+        string[] allowedTables)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-dml-validator-v1",
+            new HashSet<string>(
+                allowedTables,
+                StringComparer.OrdinalIgnoreCase));
+
+        var parsed = CoreSqlTextParser.ParseDml(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Postgres,
+                    validation));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> DmlGrammarFailureParityCases()
     {
         yield return new object[]

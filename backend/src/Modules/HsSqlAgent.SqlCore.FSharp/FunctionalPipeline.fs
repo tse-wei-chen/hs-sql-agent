@@ -375,9 +375,9 @@ module internal FunctionalPipeline =
         (CanonicalDml(context, canonical)) =
 
         let validated =
-            CoreDmlPlanValidator().Validate(
-                canonical,
-                validationContext)
+            FunctionalDmlPlanValidator.validate
+                canonical
+                validationContext
 
         FunctionalAst.verify validated.Statement |> ignore
         ValidatedDml(context, validated)
