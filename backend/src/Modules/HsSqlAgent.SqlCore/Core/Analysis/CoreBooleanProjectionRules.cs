@@ -53,13 +53,25 @@ internal static class CoreBooleanProjectionRules
         IsNullExpr or InExpr or BetweenExpr or ExistsExpr => true,
         UnaryExpr unary when unary.Operator.Equals("NOT", StringComparison.OrdinalIgnoreCase) => true,
         BinaryExpr binary when BooleanBinaryOperators.Contains(binary.Operator) => true,
-        FunctionCallExpr function when IdentifierText(function.Name).Equals(
-            "CORE_REGEX_MATCH",
-            StringComparison.OrdinalIgnoreCase) =>
-            provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.Oracle,
+        FunctionCallExpr function => IsCanonicalBooleanResult(function, provider),
         CaseExpr @case => IsBooleanCase(@case, provider),
         _ => false
     };
+
+    private static bool IsCanonicalBooleanResult(
+        FunctionCallExpr function,
+        SqlAgentToolType provider)
+    {
+        var name = string.Join('.', function.Name.Parts.Select(part => part.Value));
+        return SqlCanonicalFunctionRegistry.Find(name)?.ResultKind switch
+        {
+            SqlCanonicalResultKind.RegexPredicate =>
+                SqlRegexCapabilityRules.SupportsTarget(
+                    provider,
+                    targetProfile: null),
+            _ => false
+        };
+    }
 
     internal static bool HasOnlyLiteralBooleanCaseResults(CaseExpr @case)
     {
@@ -107,6 +119,4 @@ internal static class CoreBooleanProjectionRules
     private static bool IsNullLiteral(SqlExpr expression) =>
         expression is LiteralExpr { Value: null };
 
-    private static string IdentifierText(SqlIdentifier identifier) =>
-        string.Join('.', identifier.Parts.Select(part => part.Value));
 }

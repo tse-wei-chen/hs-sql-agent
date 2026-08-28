@@ -29,6 +29,22 @@ public class CoreBooleanProjectionCapabilityTests
     }
 
     [Fact]
+    public void Compile_SqlServerRegexProjectionAtCompatibility170_RemainsSupported()
+    {
+        var command = Compile(
+            "SELECT REGEXP_LIKE(name, '^A') FROM users",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.MsSqlServer,
+            new SqlProviderCapabilityProfile(
+                SqlAgentToolType.MsSqlServer,
+                ServerVersion: new Version(17, 0),
+                CompatibilityLevel: 170));
+
+        Assert.Contains("REGEXP_LIKE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CORE_REGEX_MATCH", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_OracleRegexPredicate_RemainsSupported()
     {
         var command = Compile(
@@ -64,10 +80,12 @@ public class CoreBooleanProjectionCapabilityTests
     private static CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider) =>
+        SqlAgentToolType targetProvider,
+        SqlProviderCapabilityProfile? targetProfile = null) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, sourceDialect),
             targetProvider,
             new SqlPlanValidationContext("policy-v1"),
-            new SqlExecutionPlanPolicy());
+            new SqlExecutionPlanPolicy(),
+            targetProfile);
 }

@@ -23,11 +23,13 @@ internal static class SqlCanonicalFunctionRegistry
             ["NULLIF"] = Scalar("NULLIF", 2),
 
             ["AVG"] = Aggregate("AVG", 1),
-            ["COUNT"] = WithPlanShapeRules(
-                Aggregate("COUNT", 1),
-                DistinctWildcardForbidden(
-                    0,
-                    "COUNT(DISTINCT *) is not a valid Core aggregate shape.")),
+            ["COUNT"] = WithNoFromWildcardArgument(
+                WithPlanShapeRules(
+                    Aggregate("COUNT", 1),
+                    DistinctWildcardForbidden(
+                        0,
+                        "COUNT(DISTINCT *) is not a valid Core aggregate shape.")),
+                0),
             ["MAX"] = Aggregate("MAX", 1),
             ["MIN"] = Aggregate("MIN", 1),
             ["SUM"] = Aggregate("SUM", 1),
@@ -94,11 +96,13 @@ internal static class SqlCanonicalFunctionRegistry
                     Scalar("CORE_JSON_SET", 3, directPortable: false),
                     SqlCanonicalTargetCapabilityFamily.Json),
                 SqlCanonicalNativeLoweringKind.JsonSet),
-            ["CORE_REGEX_MATCH"] = WithNativeLowering(
-                WithTargetMetadata(
-                    Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
-                    SqlCanonicalTargetCapabilityFamily.Regex),
-                SqlCanonicalNativeLoweringKind.RegexMatch),
+            ["CORE_REGEX_MATCH"] = WithResultKind(
+                WithNativeLowering(
+                    WithTargetMetadata(
+                        Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
+                        SqlCanonicalTargetCapabilityFamily.Regex),
+                    SqlCanonicalNativeLoweringKind.RegexMatch),
+                SqlCanonicalResultKind.RegexPredicate),
             ["CORE_CURRENT_DATE"] = WithNativeLowering(
                 WithCurrentTemporalTarget(
                     Scalar("CORE_CURRENT_DATE", 0, directPortable: false),
@@ -228,6 +232,16 @@ internal static class SqlCanonicalFunctionRegistry
         SqlCanonicalNativeLoweringKind nativeLoweringKind) =>
         contract with { NativeLoweringKind = nativeLoweringKind };
 
+    private static SqlCanonicalFunctionContract WithResultKind(
+        SqlCanonicalFunctionContract contract,
+        SqlCanonicalResultKind resultKind) =>
+        contract with { ResultKind = resultKind };
+
+    private static SqlCanonicalFunctionContract WithNoFromWildcardArgument(
+        SqlCanonicalFunctionContract contract,
+        int argumentIndex) =>
+        contract with { NoFromWildcardArgumentIndex = argumentIndex };
+
     private static SqlCanonicalFunctionContract WithCurrentTemporalTarget(
         SqlCanonicalFunctionContract contract,
         SqlCurrentTemporalKind currentTemporalKind) =>
@@ -280,6 +294,12 @@ internal enum SqlCanonicalFunctionKind
     Scalar,
     Aggregate,
     Window
+}
+
+internal enum SqlCanonicalResultKind
+{
+    Unspecified,
+    RegexPredicate
 }
 
 internal enum SqlCanonicalTargetCapabilityFamily
@@ -358,6 +378,11 @@ internal sealed record SqlCanonicalFunctionContract(
         SqlCanonicalNativeLoweringKind.Ordinary;
 
     internal SqlCurrentTemporalKind? CurrentTemporalKind { get; init; }
+
+    internal SqlCanonicalResultKind ResultKind { get; init; } =
+        SqlCanonicalResultKind.Unspecified;
+
+    internal int? NoFromWildcardArgumentIndex { get; init; }
 
     internal ImmutableArray<SqlCanonicalPlanShapeRule> PlanShapeRules { get; init; } =
         ImmutableArray<SqlCanonicalPlanShapeRule>.Empty;

@@ -87,26 +87,26 @@ internal static class CoreNoFromReferenceValidator
         }
 
         foreach (var item in select.Select)
-            ValidateNoFromExpression(item.Expression, provider, allowCountWildcard: false);
+            ValidateNoFromExpression(item.Expression, provider, allowNoFromWildcard: false);
         if (select.Where is not null)
-            ValidateNoFromExpression(select.Where, provider, allowCountWildcard: false);
+            ValidateNoFromExpression(select.Where, provider, allowNoFromWildcard: false);
         foreach (var expression in select.GroupBy)
-            ValidateNoFromExpression(expression, provider, allowCountWildcard: false);
+            ValidateNoFromExpression(expression, provider, allowNoFromWildcard: false);
         if (select.Having is not null)
-            ValidateNoFromExpression(select.Having, provider, allowCountWildcard: false);
+            ValidateNoFromExpression(select.Having, provider, allowNoFromWildcard: false);
 
         foreach (var item in select.OrderBy)
         {
             if (IsProjectionAliasReference(item.Expression, select, provider))
                 continue;
-            ValidateNoFromExpression(item.Expression, provider, allowCountWildcard: false);
+            ValidateNoFromExpression(item.Expression, provider, allowNoFromWildcard: false);
         }
     }
 
     private static void ValidateNoFromExpression(
         SqlExpr expression,
         SqlAgentToolType provider,
-        bool allowCountWildcard)
+        bool allowNoFromWildcard)
     {
         switch (expression)
         {
@@ -114,80 +114,83 @@ internal static class CoreNoFromReferenceValidator
             case IntervalExpr:
                 return;
             case ColumnExpr column:
-                ValidateNoFromColumn(column.Name, allowCountWildcard);
+                ValidateNoFromColumn(column.Name, allowNoFromWildcard);
                 return;
             case BoundColumnExpr column:
                 // A no-FROM subquery may legally correlate to an outer source. The binder records
                 // that distinction explicitly; only truly unbound scalar references are invalid.
                 // Wildcard projection remains non-portable even when an outer source exists, while
-                // COUNT(*) retains its well-defined singleton-row aggregate semantics.
+                // Canonical functions may explicitly declare a singleton no-FROM wildcard argument.
                 if (!IsWildcard(column.Name) && column.Source is not null)
                     return;
-                ValidateNoFromColumn(column.Name, allowCountWildcard);
+                ValidateNoFromColumn(column.Name, allowNoFromWildcard);
                 return;
             case UnaryExpr unary:
-                ValidateNoFromExpression(unary.Operand, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(unary.Operand, provider, allowNoFromWildcard: false);
                 return;
             case BinaryExpr binary:
-                ValidateNoFromExpression(binary.Left, provider, allowCountWildcard: false);
-                ValidateNoFromExpression(binary.Right, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(binary.Left, provider, allowNoFromWildcard: false);
+                ValidateNoFromExpression(binary.Right, provider, allowNoFromWildcard: false);
                 return;
             case FunctionCallExpr function:
             {
-                var isCountStar = IdentifierText(function.Name).Equals("COUNT", StringComparison.OrdinalIgnoreCase)
-                    && function.Arguments.Length == 1
-                    && IsUnqualifiedWildcard(function.Arguments[0]);
+                var functionName = IdentifierText(function.Name).ToUpperInvariant();
+                var wildcardArgumentIndex =
+                    SqlCanonicalFunctionRegistry.Find(functionName)?.NoFromWildcardArgumentIndex;
                 for (var i = 0; i < function.Arguments.Length; i++)
                 {
+                    var allowFunctionWildcard =
+                        wildcardArgumentIndex == i
+                        && IsUnqualifiedWildcard(function.Arguments[i]);
                     ValidateNoFromExpression(
                         function.Arguments[i],
                         provider,
-                        allowCountWildcard: isCountStar && i == 0);
+                        allowNoFromWildcard: allowFunctionWildcard);
                 }
                 foreach (var item in function.AggregateOrderBy)
                 {
                     ValidateNoFromExpression(
                         item.Expression,
                         provider,
-                        allowCountWildcard: false);
+                        allowNoFromWildcard: false);
                 }
                 return;
             }
             case FilterExpr filter:
-                ValidateNoFromExpression(filter.Expression, provider, allowCountWildcard: false);
-                ValidateNoFromExpression(filter.Predicate, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(filter.Expression, provider, allowNoFromWildcard: false);
+                ValidateNoFromExpression(filter.Predicate, provider, allowNoFromWildcard: false);
                 return;
             case WindowedExpr windowed:
-                ValidateNoFromExpression(windowed.Expression, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(windowed.Expression, provider, allowNoFromWildcard: false);
                 foreach (var partition in windowed.Window.PartitionBy)
-                    ValidateNoFromExpression(partition, provider, allowCountWildcard: false);
+                    ValidateNoFromExpression(partition, provider, allowNoFromWildcard: false);
                 foreach (var item in windowed.Window.OrderBy)
-                    ValidateNoFromExpression(item.Expression, provider, allowCountWildcard: false);
+                    ValidateNoFromExpression(item.Expression, provider, allowNoFromWildcard: false);
                 return;
             case CastExpr cast:
-                ValidateNoFromExpression(cast.Expression, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(cast.Expression, provider, allowNoFromWildcard: false);
                 return;
             case CaseExpr @case:
                 foreach (var branch in @case.Branches)
                 {
-                    ValidateNoFromExpression(branch.Condition, provider, allowCountWildcard: false);
-                    ValidateNoFromExpression(branch.Value, provider, allowCountWildcard: false);
+                    ValidateNoFromExpression(branch.Condition, provider, allowNoFromWildcard: false);
+                    ValidateNoFromExpression(branch.Value, provider, allowNoFromWildcard: false);
                 }
                 if (@case.ElseExpression is not null)
-                    ValidateNoFromExpression(@case.ElseExpression, provider, allowCountWildcard: false);
+                    ValidateNoFromExpression(@case.ElseExpression, provider, allowNoFromWildcard: false);
                 return;
             case InExpr @in:
-                ValidateNoFromExpression(@in.Value, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(@in.Value, provider, allowNoFromWildcard: false);
                 foreach (var item in @in.Items)
-                    ValidateNoFromExpression(item, provider, allowCountWildcard: false);
+                    ValidateNoFromExpression(item, provider, allowNoFromWildcard: false);
                 return;
             case BetweenExpr between:
-                ValidateNoFromExpression(between.Value, provider, allowCountWildcard: false);
-                ValidateNoFromExpression(between.Lower, provider, allowCountWildcard: false);
-                ValidateNoFromExpression(between.Upper, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(between.Value, provider, allowNoFromWildcard: false);
+                ValidateNoFromExpression(between.Lower, provider, allowNoFromWildcard: false);
+                ValidateNoFromExpression(between.Upper, provider, allowNoFromWildcard: false);
                 return;
             case IsNullExpr isNull:
-                ValidateNoFromExpression(isNull.Value, provider, allowCountWildcard: false);
+                ValidateNoFromExpression(isNull.Value, provider, allowNoFromWildcard: false);
                 return;
             case SubqueryExpr subquery:
                 Validate(subquery.Query, provider);
@@ -271,9 +274,9 @@ internal static class CoreNoFromReferenceValidator
         }
     }
 
-    private static void ValidateNoFromColumn(SqlIdentifier identifier, bool allowCountWildcard)
+    private static void ValidateNoFromColumn(SqlIdentifier identifier, bool allowNoFromWildcard)
     {
-        if (allowCountWildcard && IsUnqualifiedWildcard(identifier))
+        if (allowNoFromWildcard && IsUnqualifiedWildcard(identifier))
             return;
 
         throw new SqlCompilationException(
