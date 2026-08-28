@@ -96,13 +96,15 @@ internal static class SqlCanonicalFunctionRegistry
                     Scalar("CORE_JSON_SET", 3, directPortable: false),
                     SqlCanonicalTargetCapabilityFamily.Json),
                 SqlCanonicalNativeLoweringKind.JsonSet),
-            ["CORE_REGEX_MATCH"] = WithResultKind(
-                WithNativeLowering(
-                    WithTargetMetadata(
-                        Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
-                        SqlCanonicalTargetCapabilityFamily.Regex),
-                    SqlCanonicalNativeLoweringKind.RegexMatch),
-                SqlCanonicalResultKind.RegexPredicate),
+            ["CORE_REGEX_MATCH"] = WithProviderProfileRewrite(
+                WithResultKind(
+                    WithNativeLowering(
+                        WithTargetMetadata(
+                            Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
+                            SqlCanonicalTargetCapabilityFamily.Regex),
+                        SqlCanonicalNativeLoweringKind.RegexMatch),
+                    SqlCanonicalResultKind.RegexPredicate),
+                SqlCanonicalProviderProfileRewriteKind.Regex),
             ["CORE_CURRENT_DATE"] = WithNativeLowering(
                 WithCurrentTemporalTarget(
                     Scalar("CORE_CURRENT_DATE", 0, directPortable: false),
@@ -232,6 +234,11 @@ internal static class SqlCanonicalFunctionRegistry
         SqlCanonicalNativeLoweringKind nativeLoweringKind) =>
         contract with { NativeLoweringKind = nativeLoweringKind };
 
+    private static SqlCanonicalFunctionContract WithProviderProfileRewrite(
+        SqlCanonicalFunctionContract contract,
+        SqlCanonicalProviderProfileRewriteKind rewriteKind) =>
+        contract with { ProviderProfileRewriteKind = rewriteKind };
+
     private static SqlCanonicalFunctionContract WithResultKind(
         SqlCanonicalFunctionContract contract,
         SqlCanonicalResultKind resultKind) =>
@@ -294,6 +301,12 @@ internal enum SqlCanonicalFunctionKind
     Scalar,
     Aggregate,
     Window
+}
+
+internal enum SqlCanonicalProviderProfileRewriteKind
+{
+    None,
+    Regex
 }
 
 internal enum SqlCanonicalResultKind
@@ -381,6 +394,9 @@ internal sealed record SqlCanonicalFunctionContract(
 
     internal SqlCanonicalResultKind ResultKind { get; init; } =
         SqlCanonicalResultKind.Unspecified;
+
+    internal SqlCanonicalProviderProfileRewriteKind ProviderProfileRewriteKind { get; init; } =
+        SqlCanonicalProviderProfileRewriteKind.None;
 
     internal int? NoFromWildcardArgumentIndex { get; init; }
 
