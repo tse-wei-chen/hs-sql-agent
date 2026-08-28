@@ -52,44 +52,70 @@ internal static class SqlCanonicalFunctionRegistry
                 SqlCanonicalTargetCapabilityFamily.None,
                 PositiveInteger(0, "NTILE bucket count must be a positive integer.")),
 
-            ["CORE_DATE_ADD"] = WithTargetMetadata(
-                Scalar("CORE_DATE_ADD", 3, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.DateMath),
-            ["CORE_DATE_DIFF"] = WithTargetMetadata(
-                Scalar("CORE_DATE_DIFF", 3, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.DateMath),
-            ["CORE_DATE_PART"] = WithTargetMetadata(
-                Scalar("CORE_DATE_PART", 2, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.DatePart),
-            ["CORE_DATE_FORMAT"] = WithTargetMetadata(
-                Scalar("CORE_DATE_FORMAT", 2, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.TemporalFormat),
-            ["CORE_DATE_PARSE"] = WithTargetMetadata(
-                Scalar("CORE_DATE_PARSE", 2, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.TemporalFormat),
-            ["CORE_POSITION"] = Scalar("CORE_POSITION", 2, directPortable: false),
-            ["CORE_JSON_EXTRACT"] = WithTargetMetadata(
-                Scalar("CORE_JSON_EXTRACT", 2, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.Json),
-            ["CORE_JSON_SET"] = WithTargetMetadata(
-                Scalar("CORE_JSON_SET", 3, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.Json),
-            ["CORE_REGEX_MATCH"] = WithTargetMetadata(
-                Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
-                SqlCanonicalTargetCapabilityFamily.Regex),
-            ["CORE_CURRENT_DATE"] = Scalar("CORE_CURRENT_DATE", 0, directPortable: false),
-            ["CORE_CURRENT_TIME"] = Scalar("CORE_CURRENT_TIME", 0, directPortable: false),
-            ["CORE_CURRENT_TIMESTAMP"] = Scalar("CORE_CURRENT_TIMESTAMP", 0, directPortable: false),
-            ["CORE_STRING_AGG"] = new(
-                "CORE_STRING_AGG",
-                2,
-                2,
-                SqlCanonicalFunctionKind.Aggregate,
-                AllowDistinct: false,
-                AllowFilter: true,
-                AllowWindow: false,
-                RequireWindow: false,
-                IsDirectPortable: false)
+            ["CORE_DATE_ADD"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_DATE_ADD", 3, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.DateMath),
+                SqlCanonicalNativeLoweringKind.DateAdd),
+            ["CORE_DATE_DIFF"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_DATE_DIFF", 3, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.DateMath),
+                SqlCanonicalNativeLoweringKind.DateDiff),
+            ["CORE_DATE_PART"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_DATE_PART", 2, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.DatePart),
+                SqlCanonicalNativeLoweringKind.DatePart),
+            ["CORE_DATE_FORMAT"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_DATE_FORMAT", 2, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.TemporalFormat),
+                SqlCanonicalNativeLoweringKind.DateFormat),
+            ["CORE_DATE_PARSE"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_DATE_PARSE", 2, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.TemporalFormat),
+                SqlCanonicalNativeLoweringKind.DateParse),
+            ["CORE_POSITION"] = WithNativeLowering(
+                Scalar("CORE_POSITION", 2, directPortable: false),
+                SqlCanonicalNativeLoweringKind.Position),
+            ["CORE_JSON_EXTRACT"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_JSON_EXTRACT", 2, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.Json),
+                SqlCanonicalNativeLoweringKind.JsonExtract),
+            ["CORE_JSON_SET"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_JSON_SET", 3, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.Json),
+                SqlCanonicalNativeLoweringKind.JsonSet),
+            ["CORE_REGEX_MATCH"] = WithNativeLowering(
+                WithTargetMetadata(
+                    Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
+                    SqlCanonicalTargetCapabilityFamily.Regex),
+                SqlCanonicalNativeLoweringKind.RegexMatch),
+            ["CORE_CURRENT_DATE"] = WithNativeLowering(
+                Scalar("CORE_CURRENT_DATE", 0, directPortable: false),
+                SqlCanonicalNativeLoweringKind.CurrentDate),
+            ["CORE_CURRENT_TIME"] = WithNativeLowering(
+                Scalar("CORE_CURRENT_TIME", 0, directPortable: false),
+                SqlCanonicalNativeLoweringKind.CurrentTime),
+            ["CORE_CURRENT_TIMESTAMP"] = WithNativeLowering(
+                Scalar("CORE_CURRENT_TIMESTAMP", 0, directPortable: false),
+                SqlCanonicalNativeLoweringKind.CurrentTimestamp),
+            ["CORE_STRING_AGG"] = WithNativeLowering(
+                new(
+                    "CORE_STRING_AGG",
+                    2,
+                    2,
+                    SqlCanonicalFunctionKind.Aggregate,
+                    AllowDistinct: false,
+                    AllowFilter: true,
+                    AllowWindow: false,
+                    RequireWindow: false,
+                    IsDirectPortable: false),
+                SqlCanonicalNativeLoweringKind.StringAggregate)
         };
 
     internal static IEnumerable<SqlCanonicalFunctionContract> All =>
@@ -183,6 +209,11 @@ internal static class SqlCanonicalFunctionRegistry
             LiteralArgumentRules = literalArgumentRules.ToImmutableArray()
         };
 
+    private static SqlCanonicalFunctionContract WithNativeLowering(
+        SqlCanonicalFunctionContract contract,
+        SqlCanonicalNativeLoweringKind nativeLoweringKind) =>
+        contract with { NativeLoweringKind = nativeLoweringKind };
+
     private static SqlCanonicalLiteralArgumentRule PositiveInteger(
         int argumentIndex,
         string validationMessage) =>
@@ -216,6 +247,24 @@ internal enum SqlCanonicalTargetCapabilityFamily
     DateMath
 }
 
+internal enum SqlCanonicalNativeLoweringKind
+{
+    Ordinary,
+    DateAdd,
+    DateDiff,
+    DatePart,
+    DateFormat,
+    DateParse,
+    Position,
+    JsonExtract,
+    JsonSet,
+    RegexMatch,
+    CurrentDate,
+    CurrentTime,
+    CurrentTimestamp,
+    StringAggregate
+}
+
 internal enum SqlCanonicalLiteralArgumentValidationKind
 {
     PositiveInteger,
@@ -245,6 +294,9 @@ internal sealed record SqlCanonicalFunctionContract(
         ImmutableArray<SqlCanonicalLiteralArgumentRule>.Empty;
 
     internal bool IsWindowFrameInsensitive { get; init; }
+
+    internal SqlCanonicalNativeLoweringKind NativeLoweringKind { get; init; } =
+        SqlCanonicalNativeLoweringKind.Ordinary;
 
     internal bool AcceptsArgumentCount(int argumentCount) =>
         argumentCount >= MinArguments && argumentCount <= MaxArguments;
