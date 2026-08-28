@@ -31,7 +31,9 @@ internal static class CoreDmlConflictTextParser
 
         if (!reader.MatchWord("CONFLICT"))
         {
-            if (sourceDialect == SqlAgentToolType.MySQL && reader.PeekWord("DUPLICATE"))
+            var sourceGrammar = SqlSourceDialectGrammarRules.For(sourceDialect);
+            if (sourceGrammar.SupportsOnDuplicateKeyUpsertSyntax
+                && reader.PeekWord("DUPLICATE"))
             {
                 throw CoreTokenReader.Error(
                     "MySQL ON DUPLICATE KEY UPDATE has no explicit conflict target, so Core cannot translate it to the deterministic portable ON CONFLICT contract.",

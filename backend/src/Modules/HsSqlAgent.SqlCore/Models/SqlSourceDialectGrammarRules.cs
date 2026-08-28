@@ -58,7 +58,8 @@ internal static class SqlSourceDialectGrammarRules
                     | SqlTypedTemporalLiteralKinds.Timestamp,
                 SupportsTypedTemporalZoneQualifier: true,
                 LexicalFeatures: SqlSourceLexicalFeatures.PostgresEscapeString
-                    | SqlSourceLexicalFeatures.PostgresDollarQuotedString),
+                    | SqlSourceLexicalFeatures.PostgresDollarQuotedString,
+                    SupportsOnDuplicateKeyUpsertSyntax: false),
 
             [SqlAgentToolType.MySQL] = new(
                 SqlAgentToolType.MySQL,
@@ -85,7 +86,8 @@ internal static class SqlSourceDialectGrammarRules
                     | SqlSourceLexicalFeatures.DashDashCommentRequiresSeparator
                     | SqlSourceLexicalFeatures.DoubleQuotedIdentifierRequiresAnsiMode
                     | SqlSourceLexicalFeatures.BacktickQuotedIdentifier
-                    | SqlSourceLexicalFeatures.BackslashSensitiveQuotedText),
+                    | SqlSourceLexicalFeatures.BackslashSensitiveQuotedText,
+                    SupportsOnDuplicateKeyUpsertSyntax: true),
 
             [SqlAgentToolType.MsSqlServer] = new(
                 SqlAgentToolType.MsSqlServer,
@@ -106,7 +108,8 @@ internal static class SqlSourceDialectGrammarRules
                 TypedTemporalLiteralKinds: SqlTypedTemporalLiteralKinds.None,
                 SupportsTypedTemporalZoneQualifier: false,
                 LexicalFeatures: SqlSourceLexicalFeatures.BracketQuotedIdentifier
-                    | SqlSourceLexicalFeatures.HashPrefixedIdentifier),
+                    | SqlSourceLexicalFeatures.HashPrefixedIdentifier,
+                    SupportsOnDuplicateKeyUpsertSyntax: false),
 
             [SqlAgentToolType.Sqlite] = new(
                 SqlAgentToolType.Sqlite,
@@ -127,7 +130,8 @@ internal static class SqlSourceDialectGrammarRules
                 TypedTemporalLiteralKinds: SqlTypedTemporalLiteralKinds.None,
                 SupportsTypedTemporalZoneQualifier: false,
                 LexicalFeatures: SqlSourceLexicalFeatures.BacktickQuotedIdentifier
-                    | SqlSourceLexicalFeatures.BracketQuotedIdentifier),
+                    | SqlSourceLexicalFeatures.BracketQuotedIdentifier,
+                    SupportsOnDuplicateKeyUpsertSyntax: false),
 
             [SqlAgentToolType.Oracle] = new(
                 SqlAgentToolType.Oracle,
@@ -149,7 +153,8 @@ internal static class SqlSourceDialectGrammarRules
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Timestamp,
                 SupportsTypedTemporalZoneQualifier: false,
-                LexicalFeatures: SqlSourceLexicalFeatures.OracleQuotedString),
+                LexicalFeatures: SqlSourceLexicalFeatures.OracleQuotedString,
+                SupportsOnDuplicateKeyUpsertSyntax: false),
 
             [SqlAgentToolType.Firebird] = new(
                 SqlAgentToolType.Firebird,
@@ -172,7 +177,8 @@ internal static class SqlSourceDialectGrammarRules
                     | SqlTypedTemporalLiteralKinds.Time
                     | SqlTypedTemporalLiteralKinds.Timestamp,
                 SupportsTypedTemporalZoneQualifier: false,
-                LexicalFeatures: SqlSourceLexicalFeatures.None)
+                LexicalFeatures: SqlSourceLexicalFeatures.None,
+                SupportsOnDuplicateKeyUpsertSyntax: false)
         };
 
     internal static IEnumerable<SqlSourceDialectGrammarContract> All => Contracts.Values;
@@ -219,7 +225,8 @@ internal sealed record SqlSourceDialectGrammarContract(
     bool SupportsBareBooleanKeywords,
     SqlTypedTemporalLiteralKinds TypedTemporalLiteralKinds,
     bool SupportsTypedTemporalZoneQualifier,
-    SqlSourceLexicalFeatures LexicalFeatures)
+    SqlSourceLexicalFeatures LexicalFeatures,
+    bool SupportsOnDuplicateKeyUpsertSyntax)
 {
     internal bool SupportsLexicalFeature(SqlSourceLexicalFeatures feature) =>
         (LexicalFeatures & feature) != 0;
