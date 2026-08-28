@@ -331,19 +331,14 @@ module internal FunctionalSqlTextParser =
         let normalizedTokens =
             CommaFromNormalizer.Normalize(normalizedTokens)
 
-        let nullableTop =
-            match topLimit with
-            | Some value -> Nullable<int>(value)
-            | None -> Nullable<int>()
-
         let statement =
-            CoreQueryTextParser(
-                CoreTokenReader(normalizedTokens),
-                sourceDialect,
-                usesMySqlNoBackslashEscapes
+            FunctionalQueryTextParser.parseComplete
+                (CoreTokenReader(normalizedTokens))
+                sourceDialect
+                (usesMySqlNoBackslashEscapes
                     sourceDialect
                     sourceProfile)
-                .ParseComplete(nullableTop)
+                topLimit
 
         ParsedStatement(
             statement,

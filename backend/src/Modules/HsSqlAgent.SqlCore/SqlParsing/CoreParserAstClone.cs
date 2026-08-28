@@ -6,6 +6,21 @@ namespace HsSqlAgent.SqlCore.SqlParsing;
 /// </summary>
 internal static class CoreParserAstClone
 {
+    internal static SelectStatement CompleteSelect(
+        SelectStatement source,
+        System.Collections.Immutable.ImmutableArray<OrderByItem> orderBy,
+        int? limit,
+        int? offset,
+        SourceSpan span) =>
+        source with
+        {
+            OrderBy = orderBy,
+            Limit = limit,
+            Offset = offset,
+            Span = span
+        };
+
+
     internal static SqlStatement AttachInsertConflict(
         SqlStatement statement,
         InsertConflictClause? conflict)

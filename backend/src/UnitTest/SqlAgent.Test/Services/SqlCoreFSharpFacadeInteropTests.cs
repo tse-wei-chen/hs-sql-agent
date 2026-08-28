@@ -532,6 +532,118 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    public static IEnumerable<object[]> QueryGrammarCompileParityCases()
+    {
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "SELECT id FROM users ORDER BY id LIMIT 3 OFFSET 1"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.MySQL,
+            "SELECT id FROM users ORDER BY id LIMIT 1, 3"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.MsSqlServer,
+            "SELECT id FROM users ORDER BY id OFFSET 1 ROWS FETCH NEXT 3 ROWS ONLY"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.Oracle,
+            "SELECT id FROM users ORDER BY id OFFSET 1 ROWS FETCH NEXT 3 ROWS ONLY"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.Firebird,
+            "SELECT id FROM users ORDER BY id OFFSET 1 ROWS FETCH NEXT 3 ROWS ONLY"
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(QueryGrammarCompileParityCases))]
+    public void Facade_FunctionalQueryGrammar_MatchesLegacyRowTails(
+        SqlAgentToolType sourceDialect,
+        string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-query-grammar-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                CoreSqlTextParser.ParseQuery(sql, sourceDialect),
+                sourceDialect,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            sourceDialect,
+            sourceDialect,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    public static IEnumerable<object[]> QueryGrammarFailureParityCases()
+    {
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "WITH RECURSIVE x AS (SELECT id FROM users) SELECT id FROM x"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "SELECT d.id FROM (SELECT id FROM users)"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "SELECT u.id FROM users u CROSS JOIN roles r ON r.id = u.role_id"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "SELECT u.id FROM users u JOIN roles r USING (id)"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "SELECT id FROM users INTERSECT ALL SELECT user_id FROM audit_log"
+        };
+        yield return new object[]
+        {
+            SqlAgentToolType.MsSqlServer,
+            "SELECT id FROM users OFFSET 1 ROWS"
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(QueryGrammarFailureParityCases))]
+    public void Facade_FunctionalQueryGrammar_MatchesLegacyFailures(
+        SqlAgentToolType sourceDialect,
+        string sql)
+    {
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlTextParser.ParseQuery(sql, sourceDialect));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.ParseQuery(sql, sourceDialect));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {
