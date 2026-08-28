@@ -47,7 +47,7 @@ internal static class CoreProviderProfileRewriter
 
     private static bool RequiresProviderProfilePass(
         SqlAgentToolType provider) =>
-        SqlOffsetTimestampCapabilityRules.RequiresTargetProfileValidation(provider)
+        SqlFirebirdTimeZoneTypeCapabilityRules.RequiresTargetProfileValidation(provider)
         || SqlFirebirdDecimalCapabilityRules.RequiresTargetProfileValidation(provider)
         || SqlConcatCapabilityRules.RequiresTargetProfileRewrite(provider)
         || SqlRegexCapabilityRules.RequiresTargetProfileRewrite(provider);
@@ -70,6 +70,7 @@ internal static class CoreProviderProfileRewriter
             expression switch
             {
                 LiteralExpr literal => RewriteLiteral(literal),
+                CastExpr cast => RewriteCast(cast),
                 BinaryExpr binary => RewriteBinary(binary),
                 FunctionCallExpr function => RewriteFunction(function),
                 _ => expression
@@ -97,6 +98,18 @@ internal static class CoreProviderProfileRewriter
             }
 
             return literal;
+        }
+
+        private CastExpr RewriteCast(CastExpr cast)
+        {
+            var error = SqlFirebirdTimeZoneTypeCapabilityRules.CastTargetValidationError(
+                _targetProvider,
+                _targetProfile,
+                cast.TypeName);
+            if (error is not null)
+                throw new SqlCompilationException(error);
+
+            return cast;
         }
 
         private BinaryExpr RewriteBinary(BinaryExpr binary)
