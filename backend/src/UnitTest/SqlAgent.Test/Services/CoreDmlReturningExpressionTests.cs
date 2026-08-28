@@ -81,7 +81,7 @@ public sealed class CoreDmlReturningExpressionTests
     }
 
     [Fact]
-    public void Compile_LiteralBearingExpressionReturning_FailsClosedAfterDetectingNewBinding()
+    public void Compile_LiteralBearingExpressionReturning_IsParameterizedInsideNativeDmlFragment()
     {
         var parsed = CoreSqlTextParser.ParseDml(
             "DELETE FROM users WHERE id = 1 RETURNING id",
@@ -89,18 +89,18 @@ public sealed class CoreDmlReturningExpressionTests
         var expression = new BinaryExpr(
             new ColumnExpr(SqlIdentifier.Unquoted("id", SourceSpan.Unknown), SourceSpan.Unknown),
             "+",
-            new LiteralExpr(1, SourceSpan.Unknown),
+            new LiteralExpr(2, SourceSpan.Unknown),
             SourceSpan.Unknown);
         parsed = WithExpression(parsed, expression, null);
 
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
-                parsed,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("policy-v1")));
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
 
-        Assert.Contains("parameter finalization", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(command.ReturnsRows);
+        Assert.DoesNotContain(" + 2", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(new object?[] { 1, 2 }, command.Parameters.Select(x => x.Value).ToArray());
     }
 
     [Fact]

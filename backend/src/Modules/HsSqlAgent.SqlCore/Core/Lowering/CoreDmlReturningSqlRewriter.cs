@@ -4,10 +4,9 @@ using HsSqlAgent.SqlCore.Core.Execution;
 namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
-/// Adds DML result-row clauses after provider-specific mutation lowering. Portable target-column and
-/// wildcard items use the existing cross-provider RETURNING contract. Richer expression items are a
-/// separate capability and currently lower only for PostgreSQL when rendering introduces no new
-/// runtime bindings after native parameter finalization.
+/// Finalizes the DML result-row contract after native lowering. Ordinary RETURNING clauses are now
+/// rendered inside the native DML fragment before parameter finalization; INSERT conflict clauses
+/// still use the historical post-conflict RETURNING path until conflict lowering moves native too.
 /// </summary>
 internal static class CoreDmlReturningSqlRewriter
 {
@@ -31,11 +30,34 @@ internal static class CoreDmlReturningSqlRewriter
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
 
+        var alreadyRendered = command.Sql.Contains(
+            " RETURNING ",
+            StringComparison.OrdinalIgnoreCase);
+        if (alreadyRendered)
+            return MarkReturnsRows(command, policyVersion);
+
+        // INSERT conflict lowering still runs after native parameter finalization. Until that path
+        // becomes native, only binding-free RETURNING items may be appended here.
         var projection = string.Join(", ", returning.Select(item =>
-            RenderProjectionItem(item, command.TargetProvider)));
+            RenderPostFinalizationProjectionItem(item, command.TargetProvider)));
         var rewritten = command with
         {
             Sql = command.Sql.TrimEnd().TrimEnd(';') + " RETURNING " + projection,
+            ReturnsRows = true,
+            PlanFingerprint = string.Empty
+        };
+        return rewritten with
+        {
+            PlanFingerprint = DmlFingerprintService.ComputePlanFingerprint(rewritten, policyVersion)
+        };
+    }
+
+    private static CompiledSqlCommand MarkReturnsRows(
+        CompiledSqlCommand command,
+        string policyVersion)
+    {
+        var rewritten = command with
+        {
             ReturnsRows = true,
             PlanFingerprint = string.Empty
         };
@@ -53,7 +75,7 @@ internal static class CoreDmlReturningSqlRewriter
         _ => ImmutableArray<DmlReturningItem>.Empty
     };
 
-    private static string RenderProjectionItem(
+    private static string RenderPostFinalizationProjectionItem(
         DmlReturningItem item,
         SqlAgentToolType provider) => item switch
     {
@@ -62,12 +84,12 @@ internal static class CoreDmlReturningSqlRewriter
             provider,
             allowWildcard: false),
         DmlReturningWildcardItem => "*",
-        DmlReturningExpressionItem expression => RenderExpressionItem(expression, provider),
+        DmlReturningExpressionItem expression => RenderPostFinalizationExpression(expression, provider),
         _ => throw new InvalidOperationException(
             $"Unsupported DML returning projection item {item.GetType().Name}.")
     };
 
-    private static string RenderExpressionItem(
+    private static string RenderPostFinalizationExpression(
         DmlReturningExpressionItem item,
         SqlAgentToolType provider)
     {
@@ -86,7 +108,7 @@ internal static class CoreDmlReturningSqlRewriter
         if (!fragment.Bindings.IsDefaultOrEmpty)
         {
             throw new SqlCompilationException(
-                $"SQL capability '{SqlDmlReturningExpressionCapabilityRules.CapabilityId}' cannot append runtime bindings after native parameter finalization. Literal-bearing RETURNING expressions remain fail-closed until RETURNING lowering moves before parameter finalization.");
+                $"SQL capability '{SqlDmlReturningExpressionCapabilityRules.CapabilityId}' cannot append runtime bindings after native parameter finalization when INSERT conflict lowering is still post-native. Literal-bearing RETURNING expressions with ON CONFLICT remain fail-closed until conflict lowering moves into the native renderer.");
         }
 
         if (item.Alias is null)

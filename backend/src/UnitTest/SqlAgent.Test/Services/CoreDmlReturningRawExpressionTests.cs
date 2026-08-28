@@ -36,19 +36,20 @@ public sealed class CoreDmlReturningRawExpressionTests
     }
 
     [Fact]
-    public void Compile_PostgresRawReturningLiteralExpression_RemainsFailClosedUntilParameterizationMovesEarlier()
+    public void Compile_PostgresRawReturningLiteralExpression_ParameterizesInsideNativeDmlFragment()
     {
         var parsed = CoreSqlTextParser.ParseDml(
-            "DELETE FROM users WHERE id = 1 RETURNING id + 1",
+            "DELETE FROM users WHERE id = 1 RETURNING id + 2",
             SqlAgentToolType.Postgres);
 
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
-                parsed,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("policy-v1")));
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
 
-        Assert.Contains("parameter finalization", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(command.ReturnsRows);
+        Assert.DoesNotContain(" + 2", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(new object?[] { 1, 2 }, command.Parameters.Select(x => x.Value).ToArray());
     }
 
     [Fact]
