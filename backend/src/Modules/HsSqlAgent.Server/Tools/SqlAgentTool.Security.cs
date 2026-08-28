@@ -36,9 +36,14 @@ public partial class SqlAgentTool
 
     private void ValidateToolAccess(string? toolName = null)
     {
-        var context = _httpContextAccessor.HttpContext;
-        if (context == null) return;
-        var allowedTools = context.Items[McpContextItemKeys.AllowedTools] as string;
+        var context = _httpContextAccessor.HttpContext
+            ?? throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
+        if (!context.Items.TryGetValue(McpContextItemKeys.AllowedTools, out var allowedToolsValue))
+        {
+            throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
+        }
+
+        var allowedTools = allowedToolsValue?.ToString();
         if (string.IsNullOrWhiteSpace(allowedTools)) return;
         var isAllowed = allowedTools
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
