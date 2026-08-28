@@ -359,9 +359,6 @@ module internal FunctionalDmlConflictParser =
         (sourceServerVersion: Version | null)
         : struct (Token array * InsertConflictClause option) =
 
-        if isNull tokens then
-            raise (ArgumentNullException("tokens"))
-
         if isFirebirdUpdateOrInsertStart tokens then
             let struct (normalized, conflict) =
                 extractFirebirdUpdateOrInsert
