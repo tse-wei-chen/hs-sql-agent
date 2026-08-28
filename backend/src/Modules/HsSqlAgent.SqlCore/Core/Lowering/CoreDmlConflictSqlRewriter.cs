@@ -25,29 +25,18 @@ internal static class CoreDmlConflictSqlRewriter
         if (insert.Conflict is null)
             return command;
 
-        ValidatePortableShape(insert, command.TargetProvider);
+        ValidatePortableShape(insert, command.TargetProvider, conflictTargetAssurance);
         if (command.TargetProvider == SqlAgentToolType.Firebird)
         {
-            return RewriteFirebird(
-                command,
-                insert,
-                conflictTargetAssurance,
-                policyVersion);
+            return RewriteFirebird(command, insert, conflictTargetAssurance, policyVersion);
         }
         if (command.TargetProvider == SqlAgentToolType.MySQL)
         {
-            return RewriteMySql(
-                command,
-                insert,
-                targetProfile,
-                conflictTargetAssurance,
-                policyVersion);
+            return RewriteMySql(command, insert, targetProfile, conflictTargetAssurance, policyVersion);
         }
 
         ValidateTargetContract(command.TargetProvider, targetProfile);
-        var suffix = RenderOnConflictSuffix(
-            insert.Conflict,
-            command.TargetProvider);
+        var suffix = RenderOnConflictSuffix(insert.Conflict, command.TargetProvider);
         return RecomputeFingerprint(
             command with
             {
@@ -82,10 +71,7 @@ internal static class CoreDmlConflictSqlRewriter
         }
 
         var matching = string.Join(", ", conflict.TargetColumns.Select(column =>
-            CoreIdentifierSqlRenderer.Render(
-                column,
-                SqlAgentToolType.Firebird,
-                allowWildcard: false)));
+            CoreIdentifierSqlRenderer.Render(column, SqlAgentToolType.Firebird, allowWildcard: false)));
         var rewritten = command with
         {
             Sql = "UPDATE OR " + sql + $" MATCHING ({matching})",
@@ -111,9 +97,7 @@ internal static class CoreDmlConflictSqlRewriter
 
         ValidateMySqlUniqueKeyTarget(conflict, assurance);
 
-        var capabilityError =
-            SqlDmlUpsertCapabilityRules.MySqlConditionalTargetValidationError(
-                targetProfile);
+        var capabilityError = SqlDmlUpsertCapabilityRules.MySqlConditionalTargetValidationError(targetProfile);
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
 
@@ -123,15 +107,9 @@ internal static class CoreDmlConflictSqlRewriter
             SqlAgentToolType.MySQL,
             allowWildcard: false);
         var assignments = string.Join(", ", conflict.Assignments.Select(assignment =>
-            CoreIdentifierSqlRenderer.Render(
-                assignment.Column,
-                SqlAgentToolType.MySQL,
-                allowWildcard: false)
+            CoreIdentifierSqlRenderer.Render(assignment.Column, SqlAgentToolType.MySQL, allowWildcard: false)
             + " = " + alias + "."
-            + CoreIdentifierSqlRenderer.Render(
-                assignment.ProposedColumn,
-                SqlAgentToolType.MySQL,
-                allowWildcard: false)));
+            + CoreIdentifierSqlRenderer.Render(assignment.ProposedColumn, SqlAgentToolType.MySQL, allowWildcard: false)));
         var sql = command.Sql.TrimEnd().TrimEnd(';');
         var rewritten = command with
         {
@@ -156,11 +134,8 @@ internal static class CoreDmlConflictSqlRewriter
                 "MySQL ON DUPLICATE KEY UPDATE can react to any UNIQUE or PRIMARY KEY conflict. Core requires the matched conflict target to be the sole enforced native unique-conflict source, including no additional richer expression, prefix, partial, or otherwise unsupported enforced unique keys.");
         }
 
-        var target = conflict.TargetColumns
-            .Select(RequireSinglePart)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var matchedKey = assurance.MatchedUniqueKeyColumns
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var target = conflict.TargetColumns.Select(RequireSinglePart).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var matchedKey = assurance.MatchedUniqueKeyColumns.ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (target.Count != conflict.TargetColumns.Length
             || matchedKey.Count != assurance.MatchedUniqueKeyColumns.Length
             || !target.SetEquals(matchedKey))
@@ -189,11 +164,8 @@ internal static class CoreDmlConflictSqlRewriter
                 "Firebird UPDATE OR INSERT requires metadata-backed conflict-target assurance proving MATCHING equals the resolved primary key; absent assurance remains fail-closed because non-unique MATCHING can update multiple rows.");
         }
 
-        var target = conflict.TargetColumns
-            .Select(RequireSinglePart)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var primaryKey = assurance.PrimaryKeyColumns
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var target = conflict.TargetColumns.Select(RequireSinglePart).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var primaryKey = assurance.PrimaryKeyColumns.ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (target.Count != conflict.TargetColumns.Length
             || primaryKey.Count != assurance.PrimaryKeyColumns.Length
             || !target.SetEquals(primaryKey))
@@ -213,9 +185,7 @@ internal static class CoreDmlConflictSqlRewriter
                 "Firebird UPDATE OR INSERT updates every supplied INSERT column on a match. Core therefore requires one same-column proposed-row assignment for every INSERT column so partial-update semantics cannot drift.");
         }
 
-        var insertColumns = insert.Columns
-            .Select(RequireSinglePart)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var insertColumns = insert.Columns.Select(RequireSinglePart).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var assignment in conflict.Assignments)
         {
@@ -245,42 +215,33 @@ internal static class CoreDmlConflictSqlRewriter
         SqlAgentToolType provider)
     {
         var targets = string.Join(", ", conflict.TargetColumns.Select(column =>
-            CoreIdentifierSqlRenderer.Render(
-                column,
-                provider,
-                allowWildcard: false)));
+            CoreIdentifierSqlRenderer.Render(column, provider, allowWildcard: false)));
         if (conflict.Action == InsertConflictActionKind.DoNothing)
             return $" ON CONFLICT ({targets}) DO NOTHING";
 
         var assignments = string.Join(", ", conflict.Assignments.Select(assignment =>
-            CoreIdentifierSqlRenderer.Render(
-                assignment.Column,
-                provider,
-                allowWildcard: false)
+            CoreIdentifierSqlRenderer.Render(assignment.Column, provider, allowWildcard: false)
             + " = EXCLUDED."
-            + CoreIdentifierSqlRenderer.Render(
-                assignment.ProposedColumn,
-                provider,
-                allowWildcard: false)));
+            + CoreIdentifierSqlRenderer.Render(assignment.ProposedColumn, provider, allowWildcard: false)));
         return $" ON CONFLICT ({targets}) DO UPDATE SET {assignments}";
     }
 
     private static void ValidatePortableShape(
         InsertStatement insert,
-        SqlAgentToolType targetProvider)
+        SqlAgentToolType targetProvider,
+        DmlConflictTargetAssurance? assurance)
     {
         var conflict = insert.Conflict
             ?? throw new SqlCompilationException("INSERT conflict contract is missing.");
         var values = insert.Source as InsertValuesSource;
-        if (values is null)
+        var querySource = insert.Source as InsertQuerySource;
+        if (values is null && querySource is null)
+            throw new SqlCompilationException("Unsupported INSERT source for conflict handling.");
+
+        if (querySource is not null && targetProvider != SqlAgentToolType.Postgres)
         {
-            if (insert.Source is not InsertQuerySource
-                || targetProvider != SqlAgentToolType.Postgres
-                || conflict.Action != InsertConflictActionKind.DoNothing)
-            {
-                throw new SqlCompilationException(
-                    "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL ON CONFLICT DO NOTHING; DO UPDATE and other targets remain fail-closed until source-row uniqueness/cardinality is modeled.");
-            }
+            throw new SqlCompilationException(
+                "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL targets; other targets remain fail-closed.");
         }
 
         if (conflict.TargetColumns.IsDefaultOrEmpty)
@@ -313,10 +274,13 @@ internal static class CoreDmlConflictSqlRewriter
             throw new SqlCompilationException($"Unsupported INSERT conflict action {conflict.Action}.");
         if (conflict.Assignments.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT conflict DO UPDATE requires at least one assignment.");
-        if (values is null || values.Rows.Length != 1)
+
+        if (querySource is not null)
+            ValidateInsertSelectUpdateAssurance(conflict, assurance);
+        else if (values!.Rows.Length != 1)
         {
             throw new SqlCompilationException(
-                "Portable INSERT conflict DO UPDATE currently requires exactly one proposed VALUES row. INSERT ... SELECT requires source-row uniqueness/cardinality assurance before update semantics can be proven.");
+                "Portable INSERT conflict DO UPDATE currently requires exactly one proposed VALUES row. Multi-row proposed values require explicit source-row uniqueness/cardinality assurance.");
         }
 
         var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -331,6 +295,27 @@ internal static class CoreDmlConflictSqlRewriter
                 throw new SqlCompilationException(
                     $"Proposed-row column '{proposed}' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values.");
             }
+        }
+    }
+
+    private static void ValidateInsertSelectUpdateAssurance(
+        InsertConflictClause conflict,
+        DmlConflictTargetAssurance? assurance)
+    {
+        if (assurance is null || assurance.SourceRowsUniqueByInsertColumns.IsDefaultOrEmpty)
+        {
+            throw new SqlCompilationException(
+                "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target.");
+        }
+
+        var target = conflict.TargetColumns.Select(RequireSinglePart).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var proven = assurance.SourceRowsUniqueByInsertColumns.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (target.Count != conflict.TargetColumns.Length
+            || proven.Count != assurance.SourceRowsUniqueByInsertColumns.Length
+            || !target.SetEquals(proven))
+        {
+            throw new SqlCompilationException(
+                "INSERT ... SELECT conflict DO UPDATE requires source-row uniqueness assurance to match the complete explicit conflict target exactly.");
         }
     }
 
@@ -356,9 +341,7 @@ internal static class CoreDmlConflictSqlRewriter
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? targetProfile)
     {
-        var error = SqlDmlUpsertCapabilityRules.DirectTargetValidationError(
-            provider,
-            targetProfile);
+        var error = SqlDmlUpsertCapabilityRules.DirectTargetValidationError(provider, targetProfile);
         if (error is not null)
             throw new SqlCompilationException(error);
     }
