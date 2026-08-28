@@ -28,40 +28,12 @@ internal static class CoreProviderCapabilityRules
     public static void ValidateFunction(FunctionCallExpr function, SqlAgentToolType provider)
     {
         var name = IdentifierText(function.Name).ToUpperInvariant();
-        switch (name)
-        {
-            case "NTH_VALUE":
-                ValidateWindowFunctionCapability(name, provider);
-                break;
+        var contract = SqlCanonicalFunctionRegistry.Find(name);
+        if (contract is null)
+            return;
 
-            case "CORE_DATE_FORMAT":
-            case "CORE_DATE_PARSE":
-                ValidateTemporalFormatCapability(name, provider);
-                break;
-
-            case "CORE_JSON_EXTRACT":
-            case "CORE_JSON_SET":
-                ValidateJsonCapability(name, provider);
-                break;
-
-            case "CORE_REGEX_MATCH":
-                ValidateRegexCapability(provider);
-                break;
-
-            case "CORE_DATE_PART":
-                ValidateDatePart(function, provider);
-                break;
-
-            case "CORE_DATE_ADD":
-            case "CORE_DATE_DIFF":
-                ValidateDateMathUnit(function, provider, name);
-                break;
-        }
-
-        if (name is "CORE_JSON_EXTRACT" or "CORE_JSON_SET")
-            ValidateJsonPath(function, provider, name);
-
-        ValidateLiteralWindowArgument(name, function, provider);
+        ValidateTargetCapability(contract, function, provider);
+        ValidateLiteralArgumentRules(contract, function, provider);
     }
 
     public static void ValidateWindow(WindowedExpr windowed, SqlAgentToolType provider)
@@ -81,6 +53,86 @@ internal static class CoreProviderCapabilityRules
             provider);
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
+    }
+
+    private static void ValidateTargetCapability(
+        SqlCanonicalFunctionContract contract,
+        FunctionCallExpr function,
+        SqlAgentToolType provider)
+    {
+        switch (contract.TargetCapabilityFamily)
+        {
+            case SqlCanonicalTargetCapabilityFamily.None:
+                return;
+            case SqlCanonicalTargetCapabilityFamily.WindowFunction:
+                ValidateWindowFunctionCapability(contract.Name, provider);
+                return;
+            case SqlCanonicalTargetCapabilityFamily.TemporalFormat:
+                ValidateTemporalFormatCapability(contract.Name, provider);
+                return;
+            case SqlCanonicalTargetCapabilityFamily.Json:
+                ValidateJsonCapability(contract.Name, provider);
+                ValidateJsonPath(function, provider, contract.Name);
+                return;
+            case SqlCanonicalTargetCapabilityFamily.Regex:
+                ValidateRegexCapability(provider);
+                return;
+            case SqlCanonicalTargetCapabilityFamily.DatePart:
+                ValidateDatePart(function, provider);
+                return;
+            case SqlCanonicalTargetCapabilityFamily.DateMath:
+                ValidateDateMathUnit(function, provider, contract.Name);
+                return;
+            default:
+                throw new SqlCompilationException(
+                    $"Unsupported canonical target capability family '{contract.TargetCapabilityFamily}' for function '{contract.Name}'.");
+        }
+    }
+
+    private static void ValidateLiteralArgumentRules(
+        SqlCanonicalFunctionContract contract,
+        FunctionCallExpr function,
+        SqlAgentToolType provider)
+    {
+        foreach (var rule in contract.LiteralArgumentRules)
+        {
+            if (rule.ArgumentIndex < 0)
+            {
+                throw new SqlCompilationException(
+                    $"Canonical function '{contract.Name}' declares an invalid literal argument index {rule.ArgumentIndex}.");
+            }
+
+            if (function.Arguments.Length <= rule.ArgumentIndex
+                || !TryIntegerLiteral(function.Arguments[rule.ArgumentIndex], out var value))
+            {
+                continue;
+            }
+
+            switch (rule.Kind)
+            {
+                case SqlCanonicalLiteralArgumentValidationKind.PositiveInteger:
+                    if (value <= 0)
+                    {
+                        throw new SqlCompilationException(
+                            rule.ValidationMessage
+                            ?? $"Canonical function '{contract.Name}' requires a positive integer argument.");
+                    }
+                    break;
+
+                case SqlCanonicalLiteralArgumentValidationKind.WindowOffset:
+                    var error = SqlWindowCapabilityRules.LiteralOffsetValidationError(
+                        contract.Name,
+                        value,
+                        provider);
+                    if (error is not null)
+                        throw new SqlCompilationException(error);
+                    break;
+
+                default:
+                    throw new SqlCompilationException(
+                        $"Unsupported canonical literal argument rule '{rule.Kind}' for function '{contract.Name}'.");
+            }
+        }
     }
 
     private static void ValidateWindowFunctionCapability(
@@ -171,40 +223,6 @@ internal static class CoreProviderCapabilityRules
             provider);
         if (error is not null)
             throw new SqlCompilationException(error);
-    }
-
-    private static void ValidateLiteralWindowArgument(
-        string name,
-        FunctionCallExpr function,
-        SqlAgentToolType provider)
-    {
-        if (name == "NTILE"
-            && function.Arguments.Length == 1
-            && TryIntegerLiteral(function.Arguments[0], out var buckets)
-            && buckets <= 0)
-        {
-            throw new SqlCompilationException("NTILE bucket count must be a positive integer.");
-        }
-
-        if (name == "NTH_VALUE"
-            && function.Arguments.Length >= 2
-            && TryIntegerLiteral(function.Arguments[1], out var nth)
-            && nth <= 0)
-        {
-            throw new SqlCompilationException("NTH_VALUE index must be a positive integer.");
-        }
-
-        if (name is "LAG" or "LEAD"
-            && function.Arguments.Length >= 2
-            && TryIntegerLiteral(function.Arguments[1], out var offset))
-        {
-            var error = SqlWindowCapabilityRules.LiteralOffsetValidationError(
-                name,
-                offset,
-                provider);
-            if (error is not null)
-                throw new SqlCompilationException(error);
-        }
     }
 
     private static FunctionCallExpr? DirectWindowFunction(SqlExpr expression) => expression switch

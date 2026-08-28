@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace HsSqlAgent.SqlCore.Models;
 
 /// <summary>
@@ -31,22 +33,50 @@ internal static class SqlCanonicalFunctionRegistry
             ["DENSE_RANK"] = Window("DENSE_RANK", 0),
             ["PERCENT_RANK"] = Window("PERCENT_RANK", 0),
             ["CUME_DIST"] = Window("CUME_DIST", 0),
-            ["LAG"] = Window("LAG", 1, 3),
-            ["LEAD"] = Window("LEAD", 1, 3),
+            ["LAG"] = WithTargetMetadata(
+                Window("LAG", 1, 3),
+                SqlCanonicalTargetCapabilityFamily.None,
+                WindowOffset(1)),
+            ["LEAD"] = WithTargetMetadata(
+                Window("LEAD", 1, 3),
+                SqlCanonicalTargetCapabilityFamily.None,
+                WindowOffset(1)),
             ["FIRST_VALUE"] = Window("FIRST_VALUE", 1),
             ["LAST_VALUE"] = Window("LAST_VALUE", 1),
-            ["NTH_VALUE"] = Window("NTH_VALUE", 2),
-            ["NTILE"] = Window("NTILE", 1),
+            ["NTH_VALUE"] = WithTargetMetadata(
+                Window("NTH_VALUE", 2),
+                SqlCanonicalTargetCapabilityFamily.WindowFunction,
+                PositiveInteger(1, "NTH_VALUE index must be a positive integer.")),
+            ["NTILE"] = WithTargetMetadata(
+                Window("NTILE", 1),
+                SqlCanonicalTargetCapabilityFamily.None,
+                PositiveInteger(0, "NTILE bucket count must be a positive integer.")),
 
-            ["CORE_DATE_ADD"] = Scalar("CORE_DATE_ADD", 3, directPortable: false),
-            ["CORE_DATE_DIFF"] = Scalar("CORE_DATE_DIFF", 3, directPortable: false),
-            ["CORE_DATE_PART"] = Scalar("CORE_DATE_PART", 2, directPortable: false),
-            ["CORE_DATE_FORMAT"] = Scalar("CORE_DATE_FORMAT", 2, directPortable: false),
-            ["CORE_DATE_PARSE"] = Scalar("CORE_DATE_PARSE", 2, directPortable: false),
+            ["CORE_DATE_ADD"] = WithTargetMetadata(
+                Scalar("CORE_DATE_ADD", 3, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.DateMath),
+            ["CORE_DATE_DIFF"] = WithTargetMetadata(
+                Scalar("CORE_DATE_DIFF", 3, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.DateMath),
+            ["CORE_DATE_PART"] = WithTargetMetadata(
+                Scalar("CORE_DATE_PART", 2, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.DatePart),
+            ["CORE_DATE_FORMAT"] = WithTargetMetadata(
+                Scalar("CORE_DATE_FORMAT", 2, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.TemporalFormat),
+            ["CORE_DATE_PARSE"] = WithTargetMetadata(
+                Scalar("CORE_DATE_PARSE", 2, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.TemporalFormat),
             ["CORE_POSITION"] = Scalar("CORE_POSITION", 2, directPortable: false),
-            ["CORE_JSON_EXTRACT"] = Scalar("CORE_JSON_EXTRACT", 2, directPortable: false),
-            ["CORE_JSON_SET"] = Scalar("CORE_JSON_SET", 3, directPortable: false),
-            ["CORE_REGEX_MATCH"] = Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
+            ["CORE_JSON_EXTRACT"] = WithTargetMetadata(
+                Scalar("CORE_JSON_EXTRACT", 2, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.Json),
+            ["CORE_JSON_SET"] = WithTargetMetadata(
+                Scalar("CORE_JSON_SET", 3, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.Json),
+            ["CORE_REGEX_MATCH"] = WithTargetMetadata(
+                Scalar("CORE_REGEX_MATCH", 2, directPortable: false),
+                SqlCanonicalTargetCapabilityFamily.Regex),
             ["CORE_CURRENT_DATE"] = Scalar("CORE_CURRENT_DATE", 0, directPortable: false),
             ["CORE_CURRENT_TIME"] = Scalar("CORE_CURRENT_TIME", 0, directPortable: false),
             ["CORE_CURRENT_TIMESTAMP"] = Scalar("CORE_CURRENT_TIMESTAMP", 0, directPortable: false),
@@ -137,6 +167,30 @@ internal static class SqlCanonicalFunctionRegistry
             AllowWindow: true,
             RequireWindow: true,
             IsDirectPortable: true);
+
+    private static SqlCanonicalFunctionContract WithTargetMetadata(
+        SqlCanonicalFunctionContract contract,
+        SqlCanonicalTargetCapabilityFamily targetCapabilityFamily,
+        params SqlCanonicalLiteralArgumentRule[] literalArgumentRules) =>
+        contract with
+        {
+            TargetCapabilityFamily = targetCapabilityFamily,
+            LiteralArgumentRules = literalArgumentRules.ToImmutableArray()
+        };
+
+    private static SqlCanonicalLiteralArgumentRule PositiveInteger(
+        int argumentIndex,
+        string validationMessage) =>
+        new(
+            argumentIndex,
+            SqlCanonicalLiteralArgumentValidationKind.PositiveInteger,
+            validationMessage);
+
+    private static SqlCanonicalLiteralArgumentRule WindowOffset(int argumentIndex) =>
+        new(
+            argumentIndex,
+            SqlCanonicalLiteralArgumentValidationKind.WindowOffset,
+            ValidationMessage: null);
 }
 
 internal enum SqlCanonicalFunctionKind
@@ -145,6 +199,28 @@ internal enum SqlCanonicalFunctionKind
     Aggregate,
     Window
 }
+
+internal enum SqlCanonicalTargetCapabilityFamily
+{
+    None,
+    WindowFunction,
+    TemporalFormat,
+    Json,
+    Regex,
+    DatePart,
+    DateMath
+}
+
+internal enum SqlCanonicalLiteralArgumentValidationKind
+{
+    PositiveInteger,
+    WindowOffset
+}
+
+internal sealed record SqlCanonicalLiteralArgumentRule(
+    int ArgumentIndex,
+    SqlCanonicalLiteralArgumentValidationKind Kind,
+    string? ValidationMessage);
 
 internal sealed record SqlCanonicalFunctionContract(
     string Name,
@@ -157,6 +233,12 @@ internal sealed record SqlCanonicalFunctionContract(
     bool RequireWindow,
     bool IsDirectPortable)
 {
+    internal SqlCanonicalTargetCapabilityFamily TargetCapabilityFamily { get; init; } =
+        SqlCanonicalTargetCapabilityFamily.None;
+
+    internal ImmutableArray<SqlCanonicalLiteralArgumentRule> LiteralArgumentRules { get; init; } =
+        ImmutableArray<SqlCanonicalLiteralArgumentRule>.Empty;
+
     internal bool AcceptsArgumentCount(int argumentCount) =>
         argumentCount >= MinArguments && argumentCount <= MaxArguments;
 }
