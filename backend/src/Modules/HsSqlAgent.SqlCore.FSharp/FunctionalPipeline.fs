@@ -293,7 +293,7 @@ module internal FunctionalPipeline =
             }
 
     let private bindDml (ParsedDml context) =
-        let bound = CoreDmlBinder().Bind(context.Parsed)
+        let bound = FunctionalDmlBinder.bind context.Parsed
 
         CoreJoinProfileValidator.Validate(
             bound.Statement,

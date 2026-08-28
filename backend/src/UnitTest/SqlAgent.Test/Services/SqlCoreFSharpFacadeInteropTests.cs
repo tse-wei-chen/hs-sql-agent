@@ -310,29 +310,55 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             yield return new object[]
             {
                 targetProvider,
-                "INSERT INTO users (id, name) VALUES (1, 'a')"
+                "INSERT INTO users (id, name) VALUES (1, 'a')",
+                new[] { "users" }
             };
             yield return new object[]
             {
                 targetProvider,
-                "UPDATE users SET name = 'b' WHERE id = 1"
+                "UPDATE users SET name = 'b' WHERE id = 1",
+                new[] { "users" }
             };
             yield return new object[]
             {
                 targetProvider,
-                "DELETE FROM users WHERE id = 1"
+                "DELETE FROM users WHERE id = 1",
+                new[] { "users" }
             };
         }
 
         yield return new object[]
         {
             SqlAgentToolType.Postgres,
-            "UPDATE users SET name = 'b' WHERE id = 1 RETURNING id"
+            "UPDATE users SET name = 'b' WHERE id = 1 RETURNING id",
+            new[] { "users" }
         };
         yield return new object[]
         {
             SqlAgentToolType.Postgres,
-            "INSERT INTO users (id, name) VALUES (1, 'a') ON CONFLICT (id) DO NOTHING RETURNING id"
+            "INSERT INTO users (id, name) VALUES (1, 'a') ON CONFLICT (id) DO NOTHING RETURNING id",
+            new[] { "users" }
+        };
+
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "INSERT INTO archive (id, name) SELECT id, name FROM users",
+            new[] { "archive", "users" }
+        };
+
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "UPDATE inventory SET quantity = quantity + 1 FROM warehouse WHERE inventory.id = warehouse.inventory_id",
+            new[] { "inventory", "warehouse" }
+        };
+
+        yield return new object[]
+        {
+            SqlAgentToolType.Postgres,
+            "DELETE FROM inventory USING warehouse WHERE inventory.id = warehouse.inventory_id AND warehouse.region_id = 7",
+            new[] { "inventory", "warehouse" }
         };
     }
 
@@ -340,11 +366,14 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     [MemberData(nameof(DmlParityCases))]
     public void Facade_FunctionalDmlPipeline_MatchesLegacyCompiler(
         SqlAgentToolType targetProvider,
-        string sql)
+        string sql,
+        string[] allowedTables)
     {
         var validation = new SqlPlanValidationContext(
             "fsharp-dml-typestate-v1",
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" });
+            new HashSet<string>(
+                allowedTables,
+                StringComparer.OrdinalIgnoreCase));
 
         var parsed = CoreSqlTextParser.ParseDml(
             sql,

@@ -149,6 +149,32 @@ internal static class CoreBindingAstClone
         SqlStatement query) =>
         source with { Query = query };
 
+    internal static Assignment Assignment(
+        Assignment source,
+        SqlExpr value) =>
+        source with { Value = value };
+
+    internal static UpdateStatement Update(
+        UpdateStatement source,
+        ImmutableArray<Assignment> assignments,
+        SqlExpr? predicate) =>
+        source with { Assignments = assignments, Predicate = predicate };
+
+    internal static DeleteStatement Delete(
+        DeleteStatement source,
+        SqlExpr? predicate) =>
+        source with { Predicate = predicate };
+
+    internal static InsertQuerySource InsertQuery(
+        InsertQuerySource source,
+        SqlStatement query) =>
+        source with { Query = query };
+
+    internal static InsertStatement Insert(
+        InsertStatement source,
+        InsertSource insertSource) =>
+        source with { Source = insertSource };
+
     internal static ExistsExpr Exists(
         ExistsExpr source,
         SqlStatement query) =>
