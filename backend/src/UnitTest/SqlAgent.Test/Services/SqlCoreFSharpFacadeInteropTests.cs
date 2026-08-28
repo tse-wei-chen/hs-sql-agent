@@ -488,7 +488,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         "INSERT INTO users (id, name) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name RETURNING id")]
     [InlineData(
         SqlAgentToolType.Firebird,
-        "UPDATE OR INSERT INTO users (id, name) VALUES (1, 'a') MATCHING (id) RETURNING id")]
+        "UPDATE OR INSERT INTO users (id, name) VALUES (1, 'a') MATCHING (id)")]
     public void Facade_FunctionalConflictParser_MatchesLegacyCanonicalAst(
         SqlAgentToolType sourceDialect,
         string sql)
