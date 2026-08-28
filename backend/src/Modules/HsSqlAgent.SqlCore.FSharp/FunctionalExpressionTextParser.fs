@@ -69,17 +69,24 @@ module internal FunctionalExpressionTextParser =
             || value = "<="
 
         member private _.ParseNumber(value: string) : obj | null =
-            let mutable integer = 0
+            let isIntegerSpelling =
+                value.IndexOf('.') < 0
+                && value.IndexOf('e') < 0
+                && value.IndexOf('E') < 0
 
-            if value.IndexOf('.') < 0
-               && value.IndexOf('e') < 0
-               && value.IndexOf('E') < 0
-               && Int32.TryParse(
+            if isIntegerSpelling then
+                match Int32.TryParse(
                     value,
                     NumberStyles.Integer,
-                    CultureInfo.InvariantCulture,
-                    &integer) then
-                box integer
+                    CultureInfo.InvariantCulture) with
+                | true, integer ->
+                    box integer
+                | false, _ ->
+                    box (
+                        Decimal.Parse(
+                            value,
+                            NumberStyles.Float,
+                            CultureInfo.InvariantCulture))
             else
                 box (
                     Decimal.Parse(

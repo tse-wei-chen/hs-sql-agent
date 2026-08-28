@@ -729,6 +729,9 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             policy);
 
         Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(
+            legacy.Parameters.Select(p => p.Value?.GetType()).ToArray(),
+            migrated.Parameters.Select(p => p.Value?.GetType()).ToArray());
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
         Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
     }
