@@ -23,11 +23,7 @@ public sealed partial class NativeSqlRenderer
                 insert.Source.GetType().Name)
         };
 
-        // Conflict clauses are still lowered after native finalization. Keep RETURNING on the
-        // existing post-conflict path until conflict lowering itself moves into this renderer.
-        return insert.Conflict is null
-            ? AppendReturning(rendered, insert.Returning)
-            : rendered;
+        return AppendReturning(rendered, insert.Returning);
     }
 
     private NativeSqlFragment RenderInsertValues(
