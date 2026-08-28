@@ -181,7 +181,7 @@ public sealed class TypedDmlRuntime(
             FingerprintComponent(approvalContext.PrincipalIdentity) + "|" +
             FingerprintComponent(approvalContext.TargetIdentity) + "|" +
             FingerprintComponent(approvalContext.Provider.ToString()) + "|" +
-            FingerprintComponent(approvalContext.DatabaseIdentity ?? string.Empty);
+            FingerprintComponent(approvalContext.DatabaseIdentity);
         return Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
@@ -192,6 +192,7 @@ public sealed class TypedDmlRuntime(
         ArgumentNullException.ThrowIfNull(approvalContext);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContext.PrincipalIdentity);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContext.TargetIdentity);
+        ArgumentException.ThrowIfNullOrWhiteSpace(approvalContext.DatabaseIdentity);
     }
 
     private static string FingerprintComponent(string value)
@@ -228,4 +229,4 @@ public sealed record DmlApprovalExecutionContext(
     string PrincipalIdentity,
     string TargetIdentity,
     SqlAgentToolType Provider,
-    string? DatabaseIdentity);
+    string DatabaseIdentity);
