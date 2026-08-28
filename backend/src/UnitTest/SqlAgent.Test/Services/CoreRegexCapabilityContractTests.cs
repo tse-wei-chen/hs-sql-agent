@@ -23,16 +23,19 @@ public sealed class CoreRegexCapabilityContractTests
     }
 
     [Theory]
-    [InlineData(169, SqlCapabilityStatus.Rejected)]
-    [InlineData(170, SqlCapabilityStatus.Translated)]
-    public void Matrix_SqlServerRegex_TracksCompatibilityProfile(
+    [InlineData(17, 0, 169, SqlCapabilityStatus.Rejected)]
+    [InlineData(17, 0, 170, SqlCapabilityStatus.Translated)]
+    [InlineData(16, 0, 170, SqlCapabilityStatus.Rejected)]
+    public void Matrix_SqlServerRegex_RequiresVersionAndCompatibilityProfile(
+        int major,
+        int minor,
         int compatibilityLevel,
         SqlCapabilityStatus expectedStatus)
     {
         var capability = Assert.Single(
             SqlCapabilityMatrix.ForProvider(
                 SqlAgentToolType.MsSqlServer,
-                SqlServerProfile(compatibilityLevel)).Capabilities,
+                SqlServerProfile(major, minor, compatibilityLevel)).Capabilities,
             item => item.Id == "regex.match");
 
         Assert.Equal(expectedStatus, capability.Status);
@@ -75,17 +78,21 @@ public sealed class CoreRegexCapabilityContractTests
             Compile(SqlAgentToolType.MsSqlServer));
 
         Assert.Contains(
+            "ServerVersion 17.0",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
             "compatibility level 170",
             error.Message,
             StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Compile_SqlServerRegex_AtCompatibility170_ReachesNativeFunction()
+    public void Compile_SqlServerRegex_AtVersion17Compatibility170_ReachesNativeFunction()
     {
         var command = Compile(
             SqlAgentToolType.MsSqlServer,
-            SqlServerProfile(170));
+            SqlServerProfile(17, 0, 170));
 
         Assert.Contains(
             "REGEXP_LIKE",
@@ -94,6 +101,20 @@ public sealed class CoreRegexCapabilityContractTests
         Assert.DoesNotContain(
             "CORE_REGEX_MATCH",
             command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_SqlServerRegex_AtVersion16Compatibility170_FailsClosed()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(
+                SqlAgentToolType.MsSqlServer,
+                SqlServerProfile(16, 0, 170)));
+
+        Assert.Contains(
+            "ServerVersion 17.0",
+            error.Message,
             StringComparison.OrdinalIgnoreCase);
     }
 
@@ -110,9 +131,11 @@ public sealed class CoreRegexCapabilityContractTests
             targetProfile);
 
     private static SqlProviderCapabilityProfile SqlServerProfile(
+        int major,
+        int minor,
         int compatibilityLevel) =>
         new(
             SqlAgentToolType.MsSqlServer,
-            ServerVersion: new Version(17, 0),
+            ServerVersion: new Version(major, minor),
             CompatibilityLevel: compatibilityLevel);
 }
