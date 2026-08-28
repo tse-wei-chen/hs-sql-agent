@@ -122,6 +122,18 @@ public class CoreAggregateFilterProfileTests
     }
 
     [Fact]
+    public void Compile_PostgresFilterWithSubqueryPredicate_RemainsSupported()
+    {
+        var command = CompileRaw(
+            "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EXISTS", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_OracleFilterWithoutSourceVersion_FailsClosed()
     {
         var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
