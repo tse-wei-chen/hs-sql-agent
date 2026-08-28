@@ -84,8 +84,8 @@ module internal FunctionalSqlPlanValidator =
                 $"Unsupported JOIN kind '{other}'."))
 
     let private validateOrdering
-        orderBy
-        provider =
+        (orderBy: IEnumerable<OrderByItem>)
+        (provider: SqlAgentToolType) =
 
         if SqlNullOrderingCapabilityRules.RequiresTargetRewrite(
             provider) then
