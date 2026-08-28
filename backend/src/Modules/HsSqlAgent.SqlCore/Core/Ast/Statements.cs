@@ -116,9 +116,8 @@ public sealed record UpdateStatement(
     SourceSpan Span) : SqlStatement(Span)
 {
     /// <summary>
-    /// Canonical source tables for PostgreSQL-style UPDATE ... FROM. The first milestone only
-    /// parses this shape and keeps compilation fail-closed until binder/capability/lowering support
-    /// is installed in the next vertical slice.
+    /// Canonical source tables for PostgreSQL-style UPDATE ... FROM. The current proven target
+    /// lowering is PostgreSQL-only; other provider semantics remain fail-closed by capability rule.
     /// </summary>
     public ImmutableArray<NamedTableSource> From { get; init; } = ImmutableArray<NamedTableSource>.Empty;
     public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
@@ -129,6 +128,11 @@ public sealed record DeleteStatement(
     SqlExpr? Predicate,
     SourceSpan Span) : SqlStatement(Span)
 {
+    /// <summary>
+    /// Canonical PostgreSQL DELETE ... USING source tables. The target is kept separate so mutation
+    /// authorization cannot confuse read sources with the row-producing delete target.
+    /// </summary>
+    public ImmutableArray<NamedTableSource> Using { get; init; } = ImmutableArray<NamedTableSource>.Empty;
     public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
 }
 

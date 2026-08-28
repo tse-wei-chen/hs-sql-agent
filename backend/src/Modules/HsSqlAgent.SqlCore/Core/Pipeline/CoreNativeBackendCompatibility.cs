@@ -63,6 +63,13 @@ internal static class CoreNativeBackendCompatibility
                 return;
 
             case DeleteStatement delete:
+                if (!delete.Using.IsDefaultOrEmpty)
+                {
+                    var deleteUsingError = SqlDmlDeleteUsingCapabilityRules.TargetValidationError(provider);
+                    if (deleteUsingError is not null)
+                        throw new SqlCompilationException(deleteUsingError);
+                }
+
                 if (delete.Predicate is not null)
                     VisitExpression(delete.Predicate, provider, allowNestedCteFragments: true);
                 return;

@@ -220,6 +220,15 @@ public sealed partial class NativeSqlRenderer
         var sql = new StringBuilder("DELETE FROM ").Append(table);
         var bindings = ImmutableArray.CreateBuilder<object?>();
 
+        if (!delete.Using.IsDefaultOrEmpty)
+        {
+            var sources = delete.Using.Select(RenderNamedTableSource).ToArray();
+            sql.Append(" USING ")
+                .Append(string.Join(", ", sources.Select(source => source.Sql)));
+            foreach (var source in sources)
+                bindings.AddRange(source.Bindings);
+        }
+
         if (delete.Predicate is not null)
         {
             var predicate = RenderPredicateExpression(

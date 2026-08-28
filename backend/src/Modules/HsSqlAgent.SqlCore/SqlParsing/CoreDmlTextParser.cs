@@ -151,20 +151,7 @@ internal sealed class CoreDmlTextParser
                 fromToken);
         }
 
-        var sources = ImmutableArray.CreateBuilder<NamedTableSource>();
-        do
-        {
-            var name = _reader.ParseIdentifierPath("UPDATE FROM source table");
-            sources.Add(new NamedTableSource(name, null, name.Span));
-            if (_reader.PeekWord("AS") || (_reader.Peek().Type == TokenType.Identifier && !_reader.PeekWord("WHERE") && !_reader.PeekWord("RETURNING")))
-            {
-                throw CoreTokenReader.Error(
-                    "UPDATE ... FROM aliases are not represented by the first canonical milestone slice.",
-                    _reader.Peek());
-            }
-        } while (_reader.Match(TokenType.Comma));
-
-        return sources.ToImmutable();
+        return ParsePostgresMutationSources("UPDATE FROM", "WHERE", "RETURNING");
     }
 
     private DeleteStatement ParseDelete()
@@ -176,13 +163,52 @@ internal sealed class CoreDmlTextParser
         var target = new NamedTableSource(name, null, name.Span);
         if (_reader.Peek().Type == TokenType.Identifier || _reader.PeekWord("AS"))
             throw CoreTokenReader.Error("DELETE target aliases are not represented by the Core DML AST.", _reader.Peek());
+        var usingSources = ParseDeleteUsingIfPresent();
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
         var returning = ParseReturningColumnsIfPresent();
         return new DeleteStatement(target, predicate, _reader.SpanFrom(start))
         {
+            Using = usingSources,
             Returning = returning
         };
+    }
+
+    private ImmutableArray<NamedTableSource> ParseDeleteUsingIfPresent()
+    {
+        if (!_reader.MatchWord("USING"))
+            return ImmutableArray<NamedTableSource>.Empty;
+
+        var usingToken = _reader.Peek(-1);
+        if (_sourceDialect != SqlAgentToolType.Postgres)
+        {
+            throw CoreTokenReader.Error(
+                "DELETE ... USING source syntax is currently declared only for the PostgreSQL source dialect.",
+                usingToken);
+        }
+
+        return ParsePostgresMutationSources("DELETE USING", "WHERE", "RETURNING");
+    }
+
+    private ImmutableArray<NamedTableSource> ParsePostgresMutationSources(
+        string context,
+        params string[] clauseTerminators)
+    {
+        var sources = ImmutableArray.CreateBuilder<NamedTableSource>();
+        do
+        {
+            var name = _reader.ParseIdentifierPath($"{context} source table");
+            sources.Add(new NamedTableSource(name, null, name.Span));
+            if (_reader.PeekWord("AS") ||
+                (_reader.Peek().Type == TokenType.Identifier && !clauseTerminators.Any(_reader.PeekWord)))
+            {
+                throw CoreTokenReader.Error(
+                    $"{context} aliases are not represented by the current canonical milestone slice.",
+                    _reader.Peek());
+            }
+        } while (_reader.Match(TokenType.Comma));
+
+        return sources.ToImmutable();
     }
 
     private ImmutableArray<SqlIdentifier> ParseReturningColumnsIfPresent()
