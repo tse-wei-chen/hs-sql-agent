@@ -68,7 +68,7 @@ module internal FunctionalExpressionTextParser =
             || value = ">="
             || value = "<="
 
-        member private _.ParseNumber(value: string) : obj =
+        member private _.ParseNumber(value: string) : obj | null =
             let mutable integer = 0
 
             if value.IndexOf('.') < 0
@@ -95,9 +95,9 @@ module internal FunctionalExpressionTextParser =
                     "'",
                     StringComparison.Ordinal)
 
-        member private this.ParseOr() =
+        member private this.ParseOr() : SqlExpr =
             let start = reader.Position
-            let mutable left = this.ParseAnd()
+            let mutable left : SqlExpr = this.ParseAnd()
 
             while reader.MatchWord("OR") do
                 left <-
@@ -109,9 +109,9 @@ module internal FunctionalExpressionTextParser =
 
             left
 
-        member private this.ParseAnd() =
+        member private this.ParseAnd() : SqlExpr =
             let start = reader.Position
-            let mutable left = this.ParseNot()
+            let mutable left : SqlExpr = this.ParseNot()
 
             while reader.MatchWord("AND") do
                 left <-
@@ -123,7 +123,7 @@ module internal FunctionalExpressionTextParser =
 
             left
 
-        member private this.ParseNot() =
+        member private this.ParseNot() : SqlExpr =
             if not (reader.PeekWord("NOT")) then
                 this.ParsePredicate()
             else
@@ -136,7 +136,7 @@ module internal FunctionalExpressionTextParser =
                     reader.SpanFrom(start))
                 :> SqlExpr
 
-        member private this.ParsePredicate() =
+        member private this.ParsePredicate() : SqlExpr =
             let start = reader.Position
             let left = this.ParseAdditive()
             let token = reader.Peek()
@@ -310,9 +310,9 @@ module internal FunctionalExpressionTextParser =
                 else
                     left
 
-        member private this.ParseAdditive() =
+        member private this.ParseAdditive() : SqlExpr =
             let start = reader.Position
-            let mutable left =
+            let mutable left : SqlExpr =
                 this.ParseMultiplicative()
 
             let isOperator() =
@@ -332,9 +332,9 @@ module internal FunctionalExpressionTextParser =
 
             left
 
-        member private this.ParseMultiplicative() =
+        member private this.ParseMultiplicative() : SqlExpr =
             let start = reader.Position
-            let mutable left =
+            let mutable left : SqlExpr =
                 this.ParseProfiledConcat()
 
             let isOperator() =
@@ -354,9 +354,9 @@ module internal FunctionalExpressionTextParser =
 
             left
 
-        member private this.ParseProfiledConcat() =
+        member private this.ParseProfiledConcat() : SqlExpr =
             let start = reader.Position
-            let mutable left = this.ParsePostfix()
+            let mutable left : SqlExpr = this.ParsePostfix()
 
             while reader.Peek().Type = TokenType.Operator
                   && reader.Peek().Value = MySqlPipesConcatToken do
@@ -372,9 +372,9 @@ module internal FunctionalExpressionTextParser =
 
             left
 
-        member private this.ParsePostfix() =
+        member private this.ParsePostfix() : SqlExpr =
             let start = reader.Position
-            let mutable expression =
+            let mutable expression : SqlExpr =
                 this.ParseUnaryNumeric()
 
             while reader.Peek().Type = TokenType.Operator
@@ -390,7 +390,7 @@ module internal FunctionalExpressionTextParser =
 
             expression
 
-        member private this.ParseUnaryNumeric() =
+        member private this.ParseUnaryNumeric() : SqlExpr =
             let token = reader.Peek()
 
             if token.Type <> TokenType.Operator
@@ -442,7 +442,7 @@ module internal FunctionalExpressionTextParser =
                 && (reader.PeekWord(1, "WITH")
                     || reader.PeekWord(1, "WITHOUT"))
 
-        member private this.ParsePrimary() =
+        member private this.ParsePrimary() : SqlExpr =
             let start = reader.Position
             let token = reader.Peek()
 
@@ -611,7 +611,7 @@ module internal FunctionalExpressionTextParser =
                     $"Unexpected token '{token.Value}' in SQL expression.",
                     token))
 
-        member private this.ParseExtract(start: int) =
+        member private this.ParseExtract(start: int) : SqlExpr =
             reader.ExpectWord("EXTRACT") |> ignore
             reader.Expect(
                 TokenType.LParen,
@@ -694,7 +694,7 @@ module internal FunctionalExpressionTextParser =
 
             items |> toImmutableArray
 
-        member private this.ParseFunction(start: int) =
+        member private this.ParseFunction(start: int) : SqlExpr =
             let nameToken = reader.Advance()
             let name = this.IdentifierFromToken(nameToken)
 
@@ -972,7 +972,7 @@ module internal FunctionalExpressionTextParser =
                         Nullable<int>(offset),
                         reader.SpanFrom(start))
 
-        member private this.ParseCase(start: int) =
+        member private this.ParseCase(start: int) : SqlExpr =
             let caseValue =
                 if reader.PeekWord("WHEN") then
                     None
@@ -1034,7 +1034,7 @@ module internal FunctionalExpressionTextParser =
                     reader.SpanFrom(start))
                 :> SqlExpr
 
-        member private this.ParseCast(start: int) =
+        member private this.ParseCast(start: int) : SqlExpr =
             reader.Expect(
                 TokenType.LParen,
                 "'(' after CAST")
@@ -1174,7 +1174,7 @@ module internal FunctionalExpressionTextParser =
 
             String.Join(" ", parts)
 
-        member private this.ParseTemporalLiteral(start: int) =
+        member private this.ParseTemporalLiteral(start: int) : SqlExpr =
             let typeToken = reader.Advance()
             let temporalType =
                 typeToken.Value.ToUpperInvariant()
