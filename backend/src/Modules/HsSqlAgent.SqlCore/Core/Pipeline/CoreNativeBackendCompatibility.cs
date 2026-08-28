@@ -49,6 +49,13 @@ internal static class CoreNativeBackendCompatibility
                 return;
 
             case UpdateStatement update:
+                if (!update.From.IsDefaultOrEmpty)
+                {
+                    var updateFromError = SqlDmlUpdateFromCapabilityRules.TargetValidationError(provider);
+                    if (updateFromError is not null)
+                        throw new SqlCompilationException(updateFromError);
+                }
+
                 foreach (var assignment in update.Assignments)
                     VisitExpression(assignment.Value, provider, allowNestedCteFragments: true);
                 if (update.Predicate is not null)

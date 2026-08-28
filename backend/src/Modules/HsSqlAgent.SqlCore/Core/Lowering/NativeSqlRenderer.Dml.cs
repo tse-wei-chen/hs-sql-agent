@@ -164,12 +164,6 @@ public sealed partial class NativeSqlRenderer
     {
         if (update.Assignments.IsDefaultOrEmpty)
             throw new SqlCompilationException("UPDATE requires at least one assignment.");
-        if (!update.From.IsDefaultOrEmpty && Provider != SqlAgentToolType.Postgres)
-        {
-            throw new SqlCompilationException(
-                "SQL capability 'dml.update.from' is currently declared only for PostgreSQL native lowering; provider " +
-                Provider + " remains fail-closed until equivalent mutation semantics are proven.");
-        }
 
         var table = CoreIdentifierSqlRenderer.Render(
             update.Target.Name,
