@@ -124,9 +124,7 @@ module internal FunctionalAst =
         }
 
     let private failClosed context (node: obj) =
-        let nodeName =
-            if isNull node then "<null>"
-            else node.GetType().Name
+        let nodeName = node.GetType().Name
 
         raise (SqlCompilationException(
             $"Unsupported {context} at the F# functional AST boundary: {nodeName}"))
@@ -585,9 +583,6 @@ module internal FunctionalAst =
     /// Convert the legacy open C# hierarchy into the closed F# compiler shape and
     /// exhaustively walk it. Unknown legacy shapes fail closed at the adapter.
     let verify (statement: SqlStatement) : AuditSummary =
-        if isNull statement then
-            nullArg (nameof statement)
-
         statement
         |> statementOf
         |> auditStatement
