@@ -233,23 +233,8 @@ internal static class CoreSqlSemanticValidator
     private static bool IdentifiersEquivalent(
         IdentifierPart left,
         IdentifierPart right,
-        SqlAgentToolType provider)
-    {
-        if (provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite)
-            return string.Equals(left.Value, right.Value, StringComparison.OrdinalIgnoreCase);
-
-        static string NormalizeDelimitedAware(IdentifierPart part, SqlAgentToolType target) =>
-            part.WasQuoted
-                ? part.Value
-                : target == SqlAgentToolType.Postgres
-                    ? part.Value.ToLowerInvariant()
-                    : part.Value.ToUpperInvariant();
-
-        return string.Equals(
-            NormalizeDelimitedAware(left, provider),
-            NormalizeDelimitedAware(right, provider),
-            StringComparison.Ordinal);
-    }
+        SqlAgentToolType provider) =>
+        SqlIdentifierDialectRules.Equivalent(left, right, provider);
 
     private static bool TryOrderByOrdinal(SqlExpr expression, out int position)
     {
