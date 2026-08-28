@@ -9,6 +9,10 @@ internal static class SqlOffsetTimestampCapabilityRules
 {
     private static readonly Version FirebirdTimeZoneVersion = new(4, 0);
 
+    internal static bool RequiresTargetProfileValidation(
+        SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.Firebird;
+
     internal static bool SupportsTarget(
         SqlAgentToolType provider,
         SqlProviderCapabilityProfile? targetProfile) => provider switch

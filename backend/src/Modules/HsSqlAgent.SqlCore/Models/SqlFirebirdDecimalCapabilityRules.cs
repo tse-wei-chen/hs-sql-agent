@@ -14,6 +14,10 @@ internal static class SqlFirebirdDecimalCapabilityRules
     internal const int LegacyMaximumPrecision = 18;
     internal static readonly Version ExtendedPrecisionMinimumVersion = new(4, 0);
 
+    internal static bool RequiresTargetProfileValidation(
+        SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.Firebird;
+
     internal static SqlDecimalShape Shape(decimal value)
     {
         var text = Math.Abs(value).ToString(

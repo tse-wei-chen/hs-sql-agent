@@ -7,6 +7,10 @@ namespace HsSqlAgent.SqlCore.Models;
 /// </summary>
 internal static class SqlRegexCapabilityRules
 {
+    internal static bool RequiresTargetProfileRewrite(
+        SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.MsSqlServer;
+
     internal static string? ProviderValidationError(
         SqlAgentToolType provider) =>
         provider is SqlAgentToolType.Sqlite or SqlAgentToolType.Firebird

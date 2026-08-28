@@ -15,12 +15,8 @@ internal static class CoreProviderProfileRewriter
         ArgumentNullException.ThrowIfNull(statement);
         ValidateProfile(targetProvider, targetProfile);
 
-        if (targetProvider is not (
-                SqlAgentToolType.MsSqlServer
-                or SqlAgentToolType.Firebird))
-        {
+        if (!RequiresProviderProfilePass(targetProvider))
             return statement;
-        }
 
         return new ProviderProfileAstRewriter(targetProvider, targetProfile)
             .Rewrite(statement);
@@ -49,6 +45,13 @@ internal static class CoreProviderProfileRewriter
         }
     }
 
+    private static bool RequiresProviderProfilePass(
+        SqlAgentToolType provider) =>
+        SqlOffsetTimestampCapabilityRules.RequiresTargetProfileValidation(provider)
+        || SqlFirebirdDecimalCapabilityRules.RequiresTargetProfileValidation(provider)
+        || SqlConcatCapabilityRules.RequiresTargetProfileRewrite(provider)
+        || SqlRegexCapabilityRules.RequiresTargetProfileRewrite(provider);
+
     private sealed class ProviderProfileAstRewriter : CoreSqlAstRewriter
     {
         private readonly SqlAgentToolType _targetProvider;
@@ -74,8 +77,7 @@ internal static class CoreProviderProfileRewriter
 
         private LiteralExpr RewriteLiteral(LiteralExpr literal)
         {
-            if (_targetProvider == SqlAgentToolType.Firebird
-                && literal.Value is SqlOffsetDateTimeValue or DateTimeOffset)
+            if (literal.Value is SqlOffsetDateTimeValue or DateTimeOffset)
             {
                 var error = SqlOffsetTimestampCapabilityRules.TargetValidationError(
                     _targetProvider,
@@ -99,8 +101,8 @@ internal static class CoreProviderProfileRewriter
 
         private BinaryExpr RewriteBinary(BinaryExpr binary)
         {
-            if (_targetProvider != SqlAgentToolType.MsSqlServer
-                || !binary.Operator.Equals("||", StringComparison.OrdinalIgnoreCase))
+            if (!binary.Operator.Equals("||", StringComparison.OrdinalIgnoreCase)
+                || !SqlConcatCapabilityRules.RequiresTargetProfileRewrite(_targetProvider))
             {
                 return binary;
             }
