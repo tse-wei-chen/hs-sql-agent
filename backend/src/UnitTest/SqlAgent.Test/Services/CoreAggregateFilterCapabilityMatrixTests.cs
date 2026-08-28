@@ -5,7 +5,7 @@ namespace SqlAgent.Test.Services;
 public sealed class CoreAggregateFilterCapabilityMatrixTests
 {
     [Theory]
-    [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Supported)]
+    [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Rejected)]
     [InlineData(SqlAgentToolType.MySQL, SqlCapabilityStatus.Rejected)]
     [InlineData(SqlAgentToolType.MsSqlServer, SqlCapabilityStatus.Rejected)]
     [InlineData(SqlAgentToolType.Sqlite, SqlCapabilityStatus.Rejected)]
@@ -115,14 +115,18 @@ public sealed class CoreAggregateFilterCapabilityMatrixTests
         Assert.Contains("no declared portable target contract", filter.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Matrix_SqliteFilterWithoutProfile_DocumentsExplicitVersionRequirement()
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, "9.4")]
+    [InlineData(SqlAgentToolType.Sqlite, "3.30")]
+    public void Matrix_VersionDependentFilterWithoutProfile_DocumentsExplicitVersionRequirement(
+        SqlAgentToolType provider,
+        string minimumVersion)
     {
-        var filter = Filter(SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Sqlite));
+        var filter = Filter(SqlCapabilityMatrix.ForProvider(provider));
 
         Assert.Equal(SqlCapabilityStatus.Rejected, filter.Status);
         Assert.Contains("explicitly declares", filter.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("3.30", filter.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(minimumVersion, filter.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     private static SqlCapability Filter(ProviderSqlCapabilities matrix) =>
