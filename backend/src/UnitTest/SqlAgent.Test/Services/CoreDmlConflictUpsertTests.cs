@@ -195,7 +195,7 @@ public sealed class CoreDmlConflictUpsertTests
     }
 
     [Fact]
-    public void Compile_InsertSelectConflict_RemainsFailClosed()
+    public void Compile_PostgresInsertSelectConflictDoNothing_IsSupported()
     {
         var parsed = CoreSqlTextParser.ParseDml(
             "INSERT INTO users (id, name) SELECT id, name FROM staged_users",
@@ -208,14 +208,38 @@ public sealed class CoreDmlConflictUpsertTests
             SourceSpan.Unknown);
         var structured = parsed with { Statement = insert with { Conflict = conflict } };
 
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            structured,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ON CONFLICT (\"id\") DO NOTHING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
+    }
+
+    [Fact]
+    public void Compile_PostgresInsertSelectConflictUpdate_RemainsFailClosedWithoutCardinalityAssurance()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO users (id, name) SELECT id, name FROM staged_users",
+            SqlAgentToolType.Postgres);
+        var insert = Assert.IsType<InsertStatement>(parsed.Statement);
+        var conflict = new InsertConflictClause(
+            ImmutableArray.Create(Id("id")),
+            InsertConflictActionKind.UpdateProposedValues,
+            ImmutableArray.Create(new InsertConflictAssignment(Id("name"), Id("name"), SourceSpan.Unknown)),
+            SourceSpan.Unknown);
+        var structured = parsed with { Statement = insert with { Conflict = conflict } };
+
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(
                 structured,
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1")));
 
-        Assert.Contains("INSERT VALUES", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("cardinality", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CompiledSqlCommand CompileRaw(

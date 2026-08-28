@@ -25,7 +25,7 @@ internal static class CoreDmlConflictSqlRewriter
         if (insert.Conflict is null)
             return command;
 
-        ValidatePortableShape(insert);
+        ValidatePortableShape(insert, command.TargetProvider);
         if (command.TargetProvider == SqlAgentToolType.Firebird)
         {
             return RewriteFirebird(
@@ -265,15 +265,24 @@ internal static class CoreDmlConflictSqlRewriter
         return $" ON CONFLICT ({targets}) DO UPDATE SET {assignments}";
     }
 
-    private static void ValidatePortableShape(InsertStatement insert)
+    private static void ValidatePortableShape(
+        InsertStatement insert,
+        SqlAgentToolType targetProvider)
     {
         var conflict = insert.Conflict
             ?? throw new SqlCompilationException("INSERT conflict contract is missing.");
-        if (insert.Source is not InsertValuesSource values)
+        var values = insert.Source as InsertValuesSource;
+        if (values is null)
         {
-            throw new SqlCompilationException(
-                "Portable INSERT conflict handling is currently limited to INSERT VALUES; INSERT ... SELECT upsert remains fail-closed until source-row cardinality is modeled.");
+            if (insert.Source is not InsertQuerySource
+                || targetProvider != SqlAgentToolType.Postgres
+                || conflict.Action != InsertConflictActionKind.DoNothing)
+            {
+                throw new SqlCompilationException(
+                    "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL ON CONFLICT DO NOTHING; DO UPDATE and other targets remain fail-closed until source-row uniqueness/cardinality is modeled.");
+            }
         }
+
         if (conflict.TargetColumns.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT conflict handling requires at least one explicit target column.");
 
@@ -304,10 +313,10 @@ internal static class CoreDmlConflictSqlRewriter
             throw new SqlCompilationException($"Unsupported INSERT conflict action {conflict.Action}.");
         if (conflict.Assignments.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT conflict DO UPDATE requires at least one assignment.");
-        if (values.Rows.Length != 1)
+        if (values is null || values.Rows.Length != 1)
         {
             throw new SqlCompilationException(
-                "Portable INSERT conflict DO UPDATE currently requires exactly one proposed VALUES row. Without declared unique-index type and collation metadata, Core cannot prove that multiple proposed rows will not resolve to the same target key across providers.");
+                "Portable INSERT conflict DO UPDATE currently requires exactly one proposed VALUES row. INSERT ... SELECT requires source-row uniqueness/cardinality assurance before update semantics can be proven.");
         }
 
         var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
