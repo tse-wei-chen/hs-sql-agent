@@ -6,7 +6,8 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
-open HsSqlAgent.SqlCore.SqlParsing\nopen HsSqlAgent.SqlCore.Internal
+open HsSqlAgent.SqlCore.SqlParsing
+open HsSqlAgent.SqlCore.Internal
 
 /// CLR-friendly result returned by SqlCoreFacade Try... methods.
 /// The public signature intentionally contains no FSharpOption, FSharpResult,
