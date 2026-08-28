@@ -93,7 +93,7 @@ internal sealed class CoreDmlTextParser
         else
             throw CoreTokenReader.Error("INSERT requires VALUES or a SELECT source.", _reader.Peek());
 
-        var returning = ParseReturningColumnsIfPresent();
+        var returning = ParseReturningItemsIfPresent();
         return new InsertStatement(target, columns.ToImmutable(), source, _reader.SpanFrom(start))
         {
             Returning = returning
@@ -127,13 +127,31 @@ internal sealed class CoreDmlTextParser
             assignments.Add(new Assignment(column, ParseUpdateAssignmentValue(), _reader.SpanFrom(assignmentStart)));
         } while (_reader.Match(TokenType.Comma));
 
+        var from = ParseUpdateFromIfPresent();
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
-        var returning = ParseReturningColumnsIfPresent();
+        var returning = ParseReturningItemsIfPresent();
         return new UpdateStatement(target, assignments.ToImmutable(), predicate, _reader.SpanFrom(start))
         {
+            From = from,
             Returning = returning
         };
+    }
+
+    private ImmutableArray<NamedTableSource> ParseUpdateFromIfPresent()
+    {
+        if (!_reader.MatchWord("FROM"))
+            return ImmutableArray<NamedTableSource>.Empty;
+
+        var fromToken = _reader.Peek(-1);
+        if (_sourceDialect != SqlAgentToolType.Postgres)
+        {
+            throw CoreTokenReader.Error(
+                "UPDATE ... FROM source syntax is currently declared only for the PostgreSQL source dialect.",
+                fromToken);
+        }
+
+        return ParsePostgresMutationSources("UPDATE FROM", "WHERE", "RETURNING");
     }
 
     private DeleteStatement ParseDelete()
@@ -145,61 +163,138 @@ internal sealed class CoreDmlTextParser
         var target = new NamedTableSource(name, null, name.Span);
         if (_reader.Peek().Type == TokenType.Identifier || _reader.PeekWord("AS"))
             throw CoreTokenReader.Error("DELETE target aliases are not represented by the Core DML AST.", _reader.Peek());
+        var usingSources = ParseDeleteUsingIfPresent();
         SqlExpr? predicate = null;
         if (_reader.MatchWord("WHERE")) predicate = _expressions.ParseExpression();
-        var returning = ParseReturningColumnsIfPresent();
+        var returning = ParseReturningItemsIfPresent();
         return new DeleteStatement(target, predicate, _reader.SpanFrom(start))
         {
+            Using = usingSources,
             Returning = returning
         };
     }
 
-    private ImmutableArray<SqlIdentifier> ParseReturningColumnsIfPresent()
+    private ImmutableArray<NamedTableSource> ParseDeleteUsingIfPresent()
+    {
+        if (!_reader.MatchWord("USING"))
+            return ImmutableArray<NamedTableSource>.Empty;
+
+        var usingToken = _reader.Peek(-1);
+        if (_sourceDialect != SqlAgentToolType.Postgres)
+        {
+            throw CoreTokenReader.Error(
+                "DELETE ... USING source syntax is currently declared only for the PostgreSQL source dialect.",
+                usingToken);
+        }
+
+        return ParsePostgresMutationSources("DELETE USING", "WHERE", "RETURNING");
+    }
+
+    private ImmutableArray<NamedTableSource> ParsePostgresMutationSources(
+        string context,
+        params string[] clauseTerminators)
+    {
+        var sources = ImmutableArray.CreateBuilder<NamedTableSource>();
+        do
+        {
+            var name = _reader.ParseIdentifierPath($"{context} source table");
+            sources.Add(new NamedTableSource(name, null, name.Span));
+            if (_reader.PeekWord("AS") ||
+                (_reader.Peek().Type == TokenType.Identifier && !clauseTerminators.Any(_reader.PeekWord)))
+            {
+                throw CoreTokenReader.Error(
+                    $"{context} aliases are not represented by the current canonical milestone slice.",
+                    _reader.Peek());
+            }
+        } while (_reader.Match(TokenType.Comma));
+
+        return sources.ToImmutable();
+    }
+
+    private ImmutableArray<DmlReturningItem> ParseReturningItemsIfPresent()
     {
         if (!_reader.MatchWord("RETURNING"))
-            return ImmutableArray<SqlIdentifier>.Empty;
+            return ImmutableArray<DmlReturningItem>.Empty;
 
         var returningToken = _reader.Peek(-1);
         ValidateReturningSourceContract(returningToken);
 
-        var columns = ImmutableArray.CreateBuilder<SqlIdentifier>();
+        var items = ImmutableArray.CreateBuilder<DmlReturningItem>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var hasWildcard = false;
         do
         {
-            SqlIdentifier column;
             var token = _reader.Peek();
             if (token.Type == TokenType.Operator && token.Value == "*")
             {
                 _reader.Advance();
-                column = SqlIdentifier.Unquoted("*", CoreTokenReader.Span(token));
+                if (!seen.Add("*"))
+                    throw CoreTokenReader.Error("RETURNING column '*' is declared more than once.", token);
                 hasWildcard = true;
+                items.Add(new DmlReturningWildcardItem(CoreTokenReader.Span(token)));
+                continue;
             }
-            else
+
+            if (_sourceDialect == SqlAgentToolType.Postgres)
             {
-                column = _reader.ParseIdentifierPath("RETURNING column");
-                if (column.Parts.Length != 1)
-                {
-                    throw CoreTokenReader.Error(
-                        "Portable DML RETURNING accepts unqualified target columns only; OLD/NEW/table-qualified and expression result items remain fail-closed.",
-                        token);
-                }
+                ParsePostgresReturningItem(items, seen, token);
+                continue;
+            }
+
+            var column = _reader.ParseIdentifierPath("RETURNING column");
+            if (column.Parts.Length != 1)
+            {
+                throw CoreTokenReader.Error(
+                    "Portable DML RETURNING accepts unqualified target columns only; OLD/NEW/table-qualified and expression result items remain fail-closed.",
+                    token);
             }
 
             var name = column.Parts[0].Value;
             if (!seen.Add(name))
                 throw CoreTokenReader.Error($"RETURNING column '{name}' is declared more than once.", token);
-            columns.Add(column);
+            items.Add(new DmlReturningColumnItem(column, column.Span));
         } while (_reader.Match(TokenType.Comma));
 
-        if (hasWildcard && columns.Count != 1)
+        if (hasWildcard && items.Count != 1)
         {
             throw CoreTokenReader.Error(
-                "RETURNING * cannot be mixed with explicit RETURNING columns in the portable Core contract.",
+                "RETURNING * cannot be mixed with explicit RETURNING columns or expressions in the Core contract.",
                 returningToken);
         }
 
-        return columns.ToImmutable();
+        return items.ToImmutable();
+    }
+
+    private void ParsePostgresReturningItem(
+        ImmutableArray<DmlReturningItem>.Builder items,
+        HashSet<string> seen,
+        Token startToken)
+    {
+        var expression = _expressions.ParseExpression();
+        IdentifierPart? alias = null;
+        if (_reader.MatchWord("AS"))
+            alias = CoreTokenReader.ToIdentifierPart(_reader.ExpectIdentifier("RETURNING expression alias"));
+
+        if (expression is ColumnExpr column && alias is null)
+        {
+            if (column.Name.Parts.Length != 1)
+            {
+                throw CoreTokenReader.Error(
+                    "PostgreSQL expression RETURNING currently accepts unqualified target-row columns only; qualified/source-table references remain fail-closed.",
+                    startToken);
+            }
+
+            var name = column.Name.Parts[0].Value;
+            if (!seen.Add(name))
+                throw CoreTokenReader.Error($"RETURNING column '{name}' is declared more than once.", startToken);
+            items.Add(new DmlReturningColumnItem(column.Name, column.Span));
+            return;
+        }
+
+        items.Add(new DmlReturningExpressionItem(
+            expression,
+            alias,
+            expression.Span));
     }
 
     private void ValidateReturningSourceContract(Token returningToken)

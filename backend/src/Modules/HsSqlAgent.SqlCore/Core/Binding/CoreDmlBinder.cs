@@ -2,7 +2,7 @@ namespace HsSqlAgent.SqlCore.Core.Binding;
 
 /// <summary>
 /// DML binder that delegates query scoping to <see cref="SqlAstBinder"/> while handling INSERT's
-/// write target explicitly. UPDATE/DELETE continue through the common binder unchanged.
+/// write target and joined-mutation source scopes explicitly.
 /// </summary>
 public sealed class CoreDmlBinder : ISqlBinder
 {
@@ -11,6 +11,10 @@ public sealed class CoreDmlBinder : ISqlBinder
     public BoundStatement Bind(ParsedStatement statement)
     {
         ArgumentNullException.ThrowIfNull(statement);
+        if (statement.Statement is UpdateStatement { From.IsDefaultOrEmpty: false } updateFrom)
+            return new CoreUpdateFromBinder(_queryBinder).Bind(statement, updateFrom);
+        if (statement.Statement is DeleteStatement { Using.IsDefaultOrEmpty: false } deleteUsing)
+            return new CoreDeleteUsingBinder(_queryBinder).Bind(statement, deleteUsing);
         if (statement.Statement is not InsertStatement insert)
             return _queryBinder.Bind(statement);
 

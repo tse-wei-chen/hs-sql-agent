@@ -115,7 +115,12 @@ public sealed record UpdateStatement(
     SqlExpr? Predicate,
     SourceSpan Span) : SqlStatement(Span)
 {
-    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+    /// <summary>
+    /// Canonical source tables for PostgreSQL-style UPDATE ... FROM. The current proven target
+    /// lowering is PostgreSQL-only; other provider semantics remain fail-closed by capability rule.
+    /// </summary>
+    public ImmutableArray<NamedTableSource> From { get; init; } = ImmutableArray<NamedTableSource>.Empty;
+    public ImmutableArray<DmlReturningItem> Returning { get; init; } = ImmutableArray<DmlReturningItem>.Empty;
 }
 
 public sealed record DeleteStatement(
@@ -123,7 +128,12 @@ public sealed record DeleteStatement(
     SqlExpr? Predicate,
     SourceSpan Span) : SqlStatement(Span)
 {
-    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+    /// <summary>
+    /// Canonical PostgreSQL DELETE ... USING source tables. The target is kept separate so mutation
+    /// authorization cannot confuse read sources with the row-producing delete target.
+    /// </summary>
+    public ImmutableArray<NamedTableSource> Using { get; init; } = ImmutableArray<NamedTableSource>.Empty;
+    public ImmutableArray<DmlReturningItem> Returning { get; init; } = ImmutableArray<DmlReturningItem>.Empty;
 }
 
 public abstract record InsertSource(SourceSpan Span) : SqlNode(Span);
@@ -169,5 +179,5 @@ public sealed record InsertStatement(
     SourceSpan Span) : SqlStatement(Span)
 {
     public InsertConflictClause? Conflict { get; init; }
-    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+    public ImmutableArray<DmlReturningItem> Returning { get; init; } = ImmutableArray<DmlReturningItem>.Empty;
 }

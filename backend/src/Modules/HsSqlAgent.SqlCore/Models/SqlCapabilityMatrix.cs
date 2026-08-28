@@ -20,7 +20,7 @@ public sealed record ProviderSqlCapabilities(
 
 public static class SqlCapabilityMatrix
 {
-    public const string Version = "2026-08-28.52";
+    public const string Version = "2026-08-28.53";
 
     public static ProviderSqlCapabilities ForProvider(
         SqlAgentToolType provider,
@@ -113,7 +113,9 @@ public static class SqlCapabilityMatrix
                 "INSERT VALUES, UPDATE, and DELETE use the structured DML path."),
             new("dml.update_expression", "dml", SqlCapabilityStatus.Translated,
                 "UPDATE SET accepts structured scalar Core expressions including column arithmetic, scalar functions, CASE, CAST, and scalar subqueries. Aggregate/window placement and provider-specific expression capabilities are validated before lowering; runtime values remain parameters."),
+            SqlDmlUpdateFromCapabilityRules.MatrixCapability(provider),
             SqlScalarBooleanCapabilityRules.UpdateAssignmentMatrixCapability(provider),
+            SqlDmlDeleteUsingCapabilityRules.MatrixCapability(provider),
             new("dml.insert_select", "dml", SqlCapabilityStatus.Translated,
                 "INSERT ... SELECT is supported when the source projection width is statically known and matches the target column count. CTE-free sources render directly from the canonical AST; statement-root CTE sources use the native provider-aware CTE placement path."),
             new("dml.insert_select.cte_scope", "dml", SqlCapabilityStatus.Translated,

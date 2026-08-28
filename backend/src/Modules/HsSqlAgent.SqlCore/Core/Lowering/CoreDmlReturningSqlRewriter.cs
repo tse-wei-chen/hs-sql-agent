@@ -4,9 +4,10 @@ using HsSqlAgent.SqlCore.Core.Execution;
 namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
-/// Adds the portable DML result-row clause after the provider-specific mutation has been lowered.
-/// The canonical subset is intentionally column-only, so PostgreSQL, SQLite and Firebird can share
-/// the same trailing RETURNING shape without provider-default expression or OLD/NEW semantics.
+/// Finalizes the DML result-row contract after native lowering. RETURNING projection SQL and all
+/// runtime bindings are rendered inside the native DML fragment before parameter finalization.
+/// Post-native conflict lowering may temporarily place ON CONFLICT/MATCHING after RETURNING; this
+/// finalizer only restores provider clause order and marks the command as returning rows.
 /// </summary>
 internal static class CoreDmlReturningSqlRewriter
 {
@@ -20,7 +21,7 @@ internal static class CoreDmlReturningSqlRewriter
         ArgumentNullException.ThrowIfNull(statement);
         ArgumentException.ThrowIfNullOrWhiteSpace(policyVersion);
 
-        var returning = ReturningColumns(statement);
+        var returning = ReturningItems(statement);
         if (returning.IsDefaultOrEmpty)
             return command;
 
@@ -29,59 +30,58 @@ internal static class CoreDmlReturningSqlRewriter
             targetProfile);
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
-        ValidateColumns(returning);
 
-        var projection = string.Join(", ", returning.Select(column =>
-            CoreIdentifierSqlRenderer.Render(
-                column,
-                command.TargetProvider,
-                allowWildcard: true)));
-        var rewritten = command with
+        if (!command.Sql.Contains(" RETURNING ", StringComparison.OrdinalIgnoreCase))
         {
-            Sql = command.Sql.TrimEnd().TrimEnd(';') + " RETURNING " + projection,
+            throw new SqlCompilationException(
+                "Native DML lowering did not render the canonical RETURNING projection before parameter finalization.");
+        }
+
+        var reordered = command with
+        {
+            Sql = RestoreConflictClauseOrder(command.Sql, command.TargetProvider),
             ReturnsRows = true,
             PlanFingerprint = string.Empty
         };
-        return rewritten with
+        return reordered with
         {
-            PlanFingerprint = DmlFingerprintService.ComputePlanFingerprint(rewritten, policyVersion)
+            PlanFingerprint = DmlFingerprintService.ComputePlanFingerprint(reordered, policyVersion)
         };
     }
 
-    private static ImmutableArray<SqlIdentifier> ReturningColumns(SqlStatement statement) => statement switch
+    private static ImmutableArray<DmlReturningItem> ReturningItems(SqlStatement statement) => statement switch
     {
         InsertStatement insert => insert.Returning,
         UpdateStatement update => update.Returning,
         DeleteStatement delete => delete.Returning,
-        _ => ImmutableArray<SqlIdentifier>.Empty
+        _ => ImmutableArray<DmlReturningItem>.Empty
     };
 
-    private static void ValidateColumns(ImmutableArray<SqlIdentifier> columns)
+    private static string RestoreConflictClauseOrder(string sql, SqlAgentToolType provider)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var wildcard = false;
-        foreach (var column in columns)
-        {
-            if (column.Parts.Length != 1)
-            {
-                throw new SqlCompilationException(
-                    "Portable DML RETURNING accepts unqualified target columns only.");
-            }
+        var returningIndex = sql.IndexOf(" RETURNING ", StringComparison.OrdinalIgnoreCase);
+        if (returningIndex < 0)
+            return sql;
 
-            var part = column.Parts[0];
-            var isWildcard = part.Value == "*" && !part.WasQuoted;
-            wildcard |= isWildcard;
-            if (!seen.Add(part.Value))
-            {
-                throw new SqlCompilationException(
-                    $"RETURNING column '{part.Value}' is declared more than once.");
-            }
-        }
-
-        if (wildcard && columns.Length != 1)
+        var trailingClause = provider switch
         {
-            throw new SqlCompilationException(
-                "RETURNING * cannot be mixed with explicit RETURNING columns in the portable Core contract.");
-        }
+            SqlAgentToolType.Postgres or SqlAgentToolType.Sqlite => " ON CONFLICT ",
+            SqlAgentToolType.Firebird => " MATCHING ",
+            _ => null
+        };
+        if (trailingClause is null)
+            return sql;
+
+        var clauseIndex = sql.IndexOf(
+            trailingClause,
+            returningIndex + " RETURNING ".Length,
+            StringComparison.OrdinalIgnoreCase);
+        if (clauseIndex < 0)
+            return sql;
+
+        var beforeReturning = sql[..returningIndex];
+        var returning = sql[returningIndex..clauseIndex];
+        var conflict = sql[clauseIndex..];
+        return beforeReturning + conflict + returning;
     }
 }

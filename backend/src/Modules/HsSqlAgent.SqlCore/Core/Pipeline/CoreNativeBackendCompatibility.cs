@@ -49,6 +49,13 @@ internal static class CoreNativeBackendCompatibility
                 return;
 
             case UpdateStatement update:
+                if (!update.From.IsDefaultOrEmpty)
+                {
+                    var updateFromError = SqlDmlUpdateFromCapabilityRules.TargetValidationError(provider);
+                    if (updateFromError is not null)
+                        throw new SqlCompilationException(updateFromError);
+                }
+
                 foreach (var assignment in update.Assignments)
                     VisitExpression(assignment.Value, provider, allowNestedCteFragments: true);
                 if (update.Predicate is not null)
@@ -56,6 +63,13 @@ internal static class CoreNativeBackendCompatibility
                 return;
 
             case DeleteStatement delete:
+                if (!delete.Using.IsDefaultOrEmpty)
+                {
+                    var deleteUsingError = SqlDmlDeleteUsingCapabilityRules.TargetValidationError(provider);
+                    if (deleteUsingError is not null)
+                        throw new SqlCompilationException(deleteUsingError);
+                }
+
                 if (delete.Predicate is not null)
                     VisitExpression(delete.Predicate, provider, allowNestedCteFragments: true);
                 return;

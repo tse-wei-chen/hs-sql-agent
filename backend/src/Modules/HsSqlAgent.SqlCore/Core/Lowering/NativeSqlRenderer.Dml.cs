@@ -14,7 +14,7 @@ public sealed partial class NativeSqlRenderer
         if (insert.Columns.IsDefaultOrEmpty)
             throw new SqlCompilationException("INSERT requires at least one target column.");
 
-        return insert.Source switch
+        var rendered = insert.Source switch
         {
             InsertValuesSource values => RenderInsertValues(insert, values),
             InsertQuerySource query => RenderInsertQuery(insert, query),
@@ -22,6 +22,8 @@ public sealed partial class NativeSqlRenderer
                 "Unsupported INSERT source during native lowering: " +
                 insert.Source.GetType().Name)
         };
+
+        return AppendReturning(rendered, insert.Returning);
     }
 
     private NativeSqlFragment RenderInsertValues(
@@ -190,6 +192,15 @@ public sealed partial class NativeSqlRenderer
             .Append(" SET ")
             .Append(string.Join(", ", assignments));
 
+        if (!update.From.IsDefaultOrEmpty)
+        {
+            var sources = update.From.Select(RenderNamedTableSource).ToArray();
+            sql.Append(" FROM ")
+                .Append(string.Join(", ", sources.Select(source => source.Sql)));
+            foreach (var source in sources)
+                bindings.AddRange(source.Bindings);
+        }
+
         if (update.Predicate is not null)
         {
             var predicate = RenderPredicateExpression(
@@ -199,7 +210,9 @@ public sealed partial class NativeSqlRenderer
             bindings.AddRange(predicate.Bindings);
         }
 
-        return new NativeSqlFragment(sql.ToString(), bindings.ToImmutable());
+        return AppendReturning(
+            new NativeSqlFragment(sql.ToString(), bindings.ToImmutable()),
+            update.Returning);
     }
 
     private NativeSqlFragment RenderDelete(DeleteStatement delete)
@@ -211,6 +224,15 @@ public sealed partial class NativeSqlRenderer
         var sql = new StringBuilder("DELETE FROM ").Append(table);
         var bindings = ImmutableArray.CreateBuilder<object?>();
 
+        if (!delete.Using.IsDefaultOrEmpty)
+        {
+            var sources = delete.Using.Select(RenderNamedTableSource).ToArray();
+            sql.Append(" USING ")
+                .Append(string.Join(", ", sources.Select(source => source.Sql)));
+            foreach (var source in sources)
+                bindings.AddRange(source.Bindings);
+        }
+
         if (delete.Predicate is not null)
         {
             var predicate = RenderPredicateExpression(
@@ -220,6 +242,69 @@ public sealed partial class NativeSqlRenderer
             bindings.AddRange(predicate.Bindings);
         }
 
-        return new NativeSqlFragment(sql.ToString(), bindings.ToImmutable());
+        return AppendReturning(
+            new NativeSqlFragment(sql.ToString(), bindings.ToImmutable()),
+            delete.Returning);
+    }
+
+    private NativeSqlFragment AppendReturning(
+        NativeSqlFragment statement,
+        ImmutableArray<DmlReturningItem> returning)
+    {
+        if (returning.IsDefaultOrEmpty)
+            return statement;
+
+        var capabilityError = SqlDmlReturningCapabilityRules.TargetValidationError(
+            Provider,
+            TargetProfile);
+        if (capabilityError is not null)
+            throw new SqlCompilationException(capabilityError);
+
+        var parts = new List<string>(returning.Length);
+        var bindings = statement.Bindings.ToBuilder();
+        foreach (var item in returning)
+        {
+            var rendered = RenderReturningItem(item);
+            parts.Add(rendered.Sql);
+            bindings.AddRange(rendered.Bindings);
+        }
+
+        return new NativeSqlFragment(
+            statement.Sql + " RETURNING " + string.Join(", ", parts),
+            bindings.ToImmutable());
+    }
+
+    private NativeSqlFragment RenderReturningItem(DmlReturningItem item) => item switch
+    {
+        DmlReturningColumnItem column => new NativeSqlFragment(
+            CoreIdentifierSqlRenderer.Render(
+                column.Identifier,
+                Provider,
+                allowWildcard: false),
+            ImmutableArray<object?>.Empty),
+        DmlReturningWildcardItem => new NativeSqlFragment(
+            "*",
+            ImmutableArray<object?>.Empty),
+        DmlReturningExpressionItem expression => RenderReturningExpression(expression),
+        _ => throw new SqlCompilationException(
+            $"Unsupported DML returning projection item {item.GetType().Name}.")
+    };
+
+    private NativeSqlFragment RenderReturningExpression(DmlReturningExpressionItem item)
+    {
+        var targetError = SqlDmlReturningExpressionCapabilityRules.TargetValidationError(Provider);
+        if (targetError is not null)
+            throw new SqlCompilationException(targetError);
+
+        SqlDmlReturningExpressionCapabilityRules.ValidateExpression(item);
+        var fragment = RenderExpression(item.Expression, dmlContext: true);
+        if (item.Alias is null)
+            return fragment;
+
+        return fragment with
+        {
+            Sql = fragment.Sql + " AS " +
+                  CoreIdentifierSqlRenderer.RenderAlias(item.Alias, Provider)
+        };
     }
 }

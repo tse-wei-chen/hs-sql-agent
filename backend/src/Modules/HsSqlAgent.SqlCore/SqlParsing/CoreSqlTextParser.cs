@@ -64,10 +64,10 @@ public static class CoreSqlTextParser
             sourceServerVersion: sourceProfile?.ServerVersion).ParseComplete();
         if (conflictExtraction.Conflict is not null)
         {
-            if (statement is not InsertStatement { Source: InsertValuesSource } insert)
+            if (statement is not InsertStatement insert)
             {
                 throw new SqlParseException(
-                    "Portable ON CONFLICT is currently limited to INSERT VALUES so source-row cardinality remains deterministic.");
+                    "INSERT conflict extraction must attach to a canonical INSERT statement.");
             }
             statement = insert with { Conflict = conflictExtraction.Conflict };
         }
