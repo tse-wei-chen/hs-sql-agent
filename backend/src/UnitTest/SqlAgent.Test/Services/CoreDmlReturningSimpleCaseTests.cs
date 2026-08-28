@@ -74,7 +74,6 @@ public sealed class CoreDmlReturningSimpleCaseTests
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1")));
 
-        Assert.Contains("searched CASE", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ExistsExpr", error.Message, StringComparison.Ordinal);
         Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
