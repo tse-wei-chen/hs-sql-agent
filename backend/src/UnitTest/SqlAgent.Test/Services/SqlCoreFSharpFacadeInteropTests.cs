@@ -1,5 +1,6 @@
 using System.Reflection;
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Ast;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
@@ -479,6 +480,56 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Sql, migrated.Sql);
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
         Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Theory]
+    [InlineData(
+        SqlAgentToolType.Postgres,
+        "INSERT INTO users (id, name) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name RETURNING id")]
+    [InlineData(
+        SqlAgentToolType.Firebird,
+        "UPDATE OR INSERT INTO users (id, name) VALUES (1, 'a') MATCHING (id) RETURNING id")]
+    public void Facade_FunctionalConflictParser_MatchesLegacyCanonicalAst(
+        SqlAgentToolType sourceDialect,
+        string sql)
+    {
+        var legacy = Assert.IsType<InsertStatement>(
+            CoreSqlTextParser.ParseDml(sql, sourceDialect).Statement);
+        var migrated = Assert.IsType<InsertStatement>(
+            SqlCoreFacade.ParseDml(sql, sourceDialect).Statement);
+
+        Assert.NotNull(legacy.Conflict);
+        Assert.NotNull(migrated.Conflict);
+        Assert.Equal(legacy.Conflict!.Action, migrated.Conflict!.Action);
+        Assert.Equal(
+            legacy.Conflict.TargetColumns.Select(
+                x => string.Join(".", x.Parts.Select(p => p.Value))),
+            migrated.Conflict.TargetColumns.Select(
+                x => string.Join(".", x.Parts.Select(p => p.Value))));
+        Assert.Equal(
+            legacy.Conflict.Assignments.Select(
+                x => (
+                    string.Join(".", x.Column.Parts.Select(p => p.Value)),
+                    string.Join(".", x.ProposedColumn.Parts.Select(p => p.Value)))),
+            migrated.Conflict.Assignments.Select(
+                x => (
+                    string.Join(".", x.Column.Parts.Select(p => p.Value)),
+                    string.Join(".", x.ProposedColumn.Parts.Select(p => p.Value))));
+    }
+
+    [Fact]
+    public void Facade_FunctionalConflictParser_MatchesLegacyMySqlFailClosed()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'a') ON DUPLICATE KEY UPDATE name = VALUES(name)";
+
+        var legacy = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MySQL));
+
+        var migrated = Assert.Throws<SqlParseException>(() =>
+            SqlCoreFacade.ParseDml(sql, SqlAgentToolType.MySQL));
+
+        Assert.Equal(legacy.Message, migrated.Message);
     }
 
     [Fact]

@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Compile Include="FunctionalAst.fs" />
+    <Compile Include="FunctionalDmlConflictParser.fs" />
     <Compile Include="FunctionalSqlTextParser.fs" />
     <Compile Include="FunctionalQueryBinder.fs" />
     <Compile Include="FunctionalDmlBinder.fs" />

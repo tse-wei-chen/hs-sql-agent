@@ -369,10 +369,10 @@ module internal FunctionalSqlTextParser =
         validateStatementTokens tokens sourceDialect
 
         let struct (conflictTokens, conflict) =
-            CoreDmlConflictTextParser.Extract(
-                tokens,
-                sourceDialect,
-                sourceServerVersion sourceProfile)
+            FunctionalDmlConflictParser.extract
+                tokens
+                sourceDialect
+                (sourceServerVersion sourceProfile)
 
         let statement =
             CoreDmlTextParser(
@@ -387,7 +387,7 @@ module internal FunctionalSqlTextParser =
         let statement =
             CoreParserAstClone.AttachInsertConflict(
                 statement,
-                conflict)
+                Option.toObj conflict)
 
         ParsedStatement(
             statement,
