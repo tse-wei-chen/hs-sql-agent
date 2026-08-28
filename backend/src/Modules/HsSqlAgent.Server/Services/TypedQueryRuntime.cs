@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
@@ -26,7 +27,15 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         ISqlProvider provider,
         ParsedStatement parsed,
         SecurityPolicyModel policy,
-        IReadOnlySet<string>? allowedTables)
+        IReadOnlySet<string>? allowedTables) =>
+        Compile(provider, parsed, policy, allowedTables, targetProfile: null);
+
+    internal CompiledSqlCommand Compile(
+        ISqlProvider provider,
+        ParsedStatement parsed,
+        SecurityPolicyModel policy,
+        IReadOnlySet<string>? allowedTables,
+        SqlProviderCapabilityProfile? targetProfile)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(parsed);
@@ -38,7 +47,8 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             new SqlPlanValidationContext(
                 ComputePolicyVersion(policy, allowedTables),
                 allowedTables),
-            new SqlExecutionPlanPolicy(policy.QueryMaxRows));
+            new SqlExecutionPlanPolicy(policy.QueryMaxRows),
+            targetProfile);
     }
 
     public async Task<QueryExecutionResult> ExecuteAsync(
@@ -54,13 +64,16 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        var command = Compile(provider, parsed, policy, allowedTables);
-        var executor = new CompiledSqlCommandExecutor(provider.Connections);
         try
         {
+            await using var connection = provider.Connections.Create(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            var targetProfile = CreateVerifiedTargetProfile(provider.Type, connection);
+            var command = Compile(provider, parsed, policy, allowedTables, targetProfile);
+            var executor = new CompiledSqlCommandExecutor(provider.Connections);
             return await executor.ExecuteQueryAsync(
                 command,
-                connectionString,
+                connection,
                 policy.QueryTimeoutSeconds,
                 cancellationToken);
         }
@@ -68,6 +81,40 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         {
             throw provider.Errors.Map(ex, "query");
         }
+    }
+
+    internal static SqlProviderCapabilityProfile CreateVerifiedTargetProfile(
+        SqlAgentToolType provider,
+        DbConnection openConnection)
+    {
+        ArgumentNullException.ThrowIfNull(openConnection);
+        if (openConnection.State != System.Data.ConnectionState.Open)
+            throw new InvalidOperationException(
+                "Verified runtime capability profile requires an open database connection.");
+
+        return new SqlProviderCapabilityProfile(
+            provider,
+            ServerVersion: ParseServerVersion(openConnection.ServerVersion));
+    }
+
+    private static Version? ParseServerVersion(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        if (Version.TryParse(trimmed, out var exact)) return exact;
+
+        var tokenLength = 0;
+        while (tokenLength < trimmed.Length)
+        {
+            var ch = trimmed[tokenLength];
+            if (!(char.IsDigit(ch) || ch == '.')) break;
+            tokenLength++;
+        }
+
+        return tokenLength > 0
+               && Version.TryParse(trimmed[..tokenLength].TrimEnd('.'), out var prefix)
+            ? prefix
+            : null;
     }
 
     internal static string ComputePolicyVersion(

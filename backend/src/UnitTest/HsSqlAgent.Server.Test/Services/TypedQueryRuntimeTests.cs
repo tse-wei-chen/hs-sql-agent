@@ -1,3 +1,5 @@
+using System.Data;
+using System.Data.Common;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using Moq;
@@ -92,6 +94,33 @@ public class TypedQueryRuntimeTests
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
 
         Assert.NotEqual(first.PlanFingerprint, second.PlanFingerprint);
+    }
+
+    [Fact]
+    public void CreateVerifiedTargetProfile_UsesOpenConnectionServerVersion()
+    {
+        var connection = new Mock<DbConnection>();
+        connection.SetupGet(x => x.State).Returns(ConnectionState.Open);
+        connection.SetupGet(x => x.ServerVersion).Returns("17.5 (Debian 17.5-1)");
+
+        var profile = TypedQueryRuntime.CreateVerifiedTargetProfile(
+            SqlAgentToolType.Postgres,
+            connection.Object);
+
+        Assert.Equal(SqlAgentToolType.Postgres, profile.Provider);
+        Assert.Equal(new Version(17, 5), profile.ServerVersion);
+    }
+
+    [Fact]
+    public void CreateVerifiedTargetProfile_RequiresOpenConnection()
+    {
+        var connection = new Mock<DbConnection>();
+        connection.SetupGet(x => x.State).Returns(ConnectionState.Closed);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            TypedQueryRuntime.CreateVerifiedTargetProfile(
+                SqlAgentToolType.Postgres,
+                connection.Object));
     }
 
     private static ParsedStatement Map(QueryDefinition definition, SqlAgentToolType sourceDialect) =>

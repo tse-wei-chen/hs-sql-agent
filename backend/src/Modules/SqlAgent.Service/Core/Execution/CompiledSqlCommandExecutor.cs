@@ -1,3 +1,5 @@
+using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
 using Dapper;
 using SqlAgent.Service.Services;
@@ -33,12 +35,30 @@ public sealed class CompiledSqlCommandExecutor(IDbConnectionFactory connectionFa
         ArgumentNullException.ThrowIfNull(command);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        await using var connection = _connectionFactory.Create(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        return await ExecuteQueryAsync(
+            command,
+            connection,
+            commandTimeoutSeconds,
+            cancellationToken);
+    }
+
+    public async Task<QueryExecutionResult> ExecuteQueryAsync(
+        CompiledSqlCommand command,
+        DbConnection connection,
+        int commandTimeoutSeconds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(connection);
+
         if (command.Kind != SqlStatementKind.Select)
             throw new InvalidOperationException(
                 $"Query executor cannot execute command kind {command.Kind}.");
-
-        await using var connection = _connectionFactory.Create(connectionString);
-        await connection.OpenAsync(cancellationToken);
+        if (connection.State != ConnectionState.Open)
+            throw new InvalidOperationException(
+                "Query executor requires an already-open database connection.");
 
         var parameters = new DynamicParameters();
         foreach (var parameter in command.Parameters)
