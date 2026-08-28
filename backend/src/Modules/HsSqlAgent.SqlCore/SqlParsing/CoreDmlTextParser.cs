@@ -204,43 +204,12 @@ internal sealed class CoreDmlTextParser
 
     private void ValidateReturningSourceContract(Token returningToken)
     {
-        switch (_sourceDialect)
-        {
-            case SqlAgentToolType.Postgres:
-                return;
-            case SqlAgentToolType.Sqlite when IsAtLeast(_sourceServerVersion, 3, 35):
-                return;
-            case SqlAgentToolType.Sqlite:
-                throw CoreTokenReader.Error(
-                    "Raw SQLite RETURNING requires a source capability profile with ServerVersion 3.35 or newer.",
-                    returningToken);
-            case SqlAgentToolType.Firebird when IsAtLeast(_sourceServerVersion, 5, 0):
-                return;
-            case SqlAgentToolType.Firebird:
-                throw CoreTokenReader.Error(
-                    "Portable multi-row Firebird DSQL RETURNING requires a source capability profile with ServerVersion 5.0 or newer.",
-                    returningToken);
-            case SqlAgentToolType.MsSqlServer:
-                throw CoreTokenReader.Error(
-                    "SQL Server uses OUTPUT rather than RETURNING; trigger-sensitive OUTPUT result semantics are not yet represented by the portable Core DML contract.",
-                    returningToken);
-            case SqlAgentToolType.Oracle:
-                throw CoreTokenReader.Error(
-                    "Oracle RETURNING requires RETURNING INTO host or bind variables, which are not represented by the portable Core DML result-row contract.",
-                    returningToken);
-            case SqlAgentToolType.MySQL:
-                throw CoreTokenReader.Error(
-                    "MySQL has no declared DML RETURNING result-row syntax in the Core MySQL 8.4 source profile.",
-                    returningToken);
-            default:
-                throw CoreTokenReader.Error(
-                    $"DML RETURNING is not represented for source dialect {_sourceDialect}.",
-                    returningToken);
-        }
+        var error = SqlDmlReturningCapabilityRules.SourceValidationError(
+            _sourceDialect,
+            _sourceServerVersion);
+        if (error is not null)
+            throw CoreTokenReader.Error(error, returningToken);
     }
-
-    private static bool IsAtLeast(Version? actual, int major, int minor) =>
-        actual is not null && actual.CompareTo(new Version(major, minor)) >= 0;
 
     private SqlExpr ParseUpdateAssignmentValue()
     {

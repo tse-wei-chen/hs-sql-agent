@@ -80,12 +80,10 @@ internal static class CoreDmlConflictTextParser
         Token[] tokens,
         SqlAgentToolType sourceDialect)
     {
-        if (sourceDialect != SqlAgentToolType.Firebird)
-        {
-            throw CoreTokenReader.Error(
-                $"UPDATE OR INSERT is Firebird source syntax and is not valid for source dialect {sourceDialect}.",
-                tokens[0]);
-        }
+        var sourceError =
+            SqlDmlUpsertCapabilityRules.FirebirdUpdateOrInsertSourceValidationError(sourceDialect);
+        if (sourceError is not null)
+            throw CoreTokenReader.Error(sourceError, tokens[0]);
 
         // Drop UPDATE OR so the ordinary INSERT parser can own target/VALUES/RETURNING parsing.
         var normalizedPrefix = new Token[tokens.Length - 2];
@@ -280,36 +278,10 @@ internal static class CoreDmlConflictTextParser
         Version? sourceServerVersion,
         Token token)
     {
-        switch (sourceDialect)
-        {
-            case SqlAgentToolType.Postgres:
-                return;
-            case SqlAgentToolType.Sqlite when IsAtLeast(sourceServerVersion, 3, 24):
-                return;
-            case SqlAgentToolType.Sqlite:
-                throw CoreTokenReader.Error(
-                    "Raw SQLite UPSERT requires a source capability profile with ServerVersion 3.24 or newer.",
-                    token);
-            case SqlAgentToolType.MySQL:
-                throw CoreTokenReader.Error(
-                    "MySQL ON DUPLICATE KEY UPDATE has no explicit conflict target and is not represented by the deterministic portable upsert contract.",
-                    token);
-            case SqlAgentToolType.Firebird:
-                throw CoreTokenReader.Error(
-                    "Firebird source upsert uses UPDATE OR INSERT ... MATCHING rather than ON CONFLICT; use the native explicit MATCHING form so Core can preserve source semantics.",
-                    token);
-            case SqlAgentToolType.MsSqlServer:
-            case SqlAgentToolType.Oracle:
-                throw CoreTokenReader.Error(
-                    $"Source dialect {sourceDialect} uses MERGE-style upsert semantics, which require a separate source-row cardinality contract and remain fail-closed.",
-                    token);
-            default:
-                throw CoreTokenReader.Error(
-                    $"Portable INSERT conflict handling is not represented for source dialect {sourceDialect}.",
-                    token);
-        }
+        var error = SqlDmlUpsertCapabilityRules.OnConflictSourceValidationError(
+            sourceDialect,
+            sourceServerVersion);
+        if (error is not null)
+            throw CoreTokenReader.Error(error, token);
     }
-
-    private static bool IsAtLeast(Version? actual, int major, int minor) =>
-        actual is not null && actual.CompareTo(new Version(major, minor)) >= 0;
 }
