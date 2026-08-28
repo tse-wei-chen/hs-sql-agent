@@ -2,7 +2,7 @@ namespace HsSqlAgent.SqlCore.Models;
 
 /// <summary>
 /// Provider contract for richer DML result expressions. This is intentionally narrower than the
-/// portable column/wildcard RETURNING contract: the first proven slice is PostgreSQL only, and the
+/// portable column/wildcard RETURNING contract: the proven slice is PostgreSQL only, and the
 /// expression itself must stay inside the deterministic target-row subset validated below.
 /// </summary>
 internal static class SqlDmlReturningExpressionCapabilityRules
@@ -74,9 +74,12 @@ internal static class SqlDmlReturningExpressionCapabilityRules
             case FunctionCallExpr function:
                 ValidateScalarFunction(function);
                 return;
+            case SimpleCaseExpr simpleCase:
+                ValidateSimpleCase(simpleCase);
+                return;
             default:
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/-, CAST, and registered direct-portable scalar functions. Expression node {expression.GetType().Name} remains fail-closed.");
+                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/-, CAST, registered direct-portable scalar functions, and simple CASE. Expression node {expression.GetType().Name} remains fail-closed.");
         }
     }
 
@@ -102,6 +105,35 @@ internal static class SqlDmlReturningExpressionCapabilityRules
 
         foreach (var argument in function.Arguments)
             ValidateNode(argument);
+    }
+
+    private static void ValidateSimpleCase(SimpleCaseExpr simpleCase)
+    {
+        if (simpleCase.Branches.IsDefaultOrEmpty)
+        {
+            throw new SqlCompilationException(
+                $"SQL capability '{CapabilityId}' requires simple CASE to contain at least one WHEN branch.");
+        }
+
+        foreach (var branch in simpleCase.Branches)
+        {
+            if (branch.Condition is not BinaryExpr
+                {
+                    Operator: "=",
+                    LikeEscape: null
+                } equality)
+            {
+                throw new SqlCompilationException(
+                    $"SQL capability '{CapabilityId}' accepts only canonical simple CASE equality branches; searched CASE predicates remain fail-closed.");
+            }
+
+            ValidateNode(equality.Left);
+            ValidateNode(equality.Right);
+            ValidateNode(branch.Value);
+        }
+
+        if (simpleCase.ElseExpression is not null)
+            ValidateNode(simpleCase.ElseExpression);
     }
 
     private static void ValidateTargetColumn(SqlIdentifier identifier)
