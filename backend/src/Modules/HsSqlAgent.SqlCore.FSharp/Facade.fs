@@ -42,8 +42,8 @@ module private FacadeResult =
             SqlCoreTryResult<'T>(
                 true,
                 action(),
-                null,
-                null,
+                Unchecked.defaultof<string>,
+                Unchecked.defaultof<string>,
                 noDiagnostics)
         with ex ->
             SqlCoreTryResult<'T>(
