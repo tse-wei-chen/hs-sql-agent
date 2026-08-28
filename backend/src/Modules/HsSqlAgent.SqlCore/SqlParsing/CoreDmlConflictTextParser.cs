@@ -20,7 +20,7 @@ internal static class CoreDmlConflictTextParser
         if (tokens.Length == 0 || !CoreTokenReader.IsWord(tokens[0], "INSERT"))
             return (tokens, null);
 
-        var onIndex = FindRootClauseAfterValues(tokens, "ON");
+        var onIndex = FindRootConflictClause(tokens);
         if (onIndex < 0)
             return (tokens, null);
 
@@ -160,6 +160,32 @@ internal static class CoreDmlConflictTextParser
         && CoreTokenReader.IsWord(tokens[1], "OR")
         && CoreTokenReader.IsWord(tokens[2], "INSERT");
 
+    private static int FindRootConflictClause(Token[] tokens)
+    {
+        var depth = 0;
+        for (var i = 0; i + 1 < tokens.Length; i++)
+        {
+            var token = tokens[i];
+            if (token.Type == TokenType.LParen)
+            {
+                depth++;
+                continue;
+            }
+            if (token.Type == TokenType.RParen)
+            {
+                depth = Math.Max(0, depth - 1);
+                continue;
+            }
+            if (depth != 0 || !CoreTokenReader.IsWord(token, "ON"))
+                continue;
+
+            if (CoreTokenReader.IsWord(tokens[i + 1], "CONFLICT")
+                || CoreTokenReader.IsWord(tokens[i + 1], "DUPLICATE"))
+                return i;
+        }
+        return -1;
+    }
+
     private static int FindRootClauseAfterValues(Token[] tokens, string word)
     {
         var depth = 0;
@@ -244,7 +270,7 @@ internal static class CoreDmlConflictTextParser
             if (equals.Type != TokenType.Operator || equals.Value != "=")
                 throw CoreTokenReader.Error("Expected '=' in ON CONFLICT UPDATE assignment.", equals);
             reader.Advance();
-            var excluded = reader.ExpectWord("EXCLUDED");
+            reader.ExpectWord("EXCLUDED");
             reader.Expect(TokenType.Dot, "'.' after EXCLUDED");
             var sourceToken = reader.ExpectIdentifier("proposed-row column after EXCLUDED.");
             var source = new SqlIdentifier(
