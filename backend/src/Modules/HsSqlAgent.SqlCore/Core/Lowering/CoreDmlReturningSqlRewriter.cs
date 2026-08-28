@@ -5,9 +5,8 @@ namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Adds the portable DML result-row clause after the provider-specific mutation has been lowered.
-/// The accepted source surface is still intentionally column-only, but lowering now classifies the
-/// projection into explicit semantic item kinds so future expression, OLD/NEW, and OUTPUT work does
-/// not have to overload SqlIdentifier shape to represent distinct result-row semantics.
+/// Projection semantics are represented by Core AST DmlReturningItem kinds so future expression,
+/// OLD/NEW, and SQL Server OUTPUT work cannot silently overload SqlIdentifier shape.
 /// </summary>
 internal static class CoreDmlReturningSqlRewriter
 {
@@ -31,7 +30,7 @@ internal static class CoreDmlReturningSqlRewriter
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
 
-        var projectionItems = ClassifyProjection(returning);
+        var projectionItems = DmlReturningProjection.FromColumns(returning);
         var projection = string.Join(", ", projectionItems.Select(item =>
             RenderProjectionItem(item, command.TargetProvider)));
         var rewritten = command with
@@ -54,65 +53,16 @@ internal static class CoreDmlReturningSqlRewriter
         _ => ImmutableArray<SqlIdentifier>.Empty
     };
 
-    private static ImmutableArray<ReturningProjectionItem> ClassifyProjection(
-        ImmutableArray<SqlIdentifier> columns)
-    {
-        var items = ImmutableArray.CreateBuilder<ReturningProjectionItem>(columns.Length);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var wildcard = false;
-
-        foreach (var column in columns)
-        {
-            if (column.Parts.Length != 1)
-            {
-                throw new SqlCompilationException(
-                    "Portable DML RETURNING accepts unqualified target columns only.");
-            }
-
-            var part = column.Parts[0];
-            var isWildcard = part.Value == "*" && !part.WasQuoted;
-            wildcard |= isWildcard;
-            if (!seen.Add(part.Value))
-            {
-                throw new SqlCompilationException(
-                    $"RETURNING column '{part.Value}' is declared more than once.");
-            }
-
-            items.Add(isWildcard
-                ? new ReturningWildcardItem(column)
-                : new ReturningColumnItem(column));
-        }
-
-        if (wildcard && columns.Length != 1)
-        {
-            throw new SqlCompilationException(
-                "RETURNING * cannot be mixed with explicit RETURNING columns in the portable Core contract.");
-        }
-
-        return items.ToImmutable();
-    }
-
     private static string RenderProjectionItem(
-        ReturningProjectionItem item,
+        DmlReturningItem item,
         SqlAgentToolType provider) => item switch
     {
-        ReturningColumnItem column => CoreIdentifierSqlRenderer.Render(
+        DmlReturningColumnItem column => CoreIdentifierSqlRenderer.Render(
             column.Identifier,
             provider,
             allowWildcard: false),
-        ReturningWildcardItem wildcard => CoreIdentifierSqlRenderer.Render(
-            wildcard.Identifier,
-            provider,
-            allowWildcard: true),
+        DmlReturningWildcardItem => "*",
         _ => throw new InvalidOperationException(
             $"Unsupported DML returning projection item {item.GetType().Name}.")
     };
-
-    private abstract record ReturningProjectionItem(SqlIdentifier Identifier);
-
-    private sealed record ReturningColumnItem(SqlIdentifier Identifier)
-        : ReturningProjectionItem(Identifier);
-
-    private sealed record ReturningWildcardItem(SqlIdentifier Identifier)
-        : ReturningProjectionItem(Identifier);
 }
