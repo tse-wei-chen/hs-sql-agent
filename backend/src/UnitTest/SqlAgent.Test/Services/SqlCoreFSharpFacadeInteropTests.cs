@@ -401,6 +401,66 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
+    public static IEnumerable<object[]> QueryValidatorFailureParityCases()
+    {
+        yield return new object[]
+        {
+            "SELECT id FROM users",
+            SqlAgentToolType.Postgres,
+            new[] { "roles" }
+        };
+        yield return new object[]
+        {
+            "SELECT COUNT(DISTINCT *) FROM users",
+            SqlAgentToolType.Postgres,
+            new[] { "users" }
+        };
+        yield return new object[]
+        {
+            "SELECT name FROM users WHERE name ILIKE 'a%'",
+            SqlAgentToolType.MySQL,
+            new[] { "users" }
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(QueryValidatorFailureParityCases))]
+    public void Facade_FunctionalQueryValidator_MatchesLegacyFailures(
+        string sql,
+        SqlAgentToolType targetProvider,
+        string[] allowedTables)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-query-validator-v1",
+            new HashSet<string>(
+                allowedTables,
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    targetProvider,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                targetProvider,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> DmlValidatorFailureParityCases()
     {
         yield return new object[]

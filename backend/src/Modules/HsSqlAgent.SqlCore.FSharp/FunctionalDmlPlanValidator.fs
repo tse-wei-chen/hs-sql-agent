@@ -189,12 +189,13 @@ module internal FunctionalDmlPlanValidator =
                 $"Unsupported INSERT VALUES expression during scope validation: {other.GetType().Name}"))
 
     let private validateNonInsert
-        (common: CoreSqlPlanValidator)
         (statement: CanonicalStatement)
         (context: SqlPlanValidationContext) =
 
         let validated =
-            common.Validate(statement, context)
+            FunctionalSqlPlanValidator.validate
+                statement
+                context
 
         match validated.Statement with
         | :? UpdateStatement as update ->
@@ -216,7 +217,6 @@ module internal FunctionalDmlPlanValidator =
         validated
 
     let private validateInsert
-        (common: CoreSqlPlanValidator)
         (statement: CanonicalStatement)
         (context: SqlPlanValidationContext)
         (insert: InsertStatement) =
@@ -237,13 +237,13 @@ module internal FunctionalDmlPlanValidator =
                     $"Unsupported INSERT source during validation: {other.GetType().Name}"))
 
         let validatedCarrier =
-            common.Validate(
-                CanonicalStatement(
+            FunctionalSqlPlanValidator.validate
+                (CanonicalStatement(
                     validationCarrier,
                     statement.Facts,
                     statement.SourceDialect,
-                    statement.TargetProvider),
-                context)
+                    statement.TargetProvider))
+                context
 
         let validatedInsert =
             match insert.Source with
@@ -297,12 +297,9 @@ module internal FunctionalDmlPlanValidator =
         (context: SqlPlanValidationContext)
         : ValidatedSqlPlan =
 
-        let common = CoreSqlPlanValidator()
-
         match statement.Statement with
         | :? InsertStatement as insert ->
             validateInsert
-                common
                 statement
                 context
                 insert
@@ -310,7 +307,6 @@ module internal FunctionalDmlPlanValidator =
         | :? UpdateStatement
         | :? DeleteStatement ->
             validateNonInsert
-                common
                 statement
                 context
 

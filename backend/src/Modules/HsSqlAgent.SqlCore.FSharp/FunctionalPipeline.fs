@@ -154,9 +154,9 @@ module internal FunctionalPipeline =
         (CanonicalQuery(context, canonical)) =
 
         let validated =
-            CoreSqlPlanValidator().Validate(
-                canonical,
-                validationContext)
+            FunctionalSqlPlanValidator.validate
+                canonical
+                validationContext
 
         FunctionalAst.verify validated.Statement |> ignore
         ValidatedQuery(context, validated)
