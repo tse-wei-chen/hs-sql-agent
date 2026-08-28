@@ -80,9 +80,21 @@ internal static class SqlDmlReturningExpressionCapabilityRules
             case CaseExpr searchedCase:
                 ValidateSearchedCase(searchedCase);
                 return;
+            case UnaryExpr { Operator: "NOT" }:
+            case BinaryExpr { Operator: "AND" or "OR", LikeEscape: null }:
+            case BinaryExpr
+                {
+                    Operator: "=" or "<>" or "!=" or ">" or "<" or ">=" or "<=",
+                    LikeEscape: null
+                }:
+            case IsNullExpr:
+            case BetweenExpr:
+            case InExpr:
+                ValidatePredicate(expression);
+                return;
             default:
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/-, CAST, registered direct-portable scalar functions, and validated CASE expressions. Expression node {expression.GetType().Name} remains fail-closed.");
+                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/-, CAST, registered direct-portable scalar functions, validated CASE expressions, and the validated target-row predicate subset. Expression node {expression.GetType().Name} remains fail-closed.");
         }
     }
 
@@ -191,7 +203,7 @@ internal static class SqlDmlReturningExpressionCapabilityRules
                 return;
             default:
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' searched CASE accepts only comparison, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates over the proven target-row expression subset; predicate node {expression.GetType().Name} remains fail-closed.");
+                    $"SQL capability '{CapabilityId}' accepts only comparison, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates over the proven target-row expression subset; predicate node {expression.GetType().Name} remains fail-closed.");
         }
     }
 
