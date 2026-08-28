@@ -424,7 +424,10 @@ module internal FunctionalExpressionTextParser =
                     else
                         match parsed with
                         | :? int as integer ->
-                            box (-integer)
+                            // Preserve the legacy raw-query parser contract:
+                            // signed negative integral literals are carried as
+                            // decimal values at the SQL parameter boundary.
+                            box (decimal (-integer))
                         | :? decimal as number ->
                             box (-number)
                         | _ ->
