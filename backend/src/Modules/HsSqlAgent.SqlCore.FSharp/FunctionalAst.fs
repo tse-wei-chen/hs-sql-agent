@@ -22,6 +22,7 @@ module internal FunctionalAst =
         | Divide
         | Modulo
         | Concat
+        | SourceProfileConcat
         | Equal
         | NotEqual
         | GreaterThan
@@ -137,6 +138,7 @@ module internal FunctionalAst =
         | "/" -> BinaryOperator.Divide
         | "%" -> BinaryOperator.Modulo
         | "||" -> BinaryOperator.Concat
+        | "__CORE_MYSQL_PIPES_AS_CONCAT__" -> BinaryOperator.SourceProfileConcat
         | "=" -> BinaryOperator.Equal
         | "<>"
         | "!=" -> BinaryOperator.NotEqual
