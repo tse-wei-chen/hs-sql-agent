@@ -53,10 +53,10 @@ module internal FunctionalQueryBinder =
         |> String.concat "."
 
     let private aliasValue (alias: IdentifierPart | null) =
-        match alias with
-        | null -> null
-        | value when String.IsNullOrWhiteSpace(value.Value) -> null
-        | value -> value.Value.Trim()
+        match Option.ofObj alias with
+        | None -> None
+        | Some value when String.IsNullOrWhiteSpace(value.Value) -> None
+        | Some value -> Some(value.Value.Trim())
 
     let private identifierKeyParts
         (state: BindingState)
@@ -157,15 +157,15 @@ module internal FunctionalQueryBinder =
 
     let private registerAlias
         (state: BindingState)
-        (alias: IdentifierPart | null)
+        (alias: IdentifierPart option)
         (symbol: TableSymbol)
         (scope: BindingScope) =
 
         match alias with
-        | null ->
+        | None ->
             scope
 
-        | aliasPart ->
+        | Some aliasPart ->
             let key = identifierKeyParts state [ aliasPart ]
             if containsKey state key scope.AliasKeys then
                 raise (InvalidOperationException(
@@ -177,7 +177,7 @@ module internal FunctionalQueryBinder =
         state
         (symbol: TableSymbol)
         (name: SqlIdentifier)
-        (alias: IdentifierPart | null)
+        (alias: IdentifierPart option)
         scope =
 
         let registered = registerAlias state alias symbol scope
@@ -199,9 +199,9 @@ module internal FunctionalQueryBinder =
                     withFullName
 
         match alias with
-        | null ->
+        | None ->
             withTailName
-        | aliasPart ->
+        | Some aliasPart ->
             addQualifier
                 state
                 (identifierKeyParts state [ aliasPart ])
@@ -385,11 +385,11 @@ module internal FunctionalQueryBinder =
             allocateScope parentScope stateAfterCtes
 
         let boundFrom, scopeAfterFrom, stateAfterFrom =
-            match select.From with
-            | null ->
-                null, initialScope, stateWithScope
+            match Option.ofObj select.From with
+            | None ->
+                None, initialScope, stateWithScope
 
-            | source ->
+            | Some source ->
                 let boundSource, nextScope, nextState =
                     bindSource
                         source
@@ -397,7 +397,7 @@ module internal FunctionalQueryBinder =
                         localCtes
                         stateWithScope
 
-                boundSource, nextScope, nextState
+                Some boundSource, nextScope, nextState
 
         let boundJoinsRev, finalScope, stateAfterJoins =
             (([], scopeAfterFrom, stateAfterFrom), select.Joins)
@@ -410,10 +410,10 @@ module internal FunctionalQueryBinder =
                         currentState
 
                 let predicate, nextState =
-                    match join.Predicate with
-                    | null ->
-                        null, stateWithSource
-                    | value ->
+                    match Option.ofObj join.Predicate with
+                    | None ->
+                        None, stateWithSource
+                    | Some value ->
                         let bound, afterPredicate =
                             bindExpr
                                 value
@@ -421,9 +421,12 @@ module internal FunctionalQueryBinder =
                                 localCtes
                                 stateWithSource
 
-                        bound, afterPredicate
+                        Some bound, afterPredicate
 
-                CoreBindingAstClone.Join(join, boundSource, predicate)
+                CoreBindingAstClone.Join(
+                    join,
+                    boundSource,
+                    Option.toObj predicate)
                 :: boundRev,
                 scopeWithSource,
                 nextState)
@@ -436,15 +439,18 @@ module internal FunctionalQueryBinder =
                 stateAfterJoins
 
         let boundWhere, stateAfterWhere =
-            match select.Where with
-            | null ->
-                null, stateAfterSelect
-            | value ->
-                bindExpr
-                    value
-                    (Some finalScope)
-                    localCtes
-                    stateAfterSelect
+            match Option.ofObj select.Where with
+            | None ->
+                None, stateAfterSelect
+            | Some value ->
+                let bound, nextState =
+                    bindExpr
+                        value
+                        (Some finalScope)
+                        localCtes
+                        stateAfterSelect
+
+                Some bound, nextState
 
         let boundGroupBy, stateAfterGroupBy =
             bindExprItems
@@ -454,15 +460,18 @@ module internal FunctionalQueryBinder =
                 stateAfterWhere
 
         let boundHaving, stateAfterHaving =
-            match select.Having with
-            | null ->
-                null, stateAfterGroupBy
-            | value ->
-                bindExpr
-                    value
-                    (Some finalScope)
-                    localCtes
-                    stateAfterGroupBy
+            match Option.ofObj select.Having with
+            | None ->
+                None, stateAfterGroupBy
+            | Some value ->
+                let bound, nextState =
+                    bindExpr
+                        value
+                        (Some finalScope)
+                        localCtes
+                        stateAfterGroupBy
+
+                Some bound, nextState
 
         let boundOrderBy, finalState =
             bindOrderByItems
@@ -474,12 +483,12 @@ module internal FunctionalQueryBinder =
         CoreBindingAstClone.Select(
             select,
             boundCtesRev |> List.rev |> toImmutableArray,
-            boundFrom,
+            Option.toObj boundFrom,
             boundJoinsRev |> List.rev |> toImmutableArray,
             boundSelect,
-            boundWhere,
+            Option.toObj boundWhere,
             boundGroupBy,
-            boundHaving,
+            Option.toObj boundHaving,
             boundOrderBy),
         finalState
 
@@ -500,10 +509,11 @@ module internal FunctionalQueryBinder =
                 else addPhysicalTable tableName state
 
             let alias = aliasValue named.Alias
+            let aliasPart = Option.ofObj named.Alias
             let symbol =
                 TableSymbol(
                     tableName,
-                    alias,
+                    Option.toObj alias,
                     false,
                     isCte,
                     named.Span)
@@ -513,15 +523,16 @@ module internal FunctionalQueryBinder =
                     stateWithTable
                     symbol
                     named.Name
-                    named.Alias
+                    aliasPart
                     scope
 
             let nextState =
-                if String.IsNullOrWhiteSpace(alias) then
+                match alias with
+                | None ->
                     stateWithTable
-                else
+                | Some value ->
                     addAliasFact
-                        alias
+                        value
                         symbol.Name
                         nextScope.Id
                         stateWithTable
@@ -753,20 +764,23 @@ module internal FunctionalQueryBinder =
                     stateAfterValue)
 
             let elseExpression, finalState =
-                match caseExpression.ElseExpression with
-                | null ->
-                    null, stateAfterBranches
-                | value ->
-                    bindExpr
-                        value
-                        scope
-                        visibleCtes
-                        stateAfterBranches
+                match Option.ofObj caseExpression.ElseExpression with
+                | None ->
+                    None, stateAfterBranches
+                | Some value ->
+                    let bound, nextState =
+                        bindExpr
+                            value
+                            scope
+                            visibleCtes
+                            stateAfterBranches
+
+                    Some bound, nextState
 
             CoreBindingAstClone.Case(
                 caseExpression,
                 branchesRev |> List.rev |> toImmutableArray,
-                elseExpression) :> SqlExpr,
+                Option.toObj elseExpression) :> SqlExpr,
             finalState
 
         | :? InExpr as inExpression ->
