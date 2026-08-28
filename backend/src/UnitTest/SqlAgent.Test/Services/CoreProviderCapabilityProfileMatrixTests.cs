@@ -53,6 +53,21 @@ public sealed class CoreProviderCapabilityProfileMatrixTests
         Assert.Contains("matrix provider is MsSqlServer", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Matrix_NegativeCompatibilityProfile_FailsClosed()
+    {
+        var error = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SqlCapabilityMatrix.ForProvider(
+                SqlAgentToolType.MsSqlServer,
+                SqlServerProfile(-1)));
+
+        Assert.Equal("targetProfile", error.ParamName);
+        Assert.Contains(
+            "Provider compatibility level must be non-negative",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     private static SqlProviderCapabilityProfile SqlServerProfile(int compatibilityLevel) =>
         new(
             SqlAgentToolType.MsSqlServer,
