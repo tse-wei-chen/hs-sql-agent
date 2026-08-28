@@ -385,6 +385,49 @@ public class SqlParserTests
         Assert.Equal(expected, constant.Constant);
     }
 
+    [Theory]
+    [InlineData("SELECT E'a\\n'", SqlAgentToolType.Postgres)]
+    [InlineData("SELECT $$value$$", SqlAgentToolType.Postgres)]
+    [InlineData("SELECT `name` FROM users", SqlAgentToolType.MySQL)]
+    [InlineData("SELECT [name] FROM users", SqlAgentToolType.MsSqlServer)]
+    public void Tokenize_DeclaredLexicalFeature_IsAcceptedByOwningDialect(
+        string sql,
+        SqlAgentToolType provider)
+    {
+        var tokens = new SqlTokenizer(sql, provider).Tokenize();
+
+        Assert.NotEmpty(tokens);
+        Assert.Equal(TokenType.EOF, tokens[^1].Type);
+    }
+
+    [Theory]
+    [InlineData(
+        "SELECT E'a\\n'",
+        SqlAgentToolType.MySQL,
+        "PostgreSQL E-string")]
+    [InlineData(
+        "SELECT $$value$$",
+        SqlAgentToolType.Oracle,
+        "PostgreSQL dollar-quoted string")]
+    [InlineData(
+        "SELECT `name` FROM users",
+        SqlAgentToolType.Postgres,
+        "Backtick-quoted identifiers")]
+    [InlineData(
+        "SELECT [name] FROM users",
+        SqlAgentToolType.Postgres,
+        "Bracket-quoted identifiers")]
+    public void Tokenize_DeclaredLexicalFeature_IsRejectedByOtherDialect(
+        string sql,
+        SqlAgentToolType provider,
+        string expectedMessage)
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            new SqlTokenizer(sql, provider).Tokenize());
+
+        Assert.Contains(expectedMessage, error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Parse_OracleQString_PreservesDecodedValue()
     {

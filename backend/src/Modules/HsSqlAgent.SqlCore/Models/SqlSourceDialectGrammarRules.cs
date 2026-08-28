@@ -9,6 +9,22 @@ internal enum SqlTypedTemporalLiteralKinds
     Timestamp = 4
 }
 
+[Flags]
+internal enum SqlSourceLexicalFeatures
+{
+    None = 0,
+    HashLineComment = 1 << 0,
+    DashDashCommentRequiresSeparator = 1 << 1,
+    PostgresEscapeString = 1 << 2,
+    PostgresDollarQuotedString = 1 << 3,
+    OracleQuotedString = 1 << 4,
+    DoubleQuotedIdentifierRequiresAnsiMode = 1 << 5,
+    BacktickQuotedIdentifier = 1 << 6,
+    BracketQuotedIdentifier = 1 << 7,
+    HashPrefixedIdentifier = 1 << 8,
+    BackslashSensitiveQuotedText = 1 << 9
+}
+
 /// <summary>
 /// Declarative raw-source grammar metadata that is stable for a dialect independent of target
 /// provider semantics. Runtime/session-sensitive MySQL lexical modes are exposed through the same
@@ -40,7 +56,9 @@ internal static class SqlSourceDialectGrammarRules
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Time
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: true),
+                SupportsTypedTemporalZoneQualifier: true,
+                LexicalFeatures: SqlSourceLexicalFeatures.PostgresEscapeString
+                    | SqlSourceLexicalFeatures.PostgresDollarQuotedString),
 
             [SqlAgentToolType.MySQL] = new(
                 SqlAgentToolType.MySQL,
@@ -62,7 +80,12 @@ internal static class SqlSourceDialectGrammarRules
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Time
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                LexicalFeatures: SqlSourceLexicalFeatures.HashLineComment
+                    | SqlSourceLexicalFeatures.DashDashCommentRequiresSeparator
+                    | SqlSourceLexicalFeatures.DoubleQuotedIdentifierRequiresAnsiMode
+                    | SqlSourceLexicalFeatures.BacktickQuotedIdentifier
+                    | SqlSourceLexicalFeatures.BackslashSensitiveQuotedText),
 
             [SqlAgentToolType.MsSqlServer] = new(
                 SqlAgentToolType.MsSqlServer,
@@ -81,7 +104,9 @@ internal static class SqlSourceDialectGrammarRules
                 SupportsTop: true,
                 SupportsBareBooleanKeywords: false,
                 TypedTemporalLiteralKinds: SqlTypedTemporalLiteralKinds.None,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                LexicalFeatures: SqlSourceLexicalFeatures.BracketQuotedIdentifier
+                    | SqlSourceLexicalFeatures.HashPrefixedIdentifier),
 
             [SqlAgentToolType.Sqlite] = new(
                 SqlAgentToolType.Sqlite,
@@ -100,7 +125,9 @@ internal static class SqlSourceDialectGrammarRules
                 SupportsTop: false,
                 SupportsBareBooleanKeywords: true,
                 TypedTemporalLiteralKinds: SqlTypedTemporalLiteralKinds.None,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                LexicalFeatures: SqlSourceLexicalFeatures.BacktickQuotedIdentifier
+                    | SqlSourceLexicalFeatures.BracketQuotedIdentifier),
 
             [SqlAgentToolType.Oracle] = new(
                 SqlAgentToolType.Oracle,
@@ -121,7 +148,8 @@ internal static class SqlSourceDialectGrammarRules
                 TypedTemporalLiteralKinds:
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: false),
+                SupportsTypedTemporalZoneQualifier: false,
+                LexicalFeatures: SqlSourceLexicalFeatures.OracleQuotedString),
 
             [SqlAgentToolType.Firebird] = new(
                 SqlAgentToolType.Firebird,
@@ -143,7 +171,8 @@ internal static class SqlSourceDialectGrammarRules
                     SqlTypedTemporalLiteralKinds.Date
                     | SqlTypedTemporalLiteralKinds.Time
                     | SqlTypedTemporalLiteralKinds.Timestamp,
-                SupportsTypedTemporalZoneQualifier: false)
+                SupportsTypedTemporalZoneQualifier: false,
+                LexicalFeatures: SqlSourceLexicalFeatures.None)
         };
 
     internal static IEnumerable<SqlSourceDialectGrammarContract> All => Contracts.Values;
@@ -189,8 +218,12 @@ internal sealed record SqlSourceDialectGrammarContract(
     bool SupportsTop,
     bool SupportsBareBooleanKeywords,
     SqlTypedTemporalLiteralKinds TypedTemporalLiteralKinds,
-    bool SupportsTypedTemporalZoneQualifier)
+    bool SupportsTypedTemporalZoneQualifier,
+    SqlSourceLexicalFeatures LexicalFeatures)
 {
+    internal bool SupportsLexicalFeature(SqlSourceLexicalFeatures feature) =>
+        (LexicalFeatures & feature) != 0;
+
     internal bool SupportsTypedTemporalLiteral(
         string temporalType,
         bool hasZoneQualifier)

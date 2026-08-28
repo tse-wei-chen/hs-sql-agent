@@ -19,7 +19,7 @@ public class Token(TokenType type, string value, int pos, int? sourceLength = nu
 public class SqlTokenizer
 {
     private readonly string _sql;
-    private readonly SqlAgentToolType? _provider;
+    private readonly SqlSourceDialectGrammarContract? _grammar;
     private readonly bool _mysqlAnsiQuotes;
     private readonly bool _mysqlNoBackslashEscapes;
     private int _pos;
@@ -31,14 +31,20 @@ public class SqlTokenizer
         bool mysqlNoBackslashEscapes = false)
     {
         _sql = sql ?? throw new ArgumentNullException(nameof(sql));
-        _provider = provider;
-        if (mysqlAnsiQuotes && provider != SqlAgentToolType.MySQL)
+        _grammar = provider is null
+            ? null
+            : SqlSourceDialectGrammarRules.For(provider.Value);
+        if (mysqlAnsiQuotes
+            && _grammar?.SupportsLexicalFeature(
+                SqlSourceLexicalFeatures.DoubleQuotedIdentifierRequiresAnsiMode) != true)
         {
             throw new ArgumentException(
                 "MySQL ANSI_QUOTES lexical mode can only be enabled with the MySQL provider.",
                 nameof(mysqlAnsiQuotes));
         }
-        if (mysqlNoBackslashEscapes && provider != SqlAgentToolType.MySQL)
+        if (mysqlNoBackslashEscapes
+            && _grammar?.SupportsLexicalFeature(
+                SqlSourceLexicalFeatures.BackslashSensitiveQuotedText) != true)
         {
             throw new ArgumentException(
                 "MySQL NO_BACKSLASH_ESCAPES lexical mode can only be enabled with the MySQL provider.",
@@ -100,7 +106,9 @@ public class SqlTokenizer
                 continue;
             }
 
-            if (c == '#' && _provider == SqlAgentToolType.MySQL)
+            if (c == '#'
+                && _grammar?.SupportsLexicalFeature(
+                    SqlSourceLexicalFeatures.HashLineComment) == true)
             {
                 SkipLineComment(1);
                 continue;
@@ -120,8 +128,12 @@ public class SqlTokenizer
 
             if ((c is 'E' or 'e') && PeekChar(1) == '\'')
             {
-                if (_provider is not (null or SqlAgentToolType.Postgres))
+                if (_grammar is not null
+                    && !_grammar.SupportsLexicalFeature(
+                        SqlSourceLexicalFeatures.PostgresEscapeString))
+                {
                     throw Error("PostgreSQL E-string is not valid for the configured provider.", _pos, 2);
+                }
                 tokens.Add(ReadPostgresEscapeString());
                 continue;
             }
@@ -131,8 +143,12 @@ public class SqlTokenizer
 
             if (c == '$' && IsDollarQuotedStringStart())
             {
-                if (_provider is not (null or SqlAgentToolType.Postgres))
+                if (_grammar is not null
+                    && !_grammar.SupportsLexicalFeature(
+                        SqlSourceLexicalFeatures.PostgresDollarQuotedString))
+                {
                     throw Error("PostgreSQL dollar-quoted string is not valid for the configured provider.", _pos, 1);
+                }
                 tokens.Add(ReadDollarQuotedString());
                 continue;
             }
@@ -145,7 +161,9 @@ public class SqlTokenizer
 
             if (c == '"')
             {
-                if (_provider == SqlAgentToolType.MySQL && !_mysqlAnsiQuotes)
+                if (_grammar?.SupportsLexicalFeature(
+                        SqlSourceLexicalFeatures.DoubleQuotedIdentifierRequiresAnsiMode) == true
+                    && !_mysqlAnsiQuotes)
                 {
                     throw Error(
                         "MySQL double-quote semantics depend on ANSI_QUOTES sql_mode; Core rejects this delimiter unless the source profile explicitly declares ANSI_QUOTES or ANSI.",
@@ -158,16 +176,24 @@ public class SqlTokenizer
 
             if (c == '`')
             {
-                if (_provider is not (null or SqlAgentToolType.MySQL or SqlAgentToolType.Sqlite))
+                if (_grammar is not null
+                    && !_grammar.SupportsLexicalFeature(
+                        SqlSourceLexicalFeatures.BacktickQuotedIdentifier))
+                {
                     throw Error("Backtick-quoted identifiers are not valid for the configured provider.", _pos, 1);
+                }
                 tokens.Add(ReadDelimited(TokenType.Identifier, '`', "quoted identifier"));
                 continue;
             }
 
             if (c == '[')
             {
-                if (_provider is not (null or SqlAgentToolType.MsSqlServer or SqlAgentToolType.Sqlite))
+                if (_grammar is not null
+                    && !_grammar.SupportsLexicalFeature(
+                        SqlSourceLexicalFeatures.BracketQuotedIdentifier))
+                {
                     throw Error("Bracket-quoted identifiers are not valid for the configured provider.", _pos, 1);
+                }
                 tokens.Add(ReadBracketIdentifier());
                 continue;
             }
@@ -313,7 +339,10 @@ public class SqlTokenizer
                 return new Token(type, identifier, start, raw.Length);
             }
 
-            if (_sql[_pos] == '\\' && _provider == SqlAgentToolType.MySQL && !_mysqlNoBackslashEscapes)
+            if (_sql[_pos] == '\\'
+                && _grammar?.SupportsLexicalFeature(
+                    SqlSourceLexicalFeatures.BackslashSensitiveQuotedText) == true
+                && !_mysqlNoBackslashEscapes)
             {
                 if (type == TokenType.String && delimiter == '\'')
                 {
@@ -478,7 +507,9 @@ public class SqlTokenizer
     private bool HasNextDigit() => _pos + 1 < _sql.Length && char.IsDigit(_sql[_pos + 1]);
     private char? PeekChar(int offset) => _pos + offset < _sql.Length ? _sql[_pos + offset] : null;
     private bool IsSqlIdentifierStart(char c) => IsIdentifierStart(c)
-        || (c == '#' && _provider == SqlAgentToolType.MsSqlServer);
+        || (c == '#'
+            && _grammar?.SupportsLexicalFeature(
+                SqlSourceLexicalFeatures.HashPrefixedIdentifier) == true);
     private static bool IsIdentifierStart(char c) => char.IsLetter(c) || c == '_';
     private static bool IsIdentifierPart(char c) => char.IsLetterOrDigit(c) || c is '_' or '$' or '#';
 
@@ -494,16 +525,26 @@ public class SqlTokenizer
 
     private bool IsLineCommentStart()
     {
-        if (_provider != SqlAgentToolType.MySQL)
+        if (_grammar?.SupportsLexicalFeature(
+                SqlSourceLexicalFeatures.DashDashCommentRequiresSeparator) != true)
+        {
             return true;
+        }
+
         var next = PeekChar(2);
         return next == null || char.IsWhiteSpace(next.Value) || char.IsControl(next.Value);
     }
 
     private bool IsOracleQuotedStringStart()
     {
-        if (_provider is not (null or SqlAgentToolType.Oracle) || PeekChar(1) != '\'')
+        if ((_grammar is not null
+                && !_grammar.SupportsLexicalFeature(
+                    SqlSourceLexicalFeatures.OracleQuotedString))
+            || PeekChar(1) != '\'')
+        {
             return false;
+        }
+
         return PeekChar(2) is not null;
     }
 
