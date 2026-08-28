@@ -494,6 +494,7 @@ onMounted(load);
                       @click="db.visible = !db.visible"
                       class="p-1 hover:bg-muted rounded-md transition-colors text-muted-foreground"
                       title="show/hide details"
+                      tabindex= -1
                     >
                       <Eye v-if="!db.visible" class="size-4" />
                       <EyeOff v-else class="size-4" />

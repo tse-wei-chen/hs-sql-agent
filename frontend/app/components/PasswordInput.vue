@@ -43,6 +43,7 @@ const model = computed({
         size="icon-xs"
         variant="ghost"
         @click="handleToggle"
+        tabindex= -1
       >
         <EyeOffIcon v-if="show" class="h-4 w-4" />
         <EyeIcon v-else class="h-4 w-4" />
