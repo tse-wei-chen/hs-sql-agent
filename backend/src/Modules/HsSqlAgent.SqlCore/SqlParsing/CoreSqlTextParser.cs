@@ -203,10 +203,27 @@ public static class CoreSqlTextParser
         if (next.Type == TokenType.String)
             return true;
 
-        hasZoneQualifier = temporalType != "DATE"
-            && (CoreTokenReader.IsWord(next, "WITH")
-                || CoreTokenReader.IsWord(next, "WITHOUT"));
-        return hasZoneQualifier;
+        if (temporalType == "DATE"
+            || (!CoreTokenReader.IsWord(next, "WITH")
+                && !CoreTokenReader.IsWord(next, "WITHOUT")))
+        {
+            return false;
+        }
+
+        // Only classify the SQL-standard typed-literal form
+        // TIMESTAMP/TIME [WITH|WITHOUT] TIME ZONE '...'. A CAST target such as
+        // CAST(value AS TIMESTAMP WITH TIME ZONE) has the same leading words but
+        // no following string literal and must not be rejected as a typed literal.
+        if (index + 4 >= tokens.Length
+            || !CoreTokenReader.IsWord(tokens[index + 2], "TIME")
+            || !CoreTokenReader.IsWord(tokens[index + 3], "ZONE")
+            || tokens[index + 4].Type != TokenType.String)
+        {
+            return false;
+        }
+
+        hasZoneQualifier = true;
+        return true;
     }
 
     private static int? NormalizeSqlServerTop(
