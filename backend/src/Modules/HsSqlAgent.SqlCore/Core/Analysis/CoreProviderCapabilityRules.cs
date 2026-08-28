@@ -83,6 +83,9 @@ internal static class CoreProviderCapabilityRules
             case SqlCanonicalTargetCapabilityFamily.DateMath:
                 ValidateDateMathUnit(function, provider, contract.Name);
                 return;
+            case SqlCanonicalTargetCapabilityFamily.CurrentTemporal:
+                ValidateCurrentTemporalCapability(contract, provider);
+                return;
             default:
                 throw new SqlCompilationException(
                     $"Unsupported canonical target capability family '{contract.TargetCapabilityFamily}' for function '{contract.Name}'.");
@@ -133,6 +136,23 @@ internal static class CoreProviderCapabilityRules
                         $"Unsupported canonical literal argument rule '{rule.Kind}' for function '{contract.Name}'.");
             }
         }
+    }
+
+    private static void ValidateCurrentTemporalCapability(
+        SqlCanonicalFunctionContract contract,
+        SqlAgentToolType provider)
+    {
+        if (contract.CurrentTemporalKind is not { } kind)
+        {
+            throw new SqlCompilationException(
+                $"Canonical function '{contract.Name}' declares the current-temporal target family without a temporal kind.");
+        }
+
+        var error = SqlCurrentTemporalCapabilityRules.TargetValidationError(
+            kind,
+            provider);
+        if (error is not null)
+            throw new SqlCompilationException(error);
     }
 
     private static void ValidateWindowFunctionCapability(

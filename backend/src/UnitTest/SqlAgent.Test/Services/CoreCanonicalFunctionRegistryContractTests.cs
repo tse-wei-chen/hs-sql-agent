@@ -70,6 +70,18 @@ public sealed class CoreCanonicalFunctionRegistryContractTests
     }
 
     [Fact]
+    public void Compile_CountDistinctWildcard_RemainsRejectedByCanonicalPlanShapeContract()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT COUNT(DISTINCT *) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("COUNT(DISTINCT *)", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not a valid Core aggregate shape", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_FilterModifier_RemainsEnabledForCanonicalAggregate()
     {
         var command = Compile(
