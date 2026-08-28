@@ -66,7 +66,8 @@ public class CoreAggregateFilterProfileTests
         var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
             FilterSql,
             SqlAgentToolType.Postgres,
-            SqlAgentToolType.Firebird));
+            SqlAgentToolType.Firebird,
+            Profile(SqlAgentToolType.Postgres, 9, 4)));
 
         Assert.Contains("Firebird target", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("4.0", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -79,7 +80,8 @@ public class CoreAggregateFilterProfileTests
             FilterSql,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Firebird,
-            targetProfile: Profile(SqlAgentToolType.Firebird, 4, 0));
+            Profile(SqlAgentToolType.Postgres, 9, 4),
+            Profile(SqlAgentToolType.Firebird, 4, 0));
 
         Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
@@ -91,7 +93,8 @@ public class CoreAggregateFilterProfileTests
             FilterSql,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
-            Profile(SqlAgentToolType.Postgres, 9, 3)));
+            Profile(SqlAgentToolType.Postgres, 9, 3),
+            Profile(SqlAgentToolType.Postgres, 9, 4)));
 
         Assert.Contains("Postgres source", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("9.4", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -104,19 +107,49 @@ public class CoreAggregateFilterProfileTests
             FilterSql,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
-            targetProfile: Profile(SqlAgentToolType.Postgres, 9, 3)));
+            Profile(SqlAgentToolType.Postgres, 9, 4),
+            Profile(SqlAgentToolType.Postgres, 9, 3)));
 
         Assert.Contains("Postgres target", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("9.4", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Compile_PostgresFilterWithoutVersionProfile_RemainsSupported()
+    public void Compile_PostgresFilterWithoutSourceVersionProfile_FailsClosed()
     {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            FilterSql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            targetProfile: Profile(SqlAgentToolType.Postgres, 9, 4)));
+
+        Assert.Contains("Postgres source", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("9.4", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_PostgresFilterWithoutTargetVersionProfile_FailsClosed()
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
+            FilterSql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            Profile(SqlAgentToolType.Postgres, 9, 4)));
+
+        Assert.Contains("Postgres target", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("9.4", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_PostgresFilterWithDeclaredSupportedVersions_Compiles()
+    {
+        var profile = Profile(SqlAgentToolType.Postgres, 9, 4);
         var command = CompileRaw(
             FilterSql,
             SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres);
+            SqlAgentToolType.Postgres,
+            profile,
+            profile);
 
         Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
@@ -124,10 +157,13 @@ public class CoreAggregateFilterProfileTests
     [Fact]
     public void Compile_PostgresFilterWithSubqueryPredicate_RemainsSupported()
     {
+        var profile = Profile(SqlAgentToolType.Postgres, 9, 4);
         var command = CompileRaw(
             "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
             SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres);
+            SqlAgentToolType.Postgres,
+            profile,
+            profile);
 
         Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("EXISTS", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -139,7 +175,8 @@ public class CoreAggregateFilterProfileTests
         var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
             FilterSql,
             SqlAgentToolType.Oracle,
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.Postgres,
+            targetProfile: Profile(SqlAgentToolType.Postgres, 9, 4)));
 
         Assert.Contains("Oracle source", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -152,7 +189,8 @@ public class CoreAggregateFilterProfileTests
             "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
             SqlAgentToolType.Oracle,
             SqlAgentToolType.Postgres,
-            Profile(SqlAgentToolType.Oracle, 25, 0)));
+            Profile(SqlAgentToolType.Oracle, 25, 0),
+            Profile(SqlAgentToolType.Postgres, 9, 4)));
 
         Assert.Contains("Oracle source", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -166,7 +204,8 @@ public class CoreAggregateFilterProfileTests
             FilterSql,
             SqlAgentToolType.Oracle,
             SqlAgentToolType.Postgres,
-            Profile(SqlAgentToolType.Oracle, 26, 0));
+            Profile(SqlAgentToolType.Oracle, 26, 0),
+            Profile(SqlAgentToolType.Postgres, 9, 4));
 
         Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
@@ -178,7 +217,8 @@ public class CoreAggregateFilterProfileTests
             "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
             SqlAgentToolType.Oracle,
             SqlAgentToolType.Postgres,
-            Profile(SqlAgentToolType.Oracle, 26, 0)));
+            Profile(SqlAgentToolType.Oracle, 26, 0),
+            Profile(SqlAgentToolType.Postgres, 9, 4)));
 
         Assert.Contains("Oracle 26ai source", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("subqueries", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -190,7 +230,8 @@ public class CoreAggregateFilterProfileTests
         var ex = Assert.Throws<SqlCompilationException>(() => CompileRaw(
             FilterSql,
             SqlAgentToolType.Postgres,
-            SqlAgentToolType.Oracle));
+            SqlAgentToolType.Oracle,
+            Profile(SqlAgentToolType.Postgres, 9, 4)));
 
         Assert.Contains("Oracle target", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -203,7 +244,8 @@ public class CoreAggregateFilterProfileTests
             FilterSql,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Oracle,
-            targetProfile: Profile(SqlAgentToolType.Oracle, 25, 0)));
+            Profile(SqlAgentToolType.Postgres, 9, 4),
+            Profile(SqlAgentToolType.Oracle, 25, 0)));
 
         Assert.Contains("Oracle target", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("26.0", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -216,7 +258,8 @@ public class CoreAggregateFilterProfileTests
             FilterSql,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Oracle,
-            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0));
+            Profile(SqlAgentToolType.Postgres, 9, 4),
+            Profile(SqlAgentToolType.Oracle, 26, 0));
 
         Assert.Contains("FILTER (WHERE", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
@@ -228,7 +271,8 @@ public class CoreAggregateFilterProfileTests
             "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Oracle,
-            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0)));
+            Profile(SqlAgentToolType.Postgres, 9, 4),
+            Profile(SqlAgentToolType.Oracle, 26, 0)));
 
         Assert.Contains("Oracle 26ai target", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("subqueries", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -241,7 +285,8 @@ public class CoreAggregateFilterProfileTests
             "SELECT SUM(amount) FILTER (WHERE ROW_NUMBER() OVER (ORDER BY id) > 1) FROM orders",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Oracle,
-            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0)));
+            Profile(SqlAgentToolType.Postgres, 9, 4),
+            Profile(SqlAgentToolType.Oracle, 26, 0)));
 
         Assert.Contains("Oracle 26ai target", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("window functions", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -254,7 +299,8 @@ public class CoreAggregateFilterProfileTests
             "SELECT u.id, (SELECT SUM(o.amount) FILTER (WHERE o.user_id = u.id) FROM orders o) AS total FROM users u",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Oracle,
-            targetProfile: Profile(SqlAgentToolType.Oracle, 26, 0)));
+            Profile(SqlAgentToolType.Postgres, 9, 4),
+            Profile(SqlAgentToolType.Oracle, 26, 0)));
 
         Assert.Contains("Oracle 26ai target", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("outer references", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -270,7 +316,8 @@ public class CoreAggregateFilterProfileTests
                     SqlAgentToolType.Sqlite),
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1"),
-                new DmlCompilationPolicy()));
+                new DmlCompilationPolicy(),
+                targetProfile: Profile(SqlAgentToolType.Postgres, 9, 4)));
 
         Assert.Contains("Sqlite source", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("3.30", ex.Message, StringComparison.OrdinalIgnoreCase);
