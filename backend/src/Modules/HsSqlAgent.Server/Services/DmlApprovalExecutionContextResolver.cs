@@ -30,8 +30,12 @@ internal static class DmlApprovalExecutionContextResolver
         }
 
         var databaseName =
-            context.Items[McpContextItemKeys.DatabaseName]?.ToString()?.Trim()
-            ?? string.Empty;
+            context.Items[McpContextItemKeys.DatabaseName]?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(databaseName))
+        {
+            throw new UnauthorizedAccessException(
+                "DML approval requires a stable database name identity.");
+        }
 
         return new DmlApprovalExecutionContext(
             "mcp-key:" + accessKeyId,
@@ -57,10 +61,17 @@ internal static class DmlApprovalExecutionContextResolver
                 "DML approval preview requires an authenticated admin principal.");
         }
 
+        var normalizedDatabaseName = databaseName?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedDatabaseName))
+        {
+            throw new UnauthorizedAccessException(
+                "DML approval requires a stable database name identity.");
+        }
+
         return new DmlApprovalExecutionContext(
             "admin:" + actor.Trim(),
             "db-management:" + dbManagementId,
             provider,
-            databaseName?.Trim() ?? string.Empty);
+            normalizedDatabaseName);
     }
 }
