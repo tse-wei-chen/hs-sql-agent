@@ -100,14 +100,12 @@ type SqlCoreFacade private () =
         validationContext: SqlPlanValidationContext,
         executionPolicy: SqlExecutionPlanPolicy) : CompiledSqlCommand =
         let parsed = SqlCoreFacade.ParseQuery(sql, sourceDialect)
-        CoreSqlCompiler
-            .CreateDefault()
-            .Compile(
-                parsed,
-                targetProvider,
-                validationContext,
-                executionPolicy,
-                null)
+        FunctionalPipeline.compileQuery
+            parsed
+            targetProvider
+            validationContext
+            executionPolicy
+            null
 
     static member CompileQuery(
         sql: string,
@@ -118,14 +116,12 @@ type SqlCoreFacade private () =
         sourceProfile: SqlProviderCapabilityProfile,
         targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
         let parsed = SqlCoreFacade.ParseQuery(sql, sourceDialect, sourceProfile)
-        CoreSqlCompiler
-            .CreateDefault()
-            .Compile(
-                parsed,
-                targetProvider,
-                validationContext,
-                executionPolicy,
-                targetProfile)
+        FunctionalPipeline.compileQuery
+            parsed
+            targetProvider
+            validationContext
+            executionPolicy
+            targetProfile
 
     static member CompileDml(
         sql: string,

@@ -36,6 +36,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="HsSqlAgent.SqlCore.FSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="SqlTranslation/Functions/Definitions/*.json" />
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>

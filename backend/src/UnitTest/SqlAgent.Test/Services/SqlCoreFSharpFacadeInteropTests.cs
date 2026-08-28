@@ -3,6 +3,7 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -96,6 +97,51 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.NotNull(insert);
         Assert.NotNull(update);
         Assert.NotNull(delete);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Facade_FunctionalQueryPipeline_MatchesLegacyCompiler(
+        SqlAgentToolType targetProvider)
+    {
+        const string sql =
+            "SELECT u.id FROM users u WHERE u.id = 42 ORDER BY u.id";
+
+        var validation = new SqlPlanValidationContext(
+            "fsharp-typestate-v1",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" });
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 7);
+
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                targetProvider,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            targetProvider,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Kind, migrated.Kind);
+        Assert.Equal(legacy.TargetProvider, migrated.TargetProvider);
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Equal(legacy.ReturnsRows, migrated.ReturnsRows);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
     }
 
     [Fact]
