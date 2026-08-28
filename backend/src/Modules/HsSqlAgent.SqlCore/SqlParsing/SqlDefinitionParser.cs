@@ -264,8 +264,11 @@ public static class SqlDefinitionParser
         out Token[] normalizedTokens)
     {
         normalizedTokens = tokens;
-        if (provider != SqlAgentToolType.MsSqlServer)
+        if (provider is null
+            || !SqlSourceDialectGrammarRules.For(provider.Value).SupportsTop)
+        {
             return null;
+        }
 
         var depth = 0;
         var selectIndex = -1;
