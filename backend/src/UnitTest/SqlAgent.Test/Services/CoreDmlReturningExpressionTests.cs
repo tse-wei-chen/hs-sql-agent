@@ -104,18 +104,29 @@ public sealed class CoreDmlReturningExpressionTests
     }
 
     [Fact]
-    public void Compile_FunctionExpressionReturning_RemainsFailClosedInFirstSubset()
+    public void Compile_DirectPortableScalarFunctionReturning_IsAllowed()
     {
         var parsed = CoreSqlTextParser.ParseDml(
-            "DELETE FROM users WHERE id = 1 RETURNING id",
+            "DELETE FROM users WHERE id = 1 RETURNING lower(name) AS normalized_name",
             SqlAgentToolType.Postgres);
-        var function = new FunctionCallExpr(
-            SqlIdentifier.Unquoted("lower", SourceSpan.Unknown),
-            ImmutableArray.Create<SqlExpr>(
-                new ColumnExpr(SqlIdentifier.Unquoted("name", SourceSpan.Unknown), SourceSpan.Unknown)),
-            IsDistinct: false,
-            SourceSpan.Unknown);
-        parsed = WithExpression(parsed, function, null);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("LOWER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("normalized_name", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(command.Parameters);
+    }
+
+    [Fact]
+    public void Compile_AggregateFunctionReturning_RemainsFailClosed()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING sum(id)",
+            SqlAgentToolType.Postgres);
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(
@@ -123,7 +134,24 @@ public sealed class CoreDmlReturningExpressionTests
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1")));
 
-        Assert.Contains("FunctionCallExpr", error.Message, StringComparison.Ordinal);
+        Assert.Contains("SUM", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_UnknownFunctionReturning_RemainsFailClosed()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING mystery(name)",
+            SqlAgentToolType.Postgres);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("policy-v1")));
+
+        Assert.Contains("mystery", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 

@@ -71,10 +71,37 @@ internal static class SqlDmlReturningExpressionCapabilityRules
             case CastExpr cast:
                 ValidateNode(cast.Expression);
                 return;
+            case FunctionCallExpr function:
+                ValidateScalarFunction(function);
+                return;
             default:
                 throw new SqlCompilationException(
-                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/- and CAST. Expression node {expression.GetType().Name} remains fail-closed.");
+                    $"SQL capability '{CapabilityId}' currently accepts only unqualified target columns, literals, arithmetic/concatenation, unary +/-, CAST, and registered direct-portable scalar functions. Expression node {expression.GetType().Name} remains fail-closed.");
         }
+    }
+
+    private static void ValidateScalarFunction(FunctionCallExpr function)
+    {
+        if (function.Name.Parts.Length != 1)
+        {
+            throw new SqlCompilationException(
+                $"SQL capability '{CapabilityId}' accepts canonical unqualified function names only; qualified function references remain fail-closed.");
+        }
+
+        var name = function.Name.Parts[0].Value;
+        var contract = SqlCanonicalFunctionRegistry.Find(name);
+        if (contract is null
+            || contract.Kind != SqlCanonicalFunctionKind.Scalar
+            || !contract.IsDirectPortable
+            || function.IsDistinct
+            || !contract.AcceptsArgumentCount(function.Arguments.Length))
+        {
+            throw new SqlCompilationException(
+                $"SQL capability '{CapabilityId}' accepts only registered direct-portable scalar functions with canonical arity and no DISTINCT; function '{name}' remains fail-closed.");
+        }
+
+        foreach (var argument in function.Arguments)
+            ValidateNode(argument);
     }
 
     private static void ValidateTargetColumn(SqlIdentifier identifier)
