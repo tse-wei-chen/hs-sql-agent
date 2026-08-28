@@ -5,8 +5,8 @@ namespace HsSqlAgent.SqlCore.Core.Lowering;
 
 /// <summary>
 /// Adds the portable DML result-row clause after the provider-specific mutation has been lowered.
-/// Projection semantics are represented by Core AST DmlReturningItem kinds so future expression,
-/// OLD/NEW, and SQL Server OUTPUT work cannot silently overload SqlIdentifier shape.
+/// Projection semantics are represented directly by Core AST DmlReturningItem kinds so future
+/// expression, OLD/NEW, and SQL Server OUTPUT work cannot silently overload SqlIdentifier shape.
 /// </summary>
 internal static class CoreDmlReturningSqlRewriter
 {
@@ -20,7 +20,7 @@ internal static class CoreDmlReturningSqlRewriter
         ArgumentNullException.ThrowIfNull(statement);
         ArgumentException.ThrowIfNullOrWhiteSpace(policyVersion);
 
-        var returning = ReturningColumns(statement);
+        var returning = ReturningItems(statement);
         if (returning.IsDefaultOrEmpty)
             return command;
 
@@ -30,8 +30,7 @@ internal static class CoreDmlReturningSqlRewriter
         if (capabilityError is not null)
             throw new SqlCompilationException(capabilityError);
 
-        var projectionItems = DmlReturningProjection.FromColumns(returning);
-        var projection = string.Join(", ", projectionItems.Select(item =>
+        var projection = string.Join(", ", returning.Select(item =>
             RenderProjectionItem(item, command.TargetProvider)));
         var rewritten = command with
         {
@@ -45,12 +44,12 @@ internal static class CoreDmlReturningSqlRewriter
         };
     }
 
-    private static ImmutableArray<SqlIdentifier> ReturningColumns(SqlStatement statement) => statement switch
+    private static ImmutableArray<DmlReturningItem> ReturningItems(SqlStatement statement) => statement switch
     {
         InsertStatement insert => insert.Returning,
         UpdateStatement update => update.Returning,
         DeleteStatement delete => delete.Returning,
-        _ => ImmutableArray<SqlIdentifier>.Empty
+        _ => ImmutableArray<DmlReturningItem>.Empty
     };
 
     private static string RenderProjectionItem(

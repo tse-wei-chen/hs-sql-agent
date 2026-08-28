@@ -120,7 +120,7 @@ public sealed record UpdateStatement(
     /// lowering is PostgreSQL-only; other provider semantics remain fail-closed by capability rule.
     /// </summary>
     public ImmutableArray<NamedTableSource> From { get; init; } = ImmutableArray<NamedTableSource>.Empty;
-    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+    public ImmutableArray<DmlReturningItem> Returning { get; init; } = ImmutableArray<DmlReturningItem>.Empty;
 }
 
 public sealed record DeleteStatement(
@@ -133,7 +133,7 @@ public sealed record DeleteStatement(
     /// authorization cannot confuse read sources with the row-producing delete target.
     /// </summary>
     public ImmutableArray<NamedTableSource> Using { get; init; } = ImmutableArray<NamedTableSource>.Empty;
-    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+    public ImmutableArray<DmlReturningItem> Returning { get; init; } = ImmutableArray<DmlReturningItem>.Empty;
 }
 
 public abstract record InsertSource(SourceSpan Span) : SqlNode(Span);
@@ -179,5 +179,5 @@ public sealed record InsertStatement(
     SourceSpan Span) : SqlStatement(Span)
 {
     public InsertConflictClause? Conflict { get; init; }
-    public ImmutableArray<SqlIdentifier> Returning { get; init; } = ImmutableArray<SqlIdentifier>.Empty;
+    public ImmutableArray<DmlReturningItem> Returning { get; init; } = ImmutableArray<DmlReturningItem>.Empty;
 }

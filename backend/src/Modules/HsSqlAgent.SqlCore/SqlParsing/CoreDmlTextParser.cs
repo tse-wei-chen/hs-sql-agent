@@ -96,7 +96,7 @@ internal sealed class CoreDmlTextParser
         var returning = ParseReturningColumnsIfPresent();
         return new InsertStatement(target, columns.ToImmutable(), source, _reader.SpanFrom(start))
         {
-            Returning = returning
+            Returning = DmlReturningProjection.FromColumns(returning)
         };
     }
 
@@ -134,7 +134,7 @@ internal sealed class CoreDmlTextParser
         return new UpdateStatement(target, assignments.ToImmutable(), predicate, _reader.SpanFrom(start))
         {
             From = from,
-            Returning = returning
+            Returning = DmlReturningProjection.FromColumns(returning)
         };
     }
 
@@ -170,7 +170,7 @@ internal sealed class CoreDmlTextParser
         return new DeleteStatement(target, predicate, _reader.SpanFrom(start))
         {
             Using = usingSources,
-            Returning = returning
+            Returning = DmlReturningProjection.FromColumns(returning)
         };
     }
 
