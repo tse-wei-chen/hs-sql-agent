@@ -73,6 +73,18 @@ public sealed class CoreProviderCapabilityProfileTests
     }
 
     [Fact]
+    public void Compile_TargetProfileNegativeCompatibility_PreservesCompilationBoundary()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CompileQuery(SqlServerProfile(-1)));
+
+        Assert.Contains(
+            "Provider compatibility level must be non-negative",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Profile_SessionMetadataLookup_IsCaseInsensitive()
     {
         var profile = new SqlProviderCapabilityProfile(

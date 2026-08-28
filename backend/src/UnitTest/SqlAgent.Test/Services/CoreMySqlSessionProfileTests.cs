@@ -156,6 +156,51 @@ public sealed class CoreMySqlSessionProfileTests
     }
 
     [Fact]
+    public void Parse_SourceProfileNegativeCompatibility_PreservesArgumentBoundary()
+    {
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            CompatibilityLevel: -1);
+
+        var error = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT 1",
+                SqlAgentToolType.MySQL,
+                sourceProfile));
+
+        Assert.Equal("sourceProfile", error.ParamName);
+        Assert.Contains(
+            "Provider compatibility level must be non-negative",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_SourceProfileNegativeCompatibility_PreservesCompilationBoundary()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT 1",
+            SqlAgentToolType.MySQL) with
+        {
+            SourceProfile = new SqlProviderCapabilityProfile(
+                SqlAgentToolType.MySQL,
+                CompatibilityLevel: -1)
+        };
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("policy-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains(
+            "Provider compatibility level must be non-negative",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void CompileDml_MySqlPipesWithSourceProfile_UsesSameSessionSemantics()
     {
         var parsed = CoreSqlTextParser.ParseDml(

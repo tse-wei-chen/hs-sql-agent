@@ -33,3 +33,27 @@ public sealed record SqlProviderCapabilityProfile(
         return null;
     }
 }
+
+internal enum SqlProviderCapabilityProfileValidationIssue
+{
+    None,
+    ProviderMismatch,
+    NegativeCompatibilityLevel
+}
+
+internal static class SqlProviderCapabilityProfileRules
+{
+    internal static SqlProviderCapabilityProfileValidationIssue ValidationIssue(
+        SqlProviderCapabilityProfile? profile,
+        SqlAgentToolType expectedProvider)
+    {
+        if (profile is null)
+            return SqlProviderCapabilityProfileValidationIssue.None;
+        if (profile.Provider != expectedProvider)
+            return SqlProviderCapabilityProfileValidationIssue.ProviderMismatch;
+        if (profile.CompatibilityLevel is < 0)
+            return SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel;
+
+        return SqlProviderCapabilityProfileValidationIssue.None;
+    }
+}

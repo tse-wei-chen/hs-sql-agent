@@ -30,15 +30,23 @@ internal static class CoreProviderProfileRewriter
         SqlAgentToolType targetProvider,
         SqlProviderCapabilityProfile? targetProfile)
     {
-        if (targetProfile is null) return;
-        if (targetProfile.Provider != targetProvider)
+        switch (SqlProviderCapabilityProfileRules.ValidationIssue(
+                    targetProfile,
+                    targetProvider))
         {
-            throw new SqlCompilationException(
-                $"Target capability profile declares provider {targetProfile.Provider}, " +
-                $"but compilation targets {targetProvider}.");
+            case SqlProviderCapabilityProfileValidationIssue.None:
+                return;
+            case SqlProviderCapabilityProfileValidationIssue.ProviderMismatch:
+                throw new SqlCompilationException(
+                    $"Target capability profile declares provider {targetProfile!.Provider}, " +
+                    $"but compilation targets {targetProvider}.");
+            case SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel:
+                throw new SqlCompilationException(
+                    "Provider compatibility level must be non-negative.");
+            default:
+                throw new SqlCompilationException(
+                    "Unsupported target capability profile validation issue.");
         }
-        if (targetProfile.CompatibilityLevel is < 0)
-            throw new SqlCompilationException("Provider compatibility level must be non-negative.");
     }
 
     private sealed class ProviderProfileAstRewriter : CoreSqlAstRewriter
