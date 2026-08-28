@@ -1,5 +1,6 @@
 using System.Reflection;
 using HsSqlAgent.Server.Services;
+using SqlAgent.Service.Core.Execution;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;
@@ -30,6 +31,30 @@ public class ProviderRuntimeBoundaryTests
         Assert.DoesNotContain(
             methods.SelectMany(method => method.GetParameters()),
             parameter => typeof(ISqlStrategy).IsAssignableFrom(parameter.ParameterType));
+    }
+
+    [Fact]
+    public void DmlCoordinatorContract_RequiresVerifiedRuntimeVersionProof()
+    {
+        var contractMethods = typeof(IDmlCoordinator).GetMethods();
+        Assert.Equal(2, contractMethods.Length);
+        Assert.All(contractMethods, method => Assert.Contains(
+            method.GetParameters(),
+            parameter => parameter.Name == "expectedServerVersionIdentity"
+                         && parameter.ParameterType == typeof(string)));
+
+        var legacyOverloads = typeof(DmlCoordinator)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Where(method => method.Name is nameof(DmlCoordinator.PreviewAsync) or nameof(DmlCoordinator.CommitAsync))
+            .Where(method => method.GetParameters().All(parameter => parameter.Name != "expectedServerVersionIdentity"))
+            .ToArray();
+
+        Assert.Equal(2, legacyOverloads.Length);
+        Assert.All(legacyOverloads, method =>
+        {
+            var obsolete = Assert.Single(method.GetCustomAttributes<ObsoleteAttribute>());
+            Assert.True(obsolete.IsError);
+        });
     }
 
     [Fact]

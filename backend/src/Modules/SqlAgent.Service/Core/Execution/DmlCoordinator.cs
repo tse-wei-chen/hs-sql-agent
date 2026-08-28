@@ -27,28 +27,26 @@ public sealed class DmlCoordinator(
     private readonly IDmlPreviewTransactionFactory _previewTransactionFactory =
         previewTransactionFactory ?? new ProviderDmlPreviewTransactionFactory();
 
+    [Obsolete("Verified runtime server-version identity is required for DML preview.", error: true)]
     public Task<DmlPreview> PreviewAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         string approvalContextFingerprint,
         CancellationToken cancellationToken = default) =>
-        PreviewAsync(
-            connectionString,
-            plan,
-            approvalContextFingerprint,
-            cancellationToken,
-            expectedServerVersionIdentity: null);
+        throw new InvalidOperationException(
+            "Verified runtime server-version identity is required for DML preview.");
 
     public async Task<DmlPreview> PreviewAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         string approvalContextFingerprint,
         CancellationToken cancellationToken,
-        string? expectedServerVersionIdentity)
+        string expectedServerVersionIdentity)
     {
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedServerVersionIdentity);
 
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             return await PreviewInsertValuesAsync(plan, approvalContextFingerprint, cancellationToken);
@@ -56,8 +54,7 @@ public sealed class DmlCoordinator(
         var matchCommand = RequireMatchCommand(plan);
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
-        if (expectedServerVersionIdentity is not null)
-            RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
+        RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
         await using var transaction = await _previewTransactionFactory.BeginAsync(
             connection,
             matchCommand.TargetProvider,
@@ -94,19 +91,15 @@ public sealed class DmlCoordinator(
             challenge);
     }
 
+    [Obsolete("Verified runtime server-version identity is required for DML commit.", error: true)]
     public Task<DmlCommitResult> CommitAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
         string approvalContextFingerprint,
         CancellationToken cancellationToken = default) =>
-        CommitAsync(
-            connectionString,
-            plan,
-            approvedChallenge,
-            approvalContextFingerprint,
-            cancellationToken,
-            expectedServerVersionIdentity: null);
+        throw new InvalidOperationException(
+            "Verified runtime server-version identity is required for DML commit.");
 
     public async Task<DmlCommitResult> CommitAsync(
         string connectionString,
@@ -114,10 +107,11 @@ public sealed class DmlCoordinator(
         DmlApprovalChallenge approvedChallenge,
         string approvalContextFingerprint,
         CancellationToken cancellationToken,
-        string? expectedServerVersionIdentity)
+        string expectedServerVersionIdentity)
     {
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedServerVersionIdentity);
         ValidateChallenge(plan, approvedChallenge, approvalContextFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -129,8 +123,7 @@ public sealed class DmlCoordinator(
 
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
-        if (expectedServerVersionIdentity is not null)
-            RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
+        RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
         await using var transaction = await connection.BeginTransactionAsync(
             _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
             cancellationToken);
