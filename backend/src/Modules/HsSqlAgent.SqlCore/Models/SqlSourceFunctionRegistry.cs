@@ -119,8 +119,10 @@ internal static class SqlSourceFunctionRegistry
             Function(
                 "GROUP_CONCAT",
                 SqlSourceFunctionCanonicalizationKind.StringAggregate,
-                "GROUP_CONCAT is modeled for MySQL source syntax and SQLite with one or two arguments.",
-                Any(SqlAgentToolType.MySQL),
+                "GROUP_CONCAT is modeled for MySQL source syntax and SQLite with one or two arguments; the SEPARATOR clause is MySQL-only.",
+                Any(
+                    SqlAgentToolType.MySQL,
+                    supportsAggregateSeparatorClause: true),
                 Range(SqlAgentToolType.Sqlite, 1, 2)),
             Function(
                 "LISTAGG",
@@ -146,8 +148,14 @@ internal static class SqlSourceFunctionRegistry
         params SqlSourceFunctionDialectRule[] dialectRules) =>
         new(name, canonicalizationKind, detail, dialectRules);
 
-    private static SqlSourceFunctionDialectRule Any(SqlAgentToolType dialect) =>
-        new(dialect, 0, null);
+    private static SqlSourceFunctionDialectRule Any(
+        SqlAgentToolType dialect,
+        bool supportsAggregateSeparatorClause = false) =>
+        new(
+            dialect,
+            0,
+            null,
+            supportsAggregateSeparatorClause);
 
     private static SqlSourceFunctionDialectRule Exact(
         SqlAgentToolType dialect,
@@ -192,12 +200,19 @@ internal sealed record SqlSourceFunctionContract(
             $"Function '{Name}' is not valid for declared source dialect {sourceDialect} " +
             $"in the Core source capability profile. {Detail}";
     }
+
+    internal bool SupportsAggregateSeparatorClause(
+        SqlAgentToolType sourceDialect) =>
+        DialectRules.Any(
+            rule => rule.Dialect == sourceDialect
+                && rule.SupportsAggregateSeparatorClause);
 }
 
 internal sealed record SqlSourceFunctionDialectRule(
     SqlAgentToolType Dialect,
     int MinArguments,
-    int? MaxArguments)
+    int? MaxArguments,
+    bool SupportsAggregateSeparatorClause = false)
 {
     internal bool Accepts(
         SqlAgentToolType dialect,
