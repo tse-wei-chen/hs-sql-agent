@@ -110,13 +110,23 @@ internal static class CoreProviderProfileRewriter
 
         private FunctionCallExpr RewriteFunction(FunctionCallExpr function)
         {
-            if (!IdentifierText(function.Name).Equals(
-                    "CORE_REGEX_MATCH",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return function;
-            }
+            var name = IdentifierText(function.Name);
+            var rewriteKind =
+                SqlCanonicalFunctionRegistry.Find(name)?.ProviderProfileRewriteKind
+                ?? SqlCanonicalProviderProfileRewriteKind.None;
 
+            return rewriteKind switch
+            {
+                SqlCanonicalProviderProfileRewriteKind.None => function,
+                SqlCanonicalProviderProfileRewriteKind.Regex =>
+                    RewriteRegexFunction(function),
+                _ => throw new SqlCompilationException(
+                    $"Unsupported canonical provider-profile rewrite kind '{rewriteKind}' for function '{name}'.")
+            };
+        }
+
+        private FunctionCallExpr RewriteRegexFunction(FunctionCallExpr function)
+        {
             var capabilityError = SqlRegexCapabilityRules.TargetValidationError(
                 _targetProvider,
                 _targetProfile);
