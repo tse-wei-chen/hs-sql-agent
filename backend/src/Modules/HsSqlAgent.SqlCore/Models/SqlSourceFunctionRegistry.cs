@@ -1,9 +1,10 @@
 namespace HsSqlAgent.SqlCore.Models;
 
 /// <summary>
-/// Declarative raw-source function contracts consumed before normalization. This registry owns only
-/// static function-name, source-dialect, and arity knowledge. Runtime/session-sensitive syntax and
-/// specialized source capabilities remain with their dedicated capability-rule owners.
+/// Declarative raw-source function contracts consumed before normalization. This registry owns
+/// static function-name, source-dialect, arity, and canonicalization-family classification.
+/// Runtime/session-sensitive syntax and specialized source capabilities remain with their dedicated
+/// capability-rule owners.
 /// </summary>
 internal static class SqlSourceFunctionRegistry
 {
@@ -26,43 +27,52 @@ internal static class SqlSourceFunctionRegistry
         {
             Function(
                 "DATEADD",
+                SqlSourceFunctionCanonicalizationKind.DateAdd,
                 "DATEADD is modeled as a three-argument SQL Server/Firebird source function.",
                 Exact(SqlAgentToolType.MsSqlServer, 3),
                 Exact(SqlAgentToolType.Firebird, 3)),
             Function(
                 "DATEDIFF",
+                SqlSourceFunctionCanonicalizationKind.DateDiff,
                 "DATEDIFF is modeled as SQL Server/Firebird (3 arguments) or MySQL (2 arguments) source syntax.",
                 Exact(SqlAgentToolType.MsSqlServer, 3),
                 Exact(SqlAgentToolType.Firebird, 3),
                 Exact(SqlAgentToolType.MySQL, 2)),
             Function(
                 "DATE_FORMAT",
+                SqlSourceFunctionCanonicalizationKind.DateFormat,
                 "DATE_FORMAT is modeled as MySQL source syntax.",
                 Any(SqlAgentToolType.MySQL)),
             Function(
                 "FORMAT",
+                SqlSourceFunctionCanonicalizationKind.DateFormat,
                 "Core models FORMAT as SQL Server date-format syntax; MySQL/SQLite FORMAT functions have different semantics.",
                 Any(SqlAgentToolType.MsSqlServer)),
             Function(
                 "TO_DATE",
+                SqlSourceFunctionCanonicalizationKind.DateParse,
                 "TO_DATE is modeled only for PostgreSQL and Oracle source syntax.",
                 Any(SqlAgentToolType.Postgres),
                 Any(SqlAgentToolType.Oracle)),
 
             Function(
                 "CHARINDEX",
+                SqlSourceFunctionCanonicalizationKind.Position,
                 "CHARINDEX is modeled as MsSqlServer source syntax.",
                 Any(SqlAgentToolType.MsSqlServer)),
             Function(
                 "LOCATE",
+                SqlSourceFunctionCanonicalizationKind.Position,
                 "LOCATE is modeled as MySQL source syntax.",
                 Any(SqlAgentToolType.MySQL)),
             Function(
                 "STRPOS",
+                SqlSourceFunctionCanonicalizationKind.Position,
                 "STRPOS is modeled as Postgres source syntax.",
                 Any(SqlAgentToolType.Postgres)),
             Function(
                 "INSTR",
+                SqlSourceFunctionCanonicalizationKind.Position,
                 "INSTR is modeled for MySQL, SQLite, and Oracle source syntax.",
                 Any(SqlAgentToolType.MySQL),
                 Any(SqlAgentToolType.Sqlite),
@@ -70,16 +80,19 @@ internal static class SqlSourceFunctionRegistry
 
             Function(
                 "JSON_EXTRACT",
+                SqlSourceFunctionCanonicalizationKind.JsonExtract,
                 "JSON_EXTRACT is modeled for MySQL and SQLite source syntax.",
                 Any(SqlAgentToolType.MySQL),
                 Any(SqlAgentToolType.Sqlite)),
             Function(
                 "JSON_SET",
+                SqlSourceFunctionCanonicalizationKind.JsonSet,
                 "JSON_SET is modeled for MySQL and SQLite source syntax.",
                 Any(SqlAgentToolType.MySQL),
                 Any(SqlAgentToolType.Sqlite)),
             Function(
                 "REGEXP_LIKE",
+                SqlSourceFunctionCanonicalizationKind.RegexMatch,
                 "REGEXP_LIKE is modeled for MySQL, Oracle, and SQL Server 2025+ source syntax.",
                 Any(SqlAgentToolType.MySQL),
                 Any(SqlAgentToolType.Oracle),
@@ -87,30 +100,36 @@ internal static class SqlSourceFunctionRegistry
 
             Function(
                 "GETDATE",
+                SqlSourceFunctionCanonicalizationKind.CurrentTimestamp,
                 "GETDATE is modeled as MsSqlServer source syntax.",
                 Any(SqlAgentToolType.MsSqlServer)),
             Function(
                 "NOW",
+                SqlSourceFunctionCanonicalizationKind.CurrentTimestamp,
                 "NOW is modeled for PostgreSQL and MySQL source syntax.",
                 Any(SqlAgentToolType.Postgres),
                 Any(SqlAgentToolType.MySQL)),
 
             Function(
                 "STRING_AGG",
+                SqlSourceFunctionCanonicalizationKind.StringAggregate,
                 "STRING_AGG is modeled as a two-argument PostgreSQL/SQL Server source function.",
                 Exact(SqlAgentToolType.Postgres, 2),
                 Exact(SqlAgentToolType.MsSqlServer, 2)),
             Function(
                 "GROUP_CONCAT",
+                SqlSourceFunctionCanonicalizationKind.StringAggregate,
                 "GROUP_CONCAT is modeled for MySQL source syntax and SQLite with one or two arguments.",
                 Any(SqlAgentToolType.MySQL),
                 Range(SqlAgentToolType.Sqlite, 1, 2)),
             Function(
                 "LISTAGG",
+                SqlSourceFunctionCanonicalizationKind.StringAggregate,
                 "LISTAGG is modeled for Oracle source syntax with one or two arguments.",
                 Range(SqlAgentToolType.Oracle, 1, 2)),
             Function(
                 "LIST",
+                SqlSourceFunctionCanonicalizationKind.StringAggregate,
                 "LIST is modeled for Firebird source syntax with one or two arguments.",
                 Range(SqlAgentToolType.Firebird, 1, 2))
         };
@@ -122,9 +141,10 @@ internal static class SqlSourceFunctionRegistry
 
     private static SqlSourceFunctionContract Function(
         string name,
+        SqlSourceFunctionCanonicalizationKind canonicalizationKind,
         string detail,
         params SqlSourceFunctionDialectRule[] dialectRules) =>
-        new(name, detail, dialectRules);
+        new(name, canonicalizationKind, detail, dialectRules);
 
     private static SqlSourceFunctionDialectRule Any(SqlAgentToolType dialect) =>
         new(dialect, 0, null);
@@ -141,8 +161,23 @@ internal static class SqlSourceFunctionRegistry
         new(dialect, minArguments, maxArguments);
 }
 
+internal enum SqlSourceFunctionCanonicalizationKind
+{
+    DateAdd,
+    DateDiff,
+    DateFormat,
+    DateParse,
+    Position,
+    JsonExtract,
+    JsonSet,
+    RegexMatch,
+    CurrentTimestamp,
+    StringAggregate
+}
+
 internal sealed record SqlSourceFunctionContract(
     string Name,
+    SqlSourceFunctionCanonicalizationKind CanonicalizationKind,
     string Detail,
     IReadOnlyList<SqlSourceFunctionDialectRule> DialectRules)
 {
