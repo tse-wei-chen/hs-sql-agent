@@ -10,9 +10,9 @@ open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for structural native-expression lowering.
-/// Provider-sensitive literal/interval/canonical-function/window leaves and the specialized
-/// Oracle/SQL Server boolean-CASE predicate bridge remain in the legacy renderer while structural
-/// recursion, casts, ordinary functions, FILTER, and ordinary CASE lowering are owned here.
+/// Provider-sensitive literal/interval/canonical-function leaves and the specialized Oracle/SQL
+/// Server boolean-CASE predicate bridge remain in the legacy renderer while structural recursion,
+/// casts, ordinary functions, FILTER, ordinary CASE, and window lowering are owned here.
 module internal FunctionalNativeExpressionRenderer =
 
     let private emptyBindings = ImmutableArray<obj | null>.Empty
@@ -70,6 +70,33 @@ module internal FunctionalNativeExpressionRenderer =
         if projection.Length <> 1 || isDirectProjectionWildcard projection[0].Expression then
             raise (SqlCompilationException(
                 "Scalar subquery must expose exactly one statically known output column."))
+
+    let private renderWindowBound (bound: WindowFrameBoundCore) =
+        match bound.Kind with
+        | WindowFrameBoundKindCore.UnboundedPreceding -> "UNBOUNDED PRECEDING"
+        | WindowFrameBoundKindCore.Preceding when bound.Offset.HasValue && bound.Offset.Value >= 0L ->
+            string bound.Offset.Value + " PRECEDING"
+        | WindowFrameBoundKindCore.CurrentRow -> "CURRENT ROW"
+        | WindowFrameBoundKindCore.Following when bound.Offset.HasValue && bound.Offset.Value >= 0L ->
+            string bound.Offset.Value + " FOLLOWING"
+        | WindowFrameBoundKindCore.UnboundedFollowing -> "UNBOUNDED FOLLOWING"
+        | _ ->
+            raise (SqlCompilationException(
+                "Invalid window frame bound '" + string bound.Kind + "'."))
+
+    let private renderWindowFrame (frame: WindowFrame) =
+        let unitText =
+            match frame.Unit with
+            | WindowFrameUnitKind.Rows -> "ROWS"
+            | WindowFrameUnitKind.Range -> "RANGE"
+            | value ->
+                raise (SqlCompilationException(
+                    "Unsupported window frame unit '" + string value + "'."))
+
+        let startText = renderWindowBound frame.Start
+        match frame.End with
+        | null -> unitText + " " + startText
+        | endBound -> unitText + " BETWEEN " + startText + " AND " + renderWindowBound endBound
 
     let private renderIdentifier
         (renderer: NativeSqlRenderer)
@@ -185,6 +212,53 @@ module internal FunctionalNativeExpressionRenderer =
             NativeSqlFragment(
                 renderedExpression.Sql + " FILTER (WHERE " + predicate.Sql + ")",
                 renderedExpression.Bindings.AddRange(predicate.Bindings))
+
+        | :? WindowedExpr as windowed ->
+            match SqlWindowCapabilityRules.WindowValidationError(windowed, renderer.Provider) with
+            | null -> ()
+            | capabilityError -> raise (SqlCompilationException(capabilityError))
+
+            let renderedExpression: NativeSqlFragment =
+                render renderer renderSubquery windowed.Expression
+            let parts = ResizeArray<string>()
+            let mutable bindings = renderedExpression.Bindings
+
+            if not windowed.Window.PartitionBy.IsDefaultOrEmpty then
+                let partition =
+                    windowed.Window.PartitionBy
+                    |> Seq.map (render renderer renderSubquery)
+                    |> Seq.toArray
+                parts.Add(
+                    "PARTITION BY " +
+                    String.Join(", ", partition |> Array.map (fun item -> item.Sql)))
+                for item in partition do
+                    bindings <- bindings.AddRange(item.Bindings)
+
+            if not windowed.Window.OrderBy.IsDefaultOrEmpty then
+                let orderParts = ResizeArray<string>()
+                for item in windowed.Window.OrderBy do
+                    let renderedItem: NativeSqlFragment =
+                        render renderer renderSubquery item.Expression
+                    let nullOrdering =
+                        match item.NullOrdering with
+                        | NullOrderingKind.Default -> String.Empty
+                        | NullOrderingKind.First -> " NULLS FIRST"
+                        | NullOrderingKind.Last -> " NULLS LAST"
+                        | value ->
+                            raise (SqlCompilationException(
+                                "Unsupported NULL ordering '" + string value + "' in window."))
+                    orderParts.Add(
+                        renderedItem.Sql + (if item.Descending then " DESC" else " ASC") + nullOrdering)
+                    bindings <- bindings.AddRange(renderedItem.Bindings)
+                parts.Add("ORDER BY " + String.Join(", ", orderParts))
+
+            match windowed.Window.Frame with
+            | null -> ()
+            | frame -> parts.Add(renderWindowFrame frame)
+
+            NativeSqlFragment(
+                renderedExpression.Sql + " OVER (" + String.Join(" ", parts) + ")",
+                bindings)
 
         | :? CastExpr as castExpr ->
             if not (safeCastType.IsMatch(castExpr.TypeName)) then
