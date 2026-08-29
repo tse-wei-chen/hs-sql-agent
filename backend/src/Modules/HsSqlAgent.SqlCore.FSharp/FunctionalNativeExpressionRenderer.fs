@@ -108,7 +108,10 @@ module internal FunctionalNativeExpressionRenderer =
                 |> Seq.toArray
             let bindings =
                 items
-                |> Array.fold (fun current item -> current.AddRange(item.Bindings)) value.Bindings
+                |> Array.fold
+                    (fun (current: ImmutableArray<obj | null>) (item: NativeSqlFragment) ->
+                        current.AddRange(item.Bindings))
+                    value.Bindings
             NativeSqlFragment(
                 "(" + value.Sql + " " + (if inExpr.IsNegated then "NOT IN" else "IN") + " (" +
                 String.Join(", ", items |> Array.map (fun item -> item.Sql)) + "))",
