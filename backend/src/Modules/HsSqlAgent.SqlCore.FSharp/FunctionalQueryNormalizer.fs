@@ -12,9 +12,10 @@ open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for query normalization.
 ///
-/// Statement/source traversal, primitive expression normalization, CAST traversal, and the
-/// canonical function surface live here. Dialect-sensitive registered function families still use
-/// the legacy function oracle until their date/string/registry semantics are moved independently.
+/// Statement/source traversal, primitive expression normalization, CAST traversal, and most
+/// canonical function families live here. Date-diff/format/parse, string-aggregate, and
+/// provider-registry translation still use the legacy function oracle until their specialized
+/// semantics are moved independently.
 module internal FunctionalQueryNormalizer =
 
     type private Context =
@@ -252,6 +253,23 @@ module internal FunctionalQueryNormalizer =
             window.PartitionBy |> immutableMap (normalizeExpression context),
             normalizeOrderBy context window.OrderBy)
 
+    and private datePartUnit (expression: SqlExpr) =
+        let unit =
+            match expression with
+            | :? BoundColumnExpr as column -> identifierText column.Name
+            | :? ColumnExpr as column -> identifierText column.Name
+            | :? LiteralExpr as literal ->
+                match literal.Value with
+                | :? string as value -> value
+                | _ ->
+                    raise (SqlCompilationException(
+                        "DATEADD/DATEDIFF date-part unit must be an unquoted SQL keyword."))
+            | _ ->
+                raise (SqlCompilationException(
+                    "DATEADD/DATEDIFF date-part unit must be an unquoted SQL keyword."))
+
+        SqlDateMathCapabilityRules.NormalizeUnit(unit, "DATEADD/DATEDIFF")
+
     and private normalizeFunction
         (context: Context)
         (functionCall: FunctionCallExpr)
@@ -271,23 +289,67 @@ module internal FunctionalQueryNormalizer =
                 normalizedArguments,
                 normalizeOrderBy context functionCall.AggregateOrderBy)
 
-        let withName name =
-            CoreBindingAstClone.FunctionName(normalizedFunction, identifier name) :> SqlExpr
+        let canonicalFunction name arguments =
+            let renamed =
+                CoreBindingAstClone.FunctionName(normalizedFunction, identifier name)
+            CoreBindingAstClone.Function(
+                renamed,
+                arguments,
+                normalizedFunction.AggregateOrderBy)
+            :> SqlExpr
+
+        let withName name = canonicalFunction name normalizedArguments
+
+        let normalizeRegisteredFamily (contract: SqlSourceFunctionContract) =
+            match contract.CanonicalizationKind with
+            | SqlSourceFunctionCanonicalizationKind.DateAdd ->
+                if normalizedArguments.Length <> 3 then
+                    raise (SqlCompilationException("DATEADD requires exactly 3 arguments."))
+                canonicalFunction
+                    "CORE_DATE_ADD"
+                    (ImmutableArray.Create<SqlExpr>(
+                        LiteralExpr(datePartUnit normalizedArguments[0], functionCall.Span) :> SqlExpr,
+                        normalizedArguments[1],
+                        normalizedArguments[2]))
+
+            | SqlSourceFunctionCanonicalizationKind.Position ->
+                if normalizedArguments.Length <> 2 then
+                    raise (SqlCompilationException($"{sourceName} requires exactly 2 arguments."))
+                let arguments =
+                    if sourceName = "STRPOS" || sourceName = "INSTR" then
+                        normalizedArguments
+                    else
+                        ImmutableArray.Create<SqlExpr>(
+                            normalizedArguments[1],
+                            normalizedArguments[0])
+                canonicalFunction "CORE_POSITION" arguments
+
+            | SqlSourceFunctionCanonicalizationKind.JsonExtract ->
+                canonicalFunction "CORE_JSON_EXTRACT" normalizedArguments
+
+            | SqlSourceFunctionCanonicalizationKind.JsonSet ->
+                canonicalFunction "CORE_JSON_SET" normalizedArguments
+
+            | SqlSourceFunctionCanonicalizationKind.RegexMatch ->
+                canonicalFunction "CORE_REGEX_MATCH" normalizedArguments
+
+            | SqlSourceFunctionCanonicalizationKind.CurrentTimestamp ->
+                if normalizedArguments.Length <> 0 then
+                    raise (SqlCompilationException(sourceName + " does not accept arguments."))
+                canonicalFunction "CORE_CURRENT_TIMESTAMP" normalizedArguments
+
+            | _ ->
+                normalizeFunctionWithLegacyOracle context functionCall
 
         if SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) then
             if normalizedArguments.Length <> 1 then
                 raise (SqlCompilationException($"{sourceName} requires exactly 1 argument."))
 
-            let arguments =
-                ImmutableArray.Create<SqlExpr>(
+            canonicalFunction
+                "CORE_DATE_PART"
+                (ImmutableArray.Create<SqlExpr>(
                     LiteralExpr(sourceName, functionCall.Span) :> SqlExpr,
-                    normalizedArguments[0])
-
-            CoreBindingAstClone.Function(
-                CoreBindingAstClone.FunctionName(normalizedFunction, identifier "CORE_DATE_PART"),
-                arguments,
-                normalizedFunction.AggregateOrderBy)
-            :> SqlExpr
+                    normalizedArguments[0]))
         else
             match sourceName with
             | "CURRENT_DATE" ->
@@ -309,9 +371,11 @@ module internal FunctionalQueryNormalizer =
             | _ when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceName) ->
                 withName sourceName
             | _ ->
-                // Registered portable families and provider-specific registry translation still use
-                // the legacy oracle so their exact cross-dialect diagnostics remain locked down.
-                normalizeFunctionWithLegacyOracle context functionCall
+                match SqlSourceFunctionRegistry.Find(sourceName) with
+                | null ->
+                    normalizeFunctionWithLegacyOracle context functionCall
+                | contract ->
+                    normalizeRegisteredFamily contract
 
     and private normalizeExpression
         (context: Context)
