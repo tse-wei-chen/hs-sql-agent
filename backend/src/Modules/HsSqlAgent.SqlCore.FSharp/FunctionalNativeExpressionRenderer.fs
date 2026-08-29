@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Core.Lowering
 
 open System
 open System.Collections.Immutable
+open System.Text.RegularExpressions
 open HsSqlAgent.SqlCore.Core.Ast
 open HsSqlAgent.SqlCore.Core.Binding
 open HsSqlAgent.SqlCore.Core.Compilation
@@ -9,14 +10,27 @@ open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for structural native-expression lowering.
-/// Provider-sensitive literal/interval/function/case/window/filter/cast leaves remain in the
-/// legacy renderer while basic expression recursion is owned here.
+/// Provider-sensitive literal/interval/canonical-function/case/window/filter leaves remain in the
+/// legacy renderer while structural recursion, casts, and ordinary functions are owned here.
 module internal FunctionalNativeExpressionRenderer =
 
     let private emptyBindings = ImmutableArray<obj | null>.Empty
 
+    let private safeFunctionName =
+        Regex(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)
+
+    let private safeCastType =
+        Regex(
+            @"^[A-Za-z_][A-Za-z0-9_.]*(?:\s+(?:PRECISION|VARYING|WITH|WITHOUT|TIME|ZONE|SIGNED|UNSIGNED))*(?:\((?:MAX|[0-9]+(?:,[0-9]+)?)\))?(?:\s+(?:PRECISION|VARYING|WITH|WITHOUT|TIME|ZONE|SIGNED|UNSIGNED))*$",
+            RegexOptions.CultureInvariant ||| RegexOptions.IgnoreCase)
+
     let private combine sql (left: NativeSqlFragment) (right: NativeSqlFragment) =
         NativeSqlFragment(sql, left.Bindings.AddRange(right.Bindings))
+
+    let private identifierText (identifier: SqlIdentifier) =
+        identifier.Parts
+        |> Seq.map (fun part -> part.Value)
+        |> String.concat "."
 
     let private isDirectProjectionWildcard (expression: SqlExpr) =
         let identifier =
@@ -96,6 +110,59 @@ module internal FunctionalNativeExpressionRenderer =
                     ("(" + left.Sql + " " + operatorText + " " + right.Sql + likeEscape + ")")
                     left
                     right
+
+        | :? FunctionCallExpr as functionCall ->
+            let name = identifierText functionCall.Name
+            let canonical = SqlCanonicalFunctionRegistry.Find(name.ToUpperInvariant())
+            let loweringKind =
+                match canonical with
+                | null -> SqlCanonicalNativeLoweringKind.Ordinary
+                | value -> value.NativeLoweringKind
+
+            if loweringKind <> SqlCanonicalNativeLoweringKind.Ordinary then
+                renderer.RenderExpressionForFunctional(expression, renderSubquery)
+            else
+                if not (safeFunctionName.IsMatch(name)) then
+                    raise (SqlCompilationException(
+                        "Unsafe function identifier '" + name + "'."))
+
+                if name.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
+                    raise (SqlCompilationException(
+                        "Canonical function '" + name +
+                        "' has no native lowering implementation; compilation was rejected."))
+
+                let args =
+                    functionCall.Arguments
+                    |> Seq.map (render renderer renderSubquery)
+                    |> Seq.toArray
+                let renderedArgs = args |> Array.map (fun argument -> argument.Sql)
+
+                if renderer.Provider = SqlAgentToolType.Postgres
+                   && name.Equals("ROUND", StringComparison.OrdinalIgnoreCase)
+                   && args.Length = 2 then
+                    renderedArgs[0] <- "CAST(" + renderedArgs[0] + " AS numeric)"
+
+                let argumentSql =
+                    let joined = String.Join(", ", renderedArgs)
+                    if functionCall.IsDistinct then "DISTINCT " + joined else joined
+
+                let bindings =
+                    args
+                    |> Array.fold
+                        (fun (current: ImmutableArray<obj | null>) (argument: NativeSqlFragment) ->
+                            current.AddRange(argument.Bindings))
+                        emptyBindings
+
+                NativeSqlFragment(name + "(" + argumentSql + ")", bindings)
+
+        | :? CastExpr as castExpr ->
+            if not (safeCastType.IsMatch(castExpr.TypeName)) then
+                raise (SqlCompilationException(
+                    "Unsafe CAST target type '" + castExpr.TypeName + "'."))
+            let rendered = render renderer renderSubquery castExpr.Expression
+            NativeSqlFragment(
+                "CAST(" + rendered.Sql + " AS " + castExpr.TypeName + ")",
+                rendered.Bindings)
 
         | :? InExpr as inExpr ->
             if inExpr.Items.IsDefaultOrEmpty then
