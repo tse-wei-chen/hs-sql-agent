@@ -152,7 +152,7 @@ module internal FunctionalNativeExpressionRenderer =
             match expression with
             | :? LiteralExpr as literal when literal.Value :? bool ->
                 let value = unbox<bool> literal.Value
-                NativeSqlFragment(if value then "(1 = 1)" else "(1 = 0)", emptyBindings)
+                NativeSqlFragment((if value then "(1 = 1)" else "(1 = 0)"), emptyBindings)
 
             | :? UnaryExpr as unary when unary.Operator = "NOT" ->
                 let operand = renderPredicate renderer renderSubquery unary.Operand
