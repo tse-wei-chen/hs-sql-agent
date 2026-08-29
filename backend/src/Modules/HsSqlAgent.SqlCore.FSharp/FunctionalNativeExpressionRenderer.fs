@@ -36,7 +36,7 @@ module internal FunctionalNativeExpressionRenderer =
     let private equivalentFragment (left: NativeSqlFragment) (right: NativeSqlFragment) =
         left.Sql = right.Sql
         && left.Bindings.Length = right.Bindings.Length
-        && Seq.forall2 obj.Equals left.Bindings right.Bindings
+        && Seq.forall2 (fun leftBinding rightBinding -> Object.Equals(leftBinding, rightBinding)) left.Bindings right.Bindings
 
     let private requireSimpleCaseComparison (branch: CaseBranch) =
         match branch.Condition with
@@ -216,9 +216,11 @@ module internal FunctionalNativeExpressionRenderer =
                 parts.Add("WHEN " + matched.Sql + " THEN " + value.Sql)
                 bindings <- bindings.AddRange(matched.Bindings).AddRange(value.Bindings)
 
-            if not (isNull simpleCase.ElseExpression) then
+            match simpleCase.ElseExpression with
+            | null -> ()
+            | otherwiseExpression ->
                 let otherwise: NativeSqlFragment =
-                    render renderer renderSubquery simpleCase.ElseExpression
+                    render renderer renderSubquery (otherwiseExpression :> SqlExpr)
                 parts.Add("ELSE " + otherwise.Sql)
                 bindings <- bindings.AddRange(otherwise.Bindings)
 
@@ -239,9 +241,11 @@ module internal FunctionalNativeExpressionRenderer =
                 parts.Add("WHEN " + condition.Sql + " THEN " + value.Sql)
                 bindings <- bindings.AddRange(condition.Bindings).AddRange(value.Bindings)
 
-            if not (isNull caseExpr.ElseExpression) then
+            match caseExpr.ElseExpression with
+            | null -> ()
+            | otherwiseExpression ->
                 let otherwise: NativeSqlFragment =
-                    render renderer renderSubquery caseExpr.ElseExpression
+                    render renderer renderSubquery (otherwiseExpression :> SqlExpr)
                 parts.Add("ELSE " + otherwise.Sql)
                 bindings <- bindings.AddRange(otherwise.Bindings)
 
