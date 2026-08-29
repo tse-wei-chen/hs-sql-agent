@@ -18,7 +18,7 @@ module internal FunctionalQueryNormalizer =
 
     type private Context =
         {
-            Facts: SqlStatementFacts
+            Facts: QueryFacts
             SourceDialect: SqlAgentToolType
             TargetProvider: SqlAgentToolType
         }
@@ -43,8 +43,8 @@ module internal FunctionalQueryNormalizer =
                 ImmutableArray<SqlExpr>.Empty,
                 null,
                 ImmutableArray<OrderByItem>.Empty,
-                null,
-                null,
+                Nullable<int>(),
+                Nullable<int>(),
                 expression.Span)
 
         let normalized =

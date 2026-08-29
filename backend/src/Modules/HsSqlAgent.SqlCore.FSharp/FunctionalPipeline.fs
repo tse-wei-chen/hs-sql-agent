@@ -95,16 +95,20 @@ module internal FunctionalPipeline =
     type private ValidatedDml = ValidatedDml of DmlContext * ValidatedSqlPlan
     type private ExecutableDml = ExecutableDml of DmlContext * ExecutableSqlPlan
 
-    let private ensureDmlRoot statement =
+    let private ensureDmlRoot (statement: SqlStatement) =
         match statement with
-        | :? InsertStatement | :? UpdateStatement | :? DeleteStatement -> ()
+        | :? InsertStatement
+        | :? UpdateStatement
+        | :? DeleteStatement -> ()
         | other -> raise (SqlCompilationException($"F# DML pipeline requires INSERT/UPDATE/DELETE AST, not {other.GetType().Name}."))
 
-    let private validateMutationPolicy statement (policy: DmlCompilationPolicy) =
+    let private validateMutationPolicy (statement: SqlStatement) (policy: DmlCompilationPolicy) =
         match statement with
         | :? UpdateStatement as update when isNull update.Predicate && (policy.RequireWhereForUpdate || not policy.AllowFullTableUpdate) -> raise (UnauthorizedAccessException("Security policy denies UPDATE without WHERE."))
         | :? DeleteStatement as delete when isNull delete.Predicate && (policy.RequireWhereForDelete || not policy.AllowFullTableDelete) -> raise (UnauthorizedAccessException("Security policy denies DELETE without WHERE."))
-        | :? InsertStatement | :? UpdateStatement | :? DeleteStatement -> ()
+        | :? InsertStatement
+        | :? UpdateStatement
+        | :? DeleteStatement -> ()
         | other -> raise (SqlCompilationException($"Unsupported DML statement '{other.GetType().Name}'."))
 
     let private startDml (parsed: ParsedStatement) targetProvider (policy: DmlCompilationPolicy | null) targetProfile conflictTargetAssurance =
@@ -156,7 +160,7 @@ module internal FunctionalPipeline =
         FunctionalAst.verify executable.Statement |> ignore
         ExecutableDml(context, executable)
 
-    let private expectedDmlKind statement =
+    let private expectedDmlKind (statement: SqlStatement) =
         match statement with
         | :? InsertStatement -> SqlStatementKind.Insert
         | :? UpdateStatement -> SqlStatementKind.Update
@@ -173,8 +177,21 @@ module internal FunctionalPipeline =
             | _ -> lowered
         CoreDmlReturningSqlRewriter.Apply(conflictApplied, executable.Statement, context.TargetProfile, executable.PolicyVersion)
 
-    let compileQuery parsed targetProvider validationContext executionPolicy targetProfile =
+    let compileQuery
+        (parsed: ParsedStatement)
+        (targetProvider: SqlAgentToolType)
+        (validationContext: SqlPlanValidationContext)
+        (executionPolicy: SqlExecutionPlanPolicy)
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        : CompiledSqlCommand =
         startQuery parsed targetProvider targetProfile |> bindQuery |> normalizeQuery |> validateQuery validationContext |> authorizeExecution executionPolicy |> lowerQuery
 
-    let compileDml parsed targetProvider validationContext policy targetProfile conflictTargetAssurance =
+    let compileDml
+        (parsed: ParsedStatement)
+        (targetProvider: SqlAgentToolType)
+        (validationContext: SqlPlanValidationContext)
+        (policy: DmlCompilationPolicy | null)
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        (conflictTargetAssurance: DmlConflictTargetAssurance | null)
+        : CompiledSqlCommand =
         startDml parsed targetProvider policy targetProfile conflictTargetAssurance |> bindDml |> normalizeDml |> validateDml validationContext |> authorizeDml |> lowerDml
