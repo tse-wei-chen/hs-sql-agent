@@ -4,6 +4,7 @@ open System
 open System.Collections.Immutable
 open System.Globalization
 open System.Text.RegularExpressions
+open HsSqlAgent.SqlCore.Core.Analysis
 open HsSqlAgent.SqlCore.Core.Ast
 open HsSqlAgent.SqlCore.Core.Binding
 open HsSqlAgent.SqlCore.Core.Compilation
@@ -32,10 +33,10 @@ module internal FunctionalNativeExpressionRenderer =
     let private combine sql (left: NativeSqlFragment) (right: NativeSqlFragment) =
         NativeSqlFragment(sql, left.Bindings.AddRange(right.Bindings))
 
-    let private bind value =
+    let private bind (value: obj | null) =
         NativeSqlFragment(parameterPlaceholder, ImmutableArray.Create<obj | null>(value))
 
-    let private castBinding castType value =
+    let private castBinding (castType: string) (value: obj | null) =
         NativeSqlFragment(
             "CAST(" + parameterPlaceholder + " AS " + castType + ")",
             ImmutableArray.Create<obj | null>(value))
@@ -111,7 +112,7 @@ module internal FunctionalNativeExpressionRenderer =
     let private formatFirebirdOffsetTimestamp (value: DateTimeOffset) =
         value.ToString("yyyy-MM-dd HH:mm:ss.fffffff zzz", CultureInfo.InvariantCulture)
 
-    let private renderFirebirdString value =
+    let private renderFirebirdString (value: string) =
         let maxFirebirdUtf8VarcharChars = 8191
         if value.Length > maxFirebirdUtf8VarcharChars then
             raise (SqlCompilationException(
@@ -342,8 +343,8 @@ module internal FunctionalNativeExpressionRenderer =
                 if not (safeFunctionName.IsMatch(name)) then raise (SqlCompilationException("Unsafe function identifier '" + name + "'."))
                 if name.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
                     raise (SqlCompilationException("Canonical function '" + name + "' has no native lowering implementation; compilation was rejected."))
-                let args = functionCall.Arguments |> Seq.map (render provider renderSubquery) |> Seq.toArray
-                let renderedArgs = args |> Array.map (fun argument -> argument.Sql)
+                let args: NativeSqlFragment array = functionCall.Arguments |> Seq.map (render provider renderSubquery) |> Seq.toArray
+                let renderedArgs = args |> Array.map (fun (argument: NativeSqlFragment) -> argument.Sql)
                 if provider = SqlAgentToolType.Postgres && name.Equals("ROUND", StringComparison.OrdinalIgnoreCase) && args.Length = 2 then
                     renderedArgs[0] <- "CAST(" + renderedArgs[0] + " AS numeric)"
                 let argumentSql =
@@ -356,25 +357,25 @@ module internal FunctionalNativeExpressionRenderer =
             match provider with
             | SqlAgentToolType.Postgres | SqlAgentToolType.Sqlite | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird -> ()
             | value -> raise (SqlCompilationException("FILTER lowering is not supported by " + string value + "."))
-            let renderedExpression = render provider renderSubquery filter.Expression
-            let predicate = renderPredicate provider renderSubquery filter.Predicate
+            let renderedExpression: NativeSqlFragment = render provider renderSubquery filter.Expression
+            let predicate: NativeSqlFragment = renderPredicate provider renderSubquery filter.Predicate
             NativeSqlFragment(renderedExpression.Sql + " FILTER (WHERE " + predicate.Sql + ")", renderedExpression.Bindings.AddRange(predicate.Bindings))
 
         | :? WindowedExpr as windowed ->
             match SqlWindowCapabilityRules.WindowValidationError(windowed, provider) with
             | null -> ()
             | capabilityError -> raise (SqlCompilationException(capabilityError))
-            let renderedExpression = render provider renderSubquery windowed.Expression
+            let renderedExpression: NativeSqlFragment = render provider renderSubquery windowed.Expression
             let parts = ResizeArray<string>()
             let mutable bindings = renderedExpression.Bindings
             if not windowed.Window.PartitionBy.IsDefaultOrEmpty then
-                let partition = windowed.Window.PartitionBy |> Seq.map (render provider renderSubquery) |> Seq.toArray
-                parts.Add("PARTITION BY " + String.Join(", ", partition |> Array.map (fun item -> item.Sql)))
+                let partition: NativeSqlFragment array = windowed.Window.PartitionBy |> Seq.map (render provider renderSubquery) |> Seq.toArray
+                parts.Add("PARTITION BY " + String.Join(", ", partition |> Array.map (fun (item: NativeSqlFragment) -> item.Sql)))
                 for item in partition do bindings <- bindings.AddRange(item.Bindings)
             if not windowed.Window.OrderBy.IsDefaultOrEmpty then
                 let orderParts = ResizeArray<string>()
                 for item in windowed.Window.OrderBy do
-                    let renderedItem = render provider renderSubquery item.Expression
+                    let renderedItem: NativeSqlFragment = render provider renderSubquery item.Expression
                     let nullOrdering =
                         match item.NullOrdering with
                         | NullOrderingKind.Default -> String.Empty
@@ -391,27 +392,27 @@ module internal FunctionalNativeExpressionRenderer =
 
         | :? CastExpr as castExpr ->
             if not (safeCastType.IsMatch(castExpr.TypeName)) then raise (SqlCompilationException("Unsafe CAST target type '" + castExpr.TypeName + "'."))
-            let rendered = render provider renderSubquery castExpr.Expression
+            let rendered: NativeSqlFragment = render provider renderSubquery castExpr.Expression
             NativeSqlFragment("CAST(" + rendered.Sql + " AS " + castExpr.TypeName + ")", rendered.Bindings)
 
         | :? SimpleCaseExpr as simpleCase ->
             if simpleCase.Branches.IsDefaultOrEmpty then raise (SqlCompilationException("Simple CASE requires at least one WHEN branch."))
             let first = requireSimpleCaseComparison simpleCase.Branches[0]
-            let operand = render provider renderSubquery first.Left
+            let operand: NativeSqlFragment = render provider renderSubquery first.Left
             let mutable bindings = operand.Bindings
             let parts = ResizeArray<string>()
             for branch in simpleCase.Branches do
                 let comparison = requireSimpleCaseComparison branch
-                let branchOperand = render provider renderSubquery comparison.Left
+                let branchOperand: NativeSqlFragment = render provider renderSubquery comparison.Left
                 if not (equivalentFragment operand branchOperand) then raise (SqlCompilationException("Simple CASE branches must preserve one canonical operand before native lowering."))
-                let matched = render provider renderSubquery comparison.Right
-                let value = render provider renderSubquery branch.Value
+                let matched: NativeSqlFragment = render provider renderSubquery comparison.Right
+                let value: NativeSqlFragment = render provider renderSubquery branch.Value
                 parts.Add("WHEN " + matched.Sql + " THEN " + value.Sql)
                 bindings <- bindings.AddRange(matched.Bindings).AddRange(value.Bindings)
             match simpleCase.ElseExpression with
             | null -> ()
             | otherwiseExpression ->
-                let otherwise = render provider renderSubquery otherwiseExpression
+                let otherwise: NativeSqlFragment = render provider renderSubquery otherwiseExpression
                 parts.Add("ELSE " + otherwise.Sql)
                 bindings <- bindings.AddRange(otherwise.Bindings)
             NativeSqlFragment("CASE " + operand.Sql + " " + String.Join(" ", parts) + " END", bindings)
@@ -421,42 +422,42 @@ module internal FunctionalNativeExpressionRenderer =
             let mutable bindings = emptyBindings
             let parts = ResizeArray<string>()
             for branch in caseExpr.Branches do
-                let condition = renderPredicate provider renderSubquery branch.Condition
-                let value = render provider renderSubquery branch.Value
+                let condition: NativeSqlFragment = renderPredicate provider renderSubquery branch.Condition
+                let value: NativeSqlFragment = render provider renderSubquery branch.Value
                 parts.Add("WHEN " + condition.Sql + " THEN " + value.Sql)
                 bindings <- bindings.AddRange(condition.Bindings).AddRange(value.Bindings)
             match caseExpr.ElseExpression with
             | null -> ()
             | otherwiseExpression ->
-                let otherwise = render provider renderSubquery otherwiseExpression
+                let otherwise: NativeSqlFragment = render provider renderSubquery otherwiseExpression
                 parts.Add("ELSE " + otherwise.Sql)
                 bindings <- bindings.AddRange(otherwise.Bindings)
             NativeSqlFragment("CASE " + String.Join(" ", parts) + " END", bindings)
 
         | :? InExpr as inExpr ->
             if inExpr.Items.IsDefaultOrEmpty then raise (SqlCompilationException("IN requires at least one item."))
-            let value = render provider renderSubquery inExpr.Value
-            let items = inExpr.Items |> Seq.map (render provider renderSubquery) |> Seq.toArray
+            let value: NativeSqlFragment = render provider renderSubquery inExpr.Value
+            let items: NativeSqlFragment array = inExpr.Items |> Seq.map (render provider renderSubquery) |> Seq.toArray
             let bindings = items |> Array.fold (fun (current: ImmutableArray<obj | null>) (item: NativeSqlFragment) -> current.AddRange(item.Bindings)) value.Bindings
-            NativeSqlFragment("(" + value.Sql + " " + (if inExpr.IsNegated then "NOT IN" else "IN") + " (" + String.Join(", ", items |> Array.map (fun item -> item.Sql)) + "))", bindings)
+            NativeSqlFragment("(" + value.Sql + " " + (if inExpr.IsNegated then "NOT IN" else "IN") + " (" + String.Join(", ", items |> Array.map (fun (item: NativeSqlFragment) -> item.Sql)) + "))", bindings)
 
         | :? BetweenExpr as between ->
-            let value = render provider renderSubquery between.Value
-            let lower = render provider renderSubquery between.Lower
-            let upper = render provider renderSubquery between.Upper
+            let value: NativeSqlFragment = render provider renderSubquery between.Value
+            let lower: NativeSqlFragment = render provider renderSubquery between.Lower
+            let upper: NativeSqlFragment = render provider renderSubquery between.Upper
             NativeSqlFragment("(" + value.Sql + " " + (if between.IsNegated then "NOT BETWEEN" else "BETWEEN") + " " + lower.Sql + " AND " + upper.Sql + ")", value.Bindings.AddRange(lower.Bindings).AddRange(upper.Bindings))
 
         | :? IsNullExpr as isNull ->
-            let value = render provider renderSubquery isNull.Value
+            let value: NativeSqlFragment = render provider renderSubquery isNull.Value
             NativeSqlFragment("(" + value.Sql + " IS " + (if isNull.IsNegated then "NOT " else String.Empty) + "NULL)", value.Bindings)
 
         | :? SubqueryExpr as subquery ->
             validateScalarSubqueryProjection subquery.Query
-            let rendered = renderSubquery.Invoke(subquery.Query)
+            let rendered: NativeSqlFragment = renderSubquery.Invoke(subquery.Query)
             NativeSqlFragment("(" + rendered.Sql + ")", rendered.Bindings)
 
         | :? ExistsExpr as exists ->
-            let rendered = renderSubquery.Invoke(exists.Query)
+            let rendered: NativeSqlFragment = renderSubquery.Invoke(exists.Query)
             NativeSqlFragment((if exists.IsNegated then "NOT " else String.Empty) + "EXISTS (" + rendered.Sql + ")", rendered.Bindings)
 
         | _ ->
@@ -513,23 +514,23 @@ module internal FunctionalNativeExpressionRenderer =
         if caseExpr.Branches.IsDefaultOrEmpty then
             raise (SqlCompilationException("Simple CASE requires at least one WHEN branch."))
         let first = requireSimpleCaseComparison caseExpr.Branches[0]
-        let operand = render provider renderSubquery first.Left
+        let operand: NativeSqlFragment = render provider renderSubquery first.Left
         let mutable bindings = operand.Bindings
         let parts = ResizeArray<string>()
         for branch in caseExpr.Branches do
             let comparison = requireSimpleCaseComparison branch
-            let branchOperand = render provider renderSubquery comparison.Left
+            let branchOperand: NativeSqlFragment = render provider renderSubquery comparison.Left
             if not (equivalentFragment operand branchOperand) then
                 raise (SqlCompilationException(
                     "Simple CASE branches must preserve one canonical operand before native lowering."))
-            let matched = render provider renderSubquery comparison.Right
-            let value = renderBooleanTruthValue branch.Value
+            let matched: NativeSqlFragment = render provider renderSubquery comparison.Right
+            let value: NativeSqlFragment = renderBooleanTruthValue branch.Value
             parts.Add("WHEN " + matched.Sql + " THEN " + value.Sql)
             bindings <- bindings.AddRange(matched.Bindings).AddRange(value.Bindings)
         match caseExpr.ElseExpression with
         | null -> ()
         | otherwiseExpression ->
-            let otherwise = renderBooleanTruthValue otherwiseExpression
+            let otherwise: NativeSqlFragment = renderBooleanTruthValue otherwiseExpression
             parts.Add("ELSE " + otherwise.Sql)
             bindings <- bindings.AddRange(otherwise.Bindings)
         NativeSqlFragment("(CASE " + operand.Sql + " " + String.Join(" ", parts) + " END = 1)", bindings)
@@ -544,14 +545,14 @@ module internal FunctionalNativeExpressionRenderer =
         let mutable bindings = emptyBindings
         let parts = ResizeArray<string>()
         for branch in caseExpr.Branches do
-            let condition = renderPredicate provider renderSubquery branch.Condition
-            let value = renderBooleanTruthValue branch.Value
+            let condition: NativeSqlFragment = renderPredicate provider renderSubquery branch.Condition
+            let value: NativeSqlFragment = renderBooleanTruthValue branch.Value
             parts.Add("WHEN " + condition.Sql + " THEN " + value.Sql)
             bindings <- bindings.AddRange(condition.Bindings).AddRange(value.Bindings)
         match caseExpr.ElseExpression with
         | null -> ()
         | otherwiseExpression ->
-            let otherwise = renderBooleanTruthValue otherwiseExpression
+            let otherwise: NativeSqlFragment = renderBooleanTruthValue otherwiseExpression
             parts.Add("ELSE " + otherwise.Sql)
             bindings <- bindings.AddRange(otherwise.Bindings)
         NativeSqlFragment("(CASE " + String.Join(" ", parts) + " END = 1)", bindings)
