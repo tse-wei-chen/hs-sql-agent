@@ -291,6 +291,16 @@ module internal FunctionalNativeExpressionRenderer =
                     renderer.Provider
                     functionCall
                     (fun argument -> render renderer renderSubquery argument)
+            elif loweringKind = SqlCanonicalNativeLoweringKind.JsonExtract then
+                FunctionalStructuredTextCanonicalRenderer.renderJsonExtract
+                    renderer.Provider
+                    functionCall
+                    (fun argument -> render renderer renderSubquery argument)
+            elif loweringKind = SqlCanonicalNativeLoweringKind.JsonSet then
+                FunctionalStructuredTextCanonicalRenderer.renderJsonSet
+                    renderer.Provider
+                    functionCall
+                    (fun argument -> render renderer renderSubquery argument)
             elif loweringKind = SqlCanonicalNativeLoweringKind.CurrentDate then
                 requireCurrentTemporalShape functionCall
                 NativeSqlFragment(
