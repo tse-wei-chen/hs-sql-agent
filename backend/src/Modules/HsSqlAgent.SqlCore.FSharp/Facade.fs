@@ -56,6 +56,33 @@ module private FacadeResult =
                 noDiagnostics)
 
 module private FacadeCompile =
+    let private containsIgnoreCase (needle: string) (text: string) =
+        text.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
+
+    /// Keep the first production DU lane intentionally narrow. Each excluded grammar family is
+    /// widened only after its rewrite parser/lowering/diagnostic parity is covered by tests.
+    let private rewriteEligible (sql: string) (executionPolicy: SqlExecutionPlanPolicy) =
+        let excluded =
+            [ " UNION "; " INTERSECT "; " EXCEPT "; " JOIN "; " ORDER "; " GROUP "; " HAVING "
+              " LIMIT "; " OFFSET "; " FETCH "; " TOP "; " CASE "; " CAST"; " DATE "; " TIME "
+              " TIMESTAMP "; " INTERVAL "; " EXISTS "; " IN "; " BETWEEN "; " LIKE "; " ILIKE "
+              " DISTINCT "; " AS "; " WITH " ]
+        executionPolicy.QueryMaxRows = 0
+        && not (sql.Contains('.', StringComparison.Ordinal))
+        && not (sql.Contains('(', StringComparison.Ordinal))
+        && not (sql.Contains(')', StringComparison.Ordinal))
+        && (excluded |> List.exists (fun token -> containsIgnoreCase token sql) |> not)
+
+    let private functionalQuery
+        (sql: string)
+        (sourceDialect: SqlAgentToolType)
+        (targetProvider: SqlAgentToolType)
+        (validationContext: SqlPlanValidationContext)
+        (executionPolicy: SqlExecutionPlanPolicy) =
+        let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
+        FunctionalAst.verify parsed.Statement |> ignore
+        FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
+
     let queryText
         (sql: string)
         (sourceDialect: SqlAgentToolType)
@@ -63,18 +90,16 @@ module private FacadeCompile =
         (validationContext: SqlPlanValidationContext)
         (executionPolicy: SqlExecutionPlanPolicy) =
 
-        if sourceDialect = targetProvider then
+        if sourceDialect = targetProvider && rewriteEligible sql executionPolicy then
             try
                 RewriteFacadeAdapter.compileQueryValidated sql targetProvider validationContext executionPolicy
             with
             | :? SqlCompilationException ->
-                let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
-                FunctionalAst.verify parsed.Statement |> ignore
-                FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
+                functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
+            | :? ArgumentException ->
+                functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
         else
-            let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
-            FunctionalAst.verify parsed.Statement |> ignore
-            FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
+            functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
 
 /// C#-oriented facade for the parser and compiler pipeline.
 [<AbstractClass; Sealed>]
