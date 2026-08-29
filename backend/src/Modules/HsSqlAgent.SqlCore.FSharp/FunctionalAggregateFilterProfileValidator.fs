@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Core.Analysis
 
 open System
 open HsSqlAgent.SqlCore.Core.Ast
+open HsSqlAgent.SqlCore.Core.Binding
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
