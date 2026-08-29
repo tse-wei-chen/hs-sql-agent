@@ -52,6 +52,7 @@
     <Compile Include="FunctionalNativeBackendCompatibility.fs" />
     <Compile Include="FunctionalDmlConflictSqlRewriter.fs" />
     <Compile Include="FunctionalDmlReturningSqlRewriter.fs" />
+    <Compile Include="FunctionalNativeExpressionRenderer.fs" />
     <Compile Include="FunctionalNativeQueryRenderer.fs" />
     <Compile Include="FunctionalPipeline.fs" />
     <Compile Include="Facade.fs" />
