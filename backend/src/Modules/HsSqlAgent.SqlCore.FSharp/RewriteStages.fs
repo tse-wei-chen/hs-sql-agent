@@ -1,5 +1,6 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
+open System
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
@@ -59,45 +60,78 @@ module internal RewriteStages =
 
     let normalize bound = Transition.normalize normalizeDocument bound
 
-    let rec private validateExpr expression =
+    let private identifierText (identifier: Identifier) =
+        identifier |> Identifier.parts |> List.map (fun part -> part.Value) |> String.concat "."
+
+    let private ensureTableAllowed (allowedTables: string list option) (identifier: Identifier) =
+        match allowedTables with
+        | None | Some [] -> ()
+        | Some allowed ->
+            let table = identifierText identifier
+            let authorized = allowed |> List.exists (fun value -> StringComparer.OrdinalIgnoreCase.Equals(value, table))
+            if not authorized then
+                raise (UnauthorizedAccessException("SQL plan is not authorized to access table(s): " + table))
+
+    let rec private validateExpr allowedTables expression =
         match expression with
         | Column _ | Literal _ | Interval _ -> ()
-        | Unary(_, operand) -> validateExpr operand
-        | Binary(_, left, right) -> validateExpr left; validateExpr right
-        | FunctionCall call -> call.Arguments |> List.iter validateExpr
-        | FilteredAggregate(value, predicate) -> validateExpr value; validateExpr predicate
-        | Windowed(value, window) -> validateExpr value; window.PartitionBy |> List.iter validateExpr; window.OrderBy |> List.iter (fun order -> validateExpr order.Expression)
-        | Cast(value, _) -> validateExpr value
-        | SimpleCase(input, branches, fallback) -> validateExpr input; branches |> NonEmpty.iter (fun branch -> validateExpr branch.Match; validateExpr branch.Result); fallback |> Option.iter validateExpr
-        | SearchedCase(branches, fallback) -> branches |> NonEmpty.iter (fun branch -> validateExpr branch.Condition; validateExpr branch.Result); fallback |> Option.iter validateExpr
-        | InList(value, items, _) -> validateExpr value; items |> NonEmpty.iter validateExpr
-        | Between(value, lower, upper, _) -> validateExpr value; validateExpr lower; validateExpr upper
-        | IsNull(value, _) -> validateExpr value
-        | ScalarSubquery query -> validateQuery query
-        | Exists(query, _) -> validateQuery query
+        | Unary(_, operand) -> validateExpr allowedTables operand
+        | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
+        | FunctionCall call -> call.Arguments |> List.iter (validateExpr allowedTables)
+        | FilteredAggregate(value, predicate) -> validateExpr allowedTables value; validateExpr allowedTables predicate
+        | Windowed(value, window) -> validateExpr allowedTables value; window.PartitionBy |> List.iter (validateExpr allowedTables); window.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
+        | Cast(value, _) -> validateExpr allowedTables value
+        | SimpleCase(input, branches, fallback) -> validateExpr allowedTables input; branches |> NonEmpty.iter (fun branch -> validateExpr allowedTables branch.Match; validateExpr allowedTables branch.Result); fallback |> Option.iter (validateExpr allowedTables)
+        | SearchedCase(branches, fallback) -> branches |> NonEmpty.iter (fun branch -> validateExpr allowedTables branch.Condition; validateExpr allowedTables branch.Result); fallback |> Option.iter (validateExpr allowedTables)
+        | InList(value, items, _) -> validateExpr allowedTables value; items |> NonEmpty.iter (validateExpr allowedTables)
+        | Between(value, lower, upper, _) -> validateExpr allowedTables value; validateExpr allowedTables lower; validateExpr allowedTables upper
+        | IsNull(value, _) -> validateExpr allowedTables value
+        | ScalarSubquery query -> validateQuery allowedTables query
+        | Exists(query, _) -> validateQuery allowedTables query
 
-    and private validateSelect select =
-        select.ProjectionItems |> NonEmpty.iter (fun item -> validateExpr item.Expression)
-        select.Where |> Option.iter validateExpr
-        select.GroupBy |> List.iter validateExpr
-        select.Having |> Option.iter validateExpr
-        select.Joins |> List.iter (function CrossJoin _ -> () | OnJoin(_, _, predicate) -> validateExpr predicate)
+    and private validateSource allowedTables source =
+        match source with
+        | NamedTable(identifier, _) -> ensureTableAllowed allowedTables identifier
+        | DerivedTable(query, _) -> validateQuery allowedTables query
 
-    and private validateQuery query =
-        validateSelect query.Head
-        query.SetOperations |> List.iter (fun branch -> validateQuery branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateExpr order.Expression)
+    and private validateSelect allowedTables select =
+        select.From |> Option.iter (validateSource allowedTables)
+        select.ProjectionItems |> NonEmpty.iter (fun item -> validateExpr allowedTables item.Expression)
+        select.Where |> Option.iter (validateExpr allowedTables)
+        select.GroupBy |> List.iter (validateExpr allowedTables)
+        select.Having |> Option.iter (validateExpr allowedTables)
+        select.Joins
+        |> List.iter (function
+            | CrossJoin source -> validateSource allowedTables source
+            | OnJoin(_, source, predicate) -> validateSource allowedTables source; validateExpr allowedTables predicate)
 
-    let private validateDocument document =
+    and private validateQuery allowedTables query =
+        validateSelect allowedTables query.Head
+        query.SetOperations |> List.iter (fun branch -> validateQuery allowedTables branch.Query)
+        query.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
+
+    let private validateReturning allowedTables items =
+        items |> List.iter (fun item -> validateExpr allowedTables item.Expression)
+
+    let private validateDocument allowedTables document =
         match document.Statement with
-        | QueryStatement query -> validateQuery query
+        | QueryStatement query -> validateQuery allowedTables query
         | InsertStatement insert ->
+            ensureTableAllowed allowedTables insert.Target
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter validateExpr)
-            | QuerySource query -> validateQuery query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (validateExpr allowedTables))
+            | QuerySource query -> validateQuery allowedTables query
             | DefaultValues -> ()
-        | UpdateStatement update -> update.AssignmentItems |> NonEmpty.iter (fun assignment -> validateExpr assignment.Value); update.Where |> Option.iter validateExpr
-        | DeleteStatement delete -> delete.Where |> Option.iter validateExpr
+            validateReturning allowedTables insert.Returning
+        | UpdateStatement update ->
+            ensureTableAllowed allowedTables update.Target
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> validateExpr allowedTables assignment.Value)
+            update.Where |> Option.iter (validateExpr allowedTables)
+            validateReturning allowedTables update.Returning
+        | DeleteStatement delete ->
+            ensureTableAllowed allowedTables delete.Target
+            delete.Where |> Option.iter (validateExpr allowedTables)
+            validateReturning allowedTables delete.Returning
         document
 
-    let validate canonical = Transition.validate validateDocument canonical
+    let validate allowedTables canonical = Transition.validate (validateDocument allowedTables) canonical

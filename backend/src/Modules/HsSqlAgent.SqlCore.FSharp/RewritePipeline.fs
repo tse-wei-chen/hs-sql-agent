@@ -8,13 +8,14 @@ module internal RewritePipeline =
 
     type CompileOptions =
         { Provider: Provider
-          Policy: ExecutionPolicy }
+          Policy: ExecutionPolicy
+          AllowedTables: string list option }
 
     let compile options sql =
         sql
         |> RewriteParser.parse
         |> RewriteBinder.bind
         |> RewriteStages.normalize
-        |> RewriteStages.validate
+        |> RewriteStages.validate options.AllowedTables
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider

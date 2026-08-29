@@ -1,9 +1,11 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Execution
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
@@ -55,50 +57,60 @@ module internal RewriteFacadeAdapter =
         || message.Contains("OFFSET requires ORDER BY", StringComparison.Ordinal)
         || message.Contains("RETURNING is not supported", StringComparison.Ordinal)
 
+    let private allowedTables (tables: IReadOnlySet<string> | null) =
+        if isNull tables || tables.Count = 0 then None
+        else Some(tables |> Seq.toList)
+
     let private compileRewrite options sql =
         try
             RewritePipeline.compile options sql
         with
         | :? SqlCompilationException -> reraise()
-        | :? ArgumentException as ex ->
-            raise (SqlCompilationException(ex.Message, ex))
-        | :? InvalidOperationException as ex when shouldSurfaceAsCompilationError ex.Message ->
-            raise (SqlCompilationException(ex.Message, ex))
+        | :? ArgumentException as ex -> raise (SqlCompilationException(ex.Message, ex))
+        | :? InvalidOperationException as ex when shouldSurfaceAsCompilationError ex.Message -> raise (SqlCompilationException(ex.Message, ex))
 
-    let private compile (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (policy: ExecutionPolicy) =
+    let private compile (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (policy: ExecutionPolicy) allowed =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let kind = statementKind sql
         let rendered =
             compileRewrite
                 { Provider = provider targetProvider
-                  Policy = policy }
+                  Policy = policy
+                  AllowedTables = allowed }
                 sql
         let parameterValues = parameters targetProvider rendered.Parameters
-        let command =
-            CompiledSqlCommand(
-                rendered.Sql,
-                parameterValues,
-                kind,
-                String.Empty,
-                targetProvider)
+        let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, targetProvider)
         let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-        CompiledSqlCommand(
-            rendered.Sql,
-            parameterValues,
-            kind,
-            fingerprint,
-            targetProvider)
+        CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, targetProvider)
 
-    let compileQuery (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (queryMaxRows: int) =
+    let private queryPolicy queryMaxRows =
         let queryRows =
             if queryMaxRows <= 0 then RowCap.Unlimited
             else RowCap.MaxRows(PositiveRowCount.create queryMaxRows)
-        let policy = { RewritePolicy.safeDefaults with QueryRows = queryRows }
-        let command = compile sql targetProvider policyVersion policy
+        { RewritePolicy.safeDefaults with QueryRows = queryRows }
+
+    let compileQuery (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (queryMaxRows: int) =
+        let command = compile sql targetProvider policyVersion (queryPolicy queryMaxRows) None
+        if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
+        command
+
+    let compileQueryValidated (sql: string) (targetProvider: SqlAgentToolType) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
+        let command =
+            compile sql targetProvider validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables)
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
     let compileDml (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) =
-        let command = compile sql targetProvider policyVersion RewritePolicy.safeDefaults
+        let command = compile sql targetProvider policyVersion RewritePolicy.safeDefaults None
+        if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
+        command
+
+    let compileDmlValidated (sql: string) (targetProvider: SqlAgentToolType) (validationContext: SqlPlanValidationContext) =
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
+        let command = compile sql targetProvider validationContext.PolicyVersion RewritePolicy.safeDefaults (allowedTables validationContext.AllowedTables)
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command
