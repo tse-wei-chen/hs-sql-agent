@@ -28,95 +28,53 @@ module internal CoreModel =
 
         let parts (Identifier parts) = parts
 
-    /// Generic non-empty sequence used where SQL grammar requires one or more elements.
     type NonEmpty<'T> = private NonEmpty of head: 'T * tail: 'T list
 
     module NonEmpty =
         let create head tail = NonEmpty(head, tail)
-
         let ofList argumentName values =
             match values with
             | head :: tail -> NonEmpty(head, tail)
             | [] -> invalidArg argumentName "Collection must contain at least one item."
-
         let toList (NonEmpty(head, tail)) = head :: tail
+        let map mapping (NonEmpty(head, tail)) = NonEmpty(mapping head, tail |> List.map mapping)
+        let iter action values = values |> toList |> List.iter action
 
-        let map mapping (NonEmpty(head, tail)) =
-            NonEmpty(mapping head, tail |> List.map mapping)
+    type NonNegativeRowCount = private NonNegativeRowCount of int
 
-        let iter action values =
-            values |> toList |> List.iter action
+    module NonNegativeRowCount =
+        let create value =
+            if value < 0 then invalidArg (nameof value) "Row count cannot be negative."
+            NonNegativeRowCount value
+        let value (NonNegativeRowCount value) = value
 
-    /// Positive row counts are trusted once constructed. Magic zero/negative sentinels do not enter the core model.
     type PositiveRowCount = private PositiveRowCount of int
 
     module PositiveRowCount =
         let create value =
             if value <= 0 then invalidArg (nameof value) "Row count must be positive."
             PositiveRowCount value
-
         let value (PositiveRowCount value) = value
 
-    type UnaryOperator =
-        | Not
-        | Negate
-        | Positive
+    type UnaryOperator = Not | Negate | Positive
 
     type BinaryOperator =
-        | Add
-        | Subtract
-        | Multiply
-        | Divide
-        | Modulo
-        | Concat
-        | Equal
-        | NotEqual
-        | GreaterThan
-        | LessThan
-        | GreaterThanOrEqual
-        | LessThanOrEqual
-        | Like
-        | ILike
-        | And
-        | Or
+        | Add | Subtract | Multiply | Divide | Modulo | Concat
+        | Equal | NotEqual | GreaterThan | LessThan | GreaterThanOrEqual | LessThanOrEqual
+        | Like | ILike | And | Or
 
-    type JoinKind =
-        | Inner
-        | Left
-        | Right
-        | Full
-        | Cross
+    type JoinKind = Inner | Left | Right | Full | Cross
+    type OnJoinKind = Inner | Left | Right | Full
+    type NullOrdering = Default | NullsFirst | NullsLast
+    type SetOperator = Union | UnionAll | Intersect | Except
+    type WindowFrameUnit = Rows | Range
 
-    /// Predicate-bearing joins cannot be CROSS joins by construction.
-    type OnJoinKind =
-        | Inner
-        | Left
-        | Right
-        | Full
-
-    type NullOrdering =
-        | Default
-        | NullsFirst
-        | NullsLast
-
-    type SetOperator =
-        | Union
-        | UnionAll
-        | Intersect
-        | Except
-
-    type WindowFrameUnit =
-        | Rows
-        | Range
-
-    /// Window offsets cannot be negative once inside the typed core.
     type FrameOffset = private FrameOffset of int
 
     module FrameOffset =
         let create value =
             if value < 0 then invalidArg (nameof value) "Window frame offset cannot be negative."
             FrameOffset value
-
         let value (FrameOffset value) = value
 
     type WindowFrameBound =
@@ -126,7 +84,6 @@ module internal CoreModel =
         | Following of FrameOffset
         | UnboundedFollowing
 
-    /// A frame is either a single bound or a BETWEEN pair; End=None is no longer a forgeable state.
     type WindowFrameExtent =
         | SingleBound of WindowFrameBound
         | BetweenBounds of WindowFrameBound * WindowFrameBound
@@ -136,8 +93,7 @@ module internal CoreModel =
           Extent: WindowFrameExtent }
         member this.Start =
             match this.Extent with
-            | SingleBound start
-            | BetweenBounds(start, _) -> start
+            | SingleBound start | BetweenBounds(start, _) -> start
         member this.End =
             match this.Extent with
             | SingleBound _ -> None
@@ -157,43 +113,31 @@ module internal CoreModel =
         | Duration of TimeSpan
         | Bytes of byte array
 
-    /// Raw interval text is accepted only at the parser boundary and is then trusted as a distinct semantic value.
     type IntervalLiteral = private IntervalLiteral of string
 
     module IntervalLiteral =
         let create value =
-            if String.IsNullOrWhiteSpace(value) then
-                invalidArg (nameof value) "INTERVAL literal cannot be empty."
-            if value.IndexOfAny([| '\000'; '\r'; '\n' |]) >= 0 then
-                invalidArg (nameof value) "INTERVAL literal contains invalid control characters."
+            if String.IsNullOrWhiteSpace(value) then invalidArg (nameof value) "INTERVAL literal cannot be empty."
+            if value.IndexOfAny([| '\000'; '\r'; '\n' |]) >= 0 then invalidArg (nameof value) "INTERVAL literal contains invalid control characters."
             IntervalLiteral value
-
         let value (IntervalLiteral value) = value
 
     type CastType = private CastType of string
 
     module CastType =
-        let private safeCastType =
-            Regex("^[A-Za-z][A-Za-z0-9_ ]*(\\([0-9]+(,[0-9]+)?\\))?$", RegexOptions.CultureInvariant)
-
+        let private safeCastType = Regex("^[A-Za-z][A-Za-z0-9_ ]*(\\([0-9]+(,[0-9]+)?\\))?$", RegexOptions.CultureInvariant)
         let create value =
-            if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then
-                invalidArg (nameof value) ("Unsafe CAST type '" + string value + "'.")
+            if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then invalidArg (nameof value) ("Unsafe CAST type '" + string value + "'.")
             CastType value
-
         let value (CastType value) = value
 
     type FunctionName = private FunctionName of string
 
     module FunctionName =
-        let private safeFunctionName =
-            Regex("^[A-Za-z_][A-Za-z0-9_$.]*$", RegexOptions.CultureInvariant)
-
+        let private safeFunctionName = Regex("^[A-Za-z_][A-Za-z0-9_$.]*$", RegexOptions.CultureInvariant)
         let create value =
-            if String.IsNullOrWhiteSpace(value) || not (safeFunctionName.IsMatch(value)) then
-                invalidArg (nameof value) ("Unsafe function name '" + string value + "'.")
+            if String.IsNullOrWhiteSpace(value) || not (safeFunctionName.IsMatch(value)) then invalidArg (nameof value) ("Unsafe function name '" + string value + "'.")
             FunctionName value
-
         let value (FunctionName value) = value
 
     type Expr =
@@ -206,9 +150,9 @@ module internal CoreModel =
         | FilteredAggregate of Expr * Expr
         | Windowed of Expr * WindowSpec
         | Cast of Expr * CastType
-        | SimpleCase of Expr * SimpleCaseBranch list * Expr option
-        | SearchedCase of SearchedCaseBranch list * Expr option
-        | InList of Expr * Expr list * bool
+        | SimpleCase of Expr * NonEmpty<SimpleCaseBranch> * Expr option
+        | SearchedCase of NonEmpty<SearchedCaseBranch> * Expr option
+        | InList of Expr * NonEmpty<Expr> * bool
         | Between of Expr * Expr * Expr * bool
         | IsNull of Expr * bool
         | ScalarSubquery of Query
@@ -219,34 +163,16 @@ module internal CoreModel =
           Arguments: Expr list
           IsDistinct: bool }
 
-    and SimpleCaseBranch =
-        { Match: Expr
-          Result: Expr }
-
-    and SearchedCaseBranch =
-        { Condition: Expr
-          Result: Expr }
-
-    and WindowSpec =
-        { PartitionBy: Expr list
-          OrderBy: OrderBy list
-          Frame: WindowFrame option }
-
-    and OrderBy =
-        { Expression: Expr
-          Descending: bool
-          NullOrdering: NullOrdering }
-
-    and SelectItem =
-        { Expression: Expr
-          Alias: IdentifierPart option }
+    and SimpleCaseBranch = { Match: Expr; Result: Expr }
+    and SearchedCaseBranch = { Condition: Expr; Result: Expr }
+    and WindowSpec = { PartitionBy: Expr list; OrderBy: OrderBy list; Frame: WindowFrame option }
+    and OrderBy = { Expression: Expr; Descending: bool; NullOrdering: NullOrdering }
+    and SelectItem = { Expression: Expr; Alias: IdentifierPart option }
 
     and TableSource =
         | NamedTable of Identifier * IdentifierPart option
         | DerivedTable of Query * IdentifierPart
 
-    /// Join shape encodes the ON-predicate invariant directly:
-    /// CROSS JOIN has no predicate; every other join always has one.
     and Join =
         | CrossJoin of TableSource
         | OnJoin of OnJoinKind * TableSource * Expr
@@ -258,13 +184,9 @@ module internal CoreModel =
             | OnJoin(OnJoinKind.Right, _, _) -> JoinKind.Right
             | OnJoin(OnJoinKind.Full, _, _) -> JoinKind.Full
         member this.Source =
-            match this with
-            | CrossJoin source
-            | OnJoin(_, source, _) -> source
+            match this with CrossJoin source | OnJoin(_, source, _) -> source
         member this.Predicate =
-            match this with
-            | CrossJoin _ -> None
-            | OnJoin(_, _, predicate) -> Some predicate
+            match this with CrossJoin _ -> None | OnJoin(_, _, predicate) -> Some predicate
 
     and Select =
         { Distinct: bool
@@ -276,23 +198,17 @@ module internal CoreModel =
           Having: Expr option }
         member this.Projection = NonEmpty.toList this.ProjectionItems
 
-    and SetBranch =
-        { Operator: SetOperator
-          Query: Query }
+    and SetBranch = { Operator: SetOperator; Query: Query }
 
     and Query =
         { Head: Select
           SetOperations: SetBranch list
           OrderBy: OrderBy list
-          Limit: int option
-          Offset: int option }
+          Limit: NonNegativeRowCount option
+          Offset: NonNegativeRowCount option }
 
-    type Assignment =
-        { Target: Identifier
-          Value: Expr }
+    type Assignment = { Target: Identifier; Value: Expr }
 
-    /// INSERT source is exactly one of VALUES, query source, or DEFAULT VALUES.
-    /// VALUES contains at least one row and every row contains at least one expression.
     type InsertInput =
         | Values of NonEmpty<NonEmpty<Expr>>
         | QuerySource of Query
@@ -306,13 +222,11 @@ module internal CoreModel =
         member this.Rows =
             match this.Input with
             | Values rows -> rows |> NonEmpty.toList |> List.map NonEmpty.toList
-            | QuerySource _
-            | DefaultValues -> []
+            | QuerySource _ | DefaultValues -> []
         member this.Source =
             match this.Input with
             | QuerySource query -> Some query
-            | Values _
-            | DefaultValues -> None
+            | Values _ | DefaultValues -> None
 
     type Update =
         { Target: Identifier
@@ -321,10 +235,7 @@ module internal CoreModel =
           Returning: SelectItem list }
         member this.Assignments = NonEmpty.toList this.AssignmentItems
 
-    type Delete =
-        { Target: Identifier
-          Where: Expr option
-          Returning: SelectItem list }
+    type Delete = { Target: Identifier; Where: Expr option; Returning: SelectItem list }
 
     type Statement =
         | QueryStatement of Query
@@ -332,6 +243,4 @@ module internal CoreModel =
         | UpdateStatement of Update
         | DeleteStatement of Delete
 
-    type Document =
-        { Statement: Statement
-          Span: Span }
+    type Document = { Statement: Statement; Span: Span }
