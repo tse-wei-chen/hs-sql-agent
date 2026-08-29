@@ -60,13 +60,14 @@ public sealed partial class NativeSqlRenderer
         ImmutableArray<OrderByItem> orderBy,
         int? limit,
         int? offset,
-        ImmutableArray<SelectItem> projection) =>
-        RenderSetTailWrapper(inner, orderBy, limit, offset, projection);
+        ImmutableArray<SelectItem> projection)
+    {
+        if (Provider != SqlAgentToolType.MsSqlServer || offset is not > 0 || limit == 0)
+        {
+            throw new InvalidOperationException(
+                "The remaining C# set-tail bridge is reserved for SQL Server positive-OFFSET compatibility lowering.");
+        }
 
-    internal NativeSqlFragment RenderDirectSetTailForFunctional(
-        ImmutableArray<OrderByItem> orderBy,
-        int? limit,
-        int? offset,
-        ImmutableArray<SelectItem> projection) =>
-        RenderDirectSetTail(orderBy, limit, offset, projection);
+        return RenderSetTailWrapper(inner, orderBy, limit, offset, projection);
+    }
 }
