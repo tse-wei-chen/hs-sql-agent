@@ -56,23 +56,6 @@ module private FacadeResult =
                 noDiagnostics)
 
 module private FacadeCompile =
-    let private containsIgnoreCase (needle: string) (text: string) =
-        text.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
-
-    let private rewriteEligible (sql: string) (executionPolicy: SqlExecutionPlanPolicy) =
-        let hasSetOperation =
-            [ " UNION "; " INTERSECT "; " EXCEPT " ]
-            |> List.exists (fun token -> containsIgnoreCase token sql)
-        let hasOrder = containsIgnoreCase " ORDER " sql
-        let excluded =
-            [ " LIMIT "; " OFFSET "; " FETCH "; " TOP "; " NULLS "; " CASE "; " CAST"; " DATE "; " TIME "
-              " TIMESTAMP "; " INTERVAL "; " EXISTS "; " IN "; " BETWEEN "; " LIKE "; " ILIKE "; " WITH " ]
-        executionPolicy.QueryMaxRows = 0
-        && not (hasSetOperation && hasOrder)
-        && not (sql.Contains('(', StringComparison.Ordinal))
-        && not (sql.Contains(')', StringComparison.Ordinal))
-        && (excluded |> List.exists (fun token -> containsIgnoreCase token sql) |> not)
-
     let private functionalQuery
         (sql: string)
         (sourceDialect: SqlAgentToolType)
@@ -83,6 +66,18 @@ module private FacadeCompile =
         FunctionalAst.verify parsed.Statement |> ignore
         FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
 
+    let private functionalDml
+        (sql: string)
+        (sourceDialect: SqlAgentToolType)
+        (targetProvider: SqlAgentToolType)
+        (validationContext: SqlPlanValidationContext) =
+        let parsed = FunctionalSqlTextParser.parseDml sql sourceDialect null
+        FunctionalAst.verify parsed.Statement |> ignore
+        FunctionalPipeline.compileDml parsed targetProvider validationContext null null null
+
+    /// Production text compilation is rewrite-first whenever source and target dialects are the same.
+    /// The compatibility pipeline remains only as a fail-closed seam for grammar/lowering that the
+    /// closed DU does not represent yet. Policy denials are deliberately never swallowed by fallback.
     let queryText
         (sql: string)
         (sourceDialect: SqlAgentToolType)
@@ -90,16 +85,35 @@ module private FacadeCompile =
         (validationContext: SqlPlanValidationContext)
         (executionPolicy: SqlExecutionPlanPolicy) =
 
-        if sourceDialect = targetProvider && rewriteEligible sql executionPolicy then
+        if sourceDialect = targetProvider then
             try
                 RewriteFacadeAdapter.compileQueryValidated sql targetProvider validationContext executionPolicy
             with
-            | :? SqlCompilationException ->
-                functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
-            | :? ArgumentException ->
+            | :? UnauthorizedAccessException -> reraise()
+            | :? SqlCompilationException
+            | :? ArgumentException
+            | :? InvalidOperationException ->
                 functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
         else
             functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
+
+    let dmlText
+        (sql: string)
+        (sourceDialect: SqlAgentToolType)
+        (targetProvider: SqlAgentToolType)
+        (validationContext: SqlPlanValidationContext) =
+
+        if sourceDialect = targetProvider then
+            try
+                RewriteFacadeAdapter.compileDmlValidated sql targetProvider validationContext
+            with
+            | :? UnauthorizedAccessException -> reraise()
+            | :? SqlCompilationException
+            | :? ArgumentException
+            | :? InvalidOperationException ->
+                functionalDml sql sourceDialect targetProvider validationContext
+        else
+            functionalDml sql sourceDialect targetProvider validationContext
 
 /// C#-oriented facade for the parser and compiler pipeline.
 [<AbstractClass; Sealed>]
@@ -157,9 +171,7 @@ type SqlCoreFacade private () =
 
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
-        let parsed = FunctionalSqlTextParser.parseDml sql sourceDialect null
-        FunctionalAst.verify parsed.Statement |> ignore
-        FunctionalPipeline.compileDml parsed targetProvider validationContext null null null
+        FacadeCompile.dmlText sql sourceDialect targetProvider validationContext
 
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, policy: DmlCompilationPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile, conflictTargetAssurance: DmlConflictTargetAssurance) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
