@@ -1,9 +1,11 @@
 namespace HsSqlAgent.SqlCore.Core.Pipeline
 
+open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Analysis
 open HsSqlAgent.SqlCore.Core.Ast
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Lowering
+open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
 module private FunctionalNativeBackendCompatibility =
@@ -21,7 +23,9 @@ module private FunctionalNativeBackendCompatibility =
         SqlCompilationException(
             $"SQL capability '{capability}' is not supported by the native SQL backend: {detail}.")
 
-    let private canLowerNestedCteFragment provider allowNestedCteFragments =
+    let private canLowerNestedCteFragment
+        (provider: SqlAgentToolType)
+        (allowNestedCteFragments: bool) =
         allowNestedCteFragments
         && SqlNestedCteCapabilityRules.SupportsTarget(provider)
 
@@ -32,9 +36,9 @@ module private FunctionalNativeBackendCompatibility =
 
     let private canPreserveSetTailCte
         (query: QueryStatement)
-        position
-        provider
-        allowNestedCteFragments =
+        (position: QueryPosition)
+        (provider: SqlAgentToolType)
+        (allowNestedCteFragments: bool) =
 
         match position with
         | QueryPosition.Root
@@ -47,7 +51,12 @@ module private FunctionalNativeBackendCompatibility =
             canLowerNestedCteFragment provider allowNestedCteFragments
             && CoreNativeSetTailScope.CanRenderDirectTail(query)
 
-    let private validateCtePlacement ctes position provider allowNestedCteFragments =
+    let private validateCtePlacement
+        (ctes: ImmutableArray<CteDefinition>)
+        (position: QueryPosition)
+        (provider: SqlAgentToolType)
+        (allowNestedCteFragments: bool) =
+
         if not ctes.IsDefaultOrEmpty then
             let nestedSupported =
                 canLowerNestedCteFragment provider allowNestedCteFragments
@@ -71,7 +80,11 @@ module private FunctionalNativeBackendCompatibility =
                     $"provider {provider} has no declared portable WITH-in-set-operation-branch lowering contract")
             | _ -> ()
 
-    let rec private visitExpression expression provider allowNestedCteFragments =
+    let rec private visitExpression
+        (expression: SqlExpr)
+        (provider: SqlAgentToolType)
+        (allowNestedCteFragments: bool) =
+
         match expression with
         | :? SubqueryExpr as subquery ->
             validateStatement
@@ -91,8 +104,8 @@ module private FunctionalNativeBackendCompatibility =
 
     and private visitSubqueryExpressions
         (select: SelectStatement)
-        provider
-        allowNestedCteFragments =
+        (provider: SqlAgentToolType)
+        (allowNestedCteFragments: bool) =
 
         for item in select.Select do
             visitExpression item.Expression provider allowNestedCteFragments
@@ -112,10 +125,10 @@ module private FunctionalNativeBackendCompatibility =
             | expression -> visitExpression expression provider allowNestedCteFragments
 
     and private validateStatement
-        statement
-        position
-        provider
-        allowNestedCteFragments =
+        (statement: SqlStatement)
+        (position: QueryPosition)
+        (provider: SqlAgentToolType)
+        (allowNestedCteFragments: bool) =
 
         match statement with
         | :? SelectStatement as select ->
@@ -175,13 +188,13 @@ module private FunctionalNativeBackendCompatibility =
             raise (SqlCompilationException(
                 $"Unsupported statement for native backend compatibility validation: {other.GetType().Name}"))
 
-    let validateQuery statement provider =
+    let validateQuery (statement: SqlStatement) (provider: SqlAgentToolType) =
         validateStatement statement QueryPosition.Root provider true
 
-    let validateInsertSelect statement provider =
+    let validateInsertSelect (statement: SqlStatement) (provider: SqlAgentToolType) =
         validateStatement statement QueryPosition.InsertSelectSource provider true
 
-    let validateDml statement provider =
+    let validateDml (statement: SqlStatement) (provider: SqlAgentToolType) =
         let failIfUnsupported (error: string | null) =
             match error with
             | null -> ()
