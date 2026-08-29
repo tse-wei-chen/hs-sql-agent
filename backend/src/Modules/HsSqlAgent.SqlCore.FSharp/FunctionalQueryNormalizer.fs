@@ -12,9 +12,9 @@ open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for query normalization.
 ///
-/// Statement/source traversal, primitive expression normalization, CAST traversal, and most
-/// canonical function families live here. Date-format/parse and provider-registry translation
-/// still use the legacy function oracle until their specialized semantics are moved independently.
+/// Statement/source traversal, primitive expression normalization, CAST traversal, and canonical
+/// function families live here. Provider-registry translation remains behind the legacy function
+/// oracle until its cross-dialect semantic mapping is moved independently.
 module internal FunctionalQueryNormalizer =
 
     type private Context =
@@ -299,6 +299,39 @@ module internal FunctionalQueryNormalizer =
 
         let withName name = canonicalFunction name normalizedArguments
 
+        let literalString (expression: SqlExpr) label =
+            match expression with
+            | :? LiteralExpr as literal ->
+                match literal.Value with
+                | :? string as value -> value
+                | _ -> raise (SqlCompilationException(label + " must be a string literal."))
+            | _ -> raise (SqlCompilationException(label + " must be a string literal."))
+
+        let canonicalTemporalFormat canonicalName errorPrefix arityMessage literalLabel =
+            if normalizedArguments.Length <> 2 then
+                raise (SqlCompilationException(arityMessage))
+
+            let sourceFormat = literalString normalizedArguments[1] literalLabel
+            try
+                let translatedFormat =
+                    CoreTemporalFormatNormalizer.Translate(
+                        sourceFormat,
+                        context.SourceDialect,
+                        context.TargetProvider)
+
+                canonicalFunction
+                    canonicalName
+                    (ImmutableArray.Create<SqlExpr>(
+                        normalizedArguments[0],
+                        LiteralExpr(translatedFormat, functionCall.Span) :> SqlExpr))
+            with
+            | :? FormatException as ex ->
+                raise (SqlCompilationException(
+                    $"{errorPrefix} from {context.SourceDialect} to {context.TargetProvider} is not supported: {ex.Message}", ex))
+            | :? NotSupportedException as ex ->
+                raise (SqlCompilationException(
+                    $"{errorPrefix} from {context.SourceDialect} to {context.TargetProvider} is not supported: {ex.Message}", ex))
+
         let canonicalStringAggregate () =
             if normalizedArguments.Length < 1 || normalizedArguments.Length > 2 then
                 raise (SqlCompilationException("String aggregate requires 1 or 2 arguments."))
@@ -364,6 +397,20 @@ module internal FunctionalQueryNormalizer =
                     normalizedArguments,
                     context.SourceDialect,
                     context.TargetProvider)
+
+            | SqlSourceFunctionCanonicalizationKind.DateFormat ->
+                canonicalTemporalFormat
+                    "CORE_DATE_FORMAT"
+                    "portable date formatting"
+                    "DATE_FORMAT/FORMAT requires exactly 2 arguments."
+                    "DATE_FORMAT format"
+
+            | SqlSourceFunctionCanonicalizationKind.DateParse ->
+                canonicalTemporalFormat
+                    "CORE_DATE_PARSE"
+                    "formatted date parsing"
+                    "TO_DATE requires exactly 2 arguments."
+                    "TO_DATE format"
 
             | SqlSourceFunctionCanonicalizationKind.Position ->
                 if normalizedArguments.Length <> 2 then
