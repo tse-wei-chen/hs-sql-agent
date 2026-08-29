@@ -242,7 +242,7 @@ module internal FunctionalNativeQueryRenderer =
         let renderSubquery =
             Func<SqlStatement, NativeSqlFragment>(fun statement ->
                 renderStatement renderer statement FunctionalQueryPosition.ScalarSubquery)
-        FunctionalNativeExpressionRenderer.render renderer.Provider renderSubquery expression
+        FunctionalDuExpressionRenderer.render renderer.Provider renderSubquery expression
 
     and private renderPredicate (renderer: NativeSqlRenderer) (expression: SqlExpr) =
         let renderSubquery =
