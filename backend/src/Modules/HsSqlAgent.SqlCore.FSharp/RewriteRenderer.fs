@@ -25,30 +25,34 @@ module internal RewriteRenderer =
         let parameters = ResizeArray<obj | null>()
         member _.Provider = provider
         member _.Bind(value: obj | null) =
-            parameters.Add(value)
             let index = parameters.Count
+            parameters.Add(value)
             match provider with
-            | PostgreSql -> "$" + string index
-            | SqlServer -> "@p" + string index
             | Oracle -> ":p" + string index
-            | MySql
-            | SQLite
-            | Firebird -> "?"
+            | _ -> "@p" + string index
         member _.Parameters = parameters |> Seq.toList
 
-    let private quotePart (provider: Provider) (value: string) =
+    let private quotePart (provider: Provider) (part: IdentifierPart) =
+        let raw =
+            if part.WasQuoted then part.Value
+            else
+                match provider with
+                | Oracle
+                | Firebird -> part.Value.ToUpperInvariant()
+                | _ -> part.Value
         match provider with
-        | MySql -> "`" + value.Replace("`", "``") + "`"
-        | _ -> "\"" + value.Replace("\"", "\"\"") + "\""
+        | MySql -> "`" + raw.Replace("`", "``") + "`"
+        | SqlServer -> "[" + raw.Replace("]", "]]" ) + "]"
+        | _ -> "\"" + raw.Replace("\"", "\"\"") + "\""
 
     let private renderIdentifier (provider: Provider) (identifier: Identifier) =
         identifier
         |> Identifier.parts
-        |> List.map (fun (part: IdentifierPart) -> quotePart provider part.Value)
+        |> List.map (quotePart provider)
         |> String.concat "."
 
     let private renderAlias (provider: Provider) (alias: IdentifierPart) =
-        quotePart provider alias.Value
+        quotePart provider alias
 
     let private scalarObject (value: ScalarValue) : obj | null =
         match value with
@@ -64,6 +68,24 @@ module internal RewriteRenderer =
         | ScalarValue.OffsetDateTime value -> box value
         | ScalarValue.Duration value -> box value
         | ScalarValue.Bytes value -> box value
+
+    let private renderLiteral (ctx: RenderContext) (value: ScalarValue) =
+        let placeholder = ctx.Bind(scalarObject value)
+        match ctx.Provider, value with
+        | Firebird, ScalarValue.Text text ->
+            if text.Length > 8191 then invalidOp "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."
+            "CAST(" + placeholder + " AS VARCHAR(" + string (max 1 text.Length) + "))"
+        | Firebird, ScalarValue.Boolean _ -> "CAST(" + placeholder + " AS BOOLEAN)"
+        | Firebird, ScalarValue.Integer value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue ->
+            "CAST(" + placeholder + " AS INTEGER)"
+        | Firebird, ScalarValue.Integer _ -> "CAST(" + placeholder + " AS BIGINT)"
+        | Firebird, ScalarValue.Decimal _ -> "CAST(" + placeholder + " AS DECIMAL(38,18))"
+        | Firebird, ScalarValue.Floating _ -> "CAST(" + placeholder + " AS DOUBLE PRECISION)"
+        | Firebird, ScalarValue.Date _ -> "CAST(" + placeholder + " AS DATE)"
+        | Firebird, ScalarValue.Time _ -> "CAST(" + placeholder + " AS TIME)"
+        | Firebird, ScalarValue.LocalDateTime _ -> "CAST(" + placeholder + " AS TIMESTAMP)"
+        | Firebird, ScalarValue.OffsetDateTime _ -> "CAST(" + placeholder + " AS TIMESTAMP WITH TIME ZONE)"
+        | _ -> placeholder
 
     let private unaryText = function
         | UnaryOperator.Not -> "NOT"
@@ -121,7 +143,7 @@ module internal RewriteRenderer =
     let rec private renderExpr (ctx: RenderContext) (expression: Expr) : string =
         match expression with
         | Expr.Column identifier -> renderIdentifier ctx.Provider identifier
-        | Expr.Literal value -> ctx.Bind(scalarObject value)
+        | Expr.Literal value -> renderLiteral ctx value
         | Expr.Interval literal ->
             match ctx.Provider with
             | PostgreSql -> "CAST(" + ctx.Bind(box literal) + " AS interval)"
@@ -246,31 +268,41 @@ module internal RewriteRenderer =
         sql
 
     and private renderPaging (ctx: RenderContext) (query: Query) (sql: string) : string =
+        let bindInt value = ctx.Bind(box value)
         match ctx.Provider with
         | PostgreSql
         | SQLite
         | MySql ->
-            let withLimit = query.Limit |> Option.map (fun value -> sql + " LIMIT " + string value) |> Option.defaultValue sql
+            let withLimit =
+                query.Limit
+                |> Option.map (fun value -> sql + " LIMIT " + bindInt value)
+                |> Option.defaultValue sql
             match query.Offset, ctx.Provider, query.Limit with
-            | Some value, MySql, None -> withLimit + " LIMIT 18446744073709551615 OFFSET " + string value
-            | Some value, _, _ -> withLimit + " OFFSET " + string value
+            | Some value, MySql, None -> withLimit + " LIMIT 18446744073709551615 OFFSET " + bindInt value
+            | Some value, _, _ -> withLimit + " OFFSET " + bindInt value
             | None, _, _ -> withLimit
         | SqlServer ->
             match query.Offset, query.Limit with
             | None, None -> sql
             | None, Some limit ->
+                let top = bindInt limit
                 if sql.StartsWith("SELECT DISTINCT ", StringComparison.Ordinal) then
-                    "SELECT DISTINCT TOP (" + string limit + ") " + sql.Substring("SELECT DISTINCT ".Length)
+                    "SELECT DISTINCT TOP (" + top + ") " + sql.Substring("SELECT DISTINCT ".Length)
                 else
-                    "SELECT TOP (" + string limit + ") " + sql.Substring("SELECT ".Length)
+                    "SELECT TOP (" + top + ") " + sql.Substring("SELECT ".Length)
             | Some offset, limit ->
                 if query.OrderBy.IsEmpty then invalidOp "SQL Server OFFSET requires ORDER BY."
-                sql + " OFFSET " + string offset + " ROWS"
-                + (limit |> Option.map (fun value -> " FETCH NEXT " + string value + " ROWS ONLY") |> Option.defaultValue "")
+                sql + " OFFSET " + bindInt offset + " ROWS"
+                + (limit |> Option.map (fun value -> " FETCH NEXT " + bindInt value + " ROWS ONLY") |> Option.defaultValue "")
         | Oracle
         | Firebird ->
-            let withOffset = query.Offset |> Option.map (fun value -> sql + " OFFSET " + string value + " ROWS") |> Option.defaultValue sql
-            query.Limit |> Option.map (fun value -> withOffset + " FETCH NEXT " + string value + " ROWS ONLY") |> Option.defaultValue withOffset
+            let withOffset =
+                query.Offset
+                |> Option.map (fun value -> sql + " OFFSET " + bindInt value + " ROWS")
+                |> Option.defaultValue sql
+            query.Limit
+            |> Option.map (fun value -> withOffset + " FETCH NEXT " + bindInt value + " ROWS ONLY")
+            |> Option.defaultValue withOffset
 
     and private renderQuery (ctx: RenderContext) (query: Query) : string =
         let mutable sql = renderSelect ctx query.Head
