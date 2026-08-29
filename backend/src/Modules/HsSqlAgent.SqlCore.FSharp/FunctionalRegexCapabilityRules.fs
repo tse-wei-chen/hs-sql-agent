@@ -26,13 +26,16 @@ type internal SqlRegexCapabilityRules =
         | SqlAgentToolType.MySQL
         | SqlAgentToolType.Oracle -> true
         | SqlAgentToolType.MsSqlServer ->
-            if isNull targetProfile then false
-            elif targetProfile.Provider <> SqlAgentToolType.MsSqlServer then false
-            elif isNull targetProfile.ServerVersion then false
-            elif not targetProfile.CompatibilityLevel.HasValue then false
-            else
-                targetProfile.CompatibilityLevel.Value >= SqlRegexCapabilityRules.SqlServerMinimumCompatibilityLevel
-                && targetProfile.ServerVersion.CompareTo(SqlRegexCapabilityRules.SqlServerMinimumVersion) >= 0
+            match Option.ofObj targetProfile with
+            | None -> false
+            | Some profile when profile.Provider <> SqlAgentToolType.MsSqlServer -> false
+            | Some profile ->
+                match Option.ofObj profile.ServerVersion with
+                | None -> false
+                | Some version when not profile.CompatibilityLevel.HasValue -> false
+                | Some version ->
+                    profile.CompatibilityLevel.Value >= SqlRegexCapabilityRules.SqlServerMinimumCompatibilityLevel
+                    && version.CompareTo(SqlRegexCapabilityRules.SqlServerMinimumVersion) >= 0
         | SqlAgentToolType.Sqlite
         | SqlAgentToolType.Firebird -> false
         | _ -> raise (ArgumentOutOfRangeException("provider", provider, "Unsupported SQL provider."))
