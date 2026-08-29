@@ -4,6 +4,7 @@ open System
 open System.Collections.Immutable
 open System.Text
 open HsSqlAgent.SqlCore.Core.Ast
+open HsSqlAgent.SqlCore.Core.Binding
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
 
@@ -35,8 +36,8 @@ module internal FunctionalSqlServerPagingRenderer =
 
         let result = ImmutableArray.CreateBuilder<IdentifierPart>(projection.Length)
         for item in projection do
-            match item.Alias with
-            | null ->
+            match Option.ofObj item.Alias with
+            | None ->
                 match expressionIdentifier item.Expression with
                 | Some identifier
                     when not identifier.Parts.IsDefaultOrEmpty
@@ -47,7 +48,7 @@ module internal FunctionalSqlServerPagingRenderer =
                     raise (SqlCompilationException(
                         context + " requires every projected output to have a stable name; " +
                         "use explicit aliases for wildcard or computed expressions."))
-            | alias -> result.Add(alias)
+            | Some alias -> result.Add(alias)
         result.ToImmutable()
 
     let private ensureUniqueOutputNames
@@ -84,8 +85,9 @@ module internal FunctionalSqlServerPagingRenderer =
                         projection
                         |> Seq.mapi (fun index item -> index, item.Alias)
                         |> Seq.filter (fun (_, alias) ->
-                            not (isNull alias)
-                            && String.Equals(alias.Value, reference, StringComparison.OrdinalIgnoreCase))
+                            match Option.ofObj alias with
+                            | Some alias -> String.Equals(alias.Value, reference, StringComparison.OrdinalIgnoreCase)
+                            | None -> false)
                         |> Seq.truncate 2
                         |> Seq.toArray
                     if matches.Length > 1 then
@@ -111,8 +113,9 @@ module internal FunctionalSqlServerPagingRenderer =
                     projection
                     |> Seq.mapi (fun index item -> index, item.Alias)
                     |> Seq.filter (fun (_, alias) ->
-                        not (isNull alias)
-                        && String.Equals(alias.Value, reference, StringComparison.OrdinalIgnoreCase))
+                        match Option.ofObj alias with
+                        | Some alias -> String.Equals(alias.Value, reference, StringComparison.OrdinalIgnoreCase)
+                        | None -> false)
                     |> Seq.truncate 2
                     |> Seq.toArray
                 if matches.Length > 1 then
