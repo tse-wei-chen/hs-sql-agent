@@ -13,7 +13,7 @@ open HsSqlAgent.SqlCore.Models
 /// F# ownership boundary for query normalization.
 ///
 /// Statement/source traversal, primitive expression normalization, CAST traversal, and most
-/// canonical function families live here. Date-diff/format/parse, string-aggregate, and
+/// canonical function families live here. Date-format/parse, string-aggregate, and
 /// provider-registry translation still use the legacy function oracle until their specialized
 /// semantics are moved independently.
 module internal FunctionalQueryNormalizer =
@@ -311,6 +311,13 @@ module internal FunctionalQueryNormalizer =
                         LiteralExpr(datePartUnit normalizedArguments[0], functionCall.Span) :> SqlExpr,
                         normalizedArguments[1],
                         normalizedArguments[2]))
+
+            | SqlSourceFunctionCanonicalizationKind.DateDiff ->
+                CoreDateDiffNormalizer.Normalize(
+                    normalizedFunction,
+                    normalizedArguments,
+                    context.SourceDialect,
+                    context.TargetProvider)
 
             | SqlSourceFunctionCanonicalizationKind.Position ->
                 if normalizedArguments.Length <> 2 then
