@@ -4,6 +4,7 @@ open System
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
 
@@ -24,8 +25,18 @@ module internal RewriteFacadeAdapter =
         |> List.mapi (fun index value -> SqlParameterValue("p" + string (index + 1), value))
         |> ImmutableArray.CreateRange
 
-    let compileQuery (sql: string) (targetProvider: SqlAgentToolType) =
+    let private statementKind sql =
+        match RewriteLexer.tokenize sql with
+        | { Kind = Keyword "SELECT" } :: _ -> SqlStatementKind.Query
+        | { Kind = Keyword "INSERT" } :: _ -> SqlStatementKind.Insert
+        | { Kind = Keyword "UPDATE" } :: _ -> SqlStatementKind.Update
+        | { Kind = Keyword "DELETE" } :: _ -> SqlStatementKind.Delete
+        | token :: _ -> invalidArg "sql" ("Unsupported SQL statement at offset " + string token.Start + ".")
+        | [] -> invalidArg "sql" "SQL text cannot be empty."
+
+    let private compile sql targetProvider =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
+        let kind = statementKind sql
         let rendered =
             RewritePipeline.compile
                 { Provider = provider targetProvider
@@ -34,6 +45,16 @@ module internal RewriteFacadeAdapter =
         CompiledSqlCommand(
             rendered.Sql,
             parameters rendered.Parameters,
-            SqlStatementKind.Query,
+            kind,
             String.Empty,
             targetProvider)
+
+    let compileQuery (sql: string) (targetProvider: SqlAgentToolType) =
+        let command = compile sql targetProvider
+        if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
+        command
+
+    let compileDml (sql: string) (targetProvider: SqlAgentToolType) =
+        let command = compile sql targetProvider
+        if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
+        command
