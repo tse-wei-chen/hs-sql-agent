@@ -410,9 +410,7 @@ module internal FunctionalQueryNormalizer =
                     string kind + "' for function '" + sourceName + "'."))
 
         match SqlSourceFunctionRegistry.Find(sourceName) with
-        | contract when not (isNull contract) ->
-            normalizeRegisteredFamily contract
-        | _ ->
+        | null ->
             if SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) then
                 if normalizedArguments.Length <> 1 then
                     raise (SqlCompilationException($"{sourceName} requires exactly 1 argument."))
@@ -449,6 +447,8 @@ module internal FunctionalQueryNormalizer =
                         sourceName
                         normalizedFunction
                         normalizedArguments
+        | contract ->
+            normalizeRegisteredFamily contract
 
     and private normalizeExpression
         (context: Context)
