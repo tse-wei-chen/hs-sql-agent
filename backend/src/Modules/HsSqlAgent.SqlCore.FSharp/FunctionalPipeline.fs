@@ -11,16 +11,6 @@ open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
-/// Query compiler orchestration expressed as private F# typestates.
-///
-/// The legacy C# stage payloads are retained during migration because the
-/// binder/normalizer/validator implementations have not moved yet. Their
-/// public constructors therefore remain a compatibility surface, but the
-/// migration facade no longer chains them directly: each transition below
-/// accepts exactly one prior private stage and produces exactly one next stage.
-///
-/// Once a stage implementation moves to F#, its legacy payload can be folded
-/// into the corresponding private representation without changing the facade.
 module internal FunctionalPipeline =
 
     type private QueryContext =
@@ -30,180 +20,66 @@ module internal FunctionalPipeline =
             TargetProfile: SqlProviderCapabilityProfile | null
         }
 
-    type private ParsedQuery =
-        | ParsedQuery of QueryContext
-
-    type private BoundQuery =
-        | BoundQuery of QueryContext * BoundStatement
-
-    type private CanonicalQuery =
-        | CanonicalQuery of QueryContext * CanonicalStatement
-
-    type private ValidatedQuery =
-        | ValidatedQuery of QueryContext * ValidatedSqlPlan
-
-    type private ExecutableQuery =
-        | ExecutableQuery of QueryContext * ExecutableSqlPlan
+    type private ParsedQuery = ParsedQuery of QueryContext
+    type private BoundQuery = BoundQuery of QueryContext * BoundStatement
+    type private CanonicalQuery = CanonicalQuery of QueryContext * CanonicalStatement
+    type private ValidatedQuery = ValidatedQuery of QueryContext * ValidatedSqlPlan
+    type private ExecutableQuery = ExecutableQuery of QueryContext * ExecutableSqlPlan
 
     let private ensureQueryRoot (statement: SqlStatement) =
         match statement with
         | :? SelectStatement
-        | :? QueryStatement ->
-            ()
-        | other ->
-            raise (SqlCompilationException(
-                $"F# query pipeline requires SELECT/query-set AST, not {other.GetType().Name}."))
+        | :? QueryStatement -> ()
+        | other -> raise (SqlCompilationException($"F# query pipeline requires SELECT/query-set AST, not {other.GetType().Name}."))
 
-    let private startQuery
-        (parsed: ParsedStatement)
-        (targetProvider: SqlAgentToolType)
-        (targetProfile: SqlProviderCapabilityProfile | null) =
-
-        FunctionalProviderProfileRewriter.validateProfile
-            targetProvider
-            targetProfile
-        FunctionalSourceProfileRewriter.validateProfile
-            parsed.SourceDialect
-            parsed.SourceProfile
+    let private startQuery (parsed: ParsedStatement) targetProvider targetProfile =
+        FunctionalProviderProfileRewriter.validateProfile targetProvider targetProfile
+        FunctionalSourceProfileRewriter.validateProfile parsed.SourceDialect parsed.SourceProfile
         ensureQueryRoot parsed.Statement
         FunctionalAst.verify parsed.Statement |> ignore
-
-        ParsedQuery
-            {
-                Parsed = parsed
-                TargetProvider = targetProvider
-                TargetProfile = targetProfile
-            }
+        ParsedQuery { Parsed = parsed; TargetProvider = targetProvider; TargetProfile = targetProfile }
 
     let private bindQuery (ParsedQuery context) =
         let bound = FunctionalQueryBinder.bind context.Parsed
-
-        CoreJoinProfileValidator.Validate(
-            bound.Statement,
-            context.Parsed.EnforceSourceDialectSyntax,
-            bound.SourceDialect,
-            context.Parsed.SourceProfile,
-            context.TargetProvider,
-            context.TargetProfile)
-
-        CoreAggregateLocalOrderingGuard.Validate(
-            bound.Statement,
-            context.Parsed.EnforceSourceDialectSyntax,
-            bound.SourceDialect,
-            context.Parsed.SourceProfile,
-            context.TargetProvider,
-            context.TargetProfile)
-
+        CoreJoinProfileValidator.Validate(bound.Statement, context.Parsed.EnforceSourceDialectSyntax, bound.SourceDialect, context.Parsed.SourceProfile, context.TargetProvider, context.TargetProfile)
+        CoreAggregateLocalOrderingGuard.Validate(bound.Statement, context.Parsed.EnforceSourceDialectSyntax, bound.SourceDialect, context.Parsed.SourceProfile, context.TargetProvider, context.TargetProfile)
         let sourcePrepared =
             if context.Parsed.EnforceSourceDialectSyntax then
-                CoreSourceDialectValidator.Validate(
-                    bound.Statement,
-                    bound.SourceDialect)
-
-                BoundStatement(
-                    FunctionalSourceProfileRewriter.prepare
-                        bound.Statement
-                        bound.SourceDialect
-                        context.Parsed.SourceProfile,
-                    bound.Facts,
-                    bound.SourceDialect)
-            else
-                bound
-
-        CoreAggregateFilterProfileValidator.Validate(
-            sourcePrepared.Statement,
-            context.Parsed.EnforceSourceDialectSyntax,
-            sourcePrepared.SourceDialect,
-            context.Parsed.SourceProfile,
-            context.TargetProvider,
-            context.TargetProfile)
-
+                CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect)
+                BoundStatement(FunctionalSourceProfileRewriter.prepare bound.Statement bound.SourceDialect context.Parsed.SourceProfile, bound.Facts, bound.SourceDialect)
+            else bound
+        CoreAggregateFilterProfileValidator.Validate(sourcePrepared.Statement, context.Parsed.EnforceSourceDialectSyntax, sourcePrepared.SourceDialect, context.Parsed.SourceProfile, context.TargetProvider, context.TargetProfile)
         FunctionalAst.verify sourcePrepared.Statement |> ignore
         BoundQuery(context, sourcePrepared)
 
     let private normalizeQuery (BoundQuery(context, bound)) =
-        let normalized =
-            CoreSqlNormalizer
-                .CreateDefault()
-                .Normalize(bound, context.TargetProvider)
-
+        let normalized = FunctionalQueryNormalizer.normalize bound context.TargetProvider
         let sourceRestored =
             if context.Parsed.EnforceSourceDialectSyntax then
-                CanonicalStatement(
-                    FunctionalSourceProfileRewriter.restore
-                        normalized.Statement,
-                    normalized.Facts,
-                    normalized.SourceDialect,
-                    normalized.TargetProvider)
-            else
-                normalized
-
+                CanonicalStatement(FunctionalSourceProfileRewriter.restore normalized.Statement, normalized.Facts, normalized.SourceDialect, normalized.TargetProvider)
+            else normalized
         let nullOrderingCanonical =
-            CanonicalStatement(
-                FunctionalNullOrderingRewriter.rewrite
-                    sourceRestored.Statement
-                    context.TargetProvider,
-                sourceRestored.Facts,
-                sourceRestored.SourceDialect,
-                sourceRestored.TargetProvider)
-
-        FunctionalNoFromReferenceValidator.validate
-            nullOrderingCanonical.Statement
-            context.TargetProvider
-
+            CanonicalStatement(FunctionalNullOrderingRewriter.rewrite sourceRestored.Statement context.TargetProvider, sourceRestored.Facts, sourceRestored.SourceDialect, sourceRestored.TargetProvider)
+        FunctionalNoFromReferenceValidator.validate nullOrderingCanonical.Statement context.TargetProvider
         FunctionalAst.verify nullOrderingCanonical.Statement |> ignore
         CanonicalQuery(context, nullOrderingCanonical)
 
-    let private validateQuery
-        (validationContext: SqlPlanValidationContext)
-        (CanonicalQuery(context, canonical)) =
-
-        let validated =
-            FunctionalSqlPlanValidator.validate
-                canonical
-                validationContext
-
+    let private validateQuery validationContext (CanonicalQuery(context, canonical)) =
+        let validated = FunctionalSqlPlanValidator.validate canonical validationContext
         FunctionalAst.verify validated.Statement |> ignore
         ValidatedQuery(context, validated)
 
-    let private authorizeExecution
-        (executionPolicy: SqlExecutionPlanPolicy)
-        (ValidatedQuery(context, validated)) =
-
-        let policyApplied =
-            FunctionalExecutionPolicyRewriter.rewrite
-                validated
-                executionPolicy
-
-        let profiled =
-            FunctionalProviderProfileRewriter.rewrite
-                policyApplied.Statement
-                context.TargetProvider
-                context.TargetProfile
-
-        let scoped =
-            FunctionalRootCteSetTailRewriter.rewrite profiled
-
-        let executable =
-            ExecutableSqlPlan(
-                scoped,
-                policyApplied.Facts,
-                policyApplied.SourceDialect,
-                policyApplied.TargetProvider,
-                policyApplied.PolicyVersion)
-
-        CoreNativeBackendCompatibility.ValidateQuery(
-            executable.Statement,
-            context.TargetProvider)
-
+    let private authorizeExecution executionPolicy (ValidatedQuery(context, validated)) =
+        let policyApplied = FunctionalExecutionPolicyRewriter.rewrite validated executionPolicy
+        let profiled = FunctionalProviderProfileRewriter.rewrite policyApplied.Statement context.TargetProvider context.TargetProfile
+        let scoped = FunctionalRootCteSetTailRewriter.rewrite profiled
+        let executable = ExecutableSqlPlan(scoped, policyApplied.Facts, policyApplied.SourceDialect, policyApplied.TargetProvider, policyApplied.PolicyVersion)
+        CoreNativeBackendCompatibility.ValidateQuery(executable.Statement, context.TargetProvider)
         FunctionalAst.verify executable.Statement |> ignore
         ExecutableQuery(context, executable)
 
     let private lowerQuery (ExecutableQuery(context, executable)) =
-        NativeSqlRenderer(
-            context.TargetProvider,
-            context.TargetProfile)
-            .Lower(executable)
+        NativeSqlRenderer(context.TargetProvider, context.TargetProfile).Lower(executable)
 
     type private DmlContext =
         {
@@ -213,284 +89,92 @@ module internal FunctionalPipeline =
             ConflictTargetAssurance: DmlConflictTargetAssurance | null
         }
 
-    type private ParsedDml =
-        | ParsedDml of DmlContext
+    type private ParsedDml = ParsedDml of DmlContext
+    type private BoundDml = BoundDml of DmlContext * BoundStatement
+    type private CanonicalDml = CanonicalDml of DmlContext * CanonicalStatement
+    type private ValidatedDml = ValidatedDml of DmlContext * ValidatedSqlPlan
+    type private ExecutableDml = ExecutableDml of DmlContext * ExecutableSqlPlan
 
-    type private BoundDml =
-        | BoundDml of DmlContext * BoundStatement
-
-    type private CanonicalDml =
-        | CanonicalDml of DmlContext * CanonicalStatement
-
-    type private ValidatedDml =
-        | ValidatedDml of DmlContext * ValidatedSqlPlan
-
-    type private ExecutableDml =
-        | ExecutableDml of DmlContext * ExecutableSqlPlan
-
-    let private ensureDmlRoot (statement: SqlStatement) =
+    let private ensureDmlRoot statement =
         match statement with
-        | :? InsertStatement
-        | :? UpdateStatement
-        | :? DeleteStatement ->
-            ()
-        | other ->
-            raise (SqlCompilationException(
-                $"F# DML pipeline requires INSERT/UPDATE/DELETE AST, not {other.GetType().Name}."))
+        | :? InsertStatement | :? UpdateStatement | :? DeleteStatement -> ()
+        | other -> raise (SqlCompilationException($"F# DML pipeline requires INSERT/UPDATE/DELETE AST, not {other.GetType().Name}."))
 
-    let private validateMutationPolicy
-        (statement: SqlStatement)
-        (policy: DmlCompilationPolicy) =
-
+    let private validateMutationPolicy statement (policy: DmlCompilationPolicy) =
         match statement with
-        | :? UpdateStatement as update ->
-            if isNull update.Predicate
-               && (policy.RequireWhereForUpdate || not policy.AllowFullTableUpdate) then
-                raise (UnauthorizedAccessException(
-                    "Security policy denies UPDATE without WHERE."))
+        | :? UpdateStatement as update when isNull update.Predicate && (policy.RequireWhereForUpdate || not policy.AllowFullTableUpdate) -> raise (UnauthorizedAccessException("Security policy denies UPDATE without WHERE."))
+        | :? DeleteStatement as delete when isNull delete.Predicate && (policy.RequireWhereForDelete || not policy.AllowFullTableDelete) -> raise (UnauthorizedAccessException("Security policy denies DELETE without WHERE."))
+        | :? InsertStatement | :? UpdateStatement | :? DeleteStatement -> ()
+        | other -> raise (SqlCompilationException($"Unsupported DML statement '{other.GetType().Name}'."))
 
-        | :? DeleteStatement as delete ->
-            if isNull delete.Predicate
-               && (policy.RequireWhereForDelete || not policy.AllowFullTableDelete) then
-                raise (UnauthorizedAccessException(
-                    "Security policy denies DELETE without WHERE."))
-
-        | :? InsertStatement ->
-            ()
-
-        | other ->
-            raise (SqlCompilationException(
-                $"Unsupported DML statement '{other.GetType().Name}'."))
-
-    let private startDml
-        (parsed: ParsedStatement)
-        (targetProvider: SqlAgentToolType)
-        (policy: DmlCompilationPolicy | null)
-        (targetProfile: SqlProviderCapabilityProfile | null)
-        (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
-
+    let private startDml (parsed: ParsedStatement) targetProvider (policy: DmlCompilationPolicy | null) targetProfile conflictTargetAssurance =
         let effectivePolicy =
             match policy with
-            | null ->
-                DmlCompilationPolicy(
-                    RequireWhereForUpdate = true,
-                    RequireWhereForDelete = true,
-                    AllowFullTableUpdate = false,
-                    AllowFullTableDelete = false)
-            | nonNullPolicy ->
-                nonNullPolicy
-
-        FunctionalProviderProfileRewriter.validateProfile
-            targetProvider
-            targetProfile
-        FunctionalSourceProfileRewriter.validateProfile
-            parsed.SourceDialect
-            parsed.SourceProfile
+            | null -> DmlCompilationPolicy(RequireWhereForUpdate = true, RequireWhereForDelete = true, AllowFullTableUpdate = false, AllowFullTableDelete = false)
+            | value -> value
+        FunctionalProviderProfileRewriter.validateProfile targetProvider targetProfile
+        FunctionalSourceProfileRewriter.validateProfile parsed.SourceDialect parsed.SourceProfile
         ensureDmlRoot parsed.Statement
         validateMutationPolicy parsed.Statement effectivePolicy
-        SqlDmlReturningExpressionCapabilityRules.ValidateSource(
-            parsed.Statement,
-            parsed.SourceDialect)
+        SqlDmlReturningExpressionCapabilityRules.ValidateSource(parsed.Statement, parsed.SourceDialect)
         FunctionalAst.verify parsed.Statement |> ignore
-
-        ParsedDml
-            {
-                Parsed = parsed
-                TargetProvider = targetProvider
-                TargetProfile = targetProfile
-                ConflictTargetAssurance = conflictTargetAssurance
-            }
+        ParsedDml { Parsed = parsed; TargetProvider = targetProvider; TargetProfile = targetProfile; ConflictTargetAssurance = conflictTargetAssurance }
 
     let private bindDml (ParsedDml context) =
         let bound = FunctionalDmlBinder.bind context.Parsed
-
-        CoreJoinProfileValidator.Validate(
-            bound.Statement,
-            context.Parsed.EnforceSourceDialectSyntax,
-            bound.SourceDialect,
-            context.Parsed.SourceProfile,
-            context.TargetProvider,
-            context.TargetProfile)
-
-        CoreAggregateLocalOrderingGuard.Validate(
-            bound.Statement,
-            context.Parsed.EnforceSourceDialectSyntax,
-            bound.SourceDialect,
-            context.Parsed.SourceProfile,
-            context.TargetProvider,
-            context.TargetProfile)
-
+        CoreJoinProfileValidator.Validate(bound.Statement, context.Parsed.EnforceSourceDialectSyntax, bound.SourceDialect, context.Parsed.SourceProfile, context.TargetProvider, context.TargetProfile)
+        CoreAggregateLocalOrderingGuard.Validate(bound.Statement, context.Parsed.EnforceSourceDialectSyntax, bound.SourceDialect, context.Parsed.SourceProfile, context.TargetProvider, context.TargetProfile)
         let sourcePrepared =
             if context.Parsed.EnforceSourceDialectSyntax then
-                CoreSourceDialectValidator.Validate(
-                    bound.Statement,
-                    bound.SourceDialect)
-
-                BoundStatement(
-                    FunctionalSourceProfileRewriter.prepare
-                        bound.Statement
-                        bound.SourceDialect
-                        context.Parsed.SourceProfile,
-                    bound.Facts,
-                    bound.SourceDialect)
-            else
-                bound
-
-        CoreAggregateFilterProfileValidator.Validate(
-            sourcePrepared.Statement,
-            context.Parsed.EnforceSourceDialectSyntax,
-            sourcePrepared.SourceDialect,
-            context.Parsed.SourceProfile,
-            context.TargetProvider,
-            context.TargetProfile)
-
+                CoreSourceDialectValidator.Validate(bound.Statement, bound.SourceDialect)
+                BoundStatement(FunctionalSourceProfileRewriter.prepare bound.Statement bound.SourceDialect context.Parsed.SourceProfile, bound.Facts, bound.SourceDialect)
+            else bound
+        CoreAggregateFilterProfileValidator.Validate(sourcePrepared.Statement, context.Parsed.EnforceSourceDialectSyntax, sourcePrepared.SourceDialect, context.Parsed.SourceProfile, context.TargetProvider, context.TargetProfile)
         FunctionalAst.verify sourcePrepared.Statement |> ignore
         BoundDml(context, sourcePrepared)
 
     let private normalizeDml (BoundDml(context, bound)) =
-        let normalized =
-            FunctionalDmlNormalizer.normalize
-                bound
-                context.TargetProvider
-
+        let normalized = FunctionalDmlNormalizer.normalize bound context.TargetProvider
         let sourceRestored =
             if context.Parsed.EnforceSourceDialectSyntax then
-                CanonicalStatement(
-                    FunctionalSourceProfileRewriter.restore
-                        normalized.Statement,
-                    normalized.Facts,
-                    normalized.SourceDialect,
-                    normalized.TargetProvider)
-            else
-                normalized
-
-        let nullOrderingCanonical =
-            CanonicalStatement(
-                FunctionalNullOrderingRewriter.rewrite
-                    sourceRestored.Statement
-                    context.TargetProvider,
-                sourceRestored.Facts,
-                sourceRestored.SourceDialect,
-                sourceRestored.TargetProvider)
-
-        FunctionalNoFromReferenceValidator.validate
-            nullOrderingCanonical.Statement
-            context.TargetProvider
-
+                CanonicalStatement(FunctionalSourceProfileRewriter.restore normalized.Statement, normalized.Facts, normalized.SourceDialect, normalized.TargetProvider)
+            else normalized
+        let nullOrderingCanonical = CanonicalStatement(FunctionalNullOrderingRewriter.rewrite sourceRestored.Statement context.TargetProvider, sourceRestored.Facts, sourceRestored.SourceDialect, sourceRestored.TargetProvider)
+        FunctionalNoFromReferenceValidator.validate nullOrderingCanonical.Statement context.TargetProvider
         FunctionalAst.verify nullOrderingCanonical.Statement |> ignore
         CanonicalDml(context, nullOrderingCanonical)
 
-    let private validateDml
-        (validationContext: SqlPlanValidationContext)
-        (CanonicalDml(context, canonical)) =
-
-        let validated =
-            FunctionalDmlPlanValidator.validate
-                canonical
-                validationContext
-
+    let private validateDml validationContext (CanonicalDml(context, canonical)) =
+        let validated = FunctionalDmlPlanValidator.validate canonical validationContext
         FunctionalAst.verify validated.Statement |> ignore
         ValidatedDml(context, validated)
 
     let private authorizeDml (ValidatedDml(context, validated)) =
-        let profiled =
-            FunctionalProviderProfileRewriter.rewrite
-                validated.Statement
-                context.TargetProvider
-                context.TargetProfile
-
-        let executable =
-            ExecutableSqlPlan(
-                profiled,
-                validated.Facts,
-                validated.SourceDialect,
-                validated.TargetProvider,
-                validated.PolicyVersion)
-
-        CoreNativeBackendCompatibility.ValidateDml(
-            executable.Statement,
-            context.TargetProvider)
-
+        let profiled = FunctionalProviderProfileRewriter.rewrite validated.Statement context.TargetProvider context.TargetProfile
+        let executable = ExecutableSqlPlan(profiled, validated.Facts, validated.SourceDialect, validated.TargetProvider, validated.PolicyVersion)
+        CoreNativeBackendCompatibility.ValidateDml(executable.Statement, context.TargetProvider)
         FunctionalAst.verify executable.Statement |> ignore
         ExecutableDml(context, executable)
 
-    let private expectedDmlKind (statement: SqlStatement) =
+    let private expectedDmlKind statement =
         match statement with
         | :? InsertStatement -> SqlStatementKind.Insert
         | :? UpdateStatement -> SqlStatementKind.Update
         | :? DeleteStatement -> SqlStatementKind.Delete
-        | other ->
-            raise (SqlCompilationException(
-                $"Statement '{other.GetType().Name}' is not supported by the F# DML pipeline."))
+        | other -> raise (SqlCompilationException($"Statement '{other.GetType().Name}' is not supported by the F# DML pipeline."))
 
     let private lowerDml (ExecutableDml(context, executable)) =
-        let lowered =
-            NativeSqlRenderer(
-                context.TargetProvider,
-                context.TargetProfile)
-                .Lower(executable)
-
+        let lowered = NativeSqlRenderer(context.TargetProvider, context.TargetProfile).Lower(executable)
         let expectedKind = expectedDmlKind context.Parsed.Statement
-        if lowered.Kind <> expectedKind then
-            raise (SqlCompilationException(
-                $"F# DML lowerer produced {lowered.Kind} for expected {expectedKind} statement."))
-
+        if lowered.Kind <> expectedKind then raise (SqlCompilationException($"F# DML lowerer produced {lowered.Kind} for expected {expectedKind} statement."))
         let conflictApplied =
             match executable.Statement with
-            | :? InsertStatement as insert ->
-                CoreDmlConflictSqlRewriter.Apply(
-                    lowered,
-                    insert,
-                    context.TargetProfile,
-                    context.ConflictTargetAssurance,
-                    executable.PolicyVersion)
-            | _ ->
-                lowered
+            | :? InsertStatement as insert -> CoreDmlConflictSqlRewriter.Apply(lowered, insert, context.TargetProfile, context.ConflictTargetAssurance, executable.PolicyVersion)
+            | _ -> lowered
+        CoreDmlReturningSqlRewriter.Apply(conflictApplied, executable.Statement, context.TargetProfile, executable.PolicyVersion)
 
-        CoreDmlReturningSqlRewriter.Apply(
-            conflictApplied,
-            executable.Statement,
-            context.TargetProfile,
-            executable.PolicyVersion)
+    let compileQuery parsed targetProvider validationContext executionPolicy targetProfile =
+        startQuery parsed targetProvider targetProfile |> bindQuery |> normalizeQuery |> validateQuery validationContext |> authorizeExecution executionPolicy |> lowerQuery
 
-    /// Compile a query through the private F# stage graph.
-    ///
-    /// There is deliberately no API that accepts BoundStatement,
-    /// CanonicalStatement, ValidatedSqlPlan, or ExecutableSqlPlan directly.
-    /// The only entry is ParsedStatement and the only exit is CompiledSqlCommand.
-    let compileQuery
-        (parsed: ParsedStatement)
-        (targetProvider: SqlAgentToolType)
-        (validationContext: SqlPlanValidationContext)
-        (executionPolicy: SqlExecutionPlanPolicy)
-        (targetProfile: SqlProviderCapabilityProfile | null)
-        : CompiledSqlCommand =
-
-        startQuery parsed targetProvider targetProfile
-        |> bindQuery
-        |> normalizeQuery
-        |> validateQuery validationContext
-        |> authorizeExecution executionPolicy
-        |> lowerQuery
-
-    /// Compile INSERT/UPDATE/DELETE through the same private stage discipline.
-    let compileDml
-        (parsed: ParsedStatement)
-        (targetProvider: SqlAgentToolType)
-        (validationContext: SqlPlanValidationContext)
-        (policy: DmlCompilationPolicy | null)
-        (targetProfile: SqlProviderCapabilityProfile | null)
-        (conflictTargetAssurance: DmlConflictTargetAssurance | null)
-        : CompiledSqlCommand =
-
-        startDml
-            parsed
-            targetProvider
-            policy
-            targetProfile
-            conflictTargetAssurance
-        |> bindDml
-        |> normalizeDml
-        |> validateDml validationContext
-        |> authorizeDml
-        |> lowerDml
+    let compileDml parsed targetProvider validationContext policy targetProfile conflictTargetAssurance =
+        startDml parsed targetProvider policy targetProfile conflictTargetAssurance |> bindDml |> normalizeDml |> validateDml validationContext |> authorizeDml |> lowerDml
