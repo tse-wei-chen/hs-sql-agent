@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Core.Lowering
 
 open HsSqlAgent.SqlCore.Core.Ast
+open HsSqlAgent.SqlCore.Core.Binding
 
 /// Portable direct-tail subset for set-operation queries.
 /// F# owns the scope-preservation decision used by backend compatibility validation.
