@@ -54,6 +54,10 @@ module internal RewriteRenderer =
     let private renderAlias (provider: Provider) (alias: IdentifierPart) =
         quotePart provider alias
 
+    let private tableAliasPrefix = function
+        | Oracle -> " "
+        | _ -> " AS "
+
     let private scalarObject (value: ScalarValue) : obj | null =
         match value with
         | ScalarValue.Null -> null
@@ -245,9 +249,11 @@ module internal RewriteRenderer =
         match source with
         | TableSource.NamedTable(identifier, alias) ->
             renderIdentifier ctx.Provider identifier
-            + (alias |> Option.map (fun value -> " AS " + renderAlias ctx.Provider value) |> Option.defaultValue "")
+            + (alias
+               |> Option.map (fun value -> tableAliasPrefix ctx.Provider + renderAlias ctx.Provider value)
+               |> Option.defaultValue "")
         | TableSource.DerivedTable(query, alias) ->
-            "(" + renderQuery ctx query + ") AS " + renderAlias ctx.Provider alias
+            "(" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
 
     and private renderSelect (ctx: RenderContext) (select: Select) : string =
         let projection =
@@ -284,12 +290,7 @@ module internal RewriteRenderer =
         | SqlServer ->
             match query.Offset, query.Limit with
             | None, None -> sql
-            | None, Some limit ->
-                let top = bindInt limit
-                if sql.StartsWith("SELECT DISTINCT ", StringComparison.Ordinal) then
-                    "SELECT DISTINCT TOP (" + top + ") " + sql.Substring("SELECT DISTINCT ".Length)
-                else
-                    "SELECT TOP (" + top + ") " + sql.Substring("SELECT ".Length)
+            | None, Some _ -> sql
             | Some offset, limit ->
                 if query.OrderBy.IsEmpty then invalidOp "SQL Server OFFSET requires ORDER BY."
                 sql + " OFFSET " + bindInt offset + " ROWS"
@@ -304,13 +305,33 @@ module internal RewriteRenderer =
             |> Option.map (fun value -> withOffset + " FETCH NEXT " + bindInt value + " ROWS ONLY")
             |> Option.defaultValue withOffset
 
-    and private renderQuery (ctx: RenderContext) (query: Query) : string =
+    and private renderQueryBody (ctx: RenderContext) (query: Query) : string =
         let mutable sql = renderSelect ctx query.Head
         for branch in query.SetOperations do
             sql <- sql + " " + setText branch.Operator + " " + renderQuery ctx branch.Query
         if not query.OrderBy.IsEmpty then
             sql <- sql + " ORDER BY " + (query.OrderBy |> List.map (renderOrderBy ctx) |> String.concat ", ")
-        renderPaging ctx query sql
+        sql
+
+    and private renderQuery (ctx: RenderContext) (query: Query) : string =
+        match ctx.Provider, query.Offset, query.Limit, query.SetOperations with
+        | SqlServer, None, Some limit, [] ->
+            let top = ctx.Bind(box limit)
+            let sql = renderQueryBody ctx { query with Limit = None }
+            if sql.StartsWith("SELECT DISTINCT ", StringComparison.Ordinal) then
+                "SELECT DISTINCT TOP (" + top + ") " + sql.Substring("SELECT DISTINCT ".Length)
+            else
+                "SELECT TOP (" + top + ") " + sql.Substring("SELECT ".Length)
+        | Firebird, None, Some limit, [] ->
+            let first = ctx.Bind(box limit)
+            let sql = renderQueryBody ctx { query with Limit = None }
+            if sql.StartsWith("SELECT DISTINCT ", StringComparison.Ordinal) then
+                "SELECT DISTINCT FIRST " + first + " " + sql.Substring("SELECT DISTINCT ".Length)
+            else
+                "SELECT FIRST " + first + " " + sql.Substring("SELECT ".Length)
+        | _ ->
+            let sql = renderQueryBody ctx query
+            renderPaging ctx query sql
 
     let private renderReturning (ctx: RenderContext) (items: SelectItem list) : string =
         if items.IsEmpty then ""
