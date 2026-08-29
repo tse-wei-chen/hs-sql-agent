@@ -55,6 +55,27 @@ module private FacadeResult =
                 ex.Message,
                 noDiagnostics)
 
+module private FacadeCompile =
+    let queryText
+        (sql: string)
+        (sourceDialect: SqlAgentToolType)
+        (targetProvider: SqlAgentToolType)
+        (validationContext: SqlPlanValidationContext)
+        (executionPolicy: SqlExecutionPlanPolicy) =
+
+        if sourceDialect = targetProvider then
+            try
+                RewriteFacadeAdapter.compileQueryValidated sql targetProvider validationContext executionPolicy
+            with
+            | :? SqlCompilationException ->
+                let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
+                FunctionalAst.verify parsed.Statement |> ignore
+                FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
+        else
+            let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
+            FunctionalAst.verify parsed.Statement |> ignore
+            FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
+
 /// C#-oriented facade for the parser and compiler pipeline.
 [<AbstractClass; Sealed>]
 type SqlCoreFacade private () =
@@ -90,9 +111,7 @@ type SqlCoreFacade private () =
     static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
-        let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
-        FunctionalAst.verify parsed.Statement |> ignore
-        FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
+        FacadeCompile.queryText sql sourceDialect targetProvider validationContext executionPolicy
 
     static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
