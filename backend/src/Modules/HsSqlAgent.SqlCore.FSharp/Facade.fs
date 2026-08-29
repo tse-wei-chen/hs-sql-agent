@@ -60,14 +60,12 @@ module private FacadeCompile =
         text.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
 
     /// Production DU eligibility is widened only after each grammar/lowering family reaches parity.
-    /// Qualified columns and joins are now admitted because binder diagnostics and join scope rules
-    /// are represented directly in the closed F# model.
+    /// Set operations, grouping, DISTINCT, aliases, qualified columns, and joins now stay inside the
+    /// closed F# model. Provider-specific ordering/paging and rich expression grammar remain gated.
     let private rewriteEligible (sql: string) (executionPolicy: SqlExecutionPlanPolicy) =
         let excluded =
-            [ " UNION "; " INTERSECT "; " EXCEPT "; " ORDER "; " GROUP "; " HAVING "
-              " LIMIT "; " OFFSET "; " FETCH "; " TOP "; " CASE "; " CAST"; " DATE "; " TIME "
-              " TIMESTAMP "; " INTERVAL "; " EXISTS "; " IN "; " BETWEEN "; " LIKE "; " ILIKE "
-              " DISTINCT "; " AS "; " WITH " ]
+            [ " ORDER "; " LIMIT "; " OFFSET "; " FETCH "; " TOP "; " CASE "; " CAST"; " DATE "; " TIME "
+              " TIMESTAMP "; " INTERVAL "; " EXISTS "; " IN "; " BETWEEN "; " LIKE "; " ILIKE "; " WITH " ]
         executionPolicy.QueryMaxRows = 0
         && not (sql.Contains('(', StringComparison.Ordinal))
         && not (sql.Contains(')', StringComparison.Ordinal))
