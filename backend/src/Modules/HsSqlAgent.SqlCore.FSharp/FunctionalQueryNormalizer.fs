@@ -8,12 +8,14 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Normalization
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 
-/// F# ownership boundary for statement/source traversal during query normalization.
+/// F# ownership boundary for query normalization.
 ///
-/// Expression canonicalization is deliberately kept behind the legacy CoreSqlNormalizer oracle
-/// for this migration slice. That preserves the existing six-dialect function/date/operator
-/// semantics while moving recursive statement reconstruction into F# first.
+/// Statement/source traversal and primitive expression normalization live here.
+/// Function and CAST canonicalization remain behind the legacy CoreSqlNormalizer oracle for now,
+/// because those paths contain the dialect-sensitive date/string/function registry semantics that
+/// must be migrated with dedicated parity coverage.
 module internal FunctionalQueryNormalizer =
 
     type private Context =
@@ -27,6 +29,39 @@ module internal FunctionalQueryNormalizer =
         values
         |> Seq.map mapper
         |> ImmutableArray.CreateRange
+
+    let private normalizeOperator (context: Context) (value: string) =
+        let normalized =
+            value.Split(
+                ' ',
+                StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)
+            |> String.concat " "
+            |> fun operatorText -> operatorText.ToUpperInvariant()
+            |> function
+                | "!=" -> "<>"
+                | "NOTIN" -> "NOT IN"
+                | "NOTBETWEEN" -> "NOT BETWEEN"
+                | "NOTEXISTS" -> "NOT EXISTS"
+                | operatorText -> operatorText
+
+        let failIfUnsupported error =
+            match error with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+
+        match normalized with
+        | "ILIKE" ->
+            SqlIlikeCapabilityRules.SourceValidationError(context.SourceDialect)
+            |> failIfUnsupported
+        | "||" ->
+            SqlConcatCapabilityRules.SourceSemanticValidationError(context.SourceDialect)
+            |> failIfUnsupported
+        | "%" ->
+            SqlModuloCapabilityRules.SourceValidationError(context.SourceDialect)
+            |> failIfUnsupported
+        | _ -> ()
+
+        normalized
 
     let private normalizeExpressionWithLegacyOracle
         (context: Context)
@@ -90,12 +125,12 @@ module internal FunctionalQueryNormalizer =
                 |> immutableMap (fun assignment ->
                     CoreBindingAstClone.Assignment(
                         assignment,
-                        normalizeExpressionWithLegacyOracle context assignment.Value))
+                        normalizeExpression context assignment.Value))
 
             let predicate : SqlExpr | null =
                 match update.Predicate with
                 | null -> null
-                | value -> normalizeExpressionWithLegacyOracle context value
+                | value -> normalizeExpression context value
 
             CoreBindingAstClone.Update(update, assignments, predicate) :> SqlStatement
 
@@ -103,7 +138,7 @@ module internal FunctionalQueryNormalizer =
             let predicate : SqlExpr | null =
                 match delete.Predicate with
                 | null -> null
-                | value -> normalizeExpressionWithLegacyOracle context value
+                | value -> normalizeExpression context value
 
             CoreBindingAstClone.Delete(delete, predicate) :> SqlStatement
 
@@ -127,7 +162,7 @@ module internal FunctionalQueryNormalizer =
             |> immutableMap (fun item ->
                 CoreBindingAstClone.SelectItem(
                     item,
-                    normalizeExpressionWithLegacyOracle context item.Expression))
+                    normalizeExpression context item.Expression))
 
         let fromSource : TableSource | null =
             match select.From with
@@ -140,26 +175,27 @@ module internal FunctionalQueryNormalizer =
                 let predicate : SqlExpr | null =
                     match join.Predicate with
                     | null -> null
-                    | value -> normalizeExpressionWithLegacyOracle context value
+                    | value -> normalizeExpression context value
 
-                CoreBindingAstClone.Join(
-                    join,
+                JoinSource(
+                    join.Kind.Trim().ToUpperInvariant(),
                     normalizeSource context join.Source,
-                    predicate))
+                    predicate,
+                    join.Span))
 
         let whereExpr : SqlExpr | null =
             match select.Where with
             | null -> null
-            | value -> normalizeExpressionWithLegacyOracle context value
+            | value -> normalizeExpression context value
 
         let groupBy =
             select.GroupBy
-            |> immutableMap (normalizeExpressionWithLegacyOracle context)
+            |> immutableMap (normalizeExpression context)
 
         let having : SqlExpr | null =
             match select.Having with
             | null -> null
-            | value -> normalizeExpressionWithLegacyOracle context value
+            | value -> normalizeExpression context value
 
         CoreBindingAstClone.Select(
             select,
@@ -196,7 +232,113 @@ module internal FunctionalQueryNormalizer =
         |> immutableMap (fun item ->
             CoreBindingAstClone.OrderBy(
                 item,
-                normalizeExpressionWithLegacyOracle context item.Expression))
+                normalizeExpression context item.Expression))
+
+    and private normalizeWindow
+        (context: Context)
+        (window: WindowSpec) =
+
+        CoreBindingAstClone.Window(
+            window,
+            window.PartitionBy |> immutableMap (normalizeExpression context),
+            normalizeOrderBy context window.OrderBy)
+
+    and private normalizeExpression
+        (context: Context)
+        (expression: SqlExpr)
+        : SqlExpr =
+
+        match expression with
+        | :? LiteralExpr
+        | :? IntervalExpr
+        | :? BoundColumnExpr
+        | :? ColumnExpr -> expression
+
+        | :? UnaryExpr as unary ->
+            UnaryExpr(
+                normalizeOperator context unary.Operator,
+                normalizeExpression context unary.Operand,
+                unary.Span)
+            :> SqlExpr
+
+        | :? BinaryExpr as binary ->
+            BinaryExpr(
+                normalizeExpression context binary.Left,
+                normalizeOperator context binary.Operator,
+                normalizeExpression context binary.Right,
+                binary.Span,
+                binary.LikeEscape)
+            :> SqlExpr
+
+        | :? FunctionCallExpr
+        | :? CastExpr ->
+            normalizeExpressionWithLegacyOracle context expression
+
+        | :? FilterExpr as filter ->
+            CoreBindingAstClone.Filter(
+                filter,
+                normalizeExpression context filter.Expression,
+                normalizeExpression context filter.Predicate)
+            :> SqlExpr
+
+        | :? WindowedExpr as windowed ->
+            CoreBindingAstClone.Windowed(
+                windowed,
+                normalizeExpression context windowed.Expression,
+                normalizeWindow context windowed.Window)
+            :> SqlExpr
+
+        | :? CaseExpr as caseExpr ->
+            let branches =
+                caseExpr.Branches
+                |> immutableMap (fun branch ->
+                    CaseBranch(
+                        normalizeExpression context branch.Condition,
+                        normalizeExpression context branch.Value))
+
+            let elseExpression : SqlExpr | null =
+                match caseExpr.ElseExpression with
+                | null -> null
+                | value -> normalizeExpression context value
+
+            CoreBindingAstClone.Case(caseExpr, branches, elseExpression) :> SqlExpr
+
+        | :? InExpr as inExpr ->
+            CoreBindingAstClone.In(
+                inExpr,
+                normalizeExpression context inExpr.Value,
+                inExpr.Items |> immutableMap (normalizeExpression context))
+            :> SqlExpr
+
+        | :? BetweenExpr as between ->
+            CoreBindingAstClone.Between(
+                between,
+                normalizeExpression context between.Value,
+                normalizeExpression context between.Lower,
+                normalizeExpression context between.Upper)
+            :> SqlExpr
+
+        | :? IsNullExpr as isNullExpr ->
+            CoreBindingAstClone.IsNull(
+                isNullExpr,
+                normalizeExpression context isNullExpr.Value)
+            :> SqlExpr
+
+        | :? SubqueryExpr as subquery ->
+            CoreBindingAstClone.Subquery(
+                subquery,
+                normalizeStatement context subquery.Query)
+            :> SqlExpr
+
+        | :? ExistsExpr as exists ->
+            CoreBindingAstClone.Exists(
+                exists,
+                normalizeStatement context exists.Query)
+            :> SqlExpr
+
+        | other ->
+            raise (SqlCompilationException(
+                $"Unsupported expression during F# normalization: {other.GetType().Name}"))
 
     let normalize
         (statement: BoundStatement)
