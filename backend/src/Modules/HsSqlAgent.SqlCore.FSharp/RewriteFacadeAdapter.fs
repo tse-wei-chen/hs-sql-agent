@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Core.Execution
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
@@ -35,7 +36,7 @@ module internal RewriteFacadeAdapter =
         | token :: _ -> invalidArg "sql" ("Unsupported SQL statement at offset " + string token.Start + ".")
         | [] -> invalidArg "sql" "SQL text cannot be empty."
 
-    let private compile (sql: string) (targetProvider: SqlAgentToolType) (policy: ExecutionPolicy) =
+    let private compile (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (policy: ExecutionPolicy) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let kind = statementKind sql
         let rendered =
@@ -43,20 +44,29 @@ module internal RewriteFacadeAdapter =
                 { Provider = provider targetProvider
                   Policy = policy }
                 sql
+        let parameterValues = parameters rendered.Parameters
+        let command =
+            CompiledSqlCommand(
+                rendered.Sql,
+                parameterValues,
+                kind,
+                String.Empty,
+                targetProvider)
+        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
         CompiledSqlCommand(
             rendered.Sql,
-            parameters rendered.Parameters,
+            parameterValues,
             kind,
-            String.Empty,
+            fingerprint,
             targetProvider)
 
-    let compileQuery (sql: string) (targetProvider: SqlAgentToolType) (queryMaxRows: int) =
+    let compileQuery (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (queryMaxRows: int) =
         let policy = { RewritePolicy.safeDefaults with QueryMaxRows = queryMaxRows }
-        let command = compile sql targetProvider policy
+        let command = compile sql targetProvider policyVersion policy
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
-    let compileDml (sql: string) (targetProvider: SqlAgentToolType) =
-        let command = compile sql targetProvider RewritePolicy.safeDefaults
+    let compileDml (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) =
+        let command = compile sql targetProvider policyVersion RewritePolicy.safeDefaults
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command
