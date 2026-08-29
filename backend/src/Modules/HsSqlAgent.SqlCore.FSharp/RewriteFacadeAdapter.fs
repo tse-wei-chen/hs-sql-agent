@@ -58,8 +58,10 @@ module internal RewriteFacadeAdapter =
         || message.Contains("RETURNING is not supported", StringComparison.Ordinal)
 
     let private allowedTables (tables: IReadOnlySet<string> | null) =
-        if isNull tables || tables.Count = 0 then None
-        else Some(tables |> Seq.toList)
+        match tables with
+        | null -> None
+        | values when values.Count = 0 -> None
+        | values -> Some(values |> Seq.toList)
 
     let private compileRewrite options sql =
         try
