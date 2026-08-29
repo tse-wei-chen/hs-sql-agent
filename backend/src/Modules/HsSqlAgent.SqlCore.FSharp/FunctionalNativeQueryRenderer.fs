@@ -553,8 +553,8 @@ module internal FunctionalNativeQueryRenderer =
                     IdentifierPart("_set", false, SourceSpan.Unknown), renderer.Provider)
                 let asKeyword = if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
                 let sql = StringBuilder(head.Sql)
-                    .Append("* FROM (").Append(inner.Sql).Append(')')
-                    .Append(asKeyword).Append(alias)
+                sql.Append("* FROM (").Append(inner.Sql).Append(')') |> ignore
+                sql.Append(asKeyword).Append(alias) |> ignore
                 let mutable bindings = head.Bindings.AddRange(inner.Bindings)
                 let order = renderOrderBy renderer statement.OrderBy statement.Head.Select
                 if order.Sql.Length > 0 then
