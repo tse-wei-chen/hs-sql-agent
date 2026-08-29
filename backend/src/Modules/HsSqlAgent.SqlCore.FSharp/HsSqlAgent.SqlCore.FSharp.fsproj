@@ -33,6 +33,7 @@
     <Compile Include="FunctionalProviderProfileRewriter.fs" />
     <Compile Include="FunctionalNullOrderingRewriter.fs" />
     <Compile Include="FunctionalNoFromReferenceValidator.fs" />
+    <Compile Include="FunctionalCteColumnAliasRewriter.fs" />
     <Compile Include="FunctionalSqlPlanValidator.fs" />
     <Compile Include="FunctionalDmlPlanValidator.fs" />
     <Compile Include="FunctionalExecutionPolicyRewriter.fs" />

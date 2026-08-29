@@ -13,6 +13,12 @@ internal static class CoreBindingAstClone
     internal static CteDefinition Cte(CteDefinition source, SqlStatement query) =>
         source with { Query = query };
 
+    internal static CteDefinition CteColumns(
+        CteDefinition source,
+        ImmutableArray<SqlIdentifier> columnAliases,
+        SqlStatement query) =>
+        source with { ColumnAliases = columnAliases, Query = query };
+
     internal static SelectStatement Select(
         SelectStatement source,
         ImmutableArray<CteDefinition> ctes,
@@ -67,6 +73,11 @@ internal static class CoreBindingAstClone
         SelectItem source,
         SqlExpr expression) =>
         source with { Expression = expression };
+
+    internal static SelectItem SelectItemAlias(
+        SelectItem source,
+        IdentifierPart? alias) =>
+        source with { Alias = alias };
 
     internal static OrderByItem OrderBy(
         OrderByItem source,

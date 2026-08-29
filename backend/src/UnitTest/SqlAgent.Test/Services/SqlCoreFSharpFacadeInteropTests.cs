@@ -487,6 +487,79 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    [Fact]
+    public void Facade_FunctionalCteColumnAliasRewrite_MatchesLegacyCompiler()
+    {
+        const string sql =
+            "WITH u(x) AS (SELECT id FROM users) SELECT x FROM u";
+
+        var validation = new SqlPlanValidationContext(
+            "fsharp-cte-alias-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Theory]
+    [InlineData("WITH u(x, y) AS (SELECT id FROM users) SELECT x FROM u")]
+    [InlineData("WITH u(x) AS (SELECT * FROM users) SELECT x FROM u")]
+    public void Facade_FunctionalCteColumnAliasRewrite_MatchesLegacyFailure(
+        string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-cte-alias-failure-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Postgres,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     [Theory]
     [InlineData("SELECT COUNT(*)", SqlAgentToolType.Oracle)]
     [InlineData("SELECT 1 AS x ORDER BY x", SqlAgentToolType.Firebird)]

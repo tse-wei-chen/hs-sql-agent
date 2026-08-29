@@ -773,8 +773,8 @@ module internal FunctionalSqlPlanValidator =
             context.PolicyVersion)
 
         let canonicalStatement =
-            CoreCteColumnAliasRewriter.Rewrite(
-                statement.Statement)
+            FunctionalCteColumnAliasRewriter.rewrite
+                statement.Statement
 
         validateTableAccess
             statement.Facts
