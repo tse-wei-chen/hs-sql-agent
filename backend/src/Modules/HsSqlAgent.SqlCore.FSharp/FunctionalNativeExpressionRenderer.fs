@@ -165,8 +165,10 @@ module internal FunctionalNativeExpressionRenderer =
                 raise (SqlCompilationException(
                     "FILTER lowering is not supported by " + string provider + "."))
 
-            let renderedExpression = render renderer renderSubquery filter.Expression
-            let predicate = renderPredicate renderer renderSubquery filter.Predicate
+            let renderedExpression: NativeSqlFragment =
+                render renderer renderSubquery filter.Expression
+            let predicate: NativeSqlFragment =
+                renderPredicate renderer renderSubquery filter.Predicate
             NativeSqlFragment(
                 renderedExpression.Sql + " FILTER (WHERE " + predicate.Sql + ")",
                 renderedExpression.Bindings.AddRange(predicate.Bindings))
