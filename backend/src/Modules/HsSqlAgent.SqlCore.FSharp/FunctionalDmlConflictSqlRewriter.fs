@@ -5,6 +5,7 @@ open System.Collections.Generic
 open HsSqlAgent.SqlCore.Core.Ast
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Execution
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
@@ -64,7 +65,7 @@ module private FunctionalDmlConflictSqlRewriter =
 
     let private validatePortableShape
         (insert: InsertStatement)
-        targetProvider
+        (targetProvider: SqlAgentToolType)
         (assurance: DmlConflictTargetAssurance | null) =
 
         let conflict =
@@ -72,21 +73,17 @@ module private FunctionalDmlConflictSqlRewriter =
             | null -> raise (SqlCompilationException("INSERT conflict contract is missing."))
             | value -> value
 
-        let values =
+        let source =
             match insert.Source with
-            | :? InsertValuesSource as source -> source
-            | _ -> null
-        let querySource =
-            match insert.Source with
-            | :? InsertQuerySource as source -> source
-            | _ -> null
+            | :? InsertValuesSource as values -> Choice1Of2 values
+            | :? InsertQuerySource as querySource -> Choice2Of2 querySource
+            | _ -> raise (SqlCompilationException("Unsupported INSERT source for conflict handling."))
 
-        if isNull values && isNull querySource then
-            raise (SqlCompilationException("Unsupported INSERT source for conflict handling."))
-
-        if not (isNull querySource) && targetProvider <> SqlAgentToolType.Postgres then
+        match source with
+        | Choice2Of2 _ when targetProvider <> SqlAgentToolType.Postgres ->
             raise (SqlCompilationException(
                 "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL targets; other targets remain fail-closed."))
+        | _ -> ()
 
         if conflict.TargetColumns.IsDefaultOrEmpty then
             raise (SqlCompilationException(
@@ -114,11 +111,12 @@ module private FunctionalDmlConflictSqlRewriter =
                 raise (SqlCompilationException(
                     "INSERT conflict DO UPDATE requires at least one assignment."))
 
-            if not (isNull querySource) then
-                validateInsertSelectUpdateAssurance conflict assurance
-            elif values.Rows.Length <> 1 then
+            match source with
+            | Choice2Of2 _ -> validateInsertSelectUpdateAssurance conflict assurance
+            | Choice1Of2 values when values.Rows.Length <> 1 ->
                 raise (SqlCompilationException(
                     "Portable INSERT conflict DO UPDATE currently requires exactly one proposed VALUES row. Multi-row proposed values require explicit source-row uniqueness/cardinality assurance."))
+            | _ -> ()
 
             let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
             for assignment in conflict.Assignments do
@@ -222,8 +220,8 @@ module private FunctionalDmlConflictSqlRewriter =
     let private rewriteFirebird
         (command: CompiledSqlCommand)
         (insert: InsertStatement)
-        assurance
-        policyVersion =
+        (assurance: DmlConflictTargetAssurance | null)
+        (policyVersion: string) =
 
         let conflict =
             match insert.Conflict with
@@ -253,9 +251,9 @@ module private FunctionalDmlConflictSqlRewriter =
     let private rewriteMySql
         (command: CompiledSqlCommand)
         (insert: InsertStatement)
-        targetProfile
-        assurance
-        policyVersion =
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        (assurance: DmlConflictTargetAssurance | null)
+        (policyVersion: string) =
 
         let conflict =
             match insert.Conflict with
