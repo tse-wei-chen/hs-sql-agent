@@ -10,8 +10,8 @@ open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for structural native-expression lowering.
-/// Provider-sensitive literal/interval/canonical-function/case/window/filter leaves remain in the
-/// legacy renderer while structural recursion, casts, and ordinary functions are owned here.
+/// Provider-sensitive literal/interval/canonical-function/case/window leaves remain in the
+/// legacy renderer while structural recursion, casts, ordinary functions, and FILTER are owned here.
 module internal FunctionalNativeExpressionRenderer =
 
     let private emptyBindings = ImmutableArray<obj | null>.Empty
@@ -155,6 +155,22 @@ module internal FunctionalNativeExpressionRenderer =
 
                 NativeSqlFragment(name + "(" + argumentSql + ")", bindings)
 
+        | :? FilterExpr as filter ->
+            match renderer.Provider with
+            | SqlAgentToolType.Postgres
+            | SqlAgentToolType.Sqlite
+            | SqlAgentToolType.Oracle
+            | SqlAgentToolType.Firebird -> ()
+            | provider ->
+                raise (SqlCompilationException(
+                    "FILTER lowering is not supported by " + string provider + "."))
+
+            let renderedExpression = render renderer renderSubquery filter.Expression
+            let predicate = renderPredicate renderer renderSubquery filter.Predicate
+            NativeSqlFragment(
+                renderedExpression.Sql + " FILTER (WHERE " + predicate.Sql + ")",
+                renderedExpression.Bindings.AddRange(predicate.Bindings))
+
         | :? CastExpr as castExpr ->
             if not (safeCastType.IsMatch(castExpr.TypeName)) then
                 raise (SqlCompilationException(
@@ -212,7 +228,7 @@ module internal FunctionalNativeExpressionRenderer =
 
         | _ -> renderer.RenderExpressionForFunctional(expression, renderSubquery)
 
-    let rec renderPredicate
+    and renderPredicate
         (renderer: NativeSqlRenderer)
         (renderSubquery: Func<SqlStatement, NativeSqlFragment>)
         (expression: SqlExpr) =
