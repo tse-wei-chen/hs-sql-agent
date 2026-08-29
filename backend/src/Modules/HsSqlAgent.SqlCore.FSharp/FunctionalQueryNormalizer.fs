@@ -12,10 +12,9 @@ open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for query normalization.
 ///
-/// Statement/source traversal and primitive expression normalization live here.
-/// Function canonicalization remains behind the legacy CoreSqlNormalizer oracle for now.
-/// CAST traversal is F#-owned and delegates only target-type semantic mapping to the existing
-/// CoreCastTypeNormalizer while that dialect matrix is migrated separately.
+/// Statement/source traversal, primitive expression normalization, CAST traversal, and the
+/// canonical function surface live here. Dialect-sensitive registered function families still use
+/// the legacy function oracle until their date/string/registry semantics are moved independently.
 module internal FunctionalQueryNormalizer =
 
     type private Context =
@@ -29,6 +28,16 @@ module internal FunctionalQueryNormalizer =
         values
         |> Seq.map mapper
         |> ImmutableArray.CreateRange
+
+    let private identifier (name: string) =
+        SqlIdentifier(
+            ImmutableArray.Create(IdentifierPart(name, false, SourceSpan.Unknown)),
+            SourceSpan.Unknown)
+
+    let private identifierText (value: SqlIdentifier) =
+        value.Parts
+        |> Seq.map (fun part -> part.Value)
+        |> String.concat "."
 
     let private normalizeOperator (context: Context) (value: string) =
         let normalized =
@@ -243,6 +252,67 @@ module internal FunctionalQueryNormalizer =
             window.PartitionBy |> immutableMap (normalizeExpression context),
             normalizeOrderBy context window.OrderBy)
 
+    and private normalizeFunction
+        (context: Context)
+        (functionCall: FunctionCallExpr)
+        : SqlExpr =
+
+        let sourceName =
+            identifierText functionCall.Name
+            |> fun value -> value.Trim().ToUpperInvariant()
+
+        let normalizedArguments =
+            functionCall.Arguments
+            |> immutableMap (normalizeExpression context)
+
+        let normalizedFunction =
+            CoreBindingAstClone.Function(
+                functionCall,
+                normalizedArguments,
+                normalizeOrderBy context functionCall.AggregateOrderBy)
+
+        let withName name =
+            CoreBindingAstClone.FunctionName(normalizedFunction, identifier name) :> SqlExpr
+
+        if SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) then
+            if normalizedArguments.Length <> 1 then
+                raise (SqlCompilationException($"{sourceName} requires exactly 1 argument."))
+
+            let arguments =
+                ImmutableArray.Create<SqlExpr>(
+                    LiteralExpr(sourceName, functionCall.Span) :> SqlExpr,
+                    normalizedArguments[0])
+
+            CoreBindingAstClone.Function(
+                CoreBindingAstClone.FunctionName(normalizedFunction, identifier "CORE_DATE_PART"),
+                arguments,
+                normalizedFunction.AggregateOrderBy)
+            :> SqlExpr
+        else
+            match sourceName with
+            | "CURRENT_DATE" ->
+                if normalizedArguments.Length <> 0 then
+                    raise (SqlCompilationException("CURRENT_DATE does not accept arguments."))
+                withName "CORE_CURRENT_DATE"
+            | "CURRENT_TIME" ->
+                if normalizedArguments.Length <> 0 then
+                    raise (SqlCompilationException("CURRENT_TIME does not accept arguments."))
+                withName "CORE_CURRENT_TIME"
+            | "CURRENT_TIMESTAMP" ->
+                if normalizedArguments.Length <> 0 then
+                    raise (SqlCompilationException("CURRENT_TIMESTAMP does not accept arguments."))
+                withName "CORE_CURRENT_TIMESTAMP"
+            | "COALESCE" ->
+                if normalizedArguments.Length < 2 then
+                    raise (SqlCompilationException("COALESCE requires at least 2 arguments."))
+                withName "COALESCE"
+            | _ when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceName) ->
+                withName sourceName
+            | _ ->
+                // Registered portable families and provider-specific registry translation still use
+                // the legacy oracle so their exact cross-dialect diagnostics remain locked down.
+                normalizeFunctionWithLegacyOracle context functionCall
+
     and private normalizeExpression
         (context: Context)
         (expression: SqlExpr)
@@ -271,7 +341,7 @@ module internal FunctionalQueryNormalizer =
             :> SqlExpr
 
         | :? FunctionCallExpr as functionCall ->
-            normalizeFunctionWithLegacyOracle context functionCall
+            normalizeFunction context functionCall
 
         | :? CastExpr as castExpr ->
             CastExpr(
