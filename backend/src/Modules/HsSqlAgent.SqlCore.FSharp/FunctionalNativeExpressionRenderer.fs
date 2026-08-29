@@ -281,6 +281,16 @@ module internal FunctionalNativeExpressionRenderer =
                         | _ -> raise (SqlCompilationException("SQLite does not support date part " + part + "."))
                     | _ -> raise (SqlCompilationException("Unsupported date-part provider."))
                 NativeSqlFragment(sql, value.Bindings)
+            elif loweringKind = SqlCanonicalNativeLoweringKind.DateFormat then
+                FunctionalTemporalCanonicalRenderer.renderDateFormat
+                    renderer.Provider
+                    functionCall
+                    (fun argument -> render renderer renderSubquery argument)
+            elif loweringKind = SqlCanonicalNativeLoweringKind.DateParse then
+                FunctionalTemporalCanonicalRenderer.renderDateParse
+                    renderer.Provider
+                    functionCall
+                    (fun argument -> render renderer renderSubquery argument)
             elif loweringKind = SqlCanonicalNativeLoweringKind.CurrentDate then
                 requireCurrentTemporalShape functionCall
                 NativeSqlFragment(
