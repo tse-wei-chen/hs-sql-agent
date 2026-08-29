@@ -13,7 +13,10 @@ type internal CoreNativeSetTailScope private () =
 
     static member private IsPortableSetOutputReference(expression: SqlExpr) =
         match expression with
-        | :? LiteralExpr as literal when literal.Value :? OrderByOrdinalValue -> true
+        | :? LiteralExpr as literal ->
+            match literal.Value with
+            | :? OrderByOrdinalValue -> true
+            | _ -> false
         | :? ColumnExpr as column -> CoreNativeSetTailScope.IsSingleOutputName(column.Name)
         | :? BoundColumnExpr as column -> CoreNativeSetTailScope.IsSingleOutputName(column.Name)
         | _ -> false
