@@ -38,7 +38,8 @@ module internal RewriteFacadeAdapter =
 
     let private statementKind (sql: string) =
         match RewriteLexer.tokenize sql with
-        | { Kind = Keyword "SELECT" } :: _ -> SqlStatementKind.Query
+        | { Kind = Keyword "SELECT" } :: _
+        | { Kind = Keyword "WITH" } :: _ -> SqlStatementKind.Query
         | { Kind = Keyword "INSERT" } :: _ -> SqlStatementKind.Insert
         | { Kind = Keyword "UPDATE" } :: _ -> SqlStatementKind.Update
         | { Kind = Keyword "DELETE" } :: _ -> SqlStatementKind.Delete
@@ -58,6 +59,8 @@ module internal RewriteFacadeAdapter =
             RewritePipeline.compile options sql
         with
         | :? SqlCompilationException -> reraise()
+        | :? ArgumentException as ex ->
+            raise (SqlCompilationException(ex.Message, ex))
         | :? InvalidOperationException as ex when shouldSurfaceAsCompilationError ex.Message ->
             raise (SqlCompilationException(ex.Message, ex))
 
