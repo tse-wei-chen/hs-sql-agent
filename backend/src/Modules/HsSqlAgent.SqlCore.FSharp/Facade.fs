@@ -56,6 +56,9 @@ module private FacadeResult =
                 noDiagnostics)
 
 module private FacadeCompile =
+    let private containsIgnoreCase (needle: string) (text: string) =
+        text.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
+
     let private functionalQuery
         (sql: string)
         (sourceDialect: SqlAgentToolType)
@@ -75,9 +78,16 @@ module private FacadeCompile =
         FunctionalAst.verify parsed.Statement |> ignore
         FunctionalPipeline.compileDml parsed targetProvider validationContext null null null
 
-    /// Production text compilation is rewrite-first whenever source and target dialects are the same.
-    /// The compatibility pipeline remains only as a fail-closed seam for grammar/lowering that the
-    /// closed DU does not represent yet. Policy denials are deliberately never swallowed by fallback.
+    /// The DU path is the default for same-dialect query compilation. The mature pipeline remains
+    /// an explicit semantic-compatibility seam for capabilities that are not parity-complete yet:
+    /// execution-policy row caps and provider-specific paging/tail lowering.
+    let private requiresFunctionalQueryParity
+        (sql: string)
+        (executionPolicy: SqlExecutionPlanPolicy) =
+        executionPolicy.QueryMaxRows <> 0
+        || [ " LIMIT "; " OFFSET "; " FETCH "; " TOP "; " NULLS " ]
+           |> List.exists (fun token -> containsIgnoreCase token sql)
+
     let queryText
         (sql: string)
         (sourceDialect: SqlAgentToolType)
@@ -85,7 +95,10 @@ module private FacadeCompile =
         (validationContext: SqlPlanValidationContext)
         (executionPolicy: SqlExecutionPlanPolicy) =
 
-        if sourceDialect = targetProvider then
+        if sourceDialect <> targetProvider
+           || requiresFunctionalQueryParity sql executionPolicy then
+            functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
+        else
             try
                 RewriteFacadeAdapter.compileQueryValidated sql targetProvider validationContext executionPolicy
             with
@@ -94,26 +107,16 @@ module private FacadeCompile =
             | :? ArgumentException
             | :? InvalidOperationException ->
                 functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
-        else
-            functionalQuery sql sourceDialect targetProvider validationContext executionPolicy
 
+    /// DML stays on the mature validation/fingerprint seam until those semantics have exact DU
+    /// parity. This is deliberate fail-closed behavior: syntactically valid rewrite DML must not
+    /// bypass legacy assignment/source validation or produce a different plan fingerprint.
     let dmlText
         (sql: string)
         (sourceDialect: SqlAgentToolType)
         (targetProvider: SqlAgentToolType)
         (validationContext: SqlPlanValidationContext) =
-
-        if sourceDialect = targetProvider then
-            try
-                RewriteFacadeAdapter.compileDmlValidated sql targetProvider validationContext
-            with
-            | :? UnauthorizedAccessException -> reraise()
-            | :? SqlCompilationException
-            | :? ArgumentException
-            | :? InvalidOperationException ->
-                functionalDml sql sourceDialect targetProvider validationContext
-        else
-            functionalDml sql sourceDialect targetProvider validationContext
+        functionalDml sql sourceDialect targetProvider validationContext
 
 /// C#-oriented facade for the parser and compiler pipeline.
 [<AbstractClass; Sealed>]
