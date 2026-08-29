@@ -45,11 +45,18 @@ module internal RewriteFacadeAdapter =
         | token :: _ -> invalidArg "sql" ("Unsupported SQL statement at offset " + string token.Start + ".")
         | [] -> invalidArg "sql" "SQL text cannot be empty."
 
+    let private compileRewrite options sql =
+        try
+            RewritePipeline.compile options sql
+        with
+        | :? SqlCompilationException -> reraise()
+        | :? InvalidOperationException as ex -> raise (SqlCompilationException(ex.Message, ex))
+
     let private compile (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (policy: ExecutionPolicy) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let kind = statementKind sql
         let rendered =
-            RewritePipeline.compile
+            compileRewrite
                 { Provider = provider targetProvider
                   Policy = policy }
                 sql
