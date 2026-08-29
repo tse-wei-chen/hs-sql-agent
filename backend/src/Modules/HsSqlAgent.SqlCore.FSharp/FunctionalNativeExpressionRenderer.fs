@@ -12,7 +12,8 @@ open HsSqlAgent.SqlCore.Models
 /// F# ownership boundary for structural native-expression lowering.
 /// Provider-sensitive literal/interval/canonical-function leaves and the specialized Oracle/SQL
 /// Server boolean-CASE predicate bridge remain in the legacy renderer while structural recursion,
-/// casts, ordinary functions, POSITION, FILTER, ordinary CASE, and window lowering are owned here.
+/// casts, ordinary functions, POSITION, current temporal functions, FILTER, ordinary CASE, and
+/// window lowering are owned here.
 module internal FunctionalNativeExpressionRenderer =
 
     let private emptyBindings = ImmutableArray<obj | null>.Empty
@@ -70,6 +71,12 @@ module internal FunctionalNativeExpressionRenderer =
         if projection.Length <> 1 || isDirectProjectionWildcard projection[0].Expression then
             raise (SqlCompilationException(
                 "Scalar subquery must expose exactly one statically known output column."))
+
+    let private requireCurrentTemporalShape (functionCall: FunctionCallExpr) =
+        if functionCall.IsDistinct || not functionCall.Arguments.IsDefaultOrEmpty then
+            raise (SqlCompilationException(
+                "Canonical current temporal function '" + identifierText functionCall.Name +
+                "' must have zero arguments and cannot be DISTINCT."))
 
     let private renderWindowBound (bound: WindowFrameBoundCore) =
         match bound.Kind with
@@ -182,6 +189,27 @@ module internal FunctionalNativeExpressionRenderer =
                 | SqlAgentToolType.Firebird ->
                     combine ("POSITION(" + needle.Sql + ", " + haystack.Sql + ")") needle haystack
                 | _ -> raise (SqlCompilationException("Unsupported position provider."))
+            elif loweringKind = SqlCanonicalNativeLoweringKind.CurrentDate then
+                requireCurrentTemporalShape functionCall
+                NativeSqlFragment(
+                    (if renderer.Provider = SqlAgentToolType.MsSqlServer then
+                        "CAST(CURRENT_TIMESTAMP AS date)"
+                     else
+                        "CURRENT_DATE"),
+                    emptyBindings)
+            elif loweringKind = SqlCanonicalNativeLoweringKind.CurrentTime then
+                requireCurrentTemporalShape functionCall
+                if renderer.Provider = SqlAgentToolType.Oracle then
+                    raise (SqlCompilationException("CURRENT_TIME is not supported by Oracle."))
+                NativeSqlFragment(
+                    (if renderer.Provider = SqlAgentToolType.MsSqlServer then
+                        "CAST(CURRENT_TIMESTAMP AS time)"
+                     else
+                        "CURRENT_TIME"),
+                    emptyBindings)
+            elif loweringKind = SqlCanonicalNativeLoweringKind.CurrentTimestamp then
+                requireCurrentTemporalShape functionCall
+                NativeSqlFragment("CURRENT_TIMESTAMP", emptyBindings)
             elif loweringKind <> SqlCanonicalNativeLoweringKind.Ordinary then
                 renderer.RenderExpressionForFunctional(expression, renderSubquery)
             else
