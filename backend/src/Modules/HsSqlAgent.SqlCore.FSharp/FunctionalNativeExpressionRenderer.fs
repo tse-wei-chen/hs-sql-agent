@@ -220,7 +220,7 @@ module internal FunctionalNativeExpressionRenderer =
             | null -> ()
             | otherwiseExpression ->
                 let otherwise: NativeSqlFragment =
-                    render renderer renderSubquery (otherwiseExpression :> SqlExpr)
+                    render renderer renderSubquery otherwiseExpression
                 parts.Add("ELSE " + otherwise.Sql)
                 bindings <- bindings.AddRange(otherwise.Bindings)
 
@@ -245,7 +245,7 @@ module internal FunctionalNativeExpressionRenderer =
             | null -> ()
             | otherwiseExpression ->
                 let otherwise: NativeSqlFragment =
-                    render renderer renderSubquery (otherwiseExpression :> SqlExpr)
+                    render renderer renderSubquery otherwiseExpression
                 parts.Add("ELSE " + otherwise.Sql)
                 bindings <- bindings.AddRange(otherwise.Bindings)
 
