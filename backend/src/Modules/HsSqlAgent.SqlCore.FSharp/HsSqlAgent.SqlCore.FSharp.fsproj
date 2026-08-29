@@ -22,6 +22,7 @@
     <Compile Include="RewriteLexer.fs" />
     <Compile Include="RewriteParser.fs" />
     <Compile Include="RewriteBinder.fs" />
+    <Compile Include="RewriteStages.fs" />
     <Compile Include="FunctionalAst.fs" />
     <Compile Include="FunctionalTokenReader.fs" />
     <Compile Include="FunctionalDmlConflictParser.fs" />
