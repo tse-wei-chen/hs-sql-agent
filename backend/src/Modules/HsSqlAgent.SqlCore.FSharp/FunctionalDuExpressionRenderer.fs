@@ -6,6 +6,7 @@ open HsSqlAgent.SqlCore.Core.Analysis
 open HsSqlAgent.SqlCore.Core.Ast
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 
 /// Native expression entry point backed by the closed F# expression shape.
 /// Complex cases still delegate to the proven renderer while leaf/unary/binary
