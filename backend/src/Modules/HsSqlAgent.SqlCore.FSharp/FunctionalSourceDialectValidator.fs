@@ -44,10 +44,13 @@ type internal CoreSourceDialectValidator private () =
 
     static member private ValidateAggregateSeparatorClause(functionCall: FunctionCallExpr, sourceDialect: SqlAgentToolType) =
         if not (isNull functionCall.AggregateSeparatorClause) then
-            let contract =
-                SqlSourceFunctionRegistry.Find(CoreSourceDialectValidator.IdentifierText(functionCall.Name))
-
-            if isNull contract || not (contract.SupportsAggregateSeparatorClause(sourceDialect)) then
+            match SqlSourceFunctionRegistry.Find(CoreSourceDialectValidator.IdentifierText(functionCall.Name)) with
+            | null ->
+                raise (
+                    SqlCompilationException(
+                        "Aggregate SEPARATOR clause is modeled only for MySQL GROUP_CONCAT raw source syntax."))
+            | contract when contract.SupportsAggregateSeparatorClause(sourceDialect) -> ()
+            | _ ->
                 raise (
                     SqlCompilationException(
                         "Aggregate SEPARATOR clause is modeled only for MySQL GROUP_CONCAT raw source syntax."))
@@ -100,25 +103,29 @@ type internal CoreSourceDialectValidator private () =
             for cte in select.Ctes do
                 CoreSourceDialectValidator.VisitStatement(cte.Query, sourceDialect)
 
-            if not (isNull select.From) then
-                CoreSourceDialectValidator.VisitSource(select.From, sourceDialect)
+            match select.From with
+            | null -> ()
+            | source -> CoreSourceDialectValidator.VisitSource(source, sourceDialect)
 
             for join in select.Joins do
                 CoreSourceDialectValidator.VisitSource(join.Source, sourceDialect)
-                if not (isNull join.Predicate) then
-                    CoreSourceDialectValidator.ValidateExpressionTree(join.Predicate, sourceDialect)
+                match join.Predicate with
+                | null -> ()
+                | predicate -> CoreSourceDialectValidator.ValidateExpressionTree(predicate, sourceDialect)
 
             for item in select.Select do
                 CoreSourceDialectValidator.ValidateExpressionTree(item.Expression, sourceDialect)
 
-            if not (isNull select.Where) then
-                CoreSourceDialectValidator.ValidateExpressionTree(select.Where, sourceDialect)
+            match select.Where with
+            | null -> ()
+            | predicate -> CoreSourceDialectValidator.ValidateExpressionTree(predicate, sourceDialect)
 
             for item in select.GroupBy do
                 CoreSourceDialectValidator.ValidateExpressionTree(item, sourceDialect)
 
-            if not (isNull select.Having) then
-                CoreSourceDialectValidator.ValidateExpressionTree(select.Having, sourceDialect)
+            match select.Having with
+            | null -> ()
+            | predicate -> CoreSourceDialectValidator.ValidateExpressionTree(predicate, sourceDialect)
 
             for item in select.OrderBy do
                 CoreSourceDialectValidator.VisitOrderBy(item, sourceDialect)
@@ -133,12 +140,14 @@ type internal CoreSourceDialectValidator private () =
         | :? UpdateStatement as update ->
             for assignment in update.Assignments do
                 CoreSourceDialectValidator.ValidateExpressionTree(assignment.Value, sourceDialect)
-            if not (isNull update.Predicate) then
-                CoreSourceDialectValidator.ValidateExpressionTree(update.Predicate, sourceDialect)
+            match update.Predicate with
+            | null -> ()
+            | predicate -> CoreSourceDialectValidator.ValidateExpressionTree(predicate, sourceDialect)
 
         | :? DeleteStatement as delete ->
-            if not (isNull delete.Predicate) then
-                CoreSourceDialectValidator.ValidateExpressionTree(delete.Predicate, sourceDialect)
+            match delete.Predicate with
+            | null -> ()
+            | predicate -> CoreSourceDialectValidator.ValidateExpressionTree(predicate, sourceDialect)
 
         | :? InsertStatement as insert ->
             match insert.Source with
