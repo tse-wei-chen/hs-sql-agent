@@ -29,6 +29,7 @@
     <Compile Include="FunctionalDmlBinder.fs" />
     <Compile Include="FunctionalCastTypeNormalizer.fs" />
     <Compile Include="FunctionalDateDiffNormalizer.fs" />
+    <Compile Include="FunctionalTemporalFormatNormalizer.fs" />
     <Compile Include="FunctionalProviderFunctionNormalizer.fs" />
     <Compile Include="FunctionalQueryNormalizer.fs" />
     <Compile Include="FunctionalDmlNormalizer.fs" />
