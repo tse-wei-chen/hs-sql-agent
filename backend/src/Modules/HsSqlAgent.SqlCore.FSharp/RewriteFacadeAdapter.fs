@@ -23,7 +23,7 @@ module internal RewriteFacadeAdapter =
 
     let private parameters (values: (obj | null) list) =
         values
-        |> List.mapi (fun index value -> SqlParameterValue("p" + string (index + 1), value))
+        |> List.mapi (fun index value -> SqlParameterValue("p" + string index, value))
         |> ImmutableArray.CreateRange
 
     let private statementKind (sql: string) =
