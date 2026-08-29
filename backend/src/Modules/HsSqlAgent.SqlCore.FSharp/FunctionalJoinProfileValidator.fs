@@ -27,20 +27,22 @@ type internal CoreJoinProfileValidator private () =
 
         for join in CoreSqlAstTraversal.EnumerateJoins(statement) do
             if enforceSourceDialectSyntax then
-                let sourceError =
+                match
                     SqlJoinCapabilityRules.SourceValidationError(
                         join.Kind,
                         sourceDialect,
                         sourceProfile)
-
-                if not (isNull sourceError) then
+                    with
+                | null -> ()
+                | sourceError ->
                     raise (SqlCompilationException(sourceError))
 
-            let targetError =
+            match
                 SqlJoinCapabilityRules.TargetValidationError(
                     join.Kind,
                     targetProvider,
                     targetProfile)
-
-            if not (isNull targetError) then
+                with
+            | null -> ()
+            | targetError ->
                 raise (SqlCompilationException(targetError))
