@@ -58,6 +58,13 @@ module internal CoreModel =
         | Full
         | Cross
 
+    /// Predicate-bearing joins cannot be CROSS joins by construction.
+    type OnJoinKind =
+        | Inner
+        | Left
+        | Right
+        | Full
+
     type NullOrdering =
         | Default
         | NullsFirst
@@ -174,10 +181,26 @@ module internal CoreModel =
         | NamedTable of Identifier * IdentifierPart option
         | DerivedTable of Query * IdentifierPart
 
+    /// Join shape encodes the ON-predicate invariant directly:
+    /// CROSS JOIN has no predicate; every other join always has one.
     and Join =
-        { Kind: JoinKind
-          Source: TableSource
-          Predicate: Expr option }
+        | CrossJoin of TableSource
+        | OnJoin of OnJoinKind * TableSource * Expr
+        member this.Kind =
+            match this with
+            | CrossJoin _ -> JoinKind.Cross
+            | OnJoin(OnJoinKind.Inner, _, _) -> JoinKind.Inner
+            | OnJoin(OnJoinKind.Left, _, _) -> JoinKind.Left
+            | OnJoin(OnJoinKind.Right, _, _) -> JoinKind.Right
+            | OnJoin(OnJoinKind.Full, _, _) -> JoinKind.Full
+        member this.Source =
+            match this with
+            | CrossJoin source
+            | OnJoin(_, source, _) -> source
+        member this.Predicate =
+            match this with
+            | CrossJoin _ -> None
+            | OnJoin(_, _, predicate) -> Some predicate
 
     and Select =
         { Distinct: bool
@@ -203,12 +226,27 @@ module internal CoreModel =
         { Target: Identifier
           Value: Expr }
 
+    /// INSERT source is exactly one of VALUES, query source, or DEFAULT VALUES.
+    type InsertInput =
+        | Values of Expr list list
+        | QuerySource of Query
+        | DefaultValues
+
     type Insert =
         { Target: Identifier
           Columns: IdentifierPart list
-          Rows: Expr list list
-          Source: Query option
+          Input: InsertInput
           Returning: SelectItem list }
+        member this.Rows =
+            match this.Input with
+            | Values rows -> rows
+            | QuerySource _
+            | DefaultValues -> []
+        member this.Source =
+            match this.Input with
+            | QuerySource query -> Some query
+            | Values _
+            | DefaultValues -> None
 
     type Update =
         { Target: Identifier

@@ -243,20 +243,20 @@ module internal RewriteParser =
             TableSource.NamedTable(name, alias)
 
     and private parseJoin (cursor: Cursor) : Join =
-        let kind =
-            if acceptKeyword "INNER" cursor then expectKeyword "JOIN" cursor; JoinKind.Inner
-            elif acceptKeyword "LEFT" cursor then expectKeyword "JOIN" cursor; JoinKind.Left
-            elif acceptKeyword "RIGHT" cursor then expectKeyword "JOIN" cursor; JoinKind.Right
-            elif acceptKeyword "FULL" cursor then expectKeyword "JOIN" cursor; JoinKind.Full
-            elif acceptKeyword "CROSS" cursor then expectKeyword "JOIN" cursor; JoinKind.Cross
-            elif acceptKeyword "JOIN" cursor then JoinKind.Inner
-            else fail cursor.Current "Expected JOIN"
-        let source = parseTableSource cursor
-        let predicate =
-            match kind with
-            | JoinKind.Cross -> None
-            | _ -> expectKeyword "ON" cursor; Some(parseExpression cursor)
-        { Kind = kind; Source = source; Predicate = predicate }
+        if acceptKeyword "CROSS" cursor then
+            expectKeyword "JOIN" cursor
+            Join.CrossJoin(parseTableSource cursor)
+        else
+            let kind =
+                if acceptKeyword "INNER" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Inner
+                elif acceptKeyword "LEFT" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Left
+                elif acceptKeyword "RIGHT" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Right
+                elif acceptKeyword "FULL" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Full
+                elif acceptKeyword "JOIN" cursor then OnJoinKind.Inner
+                else fail cursor.Current "Expected JOIN"
+            let source = parseTableSource cursor
+            expectKeyword "ON" cursor
+            Join.OnJoin(kind, source, parseExpression cursor)
 
     and private startsJoin (cursor: Cursor) =
         [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS" ]
@@ -384,25 +384,28 @@ module internal RewriteParser =
             columns.Add(identifierPart cursor)
             while acceptSymbol ',' cursor do columns.Add(identifierPart cursor)
             expectSymbol ')' cursor
-        let rows = ResizeArray<Expr list>()
-        let mutable source : Query option = None
-        if acceptKeyword "VALUES" cursor then
-            let parseRow () : Expr list =
-                expectSymbol '(' cursor
-                let values = ResizeArray<Expr>()
-                values.Add(parseExpression cursor)
-                while acceptSymbol ',' cursor do values.Add(parseExpression cursor)
-                expectSymbol ')' cursor
-                values |> Seq.toList
-            rows.Add(parseRow())
-            while acceptSymbol ',' cursor do rows.Add(parseRow())
-        elif isKeyword "SELECT" cursor.Current then source <- Some(parseQuery cursor)
-        elif acceptKeyword "DEFAULT" cursor then expectKeyword "VALUES" cursor
-        else fail cursor.Current "Expected VALUES, SELECT, or DEFAULT VALUES"
+        let input =
+            if acceptKeyword "VALUES" cursor then
+                let rows = ResizeArray<Expr list>()
+                let parseRow () : Expr list =
+                    expectSymbol '(' cursor
+                    let values = ResizeArray<Expr>()
+                    values.Add(parseExpression cursor)
+                    while acceptSymbol ',' cursor do values.Add(parseExpression cursor)
+                    expectSymbol ')' cursor
+                    values |> Seq.toList
+                rows.Add(parseRow())
+                while acceptSymbol ',' cursor do rows.Add(parseRow())
+                InsertInput.Values(rows |> Seq.toList)
+            elif isKeyword "SELECT" cursor.Current then
+                InsertInput.QuerySource(parseQuery cursor)
+            elif acceptKeyword "DEFAULT" cursor then
+                expectKeyword "VALUES" cursor
+                InsertInput.DefaultValues
+            else fail cursor.Current "Expected VALUES, SELECT, or DEFAULT VALUES"
         { Target = target
           Columns = columns |> Seq.toList
-          Rows = rows |> Seq.toList
-          Source = source
+          Input = input
           Returning = parseReturning cursor }
 
     and private parseUpdate (cursor: Cursor) : Update =

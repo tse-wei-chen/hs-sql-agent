@@ -51,16 +51,17 @@ module internal RewriteStages =
         | NamedTable _ -> source
         | DerivedTable(query, alias) -> DerivedTable(normalizeQuery query, alias)
 
+    and private normalizeJoin join =
+        match join with
+        | CrossJoin source -> CrossJoin(normalizeSource source)
+        | OnJoin(kind, source, predicate) ->
+            OnJoin(kind, normalizeSource source, normalizeExpr predicate)
+
     and private normalizeSelect select =
         { select with
             Projection = select.Projection |> List.map (fun item -> { item with Expression = normalizeExpr item.Expression })
             From = select.From |> Option.map normalizeSource
-            Joins =
-                select.Joins
-                |> List.map (fun join ->
-                    { join with
-                        Source = normalizeSource join.Source
-                        Predicate = join.Predicate |> Option.map normalizeExpr })
+            Joins = select.Joins |> List.map normalizeJoin
             Where = select.Where |> Option.map normalizeExpr
             GroupBy = select.GroupBy |> List.map normalizeExpr
             Having = select.Having |> Option.map normalizeExpr }
@@ -76,10 +77,14 @@ module internal RewriteStages =
             match document.Statement with
             | QueryStatement query -> QueryStatement(normalizeQuery query)
             | InsertStatement insert ->
+                let input =
+                    match insert.Input with
+                    | Values rows -> Values(rows |> List.map (List.map normalizeExpr))
+                    | QuerySource query -> QuerySource(normalizeQuery query)
+                    | DefaultValues -> DefaultValues
                 InsertStatement
                     { insert with
-                        Rows = insert.Rows |> List.map (List.map normalizeExpr)
-                        Source = insert.Source |> Option.map normalizeQuery
+                        Input = input
                         Returning = insert.Returning |> List.map (fun item -> { item with Expression = normalizeExpr item.Expression }) }
             | UpdateStatement update ->
                 UpdateStatement
@@ -139,12 +144,9 @@ module internal RewriteStages =
         select.GroupBy |> List.iter validateExpr
         select.Having |> Option.iter validateExpr
         select.Joins
-        |> List.iter (fun join ->
-            match join.Kind, join.Predicate with
-            | Cross, Some _ -> invalidOp "CROSS JOIN cannot have an ON predicate."
-            | Cross, None -> ()
-            | _, None -> invalidOp "Non-CROSS JOIN requires an ON predicate."
-            | _, Some predicate -> validateExpr predicate)
+        |> List.iter (function
+            | CrossJoin _ -> ()
+            | OnJoin(_, _, predicate) -> validateExpr predicate)
 
     and private validateQuery query =
         validateSelect query.Head
@@ -157,9 +159,12 @@ module internal RewriteStages =
         match document.Statement with
         | QueryStatement query -> validateQuery query
         | InsertStatement insert ->
-            require (not insert.Columns.IsEmpty || not insert.Rows.IsEmpty || insert.Source.IsSome) "INSERT has no values or source."
-            insert.Rows |> List.iter (List.iter validateExpr)
-            insert.Source |> Option.iter validateQuery
+            match insert.Input with
+            | Values rows ->
+                require (not rows.IsEmpty) "INSERT VALUES requires at least one row."
+                rows |> List.iter (List.iter validateExpr)
+            | QuerySource query -> validateQuery query
+            | DefaultValues -> ()
         | UpdateStatement update ->
             require (not update.Assignments.IsEmpty) "UPDATE requires at least one assignment."
             update.Assignments |> List.iter (fun assignment -> validateExpr assignment.Value)

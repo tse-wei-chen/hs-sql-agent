@@ -123,8 +123,11 @@ module internal RewriteBinder =
         let binding = sourceBinding source
         let extended = { scope with Sources = scope.Sources @ [ binding ] }
         ensureDistinctSources extended.Sources
-        let predicate = join.Predicate |> Option.map (bindExpr extended)
-        { join with Source = source; Predicate = predicate }, extended
+        let boundJoin =
+            match join with
+            | CrossJoin _ -> CrossJoin source
+            | OnJoin(kind, _, predicate) -> OnJoin(kind, source, bindExpr extended predicate)
+        boundJoin, extended
 
     and private bindSelect (parentScope: Scope option) (select: Select) : Select * Scope =
         let from = select.From |> Option.map (bindTableSource parentScope)
@@ -169,9 +172,12 @@ module internal RewriteBinder =
             | QueryStatement query -> QueryStatement(bindQuery None query)
             | InsertStatement insert ->
                 let emptyScope : Scope = { Parent = None; Sources = [] }
-                let rows = insert.Rows |> List.map (List.map (bindExpr emptyScope))
-                let source = insert.Source |> Option.map (bindQuery None)
-                InsertStatement { insert with Rows = rows; Source = source }
+                let input =
+                    match insert.Input with
+                    | Values rows -> Values(rows |> List.map (List.map (bindExpr emptyScope)))
+                    | QuerySource query -> QuerySource(bindQuery None query)
+                    | DefaultValues -> DefaultValues
+                InsertStatement { insert with Input = input }
             | UpdateStatement update ->
                 let binding = sourceBinding (NamedTable(update.Target, None))
                 let scope : Scope = { Parent = None; Sources = [ binding ] }
