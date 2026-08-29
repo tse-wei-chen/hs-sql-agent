@@ -13,9 +13,9 @@ open HsSqlAgent.SqlCore.Models
 /// F# ownership boundary for query normalization.
 ///
 /// Statement/source traversal and primitive expression normalization live here.
-/// Function and CAST canonicalization remain behind the legacy CoreSqlNormalizer oracle for now,
-/// because those paths contain the dialect-sensitive date/string/function registry semantics that
-/// must be migrated with dedicated parity coverage.
+/// Function canonicalization remains behind the legacy CoreSqlNormalizer oracle for now.
+/// CAST traversal is F#-owned and delegates only target-type semantic mapping to the existing
+/// CoreCastTypeNormalizer while that dialect matrix is migrated separately.
 module internal FunctionalQueryNormalizer =
 
     type private Context =
@@ -63,9 +63,9 @@ module internal FunctionalQueryNormalizer =
 
         normalized
 
-    let private normalizeExpressionWithLegacyOracle
+    let private normalizeFunctionWithLegacyOracle
         (context: Context)
-        (expression: SqlExpr) =
+        (expression: FunctionCallExpr) =
 
         let carrier =
             SelectStatement(
@@ -97,7 +97,7 @@ module internal FunctionalQueryNormalizer =
             select.Select[0].Expression
         | other ->
             raise (SqlCompilationException(
-                $"Legacy expression normalization oracle returned unexpected carrier {other.GetType().Name}."))
+                $"Legacy function normalization oracle returned unexpected carrier {other.GetType().Name}."))
 
     let rec private normalizeStatement
         (context: Context)
@@ -270,9 +270,18 @@ module internal FunctionalQueryNormalizer =
                 binary.LikeEscape)
             :> SqlExpr
 
-        | :? FunctionCallExpr
-        | :? CastExpr ->
-            normalizeExpressionWithLegacyOracle context expression
+        | :? FunctionCallExpr as functionCall ->
+            normalizeFunctionWithLegacyOracle context functionCall
+
+        | :? CastExpr as castExpr ->
+            CastExpr(
+                normalizeExpression context castExpr.Expression,
+                CoreCastTypeNormalizer.Normalize(
+                    castExpr.TypeName,
+                    context.SourceDialect,
+                    context.TargetProvider),
+                castExpr.Span)
+            :> SqlExpr
 
         | :? FilterExpr as filter ->
             CoreBindingAstClone.Filter(
