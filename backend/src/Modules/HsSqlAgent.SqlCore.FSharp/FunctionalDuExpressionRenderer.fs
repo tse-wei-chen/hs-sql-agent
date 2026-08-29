@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Core.Lowering
 
 open System
 open System.Collections.Immutable
+open HsSqlAgent.SqlCore.Core.Analysis
 open HsSqlAgent.SqlCore.Core.Ast
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
