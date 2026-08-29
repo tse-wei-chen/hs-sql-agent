@@ -10,8 +10,9 @@ open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for structural native-expression lowering.
-/// Provider-sensitive literal/interval/canonical-function/case/window leaves remain in the
-/// legacy renderer while structural recursion, casts, ordinary functions, and FILTER are owned here.
+/// Provider-sensitive literal/interval/canonical-function/window leaves and the specialized
+/// Oracle/SQL Server boolean-CASE predicate bridge remain in the legacy renderer while structural
+/// recursion, casts, ordinary functions, FILTER, and ordinary CASE lowering are owned here.
 module internal FunctionalNativeExpressionRenderer =
 
     let private emptyBindings = ImmutableArray<obj | null>.Empty
@@ -31,6 +32,18 @@ module internal FunctionalNativeExpressionRenderer =
         identifier.Parts
         |> Seq.map (fun part -> part.Value)
         |> String.concat "."
+
+    let private equivalentFragment (left: NativeSqlFragment) (right: NativeSqlFragment) =
+        left.Sql = right.Sql
+        && left.Bindings.Length = right.Bindings.Length
+        && Seq.forall2 obj.Equals left.Bindings right.Bindings
+
+    let private requireSimpleCaseComparison (branch: CaseBranch) =
+        match branch.Condition with
+        | :? BinaryExpr as comparison when comparison.Operator = "=" -> comparison
+        | _ ->
+            raise (SqlCompilationException(
+                "Simple CASE branch lost its canonical equality shape before lowering."))
 
     let private isDirectProjectionWildcard (expression: SqlExpr) =
         let identifier =
@@ -181,6 +194,58 @@ module internal FunctionalNativeExpressionRenderer =
             NativeSqlFragment(
                 "CAST(" + rendered.Sql + " AS " + castExpr.TypeName + ")",
                 rendered.Bindings)
+
+        | :? SimpleCaseExpr as simpleCase ->
+            if simpleCase.Branches.IsDefaultOrEmpty then
+                raise (SqlCompilationException("Simple CASE requires at least one WHEN branch."))
+
+            let first = requireSimpleCaseComparison simpleCase.Branches[0]
+            let operand: NativeSqlFragment = render renderer renderSubquery first.Left
+            let mutable bindings = operand.Bindings
+            let parts = ResizeArray<string>()
+
+            for branch in simpleCase.Branches do
+                let comparison = requireSimpleCaseComparison branch
+                let branchOperand: NativeSqlFragment = render renderer renderSubquery comparison.Left
+                if not (equivalentFragment operand branchOperand) then
+                    raise (SqlCompilationException(
+                        "Simple CASE branches must preserve one canonical operand before native lowering."))
+
+                let matched: NativeSqlFragment = render renderer renderSubquery comparison.Right
+                let value: NativeSqlFragment = render renderer renderSubquery branch.Value
+                parts.Add("WHEN " + matched.Sql + " THEN " + value.Sql)
+                bindings <- bindings.AddRange(matched.Bindings).AddRange(value.Bindings)
+
+            if not (isNull simpleCase.ElseExpression) then
+                let otherwise: NativeSqlFragment =
+                    render renderer renderSubquery simpleCase.ElseExpression
+                parts.Add("ELSE " + otherwise.Sql)
+                bindings <- bindings.AddRange(otherwise.Bindings)
+
+            NativeSqlFragment(
+                "CASE " + operand.Sql + " " + String.Join(" ", parts) + " END",
+                bindings)
+
+        | :? CaseExpr as caseExpr ->
+            if caseExpr.Branches.IsDefaultOrEmpty then
+                raise (SqlCompilationException("Searched CASE requires at least one WHEN branch."))
+
+            let mutable bindings = emptyBindings
+            let parts = ResizeArray<string>()
+            for branch in caseExpr.Branches do
+                let condition: NativeSqlFragment =
+                    renderPredicate renderer renderSubquery branch.Condition
+                let value: NativeSqlFragment = render renderer renderSubquery branch.Value
+                parts.Add("WHEN " + condition.Sql + " THEN " + value.Sql)
+                bindings <- bindings.AddRange(condition.Bindings).AddRange(value.Bindings)
+
+            if not (isNull caseExpr.ElseExpression) then
+                let otherwise: NativeSqlFragment =
+                    render renderer renderSubquery caseExpr.ElseExpression
+                parts.Add("ELSE " + otherwise.Sql)
+                bindings <- bindings.AddRange(otherwise.Bindings)
+
+            NativeSqlFragment("CASE " + String.Join(" ", parts) + " END", bindings)
 
         | :? InExpr as inExpr ->
             if inExpr.Items.IsDefaultOrEmpty then
