@@ -91,7 +91,7 @@ type SqlCoreFacade private () =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         sourceDialect |> ignore
-        RewriteFacadeAdapter.compileQuery sql targetProvider
+        RewriteFacadeAdapter.compileQuery sql targetProvider executionPolicy.QueryMaxRows
 
     static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
@@ -99,7 +99,7 @@ type SqlCoreFacade private () =
         ArgumentNullException.ThrowIfNull(sourceProfile)
         ArgumentNullException.ThrowIfNull(targetProfile)
         sourceDialect |> ignore
-        RewriteFacadeAdapter.compileQuery sql targetProvider
+        RewriteFacadeAdapter.compileQuery sql targetProvider executionPolicy.QueryMaxRows
 
     static member CompileDml(parsed: ParsedStatement, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         FunctionalAst.verify parsed.Statement |> ignore
