@@ -62,10 +62,7 @@ module internal RewriteBinder =
     let private bindColumn (scope: Scope) (identifier: Identifier) : Identifier =
         match identifierParts identifier with
         | [] -> invalidOp "Column identifier cannot be empty."
-        | [ _ ] ->
-            if scope.Sources.IsEmpty then
-                invalidOp ("Column '" + identifierText identifier + "' has no source in scope.")
-            identifier
+        | [ _ ] -> identifier
         | qualifier :: _ ->
             if not (qualifierExists qualifier.Value scope) then
                 invalidOp ("Unknown table qualifier '" + qualifier.Value + "'.")
@@ -129,7 +126,7 @@ module internal RewriteBinder =
         let predicate = join.Predicate |> Option.map (bindExpr extended)
         { join with Source = source; Predicate = predicate }, extended
 
-    and private bindSelect (parentScope: Scope option) (select: Select) : Select =
+    and private bindSelect (parentScope: Scope option) (select: Select) : Select * Scope =
         let from = select.From |> Option.map (bindTableSource parentScope)
         let initialSources = from |> Option.map sourceBinding |> Option.toList
         ensureDistinctSources initialSources
@@ -150,19 +147,18 @@ module internal RewriteBinder =
                     { item with Expression = bindExpr scope item.Expression })
             Where = select.Where |> Option.map (bindExpr scope)
             GroupBy = select.GroupBy |> List.map (bindExpr scope)
-            Having = select.Having |> Option.map (bindExpr scope) }
+            Having = select.Having |> Option.map (bindExpr scope) }, scope
 
     and private bindQuery (parentScope: Scope option) (query: Query) : Query =
-        let head = bindSelect parentScope query.Head
+        let head, headScope = bindSelect parentScope query.Head
         let setOperations =
             query.SetOperations
             |> List.map (fun (branch: SetBranch) ->
                 { branch with Query = bindQuery parentScope branch.Query })
-        let outputScope = { Parent = parentScope; Sources = [] }
         { query with
             Head = head
             SetOperations = setOperations
-            OrderBy = query.OrderBy |> List.map (bindOrderBy outputScope) }
+            OrderBy = query.OrderBy |> List.map (bindOrderBy headScope) }
 
     let private bindAssignment (scope: Scope) (assignment: Assignment) : Assignment =
         { assignment with Value = bindExpr scope assignment.Value }
