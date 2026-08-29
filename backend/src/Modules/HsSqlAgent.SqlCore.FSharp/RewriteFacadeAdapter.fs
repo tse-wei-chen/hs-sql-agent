@@ -21,12 +21,12 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> Provider.Firebird
         | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
 
-    let private parameters (values: obj list) =
+    let private parameters (values: (obj | null) list) =
         values
         |> List.mapi (fun index value -> SqlParameterValue("p" + string (index + 1), value))
         |> ImmutableArray.CreateRange
 
-    let private statementKind sql =
+    let private statementKind (sql: string) =
         match RewriteLexer.tokenize sql with
         | { Kind = Keyword "SELECT" } :: _ -> SqlStatementKind.Query
         | { Kind = Keyword "INSERT" } :: _ -> SqlStatementKind.Insert
@@ -35,7 +35,7 @@ module internal RewriteFacadeAdapter =
         | token :: _ -> invalidArg "sql" ("Unsupported SQL statement at offset " + string token.Start + ".")
         | [] -> invalidArg "sql" "SQL text cannot be empty."
 
-    let private compile sql targetProvider =
+    let private compile (sql: string) (targetProvider: SqlAgentToolType) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let kind = statementKind sql
         let rendered =
