@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Text.RegularExpressions
 
 /// Pure F# compiler model. No compatibility AST classes are allowed below this boundary.
 module internal CoreModel =
@@ -18,7 +19,13 @@ module internal CoreModel =
     type Identifier = private Identifier of IdentifierPart list
 
     module Identifier =
-        let create parts = Identifier parts
+        let create parts =
+            match parts with
+            | [] -> invalidArg (nameof parts) "SQL identifier must contain at least one part."
+            | values when values |> List.exists (fun part -> String.IsNullOrWhiteSpace(part.Value)) ->
+                invalidArg (nameof parts) "SQL identifier parts cannot be empty or whitespace."
+            | values -> Identifier values
+
         let parts (Identifier parts) = parts
 
     type UnaryOperator =
@@ -95,13 +102,27 @@ module internal CoreModel =
     type CastType = private CastType of string
 
     module CastType =
-        let create value = CastType value
+        let private safeCastType =
+            Regex("^[A-Za-z][A-Za-z0-9_ ]*(\\([0-9]+(,[0-9]+)?\\))?$", RegexOptions.CultureInvariant)
+
+        let create value =
+            if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then
+                invalidArg (nameof value) ("Unsafe CAST type '" + string value + "'.")
+            CastType value
+
         let value (CastType value) = value
 
     type FunctionName = private FunctionName of string
 
     module FunctionName =
-        let create value = FunctionName value
+        let private safeFunctionName =
+            Regex("^[A-Za-z_][A-Za-z0-9_$.]*$", RegexOptions.CultureInvariant)
+
+        let create value =
+            if String.IsNullOrWhiteSpace(value) || not (safeFunctionName.IsMatch(value)) then
+                invalidArg (nameof value) ("Unsafe function name '" + string value + "'.")
+            FunctionName value
+
         let value (FunctionName value) = value
 
     type Expr =
