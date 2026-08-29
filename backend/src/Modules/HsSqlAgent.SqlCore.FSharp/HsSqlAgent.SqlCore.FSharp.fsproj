@@ -54,6 +54,7 @@
     <Compile Include="FunctionalDmlReturningSqlRewriter.fs" />
     <Compile Include="FunctionalWindowCapabilityRules.fs" />
     <Compile Include="FunctionalTemporalFormatCapabilityRules.fs" />
+    <Compile Include="FunctionalTemporalCanonicalRenderer.fs" />
     <Compile Include="FunctionalNativeExpressionRenderer.fs" />
     <Compile Include="FunctionalNativeQueryRenderer.fs" />
     <Compile Include="FunctionalPipeline.fs" />
