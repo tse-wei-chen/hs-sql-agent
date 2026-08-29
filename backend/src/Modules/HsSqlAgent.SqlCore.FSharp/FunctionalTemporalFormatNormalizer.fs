@@ -76,7 +76,7 @@ module private FunctionalTemporalFormatTranslation =
                         flushLiteral result literal
                         result.Add(TemporalFormatPart.Token token)
                     | None ->
-                        raise (FormatException($"Unsupported {dialect} date-format token '%{specifier}'."))
+                        raise (FormatException("Unsupported " + string dialect + " date-format token '%" + string specifier + "'."))
 
         flushLiteral result literal
         result |> Seq.toList
@@ -102,7 +102,6 @@ module private FunctionalTemporalFormatTranslation =
             | _, TemporalFormatToken.Minute -> "%M"
             | _, TemporalFormatToken.Second -> "%S"
             | _, TemporalFormatToken.AmPm -> "%p"
-            | _ -> raise (ArgumentOutOfRangeException(nameof part))
 
     let private sqlServerTokens =
         [ "yyyy", TemporalFormatToken.Year4
@@ -189,7 +188,6 @@ module private FunctionalTemporalFormatTranslation =
         | _, TemporalFormatToken.Minute -> "MI"
         | _, TemporalFormatToken.Second -> "SS"
         | _, TemporalFormatToken.AmPm -> "AM"
-        | _ -> raise (ArgumentOutOfRangeException(nameof token))
 
     let private renderNamed (dialect: SqlAgentToolType) (format: TemporalFormatPart list) =
         format
