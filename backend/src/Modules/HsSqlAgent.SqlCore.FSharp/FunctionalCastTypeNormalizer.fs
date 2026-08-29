@@ -46,9 +46,9 @@ module private FunctionalCastTypeNormalization =
     [<Literal>]
     let private MaxLengthSentinel = -1
 
-    let private fail message = raise (SqlCompilationException(message))
+    let private fail (message: string) = raise (SqlCompilationException(message))
 
-    let private unsupported target source =
+    let private unsupported (target: SqlAgentToolType) (source: string) =
         fail $"CAST type '{source}' has no Core target mapping for provider {target}."
 
     let private combineTypeName (name: string) (suffix: string) =
@@ -56,19 +56,23 @@ module private FunctionalCastTypeNormalization =
         if String.IsNullOrEmpty(tail) then name.Trim()
         else name.Trim() + " " + tail
 
-    let private parseOptionalInt (group: Group) =
+    let private parseOptionalInt (group: Group) : int option =
         if not group.Success then None
         else
             match Int32.TryParse(group.Value, NumberStyles.None, CultureInfo.InvariantCulture) with
             | true, value -> Some value
             | _ -> fail $"CAST type argument '{group.Value}' is outside the supported integer range."
 
-    let private parsePrecision (group: Group) =
+    let private parsePrecision (group: Group) : int option =
         if not group.Success then None
         elif group.Value.Equals("MAX", StringComparison.OrdinalIgnoreCase) then Some MaxLengthSentinel
         else parseOptionalInt group
 
-    let private validateMaxShape name precision scale source =
+    let private validateMaxShape
+        (name: string)
+        (precision: int option)
+        (scale: int option)
+        (source: SqlAgentToolType) =
         match precision with
         | Some p when p = MaxLengthSentinel ->
             if source <> SqlAgentToolType.MsSqlServer then
@@ -79,7 +83,11 @@ module private FunctionalCastTypeNormalization =
                 fail $"SQL Server CAST type '{name}' does not support the MAX length marker in the Core model."
         | _ -> ()
 
-    let private validateArguments kind precision scale name =
+    let private validateArguments
+        (kind: CastTypeKind)
+        (precision: int option)
+        (scale: int option)
+        (name: string) =
         if scale.IsSome && precision.IsNone then
             fail $"CAST type '{name}' scale requires a precision."
 
@@ -109,7 +117,11 @@ module private FunctionalCastTypeNormalization =
             if precision.IsSome || scale.IsSome then
                 fail $"CAST type '{name}' does not accept precision/scale in the Core type model."
 
-    let private classify name precision scale source =
+    let private classify
+        (name: string)
+        (precision: int option)
+        (scale: int option)
+        (source: SqlAgentToolType) : CastTypeSpec =
         let kind =
             match name with
             | "BOOL" | "BOOLEAN" -> CastTypeKind.Boolean
@@ -152,29 +164,36 @@ module private FunctionalCastTypeNormalization =
             validateArguments kind precision scale name
             { Kind = kind; Precision = precision; Scale = scale }
 
-    let private boundedPrecision precision max target =
+    let private boundedPrecision
+        (precision: int option)
+        (max: int)
+        (target: SqlAgentToolType) : int option =
         match precision with
         | Some value when value > max ->
             fail $"Temporal precision {value} exceeds target provider {target} maximum {max} for a lossless CAST."
         | _ -> precision
 
-    let private temporal name precision =
+    let private temporal (name: string) (precision: int option) =
         match precision with
         | None -> name
         | Some value -> name + "(" + value.ToString(CultureInfo.InvariantCulture) + ")"
 
-    let private temporalWithZone name precision =
+    let private temporalWithZone (name: string) (precision: int option) =
         match precision with
         | None -> name + " WITH TIME ZONE"
         | Some value -> name + "(" + value.ToString(CultureInfo.InvariantCulture) + ") WITH TIME ZONE"
 
-    let private firebirdTemporal name precision =
+    let private firebirdTemporal (name: string) (precision: int option) =
         match precision with
         | Some value when value > 4 ->
             fail $"Temporal precision {value} exceeds Firebird's four fractional-second digits for a lossless CAST."
         | _ -> name
 
-    let private renderInteger target portableName oracleName source =
+    let private renderInteger
+        (target: SqlAgentToolType)
+        (portableName: string)
+        (oracleName: string)
+        (source: string) =
         match target with
         | SqlAgentToolType.Postgres
         | SqlAgentToolType.MsSqlServer
@@ -184,7 +203,7 @@ module private FunctionalCastTypeNormalization =
         | SqlAgentToolType.Oracle -> oracleName
         | _ -> unsupported target source
 
-    let private renderDecimal spec target source =
+    let private renderDecimal (spec: CastTypeSpec) (target: SqlAgentToolType) (source: string) =
         match spec.Precision with
         | None ->
             match target with
@@ -204,7 +223,11 @@ module private FunctionalCastTypeNormalization =
                 | _ -> "DECIMAL"
             name + suffix
 
-    let private renderString spec target fixedWidth source =
+    let private renderString
+        (spec: CastTypeSpec)
+        (target: SqlAgentToolType)
+        (fixedWidth: bool)
+        (source: string) =
         match fixedWidth, spec.Precision with
         | false, None ->
             match target with
@@ -223,7 +246,7 @@ module private FunctionalCastTypeNormalization =
             | SqlAgentToolType.Firebird -> (if fixedWidth then "CHAR" else "VARCHAR") + $"({length})"
             | _ -> unsupported target source
 
-    let private renderText target source =
+    let private renderText (target: SqlAgentToolType) (source: string) =
         match target with
         | SqlAgentToolType.Postgres -> "TEXT"
         | SqlAgentToolType.MySQL -> "CHAR"
@@ -233,7 +256,7 @@ module private FunctionalCastTypeNormalization =
         | SqlAgentToolType.Firebird -> fail "Text BLOB subtype CAST is not represented by the current Core CAST grammar for Firebird."
         | _ -> unsupported target source
 
-    let private renderBinary spec target source =
+    let private renderBinary (spec: CastTypeSpec) (target: SqlAgentToolType) (source: string) =
         match spec.Precision with
         | None ->
             match target with
@@ -251,7 +274,7 @@ module private FunctionalCastTypeNormalization =
             | SqlAgentToolType.Firebird -> fail "Binary string CAST requires Firebird OCTETS character-set semantics, which are not modeled yet."
             | _ -> unsupported target source
 
-    let private renderBinaryLargeObject target source =
+    let private renderBinaryLargeObject (target: SqlAgentToolType) (source: string) =
         match target with
         | SqlAgentToolType.Postgres -> "BYTEA"
         | SqlAgentToolType.MySQL -> "BINARY"
@@ -261,7 +284,11 @@ module private FunctionalCastTypeNormalization =
         | SqlAgentToolType.MsSqlServer -> "VARBINARY(MAX)"
         | _ -> unsupported target source
 
-    let private renderTime spec target withZone source =
+    let private renderTime
+        (spec: CastTypeSpec)
+        (target: SqlAgentToolType)
+        (withZone: bool)
+        (source: string) =
         if withZone then
             match target with
             | SqlAgentToolType.Postgres -> temporalWithZone "TIME" (boundedPrecision spec.Precision 6 target)
@@ -277,7 +304,11 @@ module private FunctionalCastTypeNormalization =
             | SqlAgentToolType.Firebird -> firebirdTemporal "TIME" spec.Precision
             | _ -> unsupported target source
 
-    let private renderTimestamp spec target withZone source =
+    let private renderTimestamp
+        (spec: CastTypeSpec)
+        (target: SqlAgentToolType)
+        (withZone: bool)
+        (source: string) =
         if withZone then
             match target with
             | SqlAgentToolType.Postgres -> temporalWithZone "TIMESTAMP" (boundedPrecision spec.Precision 6 target)
@@ -297,7 +328,7 @@ module private FunctionalCastTypeNormalization =
             | SqlAgentToolType.Firebird -> firebirdTemporal "TIMESTAMP" spec.Precision
             | _ -> unsupported target source
 
-    let private render spec target source =
+    let private render (spec: CastTypeSpec) (target: SqlAgentToolType) (source: string) =
         match spec.Kind with
         | CastTypeKind.Boolean ->
             match target with
@@ -386,7 +417,10 @@ module private FunctionalCastTypeNormalization =
             | SqlAgentToolType.Firebird -> fail "JSON has no dedicated Firebird CAST target in the current Core model."
             | _ -> unsupported target source
 
-    let normalize typeName sourceDialect targetProvider =
+    let normalize
+        (typeName: string)
+        (sourceDialect: SqlAgentToolType)
+        (targetProvider: SqlAgentToolType) =
         if String.IsNullOrWhiteSpace(typeName) then
             fail "CAST target type cannot be empty."
 
