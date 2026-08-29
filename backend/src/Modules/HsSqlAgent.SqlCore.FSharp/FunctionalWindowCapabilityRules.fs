@@ -66,59 +66,60 @@ type internal SqlWindowCapabilityRules private () =
             let name =
                 SqlWindowCapabilityRules.IdentifierText(functionCall.Name).ToUpperInvariant()
 
-            let contract = SqlCanonicalFunctionRegistry.Find(name)
+            let contract =
+                SqlCanonicalFunctionRegistry.Find(name)
+                |> Option.ofObj
 
             let functionError =
                 match contract with
-                | null -> null
-                | contractValue
+                | Some contractValue
                     when contractValue.TargetCapabilityFamily = SqlCanonicalTargetCapabilityFamily.WindowFunction ->
                     SqlWindowCapabilityRules.FunctionValidationError(name, provider)
-                | _ -> null
+                    |> Option.ofObj
+                | _ -> None
 
-            if not (isNull functionError) then
-                functionError
-            else
+            match functionError with
+            | Some error -> error
+            | None ->
+                let frame = windowed.Window.Frame |> Option.ofObj
+
                 let frameInsensitiveError =
-                    match contract, windowed.Window.Frame with
-                    | contractValue, frame
-                        when not (isNull contractValue)
-                             && not (isNull frame)
-                             && contractValue.IsWindowFrameInsensitive
+                    match contract, frame with
+                    | Some contractValue, Some _
+                        when contractValue.IsWindowFrameInsensitive
                              && (provider = SqlAgentToolType.MsSqlServer
                                  || provider = SqlAgentToolType.Oracle) ->
-                        SqlWindowCapabilityRules.CapabilityError(
-                            provider,
-                            "window.frame." + name.ToLowerInvariant())
-                    | _ -> null
+                        Some(
+                            SqlWindowCapabilityRules.CapabilityError(
+                                provider,
+                                "window.frame." + name.ToLowerInvariant()))
+                    | _ -> None
 
-                if not (isNull frameInsensitiveError) then
-                    frameInsensitiveError
-                else
+                match frameInsensitiveError with
+                | Some error -> error
+                | None ->
                     let orderByError =
                         match contract with
-                        | null -> null
-                        | contractValue
+                        | Some contractValue
                             when provider = SqlAgentToolType.MsSqlServer
                                  && contractValue.Kind = SqlCanonicalFunctionKind.Window
                                  && windowed.Window.OrderBy.IsDefaultOrEmpty ->
-                            SqlWindowCapabilityRules.CapabilityError(provider, "window.order_by")
-                        | _ -> null
+                            Some(SqlWindowCapabilityRules.CapabilityError(provider, "window.order_by"))
+                        | _ -> None
 
-                    if not (isNull orderByError) then
-                        orderByError
-                    else
-                        match windowed.Window.Frame with
-                        | null -> null
-                        | frame
+                    match orderByError with
+                    | Some error -> error
+                    | None ->
+                        match frame with
+                        | Some frameValue
                             when provider = SqlAgentToolType.MsSqlServer
-                                 && frame.Unit = WindowFrameUnitKind.Range ->
+                                 && frameValue.Unit = WindowFrameUnitKind.Range ->
                             let hasEndOffset =
-                                match frame.End with
-                                | null -> false
-                                | endBound -> SqlWindowCapabilityRules.HasOffsetBound(endBound)
+                                match frameValue.End |> Option.ofObj with
+                                | Some endBound -> SqlWindowCapabilityRules.HasOffsetBound(endBound)
+                                | None -> false
 
-                            if SqlWindowCapabilityRules.HasOffsetBound(frame.Start) || hasEndOffset then
+                            if SqlWindowCapabilityRules.HasOffsetBound(frameValue.Start) || hasEndOffset then
                                 SqlWindowCapabilityRules.CapabilityError(provider, "window.range_offset")
                             else
                                 null
