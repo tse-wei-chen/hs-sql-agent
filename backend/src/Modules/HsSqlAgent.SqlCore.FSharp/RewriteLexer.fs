@@ -24,7 +24,10 @@ module internal RewriteLexer =
         set [ "SELECT"; "DISTINCT"; "FROM"; "WHERE"; "AS"; "AND"; "OR"; "NOT"; "NULL"; "TRUE"; "FALSE"
               "GROUP"; "BY"; "HAVING"; "ORDER"; "ASC"; "DESC"; "LIMIT"; "OFFSET"; "INNER"; "LEFT"; "RIGHT"
               "FULL"; "CROSS"; "JOIN"; "ON"; "LIKE"; "ILIKE"; "IS"; "IN"; "BETWEEN"; "INSERT"; "INTO"
-              "VALUES"; "UPDATE"; "SET"; "DELETE"; "RETURNING"; "DEFAULT" ]
+              "VALUES"; "UPDATE"; "SET"; "DELETE"; "RETURNING"; "DEFAULT"; "UNION"; "ALL"; "INTERSECT"
+              "EXCEPT"; "NULLS"; "FIRST"; "LAST"; "ROWS"; "ROW"; "FETCH"; "NEXT"; "ONLY"; "TOP"; "WITH"
+              "CASE"; "WHEN"; "THEN"; "ELSE"; "END"; "CAST"; "EXTRACT"; "DATE"; "TIME"; "TIMESTAMP"
+              "INTERVAL"; "USING"; "CONFLICT"; "DO"; "NOTHING" ]
 
     let private isIdentifierStart c = Char.IsLetter(c) || c = '_'
     let private isIdentifierPart c = Char.IsLetterOrDigit(c) || c = '_' || c = '$'
