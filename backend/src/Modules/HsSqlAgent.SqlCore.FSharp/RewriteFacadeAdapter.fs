@@ -22,13 +22,18 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> Provider.Firebird
         | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
 
+    let private clrParameterValue (value: obj | null) : obj | null =
+        match value with
+        | :? int64 as integer when integer >= int64 Int32.MinValue && integer <= int64 Int32.MaxValue -> box (int integer)
+        | _ -> value
+
     let private parameters targetProvider (values: (obj | null) list) =
         let prefix =
             match targetProvider with
             | SqlAgentToolType.Oracle -> ":p"
             | _ -> "@p"
         values
-        |> List.mapi (fun index value -> SqlParameterValue(prefix + string index, value))
+        |> List.mapi (fun index value -> SqlParameterValue(prefix + string index, clrParameterValue value))
         |> ImmutableArray.CreateRange
 
     let private statementKind (sql: string) =
