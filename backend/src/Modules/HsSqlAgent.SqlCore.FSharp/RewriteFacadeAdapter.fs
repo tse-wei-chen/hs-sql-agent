@@ -8,12 +8,10 @@ open HsSqlAgent.SqlCore.Core.Execution
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
-open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
 
-/// CLR boundary adapter. The rewrite compiler remains independent of compatibility AST types.
-/// Keep all legacy enum/DTO conversion here so rewrite internals stay closed and F#-native.
+/// CLR boundary adapter. SQL text crosses into the closed F# DU exactly once here.
 module internal RewriteFacadeAdapter =
 
     let private provider = function
@@ -25,37 +23,20 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> Provider.Firebird
         | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
 
-    let private clrParameterValue (value: obj | null) : obj | null =
-        match value with
-        | :? int64 as integer when integer >= int64 Int32.MinValue && integer <= int64 Int32.MaxValue -> box (int integer)
-        | _ -> value
+    let private sourceDialect = function
+        | SqlAgentToolType.Postgres -> RewriteParser.SourceDialect.PostgreSql
+        | SqlAgentToolType.MySQL -> RewriteParser.SourceDialect.MySql
+        | SqlAgentToolType.MsSqlServer -> RewriteParser.SourceDialect.SqlServer
+        | SqlAgentToolType.Sqlite -> RewriteParser.SourceDialect.SQLite
+        | SqlAgentToolType.Oracle -> RewriteParser.SourceDialect.Oracle
+        | SqlAgentToolType.Firebird -> RewriteParser.SourceDialect.Firebird
+        | value -> invalidArg "sourceDialect" ("Unsupported source dialect '" + string value + "'.")
 
     let private parameters targetProvider (values: (obj | null) list) =
-        let prefix =
-            match targetProvider with
-            | SqlAgentToolType.Oracle -> ":p"
-            | _ -> "@p"
+        let prefix = if targetProvider = SqlAgentToolType.Oracle then ":p" else "@p"
         values
-        |> List.mapi (fun index value -> SqlParameterValue(prefix + string index, clrParameterValue value))
+        |> List.mapi (fun index value -> SqlParameterValue(prefix + string index, value))
         |> ImmutableArray.CreateRange
-
-    let private statementKind (sql: string) =
-        match RewriteLexer.tokenize sql with
-        | { Kind = Keyword "SELECT" } :: _
-        | { Kind = Keyword "WITH" } :: _ -> SqlStatementKind.Query
-        | { Kind = Keyword "INSERT" } :: _ -> SqlStatementKind.Insert
-        | { Kind = Keyword "UPDATE" } :: _ -> SqlStatementKind.Update
-        | { Kind = Keyword "DELETE" } :: _ -> SqlStatementKind.Delete
-        | token :: _ -> invalidArg "sql" ("Unsupported SQL statement at offset " + string token.Start + ".")
-        | [] -> invalidArg "sql" "SQL text cannot be empty."
-
-    let private shouldSurfaceAsCompilationError (message: string) =
-        message.Contains("requires provider-specific lowering", StringComparison.Ordinal)
-        || message.Contains("requires lowering for this provider", StringComparison.Ordinal)
-        || message.Contains("requires provider lowering", StringComparison.Ordinal)
-        || message.Contains("lowering is not available", StringComparison.Ordinal)
-        || message.Contains("OFFSET requires ORDER BY", StringComparison.Ordinal)
-        || message.Contains("RETURNING is not supported", StringComparison.Ordinal)
 
     let private allowedTables (tables: IReadOnlySet<string> | null) =
         match tables with
@@ -63,56 +44,64 @@ module internal RewriteFacadeAdapter =
         | values when values.Count = 0 -> None
         | values -> Some(values |> Seq.toList)
 
-    let private compileRewrite options sql =
-        try
-            RewritePipeline.compile options sql
-        with
-        | :? SqlCompilationException -> reraise()
-        | :? ArgumentException as ex -> raise (SqlCompilationException(ex.Message, ex))
-        | :? InvalidOperationException as ex when shouldSurfaceAsCompilationError ex.Message -> raise (SqlCompilationException(ex.Message, ex))
-
-    let private compile (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (policy: ExecutionPolicy) allowed =
-        if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        let kind = statementKind sql
-        let rendered =
-            compileRewrite
-                { Provider = provider targetProvider
-                  Policy = policy
-                  AllowedTables = allowed }
-                sql
-        let parameterValues = parameters targetProvider rendered.Parameters
-        let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, targetProvider)
-        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-        CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, targetProvider)
-
     let private queryPolicy queryMaxRows =
         let queryRows =
             if queryMaxRows <= 0 then RowCap.Unlimited
             else RowCap.MaxRows(PositiveRowCount.create queryMaxRows)
         { RewritePolicy.safeDefaults with QueryRows = queryRows }
 
-    let compileQuery (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (queryMaxRows: int) =
-        let command = compile sql targetProvider policyVersion (queryPolicy queryMaxRows) None
-        if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
-        command
+    let private compilationErrorMessage (message: string) =
+        message.StartsWith("INSERT ", StringComparison.Ordinal)
+        || message.StartsWith("CTE ", StringComparison.Ordinal)
+        || message.StartsWith("Wildcard projection", StringComparison.Ordinal)
+        || message.StartsWith("DISTINCT aggregate", StringComparison.Ordinal)
+        || message.StartsWith("ORDER BY alias", StringComparison.Ordinal)
+        || message.Contains("not supported by the target provider", StringComparison.Ordinal)
+        || message.Contains("requires provider", StringComparison.Ordinal)
+        || message.Contains("cannot be safely lowered", StringComparison.Ordinal)
+        || message.Contains("Pagination requires", StringComparison.Ordinal)
+        || message.Contains("OFFSET pagination", StringComparison.Ordinal)
 
-    let compileQueryValidated (sql: string) (targetProvider: SqlAgentToolType) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
+    let private run options sql =
+        try RewritePipeline.compile options sql
+        with
+        | :? UnauthorizedAccessException -> reraise()
+        | :? SqlCompilationException -> reraise()
+        | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
+            raise (SqlCompilationException(ex.Message, ex))
+
+    let private compile source target policyVersion policy allowed sql =
+        if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
+        let rendered =
+            run
+                { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
+                  Provider = provider target
+                  Policy = policy
+                  AllowedTables = allowed }
+                sql
+        let parameterValues = parameters target rendered.Parameters
+        let trimmed = sql.TrimStart()
+        let kind =
+            if trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Query
+            elif trimmed.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("UPDATE OR INSERT", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Insert
+            elif trimmed.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Update
+            elif trimmed.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Delete
+            else invalidArg "sql" "Unsupported SQL statement."
+        let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, target, ReturnsRows = rendered.ReturnsRows)
+        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+        CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
+
+    let compileQueryValidated sql source target (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command =
-            compile sql targetProvider validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables)
+        let command = compile source target validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
-    let compileDml (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) =
-        let command = compile sql targetProvider policyVersion RewritePolicy.safeDefaults None
-        if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
-        command
-
-    let compileDmlValidated (sql: string) (targetProvider: SqlAgentToolType) (validationContext: SqlPlanValidationContext) =
+    let compileDmlValidated sql source target (validationContext: SqlPlanValidationContext) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile sql targetProvider validationContext.PolicyVersion RewritePolicy.safeDefaults (allowedTables validationContext.AllowedTables)
+        let command = compile source target validationContext.PolicyVersion RewritePolicy.safeDefaults (allowedTables validationContext.AllowedTables) sql
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command

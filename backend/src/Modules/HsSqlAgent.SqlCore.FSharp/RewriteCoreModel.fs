@@ -27,6 +27,7 @@ module internal CoreModel =
             | values -> Identifier values
 
         let parts (Identifier parts) = parts
+        let text identifier = identifier |> parts |> List.map (fun part -> part.Value) |> String.concat "."
 
     type NonEmpty<'T> = private NonEmpty of head: 'T * tail: 'T list
 
@@ -39,6 +40,7 @@ module internal CoreModel =
         let toList (NonEmpty(head, tail)) = head :: tail
         let map mapping (NonEmpty(head, tail)) = NonEmpty(mapping head, tail |> List.map mapping)
         let iter action values = values |> toList |> List.iter action
+        let length values = values |> toList |> List.length
 
     type NonNegativeRowCount = private NonNegativeRowCount of int
 
@@ -61,7 +63,7 @@ module internal CoreModel =
     type BinaryOperator =
         | Add | Subtract | Multiply | Divide | Modulo | Concat
         | Equal | NotEqual | GreaterThan | LessThan | GreaterThanOrEqual | LessThanOrEqual
-        | Like | ILike | And | Or
+        | And | Or
 
     type JoinKind = Inner | Left | Right | Full | Cross
     type OnJoinKind = Inner | Left | Right | Full
@@ -140,19 +142,34 @@ module internal CoreModel =
             FunctionName value
         let value (FunctionName value) = value
 
+    type ExtractField = private ExtractField of string
+
+    module ExtractField =
+        let private allowed = set [ "YEAR"; "MONTH"; "DAY"; "HOUR"; "MINUTE"; "SECOND"; "DOW"; "DOY"; "WEEK"; "QUARTER" ]
+        let create value =
+            let upper = value.ToUpperInvariant()
+            if not (allowed.Contains upper) then invalidArg (nameof value) ("Unsupported EXTRACT field '" + value + "'.")
+            ExtractField upper
+        let value (ExtractField value) = value
+
     type Expr =
         | Column of Identifier
+        | Wildcard of Identifier option
+        | OrderOrdinal of PositiveRowCount
         | Literal of ScalarValue
         | Interval of IntervalLiteral
         | Unary of UnaryOperator * Expr
         | Binary of BinaryOperator * Expr * Expr
+        | Like of value: Expr * pattern: Expr * escape: Expr option * negated: bool * caseInsensitive: bool
         | FunctionCall of FunctionCall
         | FilteredAggregate of Expr * Expr
         | Windowed of Expr * WindowSpec
         | Cast of Expr * CastType
+        | Extract of ExtractField * Expr
         | SimpleCase of Expr * NonEmpty<SimpleCaseBranch> * Expr option
         | SearchedCase of NonEmpty<SearchedCaseBranch> * Expr option
         | InList of Expr * NonEmpty<Expr> * bool
+        | InSubquery of Expr * Query * bool
         | Between of Expr * Expr * Expr * bool
         | IsNull of Expr * bool
         | ScalarSubquery of Query
@@ -169,8 +186,14 @@ module internal CoreModel =
     and OrderBy = { Expression: Expr; Descending: bool; NullOrdering: NullOrdering }
     and SelectItem = { Expression: Expr; Alias: IdentifierPart option }
 
+    and Cte =
+        { Name: IdentifierPart
+          ColumnAliases: IdentifierPart list
+          Query: Query }
+
     and TableSource =
         | NamedTable of Identifier * IdentifierPart option
+        | CteTable of Identifier * IdentifierPart option
         | DerivedTable of Query * IdentifierPart
 
     and Join =
@@ -189,7 +212,8 @@ module internal CoreModel =
             match this with CrossJoin _ -> None | OnJoin(_, _, predicate) -> Some predicate
 
     and Select =
-        { Distinct: bool
+        { Ctes: Cte list
+          Distinct: bool
           ProjectionItems: NonEmpty<SelectItem>
           From: TableSource option
           Joins: Join list
@@ -209,6 +233,18 @@ module internal CoreModel =
 
     type Assignment = { Target: Identifier; Value: Expr }
 
+    type ConflictAssignment =
+        { Target: Identifier
+          Proposed: Identifier }
+
+    type InsertConflictAction =
+        | DoNothing
+        | UpdateProposedValues of NonEmpty<ConflictAssignment>
+
+    type InsertConflict =
+        { TargetColumns: NonEmpty<Identifier>
+          Action: InsertConflictAction }
+
     type InsertInput =
         | Values of NonEmpty<NonEmpty<Expr>>
         | QuerySource of Query
@@ -218,6 +254,7 @@ module internal CoreModel =
         { Target: Identifier
           Columns: IdentifierPart list
           Input: InsertInput
+          Conflict: InsertConflict option
           Returning: SelectItem list }
         member this.Rows =
             match this.Input with
@@ -231,11 +268,16 @@ module internal CoreModel =
     type Update =
         { Target: Identifier
           AssignmentItems: NonEmpty<Assignment>
+          From: TableSource list
           Where: Expr option
           Returning: SelectItem list }
         member this.Assignments = NonEmpty.toList this.AssignmentItems
 
-    type Delete = { Target: Identifier; Where: Expr option; Returning: SelectItem list }
+    type Delete =
+        { Target: Identifier
+          Using: TableSource list
+          Where: Expr option
+          Returning: SelectItem list }
 
     type Statement =
         | QueryStatement of Query

@@ -23,16 +23,19 @@ module internal RewriteLexer =
     let private keywords =
         set [ "SELECT"; "DISTINCT"; "FROM"; "WHERE"; "AS"; "AND"; "OR"; "NOT"; "NULL"; "TRUE"; "FALSE"
               "GROUP"; "BY"; "HAVING"; "ORDER"; "ASC"; "DESC"; "LIMIT"; "OFFSET"; "INNER"; "LEFT"; "RIGHT"
-              "FULL"; "CROSS"; "JOIN"; "ON"; "LIKE"; "ILIKE"; "IS"; "IN"; "BETWEEN"; "INSERT"; "INTO"
+              "FULL"; "CROSS"; "JOIN"; "ON"; "LIKE"; "ILIKE"; "ESCAPE"; "IS"; "IN"; "BETWEEN"; "INSERT"; "INTO"
               "VALUES"; "UPDATE"; "SET"; "DELETE"; "RETURNING"; "DEFAULT"; "UNION"; "ALL"; "INTERSECT"
               "EXCEPT"; "NULLS"; "FIRST"; "LAST"; "ROWS"; "ROW"; "FETCH"; "NEXT"; "ONLY"; "TOP"; "WITH"
-              "CASE"; "WHEN"; "THEN"; "ELSE"; "END"; "CAST"; "EXTRACT"; "DATE"; "TIME"; "TIMESTAMP"
-              "INTERVAL"; "USING"; "CONFLICT"; "DO"; "NOTHING" ]
+              "RECURSIVE"; "CASE"; "WHEN"; "THEN"; "ELSE"; "END"; "CAST"; "EXTRACT"; "DATE"; "TIME"; "TIMESTAMP"
+              "INTERVAL"; "USING"; "CONFLICT"; "DO"; "NOTHING"; "EXCLUDED"; "MATCHING"; "DUPLICATE"; "KEY"
+              "FILTER"; "OVER"; "PARTITION"; "RANGE"; "UNBOUNDED"; "PRECEDING"; "FOLLOWING"; "CURRENT"
+              "SEPARATOR"; "WITHIN" ]
 
     let private isIdentifierStart c = Char.IsLetter(c) || c = '_'
     let private isIdentifierPart c = Char.IsLetterOrDigit(c) || c = '_' || c = '$'
 
     let tokenize (sql: string) =
+        if isNull sql then nullArg "sql"
         let length = sql.Length
         let tokens = ResizeArray<Token>()
         let mutable i = 0
@@ -96,14 +99,12 @@ module internal RewriteLexer =
             elif Char.IsDigit(c) then
                 let start = i
                 let mutable hasDot = false
-                while i < length && (Char.IsDigit(sql[i]) || (sql[i] = '.' && not hasDot)) do
+                while i < length && (Char.IsDigit(sql[i]) || (sql[i] = '.' && not hasDot && i + 1 < length && Char.IsDigit(sql[i + 1]))) do
                     if sql[i] = '.' then hasDot <- true
                     i <- i + 1
                 let text = sql.Substring(start, i - start)
-                if hasDot then
-                    add (DecimalLiteral(Decimal.Parse(text, CultureInfo.InvariantCulture))) start i
-                else
-                    add (IntegerLiteral(Int64.Parse(text, CultureInfo.InvariantCulture))) start i
+                if hasDot then add (DecimalLiteral(Decimal.Parse(text, CultureInfo.InvariantCulture))) start i
+                else add (IntegerLiteral(Int64.Parse(text, CultureInfo.InvariantCulture))) start i
             elif isIdentifierStart c then
                 let start = i
                 i <- i + 1
@@ -115,7 +116,7 @@ module internal RewriteLexer =
             elif i + 1 < length then
                 let pair = sql.Substring(i, 2)
                 match pair with
-                | "<>" | "!=" | ">=" | "<=" | "||" ->
+                | "<>" | "!=" | ">=" | "<=" | "||" | "::" ->
                     add (Operator pair) i (i + 2)
                     i <- i + 2
                 | _ ->
