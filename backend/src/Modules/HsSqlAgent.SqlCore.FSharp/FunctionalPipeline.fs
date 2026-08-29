@@ -171,9 +171,9 @@ module internal FunctionalPipeline =
         (ValidatedQuery(context, validated)) =
 
         let policyApplied =
-            CoreSqlExecutionPolicyRewriter().Rewrite(
-                validated,
-                executionPolicy)
+            FunctionalExecutionPolicyRewriter.rewrite
+                validated
+                executionPolicy
 
         let profiled =
             FunctionalProviderProfileRewriter.rewrite
@@ -182,7 +182,7 @@ module internal FunctionalPipeline =
                 context.TargetProfile
 
         let scoped =
-            CoreRootCteSetTailRewriter.Rewrite(profiled)
+            FunctionalRootCteSetTailRewriter.rewrite profiled
 
         let executable =
             ExecutableSqlPlan(

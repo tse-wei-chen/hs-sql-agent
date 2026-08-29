@@ -33,6 +33,8 @@
     <Compile Include="FunctionalNullOrderingRewriter.fs" />
     <Compile Include="FunctionalSqlPlanValidator.fs" />
     <Compile Include="FunctionalDmlPlanValidator.fs" />
+    <Compile Include="FunctionalExecutionPolicyRewriter.fs" />
+    <Compile Include="FunctionalRootCteSetTailRewriter.fs" />
     <Compile Include="FunctionalPipeline.fs" />
     <Compile Include="Facade.fs" />
   </ItemGroup>
