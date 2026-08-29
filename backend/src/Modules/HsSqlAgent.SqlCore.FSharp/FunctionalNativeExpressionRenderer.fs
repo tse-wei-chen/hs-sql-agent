@@ -74,10 +74,10 @@ module internal FunctionalNativeExpressionRenderer =
     let private renderWindowBound (bound: WindowFrameBoundCore) =
         match bound.Kind with
         | WindowFrameBoundKindCore.UnboundedPreceding -> "UNBOUNDED PRECEDING"
-        | WindowFrameBoundKindCore.Preceding when bound.Offset.HasValue && bound.Offset.Value >= 0L ->
+        | WindowFrameBoundKindCore.Preceding when bound.Offset.HasValue && bound.Offset.Value >= 0 ->
             string bound.Offset.Value + " PRECEDING"
         | WindowFrameBoundKindCore.CurrentRow -> "CURRENT ROW"
-        | WindowFrameBoundKindCore.Following when bound.Offset.HasValue && bound.Offset.Value >= 0L ->
+        | WindowFrameBoundKindCore.Following when bound.Offset.HasValue && bound.Offset.Value >= 0 ->
             string bound.Offset.Value + " FOLLOWING"
         | WindowFrameBoundKindCore.UnboundedFollowing -> "UNBOUNDED FOLLOWING"
         | _ ->
