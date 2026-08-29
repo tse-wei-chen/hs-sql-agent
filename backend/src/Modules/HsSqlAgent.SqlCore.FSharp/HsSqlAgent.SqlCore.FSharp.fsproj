@@ -26,6 +26,7 @@
     <Compile Include="RewritePolicy.fs" />
     <Compile Include="RewriteRenderer.fs" />
     <Compile Include="RewritePipeline.fs" />
+    <Compile Include="RewriteFacadeAdapter.fs" />
     <Compile Include="FunctionalAst.fs" />
     <Compile Include="FunctionalTokenReader.fs" />
     <Compile Include="FunctionalDmlConflictParser.fs" />
