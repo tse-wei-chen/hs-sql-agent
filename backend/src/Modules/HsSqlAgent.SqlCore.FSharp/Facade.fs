@@ -59,16 +59,16 @@ module private FacadeCompile =
     let private containsIgnoreCase (needle: string) (text: string) =
         text.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
 
-    /// Keep the first production DU lane intentionally narrow. Each excluded grammar family is
-    /// widened only after its rewrite parser/lowering/diagnostic parity is covered by tests.
+    /// Production DU eligibility is widened only after each grammar/lowering family reaches parity.
+    /// Qualified columns and joins are now admitted because binder diagnostics and join scope rules
+    /// are represented directly in the closed F# model.
     let private rewriteEligible (sql: string) (executionPolicy: SqlExecutionPlanPolicy) =
         let excluded =
-            [ " UNION "; " INTERSECT "; " EXCEPT "; " JOIN "; " ORDER "; " GROUP "; " HAVING "
+            [ " UNION "; " INTERSECT "; " EXCEPT "; " ORDER "; " GROUP "; " HAVING "
               " LIMIT "; " OFFSET "; " FETCH "; " TOP "; " CASE "; " CAST"; " DATE "; " TIME "
               " TIMESTAMP "; " INTERVAL "; " EXISTS "; " IN "; " BETWEEN "; " LIKE "; " ILIKE "
               " DISTINCT "; " AS "; " WITH " ]
         executionPolicy.QueryMaxRows = 0
-        && not (sql.Contains('.', StringComparison.Ordinal))
         && not (sql.Contains('(', StringComparison.Ordinal))
         && not (sql.Contains(')', StringComparison.Ordinal))
         && (excluded |> List.exists (fun token -> containsIgnoreCase token sql) |> not)

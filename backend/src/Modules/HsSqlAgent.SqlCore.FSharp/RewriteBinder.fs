@@ -6,8 +6,14 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 module internal RewriteBinder =
 
-    type private SourceBinding = { Qualifiers: string list }
-    type private Scope = { Parent: Scope option; Sources: SourceBinding list }
+    type private SourceBinding =
+        { Qualifiers: string list
+          Alias: string option }
+
+    type private Scope =
+        { Id: int
+          Parent: Scope option
+          Sources: SourceBinding list }
 
     let private identifierParts (identifier: Identifier) = Identifier.parts identifier
     let private identifierText (identifier: Identifier) = identifierParts identifier |> List.map (fun (part: IdentifierPart) -> part.Value) |> String.concat "."
@@ -16,7 +22,13 @@ module internal RewriteBinder =
 
     let rec private qualifierExists qualifier (scope: Scope) =
         if scope.Sources |> List.exists (containsQualifier qualifier) then true
-        else match scope.Parent with Some parent -> qualifierExists qualifier parent | None -> false
+        else
+            match scope.Parent with
+            | Some parent -> qualifierExists qualifier parent
+            | None -> false
+
+    let private scopeId parentScope =
+        parentScope |> Option.map (fun (scope: Scope) -> scope.Id + 1) |> Option.defaultValue 0
 
     let private sourceBinding (source: TableSource) : SourceBinding =
         match source with
@@ -29,21 +41,29 @@ module internal RewriteBinder =
                 | Some value -> [ value.Value ]
                 | None when equalsName tableTail fullName -> [ tableTail ]
                 | None -> [ tableTail; fullName ]
-            { Qualifiers = qualifiers }
-        | DerivedTable(_, alias) -> { Qualifiers = [ alias.Value ] }
+            { Qualifiers = qualifiers
+              Alias = alias |> Option.map (fun value -> value.Value) }
+        | DerivedTable(_, alias) ->
+            { Qualifiers = [ alias.Value ]
+              Alias = Some alias.Value }
 
-    let private ensureDistinctSources (sources: SourceBinding list) =
-        let qualifiers = sources |> List.collect (fun source -> source.Qualifiers)
-        qualifiers |> List.iteri (fun index qualifier ->
-            qualifiers |> List.skip (index + 1) |> List.tryFind (equalsName qualifier)
-            |> Option.iter (fun _ -> invalidOp ("Duplicate table qualifier '" + qualifier + "' in SQL scope.")))
+    let private ensureDistinctAliases (scope: Scope) =
+        let aliases = scope.Sources |> List.choose (fun source -> source.Alias)
+        aliases
+        |> List.iteri (fun index alias ->
+            aliases
+            |> List.skip (index + 1)
+            |> List.tryFind (equalsName alias)
+            |> Option.iter (fun _ -> invalidOp ("Duplicate table alias '" + alias + "' in SQL scope " + string scope.Id + ".")))
 
     let private bindColumn (scope: Scope) (identifier: Identifier) : Identifier =
         match identifierParts identifier with
         | [] -> invalidOp "Column identifier cannot be empty."
         | [ _ ] -> identifier
-        | qualifier :: _ ->
-            if not (qualifierExists qualifier.Value scope) then invalidOp ("Unknown table qualifier '" + qualifier.Value + "'.")
+        | parts ->
+            let qualifier = parts |> List.take (parts.Length - 1) |> List.map (fun part -> part.Value) |> String.concat "."
+            if not (qualifierExists qualifier scope) then
+                invalidOp ("Column '" + identifierText identifier + "' references unknown table/alias qualifier '" + qualifier + "'.")
             identifier
 
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
@@ -66,47 +86,74 @@ module internal RewriteBinder =
         | ScalarSubquery query -> ScalarSubquery(bindQuery (Some scope) query)
         | Exists(query, negated) -> Exists(bindQuery (Some scope) query, negated)
 
-    and private bindOrderBy (scope: Scope) (orderBy: OrderBy) : OrderBy = { orderBy with Expression = bindExpr scope orderBy.Expression }
-    and private bindWindow (scope: Scope) (window: WindowSpec) : WindowSpec = { window with PartitionBy = window.PartitionBy |> List.map (bindExpr scope); OrderBy = window.OrderBy |> List.map (bindOrderBy scope) }
-    and private bindTableSource (parentScope: Scope option) (source: TableSource) : TableSource = match source with NamedTable _ -> source | DerivedTable(query, alias) -> DerivedTable(bindQuery parentScope query, alias)
+    and private bindOrderBy (scope: Scope) (orderBy: OrderBy) : OrderBy =
+        { orderBy with Expression = bindExpr scope orderBy.Expression }
+
+    and private bindWindow (scope: Scope) (window: WindowSpec) : WindowSpec =
+        { window with
+            PartitionBy = window.PartitionBy |> List.map (bindExpr scope)
+            OrderBy = window.OrderBy |> List.map (bindOrderBy scope) }
+
+    and private bindTableSource (parentScope: Scope option) (source: TableSource) : TableSource =
+        match source with
+        | NamedTable _ -> source
+        | DerivedTable(query, alias) -> DerivedTable(bindQuery parentScope query, alias)
 
     and private bindJoin (scope: Scope) (join: Join) : Join * Scope =
         let source = bindTableSource (Some scope) join.Source
         let binding = sourceBinding source
         let extended = { scope with Sources = scope.Sources @ [ binding ] }
-        ensureDistinctSources extended.Sources
-        let boundJoin = match join with CrossJoin _ -> CrossJoin source | OnJoin(kind, _, predicate) -> OnJoin(kind, source, bindExpr extended predicate)
+        ensureDistinctAliases extended
+        let boundJoin =
+            match join with
+            | CrossJoin _ -> CrossJoin source
+            | OnJoin(kind, _, predicate) -> OnJoin(kind, source, bindExpr extended predicate)
         boundJoin, extended
 
     and private bindSelect (parentScope: Scope option) (select: Select) : Select * Scope =
         let from = select.From |> Option.map (bindTableSource parentScope)
         let initialSources = from |> Option.map sourceBinding |> Option.toList
-        ensureDistinctSources initialSources
-        let initialScope : Scope = { Parent = parentScope; Sources = initialSources }
-        let joins, scope = (([], initialScope), select.Joins) ||> List.fold (fun (boundJoins: Join list, currentScope: Scope) (join: Join) -> let boundJoin, nextScope = bindJoin currentScope join in boundJoins @ [ boundJoin ], nextScope)
+        let initialScope : Scope = { Id = scopeId parentScope; Parent = parentScope; Sources = initialSources }
+        ensureDistinctAliases initialScope
+        let joins, scope =
+            (([], initialScope), select.Joins)
+            ||> List.fold (fun (boundJoins: Join list, currentScope: Scope) (join: Join) ->
+                let boundJoin, nextScope = bindJoin currentScope join
+                boundJoins @ [ boundJoin ], nextScope)
         let projectionItems = select.ProjectionItems |> NonEmpty.map (fun (item: SelectItem) -> { item with Expression = bindExpr scope item.Expression })
-        { select with From = from; Joins = joins; ProjectionItems = projectionItems; Where = select.Where |> Option.map (bindExpr scope); GroupBy = select.GroupBy |> List.map (bindExpr scope); Having = select.Having |> Option.map (bindExpr scope) }, scope
+        { select with
+            From = from
+            Joins = joins
+            ProjectionItems = projectionItems
+            Where = select.Where |> Option.map (bindExpr scope)
+            GroupBy = select.GroupBy |> List.map (bindExpr scope)
+            Having = select.Having |> Option.map (bindExpr scope) }, scope
 
     and private bindQuery (parentScope: Scope option) (query: Query) : Query =
         let head, headScope = bindSelect parentScope query.Head
         let setOperations = query.SetOperations |> List.map (fun (branch: SetBranch) -> { branch with Query = bindQuery parentScope branch.Query })
         { query with Head = head; SetOperations = setOperations; OrderBy = query.OrderBy |> List.map (bindOrderBy headScope) }
 
-    let private bindAssignment (scope: Scope) (assignment: Assignment) : Assignment = { assignment with Value = bindExpr scope assignment.Value }
+    let private bindAssignment (scope: Scope) (assignment: Assignment) : Assignment =
+        { assignment with Value = bindExpr scope assignment.Value }
 
     let private bindDocument (document: Document) : Document =
         let statement =
             match document.Statement with
             | QueryStatement query -> QueryStatement(bindQuery None query)
             | InsertStatement insert ->
-                let emptyScope : Scope = { Parent = None; Sources = [] }
-                let input = match insert.Input with Values rows -> rows |> NonEmpty.map (NonEmpty.map (bindExpr emptyScope)) |> Values | QuerySource query -> QuerySource(bindQuery None query) | DefaultValues -> DefaultValues
+                let emptyScope : Scope = { Id = 0; Parent = None; Sources = [] }
+                let input =
+                    match insert.Input with
+                    | Values rows -> rows |> NonEmpty.map (NonEmpty.map (bindExpr emptyScope)) |> Values
+                    | QuerySource query -> QuerySource(bindQuery None query)
+                    | DefaultValues -> DefaultValues
                 InsertStatement { insert with Input = input }
             | UpdateStatement update ->
-                let scope : Scope = { Parent = None; Sources = [ sourceBinding (NamedTable(update.Target, None)) ] }
+                let scope : Scope = { Id = 0; Parent = None; Sources = [ sourceBinding (NamedTable(update.Target, None)) ] }
                 UpdateStatement { update with AssignmentItems = update.AssignmentItems |> NonEmpty.map (bindAssignment scope); Where = update.Where |> Option.map (bindExpr scope) }
             | DeleteStatement delete ->
-                let scope : Scope = { Parent = None; Sources = [ sourceBinding (NamedTable(delete.Target, None)) ] }
+                let scope : Scope = { Id = 0; Parent = None; Sources = [ sourceBinding (NamedTable(delete.Target, None)) ] }
                 DeleteStatement { delete with Where = delete.Where |> Option.map (bindExpr scope) }
         { document with Statement = statement }
 
