@@ -150,9 +150,11 @@ module internal FunctionalNativeExpressionRenderer =
         if renderer.Provider = SqlAgentToolType.Oracle
            || renderer.Provider = SqlAgentToolType.MsSqlServer then
             match expression with
-            | :? LiteralExpr as literal when literal.Value :? bool ->
-                let value = unbox<bool> literal.Value
-                NativeSqlFragment((if value then "(1 = 1)" else "(1 = 0)"), emptyBindings)
+            | :? LiteralExpr as literal ->
+                match literal.Value with
+                | :? bool as value ->
+                    NativeSqlFragment((if value then "(1 = 1)" else "(1 = 0)"), emptyBindings)
+                | _ -> render renderer renderSubquery expression
 
             | :? UnaryExpr as unary when unary.Operator = "NOT" ->
                 let operand = renderPredicate renderer renderSubquery unary.Operand
