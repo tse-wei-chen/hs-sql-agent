@@ -47,14 +47,21 @@ module private FunctionalDmlConflictSqlRewriter =
         | null -> ()
         | error -> raise (SqlCompilationException(error))
 
+    let private requireInsertSelectAssurance (assurance: DmlConflictTargetAssurance | null) =
+        match assurance with
+        | null ->
+            raise (SqlCompilationException(
+                "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target."))
+        | value when value.SourceRowsUniqueByInsertColumns.IsDefaultOrEmpty ->
+            raise (SqlCompilationException(
+                "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target."))
+        | value -> value
+
     let private validateInsertSelectUpdateAssurance
         (conflict: InsertConflictClause)
         (assurance: DmlConflictTargetAssurance | null) =
 
-        if isNull assurance || assurance.SourceRowsUniqueByInsertColumns.IsDefaultOrEmpty then
-            raise (SqlCompilationException(
-                "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target."))
-
+        let assurance = requireInsertSelectAssurance assurance
         let target = identifierSet conflict.TargetColumns
         let proven = stringSet assurance.SourceRowsUniqueByInsertColumns
         if target.Count <> conflict.TargetColumns.Length
@@ -129,13 +136,21 @@ module private FunctionalDmlConflictSqlRewriter =
                     raise (SqlCompilationException(
                         $"Proposed-row column '{proposed}' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values."))
 
+    let private requireMySqlAssurance (assurance: DmlConflictTargetAssurance | null) =
+        match assurance with
+        | null ->
+            raise (SqlCompilationException(
+                "MySQL ON DUPLICATE KEY UPDATE requires metadata-backed statement assurance proving the explicit conflict target matches a complete enforced unique key and is the sole enforced native conflict source."))
+        | value when value.MatchedUniqueKeyColumns.IsDefaultOrEmpty ->
+            raise (SqlCompilationException(
+                "MySQL ON DUPLICATE KEY UPDATE requires metadata-backed statement assurance proving the explicit conflict target matches a complete enforced unique key and is the sole enforced native conflict source."))
+        | value -> value
+
     let private validateMySqlUniqueKeyTarget
         (conflict: InsertConflictClause)
         (assurance: DmlConflictTargetAssurance | null) =
 
-        if isNull assurance || assurance.MatchedUniqueKeyColumns.IsDefaultOrEmpty then
-            raise (SqlCompilationException(
-                "MySQL ON DUPLICATE KEY UPDATE requires metadata-backed statement assurance proving the explicit conflict target matches a complete enforced unique key and is the sole enforced native conflict source."))
+        let assurance = requireMySqlAssurance assurance
         if not assurance.IsSoleEnforcedUniqueKey then
             raise (SqlCompilationException(
                 "MySQL ON DUPLICATE KEY UPDATE can react to any UNIQUE or PRIMARY KEY conflict. Core requires the matched conflict target to be the sole enforced native unique-conflict source, including no additional richer expression, prefix, partial, or otherwise unsupported enforced unique keys."))
@@ -156,14 +171,21 @@ module private FunctionalDmlConflictSqlRewriter =
         else
             preferred
 
+    let private requireFirebirdAssurance (assurance: DmlConflictTargetAssurance | null) =
+        match assurance with
+        | null ->
+            raise (SqlCompilationException(
+                "Firebird UPDATE OR INSERT requires metadata-backed conflict-target assurance proving MATCHING equals the resolved primary key; absent assurance remains fail-closed because non-unique MATCHING can update multiple rows."))
+        | value when value.PrimaryKeyColumns.IsDefaultOrEmpty ->
+            raise (SqlCompilationException(
+                "Firebird UPDATE OR INSERT requires metadata-backed conflict-target assurance proving MATCHING equals the resolved primary key; absent assurance remains fail-closed because non-unique MATCHING can update multiple rows."))
+        | value -> value
+
     let private validateFirebirdPrimaryKeyTarget
         (conflict: InsertConflictClause)
         (assurance: DmlConflictTargetAssurance | null) =
 
-        if isNull assurance || assurance.PrimaryKeyColumns.IsDefaultOrEmpty then
-            raise (SqlCompilationException(
-                "Firebird UPDATE OR INSERT requires metadata-backed conflict-target assurance proving MATCHING equals the resolved primary key; absent assurance remains fail-closed because non-unique MATCHING can update multiple rows."))
-
+        let assurance = requireFirebirdAssurance assurance
         let target = identifierSet conflict.TargetColumns
         let primaryKey = stringSet assurance.PrimaryKeyColumns
         if target.Count <> conflict.TargetColumns.Length
