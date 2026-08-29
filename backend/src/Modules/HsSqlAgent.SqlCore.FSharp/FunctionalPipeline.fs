@@ -79,7 +79,7 @@ module internal FunctionalPipeline =
         ExecutableQuery(context, executable)
 
     let private lowerQuery (ExecutableQuery(context, executable)) =
-        NativeSqlRenderer(context.TargetProvider, context.TargetProfile).Lower(executable)
+        FunctionalNativeQueryRenderer.lower executable context.TargetProvider context.TargetProfile
 
     type private DmlContext =
         {
