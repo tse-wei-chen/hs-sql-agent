@@ -17,6 +17,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="RewriteCoreModel.fs" />
+    <Compile Include="RewriteTypestate.fs" />
     <Compile Include="FunctionalAst.fs" />
     <Compile Include="FunctionalTokenReader.fs" />
     <Compile Include="FunctionalDmlConflictParser.fs" />
