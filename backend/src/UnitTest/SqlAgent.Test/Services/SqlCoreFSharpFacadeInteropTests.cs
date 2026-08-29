@@ -488,6 +488,74 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Theory]
+    [InlineData("SELECT COUNT(*)", SqlAgentToolType.Oracle)]
+    [InlineData("SELECT 1 AS x ORDER BY x", SqlAgentToolType.Firebird)]
+    public void Facade_FunctionalNoFromValidator_MatchesLegacySuccess(
+        string sql,
+        SqlAgentToolType targetProvider)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-no-from-v1");
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                targetProvider,
+                validation,
+                policy);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            targetProvider,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Theory]
+    [InlineData("SELECT *")]
+    [InlineData("SELECT 1 AS x, 2 AS x ORDER BY x")]
+    public void Facade_FunctionalNoFromValidator_MatchesLegacyFailure(
+        string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-no-from-failure-v1");
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Oracle,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Oracle,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Theory]
     [InlineData("SELECT id FROM users ORDER BY id LIMIT 100", 7)]
     [InlineData("SELECT id FROM users ORDER BY id LIMIT 3", 7)]
     public void Facade_FunctionalExecutionPolicy_MatchesLegacyLimitClamp(

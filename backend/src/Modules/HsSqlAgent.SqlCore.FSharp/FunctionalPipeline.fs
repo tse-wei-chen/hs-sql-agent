@@ -147,9 +147,9 @@ module internal FunctionalPipeline =
                 sourceRestored.SourceDialect,
                 sourceRestored.TargetProvider)
 
-        CoreNoFromReferenceValidator.Validate(
-            nullOrderingCanonical.Statement,
-            context.TargetProvider)
+        FunctionalNoFromReferenceValidator.validate
+            nullOrderingCanonical.Statement
+            context.TargetProvider
 
         FunctionalAst.verify nullOrderingCanonical.Statement |> ignore
         CanonicalQuery(context, nullOrderingCanonical)
@@ -373,9 +373,9 @@ module internal FunctionalPipeline =
                 sourceRestored.SourceDialect,
                 sourceRestored.TargetProvider)
 
-        CoreNoFromReferenceValidator.Validate(
-            nullOrderingCanonical.Statement,
-            context.TargetProvider)
+        FunctionalNoFromReferenceValidator.validate
+            nullOrderingCanonical.Statement
+            context.TargetProvider
 
         FunctionalAst.verify nullOrderingCanonical.Statement |> ignore
         CanonicalDml(context, nullOrderingCanonical)
