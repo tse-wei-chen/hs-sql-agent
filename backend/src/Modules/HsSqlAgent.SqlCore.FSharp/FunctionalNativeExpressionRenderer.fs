@@ -12,14 +12,17 @@ open HsSqlAgent.SqlCore.Models
 /// F# ownership boundary for structural native-expression lowering.
 /// Provider-sensitive literal/interval/canonical-function leaves and the specialized Oracle/SQL
 /// Server boolean-CASE predicate bridge remain in the legacy renderer while structural recursion,
-/// casts, ordinary functions, POSITION, current temporal functions, FILTER, ordinary CASE, and
-/// window lowering are owned here.
+/// casts, ordinary functions, POSITION, date math, current temporal functions, FILTER, ordinary
+/// CASE, and window lowering are owned here.
 module internal FunctionalNativeExpressionRenderer =
 
     let private emptyBindings = ImmutableArray<obj | null>.Empty
 
     let private safeFunctionName =
         Regex(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)
+
+    let private safeKeyword =
+        Regex(@"^[A-Z_]+$", RegexOptions.CultureInvariant)
 
     let private safeCastType =
         Regex(
@@ -77,6 +80,29 @@ module internal FunctionalNativeExpressionRenderer =
             raise (SqlCompilationException(
                 "Canonical current temporal function '" + identifierText functionCall.Name +
                 "' must have zero arguments and cannot be DISTINCT."))
+
+    let private requireArguments (functionCall: FunctionCallExpr) count =
+        if functionCall.Arguments.Length <> count then
+            raise (SqlCompilationException(
+                "Canonical function '" + identifierText functionCall.Name +
+                "' requires " + string count + " argument(s)."))
+
+    let private literalKeyword (expression: SqlExpr) label =
+        match expression with
+        | :? LiteralExpr as literal ->
+            match literal.Value with
+            | :? string as value ->
+                let normalized = value.Trim().ToUpperInvariant()
+                if not (safeKeyword.IsMatch(normalized)) then
+                    raise (SqlCompilationException(
+                        "Unsafe " + label + " '" + value + "'."))
+                normalized
+            | _ ->
+                raise (SqlCompilationException(
+                    label + " must be a canonical literal keyword."))
+        | _ ->
+            raise (SqlCompilationException(
+                label + " must be a canonical literal keyword."))
 
     let private renderWindowBound (bound: WindowFrameBoundCore) =
         match bound.Kind with
@@ -167,10 +193,7 @@ module internal FunctionalNativeExpressionRenderer =
                 | value -> value.NativeLoweringKind
 
             if loweringKind = SqlCanonicalNativeLoweringKind.Position then
-                if functionCall.Arguments.Length <> 2 then
-                    raise (SqlCompilationException(
-                        "Canonical function '" + name + "' requires 2 argument(s)."))
-
+                requireArguments functionCall 2
                 let haystack: NativeSqlFragment =
                     render renderer renderSubquery functionCall.Arguments[0]
                 let needle: NativeSqlFragment =
@@ -189,6 +212,75 @@ module internal FunctionalNativeExpressionRenderer =
                 | SqlAgentToolType.Firebird ->
                     combine ("POSITION(" + needle.Sql + ", " + haystack.Sql + ")") needle haystack
                 | _ -> raise (SqlCompilationException("Unsupported position provider."))
+            elif loweringKind = SqlCanonicalNativeLoweringKind.DateAdd then
+                requireArguments functionCall 3
+                let unit = literalKeyword functionCall.Arguments[0] "DATEADD unit"
+                match SqlDateMathCapabilityRules.TargetValidationError(unit, renderer.Provider, "CORE_DATE_ADD") with
+                | null -> ()
+                | capabilityError -> raise (SqlCompilationException(capabilityError))
+
+                let amount: NativeSqlFragment = render renderer renderSubquery functionCall.Arguments[1]
+                let value: NativeSqlFragment = render renderer renderSubquery functionCall.Arguments[2]
+                match renderer.Provider with
+                | SqlAgentToolType.MsSqlServer ->
+                    combine ("DATEADD(" + unit + ", " + amount.Sql + ", " + value.Sql + ")") amount value
+                | SqlAgentToolType.MySQL ->
+                    combine ("TIMESTAMPADD(" + unit + ", " + amount.Sql + ", " + value.Sql + ")") amount value
+                | SqlAgentToolType.Postgres ->
+                    combine ("(" + value.Sql + " + (" + amount.Sql + " * INTERVAL '1 day'))") value amount
+                | SqlAgentToolType.Oracle ->
+                    combine ("(" + value.Sql + " + " + amount.Sql + ")") value amount
+                | SqlAgentToolType.Sqlite ->
+                    combine ("DATETIME(" + value.Sql + ", PRINTF('%+d day', " + amount.Sql + "))") value amount
+                | SqlAgentToolType.Firebird ->
+                    combine ("DATEADD(" + unit + ", " + amount.Sql + ", " + value.Sql + ")") amount value
+                | _ -> raise (SqlCompilationException("Unsupported DATEADD provider."))
+            elif loweringKind = SqlCanonicalNativeLoweringKind.DateDiff then
+                requireArguments functionCall 3
+                let unit = literalKeyword functionCall.Arguments[0] "DATEDIFF unit"
+                match SqlDateMathCapabilityRules.TargetValidationError(unit, renderer.Provider, "CORE_DATE_DIFF") with
+                | null -> ()
+                | capabilityError -> raise (SqlCompilationException(capabilityError))
+
+                let startValue: NativeSqlFragment = render renderer renderSubquery functionCall.Arguments[1]
+                let endValue: NativeSqlFragment = render renderer renderSubquery functionCall.Arguments[2]
+                match renderer.Provider with
+                | SqlAgentToolType.MsSqlServer ->
+                    combine ("DATEDIFF(" + unit + ", " + startValue.Sql + ", " + endValue.Sql + ")") startValue endValue
+                | SqlAgentToolType.MySQL ->
+                    combine ("TIMESTAMPDIFF(" + unit + ", " + startValue.Sql + ", " + endValue.Sql + ")") startValue endValue
+                | SqlAgentToolType.Postgres ->
+                    combine ("(CAST(" + endValue.Sql + " AS date) - CAST(" + startValue.Sql + " AS date))") endValue startValue
+                | SqlAgentToolType.Oracle ->
+                    combine ("(CAST(" + endValue.Sql + " AS DATE) - CAST(" + startValue.Sql + " AS DATE))") endValue startValue
+                | SqlAgentToolType.Sqlite ->
+                    combine ("(JULIANDAY(" + endValue.Sql + ") - JULIANDAY(" + startValue.Sql + "))") endValue startValue
+                | SqlAgentToolType.Firebird ->
+                    combine ("DATEDIFF(" + unit + " FROM " + startValue.Sql + " TO " + endValue.Sql + ")") startValue endValue
+                | _ -> raise (SqlCompilationException("Unsupported DATEDIFF provider."))
+            elif loweringKind = SqlCanonicalNativeLoweringKind.DatePart then
+                requireArguments functionCall 2
+                let part = literalKeyword functionCall.Arguments[0] "date part"
+                match SqlDatePartCapabilityRules.TargetValidationError(part, renderer.Provider) with
+                | null -> ()
+                | capabilityError -> raise (SqlCompilationException(capabilityError))
+
+                let value: NativeSqlFragment = render renderer renderSubquery functionCall.Arguments[1]
+                let sql =
+                    match renderer.Provider with
+                    | SqlAgentToolType.MsSqlServer
+                    | SqlAgentToolType.MySQL -> part + "(" + value.Sql + ")"
+                    | SqlAgentToolType.Postgres
+                    | SqlAgentToolType.Oracle -> "EXTRACT(" + part + " FROM " + value.Sql + ")"
+                    | SqlAgentToolType.Firebird -> "EXTRACT(" + part + " FROM CAST(" + value.Sql + " AS DATE))"
+                    | SqlAgentToolType.Sqlite ->
+                        match part with
+                        | "YEAR" -> "CAST(STRFTIME('%Y', " + value.Sql + ") AS INTEGER)"
+                        | "MONTH" -> "CAST(STRFTIME('%m', " + value.Sql + ") AS INTEGER)"
+                        | "DAY" -> "CAST(STRFTIME('%d', " + value.Sql + ") AS INTEGER)"
+                        | _ -> raise (SqlCompilationException("SQLite does not support date part " + part + "."))
+                    | _ -> raise (SqlCompilationException("Unsupported date-part provider."))
+                NativeSqlFragment(sql, value.Bindings)
             elif loweringKind = SqlCanonicalNativeLoweringKind.CurrentDate then
                 requireCurrentTemporalShape functionCall
                 NativeSqlFragment(
