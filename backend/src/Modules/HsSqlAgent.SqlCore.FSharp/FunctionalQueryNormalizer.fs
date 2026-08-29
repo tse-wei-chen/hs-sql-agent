@@ -13,9 +13,8 @@ open HsSqlAgent.SqlCore.Models
 /// F# ownership boundary for query normalization.
 ///
 /// Statement/source traversal, primitive expression normalization, CAST traversal, and most
-/// canonical function families live here. Date-format/parse, string-aggregate, and
-/// provider-registry translation still use the legacy function oracle until their specialized
-/// semantics are moved independently.
+/// canonical function families live here. Date-format/parse and provider-registry translation
+/// still use the legacy function oracle until their specialized semantics are moved independently.
 module internal FunctionalQueryNormalizer =
 
     type private Context =
@@ -300,6 +299,53 @@ module internal FunctionalQueryNormalizer =
 
         let withName name = canonicalFunction name normalizedArguments
 
+        let canonicalStringAggregate () =
+            if normalizedArguments.Length < 1 || normalizedArguments.Length > 2 then
+                raise (SqlCompilationException("String aggregate requires 1 or 2 arguments."))
+
+            if sourceName = "STRING_AGG" && normalizedArguments.Length <> 2 then
+                raise (SqlCompilationException("STRING_AGG requires exactly 2 arguments."))
+
+            let arguments =
+                if sourceName = "GROUP_CONCAT" && context.SourceDialect = SqlAgentToolType.MySQL then
+                    if normalizedArguments.Length <> 1 then
+                        raise (SqlCompilationException(
+                            "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. " +
+                            "Core currently supports exactly one value expression; use portable STRING_AGG(value, separator) " +
+                            "or native SEPARATOR 'literal' for an explicit delimiter."))
+
+                    let separator =
+                        match functionCall.AggregateSeparatorClause with
+                        | null -> ","
+                        | value -> value
+
+                    ImmutableArray.Create<SqlExpr>(
+                        normalizedArguments[0],
+                        LiteralExpr(separator, functionCall.Span) :> SqlExpr)
+                elif normalizedArguments.Length = 1 then
+                    let defaultSeparator =
+                        match sourceName with
+                        | "LISTAGG" -> String.Empty
+                        | "GROUP_CONCAT"
+                        | "LIST" -> ","
+                        | _ ->
+                            raise (SqlCompilationException(
+                                $"String aggregate '{sourceName}' requires an explicit separator."))
+
+                    ImmutableArray.Create<SqlExpr>(
+                        normalizedArguments[0],
+                        LiteralExpr(defaultSeparator, functionCall.Span) :> SqlExpr)
+                else
+                    normalizedArguments
+
+            FunctionCallExpr(
+                identifier "CORE_STRING_AGG",
+                arguments,
+                normalizedFunction.IsDistinct,
+                normalizedFunction.Span,
+                AggregateOrderBy = normalizedFunction.AggregateOrderBy)
+            :> SqlExpr
+
         let normalizeRegisteredFamily (contract: SqlSourceFunctionContract) =
             match contract.CanonicalizationKind with
             | SqlSourceFunctionCanonicalizationKind.DateAdd ->
@@ -344,6 +390,9 @@ module internal FunctionalQueryNormalizer =
                 if normalizedArguments.Length <> 0 then
                     raise (SqlCompilationException(sourceName + " does not accept arguments."))
                 canonicalFunction "CORE_CURRENT_TIMESTAMP" normalizedArguments
+
+            | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
+                canonicalStringAggregate ()
 
             | _ ->
                 normalizeFunctionWithLegacyOracle context functionCall
