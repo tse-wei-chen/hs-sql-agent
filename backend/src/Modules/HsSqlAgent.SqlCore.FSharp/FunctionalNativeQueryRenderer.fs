@@ -44,6 +44,21 @@ module internal FunctionalNativeQueryRenderer =
             Nullable<int>(),
             statement.Span)
 
+    let private selectWithoutTail (statement: SelectStatement) projection =
+        SelectStatement(
+            ImmutableArray<CteDefinition>.Empty,
+            statement.Distinct,
+            projection,
+            statement.From,
+            statement.Joins,
+            statement.Where,
+            statement.GroupBy,
+            statement.Having,
+            ImmutableArray<OrderByItem>.Empty,
+            Nullable<int>(),
+            Nullable<int>(),
+            statement.Span)
+
     let private setOperationKeyword kind =
         match kind with
         | SetOperationKind.Union -> "UNION"
@@ -158,10 +173,8 @@ module internal FunctionalNativeQueryRenderer =
                             .Add(box (int64 offset.Value + int64 limit.Value)))
                 else
                     NativeSqlFragment.Empty
-            | SqlAgentToolType.MsSqlServer ->
-                NativeSqlFragment.Empty
-            | other ->
-                raise (SqlCompilationException($"Unsupported target provider '{other}'."))
+            | SqlAgentToolType.MsSqlServer -> NativeSqlFragment.Empty
+            | other -> raise (SqlCompilationException($"Unsupported target provider '{other}'."))
 
     let private tryRenderPreservedProjectionAlias
         (renderer: NativeSqlRenderer)
@@ -189,9 +202,30 @@ module internal FunctionalNativeQueryRenderer =
                 Some (NativeSqlFragment(
                     CoreIdentifierSqlRenderer.RenderAlias(matches[0], renderer.Provider),
                     emptyBindings))
-            else
-                None
+            else None
         | _ -> None
+
+    let private sharedBindingValue binding =
+        match binding with
+        | :? NativeSharedSqlBinding as shared -> shared.Value
+        | value -> value
+
+    let private equivalentParameterizedExpression (left: NativeSqlFragment) (right: NativeSqlFragment) =
+        left.Sql = right.Sql
+        && left.Bindings.Length = right.Bindings.Length
+        && Seq.forall2
+            (fun leftBinding rightBinding ->
+                Object.Equals(sharedBindingValue leftBinding, sharedBindingValue rightBinding))
+            left.Bindings
+            right.Bindings
+
+    let private shareGroupingBindings (bindings: ImmutableArray<obj | null>) keyPrefix =
+        bindings
+        |> Seq.mapi (fun index binding ->
+            match binding with
+            | :? NativeSharedSqlBinding -> binding
+            | _ -> box (NativeSharedSqlBinding(keyPrefix + string index, binding)))
+        |> ImmutableArray.CreateRange
 
     let rec private renderStatement
         (renderer: NativeSqlRenderer)
@@ -208,38 +242,60 @@ module internal FunctionalNativeQueryRenderer =
         let renderSubquery =
             Func<SqlStatement, NativeSqlFragment>(fun statement ->
                 renderStatement renderer statement FunctionalQueryPosition.ScalarSubquery)
-        FunctionalNativeExpressionRenderer.render renderer renderSubquery expression
+        FunctionalNativeExpressionRenderer.render renderer.Provider renderSubquery expression
 
     and private renderPredicate (renderer: NativeSqlRenderer) (expression: SqlExpr) =
         let renderSubquery =
             Func<SqlStatement, NativeSqlFragment>(fun statement ->
                 renderStatement renderer statement FunctionalQueryPosition.ScalarSubquery)
-        FunctionalNativeExpressionRenderer.renderPredicate renderer renderSubquery expression
+        FunctionalNativeExpressionRenderer.renderPredicate renderer.Provider renderSubquery expression
+
+    and private sharePostgresGroupingBindings
+        (renderer: NativeSqlRenderer)
+        (statement: SelectStatement)
+        (projections: ResizeArray<NativeSqlFragment>)
+        (groupItems: NativeSqlFragment array) =
+
+        for groupIndex in 0 .. groupItems.Length - 1 do
+            let groupItem = groupItems[groupIndex]
+            if groupItem.Bindings |> Seq.exists (fun binding -> not (binding :? NativeSharedSqlBinding)) then
+                let mutable found = false
+                let mutable projectionIndex = 0
+                while not found && projectionIndex < statement.Select.Length do
+                    let projectedExpression = renderExpression renderer statement.Select[projectionIndex].Expression
+                    if equivalentParameterizedExpression groupItem projectedExpression then
+                        let keyPrefix =
+                            "postgres-group:" + string statement.Span.Start + ":" +
+                            string statement.Span.End + ":" + string projectionIndex + ":"
+                        let projection = projections[projectionIndex]
+                        projections[projectionIndex] <- NativeSqlFragment(
+                            projection.Sql,
+                            shareGroupingBindings projection.Bindings keyPrefix)
+                        groupItems[groupIndex] <- NativeSqlFragment(
+                            groupItem.Sql,
+                            shareGroupingBindings groupItem.Bindings keyPrefix)
+                        found <- true
+                    projectionIndex <- projectionIndex + 1
 
     and private renderSelectItem (renderer: NativeSqlRenderer) (item: SelectItem) =
         let expression = renderExpression renderer item.Expression
         match item.Alias with
         | null -> expression
-        | alias ->
-            NativeSqlFragment(
-                expression.Sql + " AS " + CoreIdentifierSqlRenderer.RenderAlias(alias, renderer.Provider),
-                expression.Bindings)
+        | alias -> NativeSqlFragment(
+            expression.Sql + " AS " + CoreIdentifierSqlRenderer.RenderAlias(alias, renderer.Provider),
+            expression.Bindings)
 
     and private renderNamedTableSource (renderer: NativeSqlRenderer) (source: NamedTableSource) =
         let table = CoreIdentifierSqlRenderer.Render(source.Name, renderer.Provider, allowWildcard = false)
         match source.Alias with
         | null -> NativeSqlFragment(table, emptyBindings)
         | alias ->
-            let separator =
-                if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
-            NativeSqlFragment(
-                table + separator + CoreIdentifierSqlRenderer.RenderAlias(alias, renderer.Provider),
-                emptyBindings)
+            let separator = if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
+            NativeSqlFragment(table + separator + CoreIdentifierSqlRenderer.RenderAlias(alias, renderer.Provider), emptyBindings)
 
     and private renderDerivedTableSource (renderer: NativeSqlRenderer) (source: DerivedTableSource) =
         let query = renderStatement renderer source.Query FunctionalQueryPosition.DerivedTable
-        let separator =
-            if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
+        let separator = if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
         NativeSqlFragment(
             "(" + query.Sql + ")" + separator + CoreIdentifierSqlRenderer.RenderAlias(source.Alias, renderer.Provider),
             query.Bindings)
@@ -281,8 +337,7 @@ module internal FunctionalNativeQueryRenderer =
         (orderBy: ImmutableArray<OrderByItem>)
         (projection: ImmutableArray<SelectItem>) =
 
-        if orderBy.IsDefaultOrEmpty then
-            NativeSqlFragment.Empty
+        if orderBy.IsDefaultOrEmpty then NativeSqlFragment.Empty
         else
             let preservedAliases =
                 projection
@@ -301,9 +356,7 @@ module internal FunctionalNativeQueryRenderer =
                     | :? LiteralExpr as literal ->
                         match literal.Value with
                         | :? OrderByOrdinalValue as ordinal ->
-                            NativeSqlFragment(
-                                ordinal.Position.ToString(CultureInfo.InvariantCulture),
-                                emptyBindings)
+                            NativeSqlFragment(ordinal.Position.ToString(CultureInfo.InvariantCulture), emptyBindings)
                         | _ ->
                             match tryRenderPreservedProjectionAlias renderer item.Expression preservedAliases with
                             | Some alias -> alias
@@ -336,25 +389,18 @@ module internal FunctionalNativeQueryRenderer =
         let mutable bindings = head.Bindings
 
         let projections = ResizeArray<NativeSqlFragment>()
-        if statement.Select.IsDefaultOrEmpty then
-            projections.Add(NativeSqlFragment("*", emptyBindings))
-        else
-            for item in statement.Select do
-                projections.Add(renderSelectItem renderer item)
+        if statement.Select.IsDefaultOrEmpty then projections.Add(NativeSqlFragment("*", emptyBindings))
+        else for item in statement.Select do projections.Add(renderSelectItem renderer item)
 
         let groupItems =
-            if statement.GroupBy.IsDefaultOrEmpty then
-                Array.empty<NativeSqlFragment>
-            else
-                statement.GroupBy
-                |> Seq.map (renderExpression renderer)
-                |> Seq.toArray
+            if statement.GroupBy.IsDefaultOrEmpty then Array.empty<NativeSqlFragment>
+            else statement.GroupBy |> Seq.map (renderExpression renderer) |> Seq.toArray
 
         if renderer.Provider = SqlAgentToolType.Postgres
            && groupItems.Length > 0
            && not statement.Select.IsDefaultOrEmpty
            && not (statement.Span.Equals(SourceSpan.Unknown)) then
-            renderer.SharePostgresGroupingBindingsForFunctional(statement, projections, groupItems)
+            sharePostgresGroupingBindings renderer statement projections groupItems
 
         for index in 0 .. projections.Count - 1 do
             if index > 0 then sql.Append(", ") |> ignore
@@ -363,10 +409,8 @@ module internal FunctionalNativeQueryRenderer =
 
         match statement.From with
         | null ->
-            if renderer.Provider = SqlAgentToolType.Oracle then
-                sql.Append(" FROM DUAL") |> ignore
-            elif renderer.Provider = SqlAgentToolType.Firebird then
-                sql.Append(" FROM RDB$DATABASE") |> ignore
+            if renderer.Provider = SqlAgentToolType.Oracle then sql.Append(" FROM DUAL") |> ignore
+            elif renderer.Provider = SqlAgentToolType.Firebird then sql.Append(" FROM RDB$DATABASE") |> ignore
         | source ->
             let renderedFrom = renderTableSource renderer source
             sql.Append(" FROM ").Append(renderedFrom.Sql) |> ignore
@@ -386,8 +430,7 @@ module internal FunctionalNativeQueryRenderer =
 
         if groupItems.Length > 0 then
             sql.Append(" GROUP BY ").Append(String.Join(", ", groupItems |> Array.map (fun item -> item.Sql))) |> ignore
-            for item in groupItems do
-                bindings <- bindings.AddRange(item.Bindings)
+            for item in groupItems do bindings <- bindings.AddRange(item.Bindings)
 
         match statement.Having with
         | null -> ()
@@ -401,7 +444,6 @@ module internal FunctionalNativeQueryRenderer =
             if order.Sql.Length > 0 then
                 sql.Append(' ').Append(order.Sql) |> ignore
                 bindings <- bindings.AddRange(order.Bindings)
-
             let pagination = renderPagination renderer statement.Limit statement.Offset
             if pagination.Sql.Length > 0 then
                 sql.Append(' ').Append(pagination.Sql) |> ignore
@@ -409,9 +451,25 @@ module internal FunctionalNativeQueryRenderer =
 
         NativeSqlFragment(sql.ToString(), bindings)
 
+    and private renderSqlServerOffsetSelect (renderer: NativeSqlRenderer) (statement: SelectStatement) =
+        let plan =
+            FunctionalSqlServerPagingRenderer.buildSelectPagePlan
+                (renderExpression renderer)
+                statement.Select
+                statement.OrderBy
+                statement.Distinct
+        let pageSource = renderSelectBody renderer (selectWithoutTail statement plan.BaseProjection) false
+        FunctionalSqlServerPagingRenderer.renderPageWrapper
+            (fun orderBy -> renderOrderBy renderer orderBy ImmutableArray<SelectItem>.Empty)
+            pageSource
+            plan.OutputInternalAliases
+            plan.ExternalAliases
+            plan.WindowOrderBy
+            statement.Limit
+            statement.Offset.Value
+
     and private renderCtes (renderer: NativeSqlRenderer) (ctes: ImmutableArray<CteDefinition>) =
-        if ctes.IsDefaultOrEmpty then
-            NativeSqlFragment.Empty
+        if ctes.IsDefaultOrEmpty then NativeSqlFragment.Empty
         else
             let sqlParts = ResizeArray<string>()
             let mutable bindings = emptyBindings
@@ -419,14 +477,11 @@ module internal FunctionalNativeQueryRenderer =
                 if not cte.ColumnAliases.IsDefaultOrEmpty then
                     raise (SqlCompilationException(
                         "CTE column aliases must be canonicalized to projection aliases before native lowering."))
-                if cte.Name.Parts.Length <> 1 then
-                    raise (SqlCompilationException("CTE name must be unqualified."))
-
+                if cte.Name.Parts.Length <> 1 then raise (SqlCompilationException("CTE name must be unqualified."))
                 let query = renderStatement renderer cte.Query FunctionalQueryPosition.CteDefinition
                 let name = CoreIdentifierSqlRenderer.Render(cte.Name, renderer.Provider, allowWildcard = false)
                 sqlParts.Add(name + " AS (" + query.Sql + ")")
                 bindings <- bindings.AddRange(query.Bindings)
-
             NativeSqlFragment("WITH " + String.Join(", ", sqlParts), bindings)
 
     and private renderSelect
@@ -441,23 +496,17 @@ module internal FunctionalNativeQueryRenderer =
                && renderer.Provider = SqlAgentToolType.MsSqlServer
                && hasPositiveOffset statement.Offset
                && (not statement.Limit.HasValue || statement.Limit.Value <> 0) then
-                renderer.RenderSqlServerOffsetSelectForFunctional(statement)
-            else
-                renderSelectBody renderer statement includeTail
+                renderSqlServerOffsetSelect renderer statement
+            else renderSelectBody renderer statement includeTail
         appendFragments ctes body " "
 
     and private renderSetBranch (renderer: NativeSqlRenderer) (statement: SqlStatement) =
         let branch = renderStatement renderer statement FunctionalQueryPosition.SetBranch
-        if (rootCtes statement).IsDefaultOrEmpty then
-            branch
+        if (rootCtes statement).IsDefaultOrEmpty then branch
         else
-            let alias =
-                CoreIdentifierSqlRenderer.RenderAlias(
-                    IdentifierPart("_set_branch", false, SourceSpan.Unknown),
-                    renderer.Provider)
-            NativeSqlFragment(
-                "SELECT * FROM (" + branch.Sql + ") AS " + alias,
-                branch.Bindings)
+            let alias = CoreIdentifierSqlRenderer.RenderAlias(
+                IdentifierPart("_set_branch", false, SourceSpan.Unknown), renderer.Provider)
+            NativeSqlFragment("SELECT * FROM (" + branch.Sql + ") AS " + alias, branch.Bindings)
 
     and private renderSetBody
         (renderer: NativeSqlRenderer)
@@ -478,8 +527,7 @@ module internal FunctionalNativeQueryRenderer =
         (statement: QueryStatement)
         position =
 
-        if not (requiresTail statement) then
-            renderSetBody renderer statement position
+        if not (requiresTail statement) then renderSetBody renderer statement position
         elif position = FunctionalQueryPosition.ScalarSubquery
              && CoreNativeSetTailScope.CanRenderDirectTail(statement) then
             let body = renderSetBody renderer (withoutTail statement) position
@@ -492,39 +540,30 @@ module internal FunctionalNativeQueryRenderer =
             if renderer.Provider = SqlAgentToolType.MsSqlServer
                && hasPositiveOffset statement.Offset
                && (not statement.Limit.HasValue || statement.Limit.Value <> 0) then
-                renderer.RenderSetTailWrapperForFunctional(
-                    inner,
-                    statement.OrderBy,
-                    statement.Limit,
-                    statement.Offset,
-                    statement.Head.Select)
+                FunctionalSqlServerPagingRenderer.renderSetOffsetWrapper
+                    (fun orderBy -> renderOrderBy renderer orderBy ImmutableArray<SelectItem>.Empty)
+                    inner
+                    statement.OrderBy
+                    statement.Limit
+                    statement.Offset.Value
+                    statement.Head.Select
             else
                 let head = renderSelectHead renderer statement.Limit statement.Offset false
-                let alias =
-                    CoreIdentifierSqlRenderer.RenderAlias(
-                        IdentifierPart("_set", false, SourceSpan.Unknown),
-                        renderer.Provider)
-                let asKeyword =
-                    if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
-                let sql =
-                    StringBuilder(head.Sql)
-                        .Append("* FROM (")
-                        .Append(inner.Sql)
-                        .Append(')')
-                        .Append(asKeyword)
-                        .Append(alias)
+                let alias = CoreIdentifierSqlRenderer.RenderAlias(
+                    IdentifierPart("_set", false, SourceSpan.Unknown), renderer.Provider)
+                let asKeyword = if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
+                let sql = StringBuilder(head.Sql)
+                    .Append("* FROM (").Append(inner.Sql).Append(')')
+                    .Append(asKeyword).Append(alias)
                 let mutable bindings = head.Bindings.AddRange(inner.Bindings)
-
                 let order = renderOrderBy renderer statement.OrderBy statement.Head.Select
                 if order.Sql.Length > 0 then
                     sql.Append(' ').Append(order.Sql) |> ignore
                     bindings <- bindings.AddRange(order.Bindings)
-
                 let pagination = renderPagination renderer statement.Limit statement.Offset
                 if pagination.Sql.Length > 0 then
                     sql.Append(' ').Append(pagination.Sql) |> ignore
                     bindings <- bindings.AddRange(pagination.Bindings)
-
                 NativeSqlFragment(sql.ToString(), bindings)
 
     let lower
@@ -540,17 +579,8 @@ module internal FunctionalNativeQueryRenderer =
         let renderer = NativeSqlRenderer(provider, targetProfile)
         let fragment = renderStatement renderer plan.Statement FunctionalQueryPosition.Root
         let struct (finalizedSql, finalizedParameters) = NativeSqlParameterizer.Finalize(fragment, provider)
-        let command =
-            CompiledSqlCommand(
-                finalizedSql,
-                finalizedParameters,
-                SqlStatementKind.Select,
-                String.Empty,
-                provider)
+        let command = CompiledSqlCommand(
+            finalizedSql, finalizedParameters, SqlStatementKind.Select, String.Empty, provider)
         let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, plan.PolicyVersion)
         CompiledSqlCommand(
-            command.Sql,
-            command.Parameters,
-            command.Kind,
-            fingerprint,
-            command.TargetProvider)
+            command.Sql, command.Parameters, command.Kind, fingerprint, command.TargetProvider)
