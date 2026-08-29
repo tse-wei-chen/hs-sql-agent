@@ -349,9 +349,9 @@ module internal FunctionalPipeline =
 
     let private normalizeDml (BoundDml(context, bound)) =
         let normalized =
-            CoreDmlNormalizer().Normalize(
-                bound,
-                context.TargetProvider)
+            FunctionalDmlNormalizer.normalize
+                bound
+                context.TargetProvider
 
         let sourceRestored =
             if context.Parsed.EnforceSourceDialectSyntax then
