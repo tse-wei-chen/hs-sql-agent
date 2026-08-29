@@ -9,6 +9,7 @@ open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
 
 /// CLR boundary adapter. The rewrite compiler remains independent of compatibility AST types.
+/// Keep all legacy enum/DTO conversion here so rewrite internals stay closed and F#-native.
 module internal RewriteFacadeAdapter =
 
     let private provider = function
