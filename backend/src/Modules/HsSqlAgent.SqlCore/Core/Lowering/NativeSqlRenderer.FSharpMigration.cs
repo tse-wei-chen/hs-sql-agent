@@ -33,6 +33,13 @@ public sealed partial class NativeSqlRenderer
             includeTail,
             extraProjection: null);
 
+    internal NativeSqlFragment RenderSqlServerOffsetSelectForFunctional(
+        SelectStatement statement) =>
+        RenderSqlServerOffsetSelect(statement with
+        {
+            Ctes = ImmutableArray<CteDefinition>.Empty
+        });
+
     internal NativeSqlFragment RenderSetTailWrapperForFunctional(
         NativeSqlFragment inner,
         ImmutableArray<OrderByItem> orderBy,

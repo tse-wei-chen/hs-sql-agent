@@ -83,7 +83,15 @@ module internal FunctionalNativeQueryRenderer =
         includeTail =
 
         let ctes = renderCtes renderer statement.Ctes
-        let body = renderer.RenderSelectBodyForFunctional(statement, position, includeTail)
+        let body =
+            if includeTail
+               && renderer.Provider = SqlAgentToolType.MsSqlServer
+               && statement.Offset.HasValue
+               && statement.Offset.Value > 0
+               && (not statement.Limit.HasValue || statement.Limit.Value <> 0) then
+                renderer.RenderSqlServerOffsetSelectForFunctional(statement)
+            else
+                renderer.RenderSelectBodyForFunctional(statement, position, includeTail)
         appendFragments ctes body " "
 
     and private renderSetBranch (renderer: NativeSqlRenderer) (statement: SqlStatement) =
