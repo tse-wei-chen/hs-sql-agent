@@ -6,7 +6,7 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
-/// F# ownership boundary for canonical JSON extraction and mutation lowering.
+/// F# ownership boundary for canonical JSON extraction/mutation and regex lowering.
 module internal FunctionalStructuredTextCanonicalRenderer =
 
     let private requireArguments (functionCall: FunctionCallExpr) count =
@@ -88,3 +88,22 @@ module internal FunctionalStructuredTextCanonicalRenderer =
                 value.Bindings.Add(pgPath).AddRange(newValue.Bindings))
         | _ ->
             raise (SqlCompilationException("JSON_SET is not supported by this provider."))
+
+    let renderRegexMatch
+        (provider: SqlAgentToolType)
+        (functionCall: FunctionCallExpr)
+        (renderExpression: SqlExpr -> NativeSqlFragment) =
+
+        requireArguments functionCall 2
+        match SqlRegexCapabilityRules.TargetValidationError(provider, null) with
+        | null -> ()
+        | capabilityError -> raise (SqlCompilationException(capabilityError))
+
+        let value = renderExpression functionCall.Arguments[0]
+        let pattern = renderExpression functionCall.Arguments[1]
+        let sql =
+            if provider = SqlAgentToolType.Postgres then
+                "(" + value.Sql + " ~ " + pattern.Sql + ")"
+            else
+                "REGEXP_LIKE(" + value.Sql + ", " + pattern.Sql + ")"
+        NativeSqlFragment(sql, value.Bindings.AddRange(pattern.Bindings))
