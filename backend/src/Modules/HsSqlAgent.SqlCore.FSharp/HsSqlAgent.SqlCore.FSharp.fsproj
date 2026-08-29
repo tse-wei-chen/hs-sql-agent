@@ -60,6 +60,7 @@
     <Compile Include="FunctionalStructuredTextCanonicalRenderer.fs" />
     <Compile Include="FunctionalStringAggregateRenderer.fs" />
     <Compile Include="FunctionalSqlServerPagingRenderer.fs" />
+    <Compile Include="FunctionalExpressionShape.fs" />
     <Compile Include="FunctionalNativeExpressionRenderer.fs" />
     <Compile Include="FunctionalNativeQueryRenderer.fs" />
     <Compile Include="FunctionalPipeline.fs" />
