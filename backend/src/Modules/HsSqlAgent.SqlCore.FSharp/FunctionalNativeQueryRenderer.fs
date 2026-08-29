@@ -205,7 +205,7 @@ module internal FunctionalNativeQueryRenderer =
             else None
         | _ -> None
 
-    let private sharedBindingValue binding =
+    let private sharedBindingValue (binding: obj | null) =
         match binding with
         | :? NativeSharedSqlBinding as shared -> shared.Value
         | value -> value
