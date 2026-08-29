@@ -91,7 +91,7 @@ type SqlCoreFacade private () =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         sourceDialect |> ignore
-        RewriteFacadeAdapter.compileQuery sql targetProvider executionPolicy.QueryMaxRows
+        RewriteFacadeAdapter.compileQuery sql targetProvider validationContext.PolicyVersion executionPolicy.QueryMaxRows
 
     static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
@@ -99,7 +99,7 @@ type SqlCoreFacade private () =
         ArgumentNullException.ThrowIfNull(sourceProfile)
         ArgumentNullException.ThrowIfNull(targetProfile)
         sourceDialect |> ignore
-        RewriteFacadeAdapter.compileQuery sql targetProvider executionPolicy.QueryMaxRows
+        RewriteFacadeAdapter.compileQuery sql targetProvider validationContext.PolicyVersion executionPolicy.QueryMaxRows
 
     static member CompileDml(parsed: ParsedStatement, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         FunctionalAst.verify parsed.Statement |> ignore
@@ -112,7 +112,7 @@ type SqlCoreFacade private () =
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
         sourceDialect |> ignore
-        RewriteFacadeAdapter.compileDml sql targetProvider
+        RewriteFacadeAdapter.compileDml sql targetProvider validationContext.PolicyVersion
 
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, policy: DmlCompilationPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile, conflictTargetAssurance: DmlConflictTargetAssurance) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
@@ -121,7 +121,7 @@ type SqlCoreFacade private () =
         ArgumentNullException.ThrowIfNull(targetProfile)
         ArgumentNullException.ThrowIfNull(conflictTargetAssurance)
         sourceDialect |> ignore
-        RewriteFacadeAdapter.compileDml sql targetProvider
+        RewriteFacadeAdapter.compileDml sql targetProvider validationContext.PolicyVersion
 
     static member TryParseQuery(sql: string, sourceDialect: SqlAgentToolType) : SqlCoreTryResult<ParsedStatement> =
         FacadeResult.capture (fun () -> SqlCoreFacade.ParseQuery(sql, sourceDialect))
