@@ -8,6 +8,7 @@ open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Internal
+open HsSqlAgent.SqlCore.Rewrite
 
 /// CLR-friendly result returned by SqlCoreFacade Try... methods.
 /// The public signature intentionally contains no FSharpOption, FSharpResult,
@@ -55,11 +56,6 @@ module private FacadeResult =
                 noDiagnostics)
 
 /// C#-oriented facade for the parser and compiler pipeline.
-///
-/// This is introduced in a temporary F# migration assembly first so C# interop
-/// can be locked before the SqlCore assembly itself is switched to F#.
-/// The source is intended to move unchanged into HsSqlAgent.SqlCore.fsproj at
-/// the final cutover.
 [<AbstractClass; Sealed>]
 type SqlCoreFacade private () =
 
@@ -134,12 +130,10 @@ type SqlCoreFacade private () =
         targetProvider: SqlAgentToolType,
         validationContext: SqlPlanValidationContext,
         executionPolicy: SqlExecutionPlanPolicy) : CompiledSqlCommand =
-        let parsed = SqlCoreFacade.ParseQuery(sql, sourceDialect)
-        SqlCoreFacade.CompileQuery(
-            parsed,
-            targetProvider,
-            validationContext,
-            executionPolicy)
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        sourceDialect |> ignore
+        RewriteFacadeAdapter.compileQuery sql targetProvider
 
     static member CompileQuery(
         sql: string,
@@ -149,13 +143,12 @@ type SqlCoreFacade private () =
         executionPolicy: SqlExecutionPlanPolicy,
         sourceProfile: SqlProviderCapabilityProfile,
         targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
-        let parsed = SqlCoreFacade.ParseQuery(sql, sourceDialect, sourceProfile)
-        SqlCoreFacade.CompileQuery(
-            parsed,
-            targetProvider,
-            validationContext,
-            executionPolicy,
-            targetProfile)
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        ArgumentNullException.ThrowIfNull(sourceProfile)
+        ArgumentNullException.ThrowIfNull(targetProfile)
+        sourceDialect |> ignore
+        RewriteFacadeAdapter.compileQuery sql targetProvider
 
     static member CompileDml(
         parsed: ParsedStatement,
