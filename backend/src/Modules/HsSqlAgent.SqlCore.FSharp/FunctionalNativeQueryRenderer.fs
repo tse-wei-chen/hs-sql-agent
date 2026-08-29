@@ -66,7 +66,7 @@ module internal FunctionalNativeQueryRenderer =
         if provider = SqlAgentToolType.MsSqlServer
            && limit.HasValue
            && limit.Value >= 0
-           && not positiveOffset then
+           && (not positiveOffset || limit.Value = 0) then
             if distinct then sql.Append("DISTINCT ") |> ignore
             sql.Append("TOP (").Append(NativeSqlParameterizer.Placeholder).Append(") ") |> ignore
             bindings <- bindings.Add(box limit.Value)
@@ -483,21 +483,49 @@ module internal FunctionalNativeQueryRenderer =
         elif position = FunctionalQueryPosition.ScalarSubquery
              && CoreNativeSetTailScope.CanRenderDirectTail(statement) then
             let body = renderSetBody renderer (withoutTail statement) position
-            let tail =
-                renderer.RenderDirectSetTailForFunctional(
+            let order = renderOrderBy renderer statement.OrderBy statement.Head.Select
+            let pagination = renderPagination renderer statement.Limit statement.Offset
+            let tail = appendFragments order pagination " "
+            appendFragments body tail " "
+        else
+            let inner = renderSetBody renderer (withoutTail statement) position
+            if renderer.Provider = SqlAgentToolType.MsSqlServer
+               && hasPositiveOffset statement.Offset
+               && (not statement.Limit.HasValue || statement.Limit.Value <> 0) then
+                renderer.RenderSetTailWrapperForFunctional(
+                    inner,
                     statement.OrderBy,
                     statement.Limit,
                     statement.Offset,
                     statement.Head.Select)
-            appendFragments body tail " "
-        else
-            let inner = renderSetBody renderer (withoutTail statement) position
-            renderer.RenderSetTailWrapperForFunctional(
-                inner,
-                statement.OrderBy,
-                statement.Limit,
-                statement.Offset,
-                statement.Head.Select)
+            else
+                let head = renderSelectHead renderer statement.Limit statement.Offset false
+                let alias =
+                    CoreIdentifierSqlRenderer.RenderAlias(
+                        IdentifierPart("_set", false, SourceSpan.Unknown),
+                        renderer.Provider)
+                let asKeyword =
+                    if renderer.Provider = SqlAgentToolType.Oracle then " " else " AS "
+                let sql =
+                    StringBuilder(head.Sql)
+                        .Append("* FROM (")
+                        .Append(inner.Sql)
+                        .Append(')')
+                        .Append(asKeyword)
+                        .Append(alias)
+                let mutable bindings = head.Bindings.AddRange(inner.Bindings)
+
+                let order = renderOrderBy renderer statement.OrderBy statement.Head.Select
+                if order.Sql.Length > 0 then
+                    sql.Append(' ').Append(order.Sql) |> ignore
+                    bindings <- bindings.AddRange(order.Bindings)
+
+                let pagination = renderPagination renderer statement.Limit statement.Offset
+                if pagination.Sql.Length > 0 then
+                    sql.Append(' ').Append(pagination.Sql) |> ignore
+                    bindings <- bindings.AddRange(pagination.Bindings)
+
+                NativeSqlFragment(sql.ToString(), bindings)
 
     let lower
         (plan: ExecutableSqlPlan)
