@@ -2,7 +2,6 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Collections.Generic
-open System.Globalization
 open System.Text.RegularExpressions
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -20,12 +19,12 @@ module internal RewriteRenderer =
 
     type RenderedCommand =
         { Sql: string
-          Parameters: obj list }
+          Parameters: (obj | null) list }
 
     type private RenderContext(provider: Provider) =
-        let parameters = ResizeArray<obj>()
+        let parameters = ResizeArray<obj | null>()
         member _.Provider = provider
-        member _.Bind(value: obj) =
+        member _.Bind(value: obj | null) =
             parameters.Add(value)
             let index = parameters.Count
             match provider with
@@ -37,20 +36,21 @@ module internal RewriteRenderer =
             | Firebird -> "?"
         member _.Parameters = parameters |> Seq.toList
 
-    let private quotePart provider (value: string) =
+    let private quotePart (provider: Provider) (value: string) =
         match provider with
         | MySql -> "`" + value.Replace("`", "``") + "`"
         | _ -> "\"" + value.Replace("\"", "\"\"") + "\""
 
-    let private renderIdentifier provider identifier =
+    let private renderIdentifier (provider: Provider) (identifier: Identifier) =
         identifier
         |> Identifier.parts
-        |> List.map (fun part -> quotePart provider part.Value)
+        |> List.map (fun (part: IdentifierPart) -> quotePart provider part.Value)
         |> String.concat "."
 
-    let private renderAlias provider alias = quotePart provider alias.Value
+    let private renderAlias (provider: Provider) (alias: IdentifierPart) =
+        quotePart provider alias.Value
 
-    let private scalarObject value : obj =
+    let private scalarObject (value: ScalarValue) : obj | null =
         match value with
         | ScalarValue.Null -> null
         | ScalarValue.Boolean value -> box value
@@ -101,12 +101,12 @@ module internal RewriteRenderer =
         | SetOperator.Intersect -> "INTERSECT"
         | SetOperator.Except -> "EXCEPT"
 
-    let private validateFunctionName value =
+    let private validateFunctionName (value: string) =
         if not (Regex.IsMatch(value, "^[A-Za-z_][A-Za-z0-9_$.]*$", RegexOptions.CultureInvariant)) then
             invalidOp ("Unsafe function name '" + value + "'.")
         value
 
-    let private validateCastType value =
+    let private validateCastType (value: string) =
         if not (Regex.IsMatch(value, "^[A-Za-z][A-Za-z0-9_ ]*(\\([0-9]+(,[0-9]+)?\\))?$", RegexOptions.CultureInvariant)) then
             invalidOp ("Unsafe CAST type '" + value + "'.")
         value
@@ -118,7 +118,7 @@ module internal RewriteRenderer =
         | WindowFrameBound.Following value -> string value + " FOLLOWING"
         | WindowFrameBound.UnboundedFollowing -> "UNBOUNDED FOLLOWING"
 
-    let rec private renderExpr (ctx: RenderContext) expression =
+    let rec private renderExpr (ctx: RenderContext) (expression: Expr) : string =
         match expression with
         | Expr.Column identifier -> renderIdentifier ctx.Provider identifier
         | Expr.Literal value -> ctx.Bind(scalarObject value)
@@ -157,14 +157,16 @@ module internal RewriteRenderer =
         | Expr.SimpleCase(input, branches, fallback) ->
             let cases =
                 branches
-                |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result)
+                |> List.map (fun (branch: SimpleCaseBranch) ->
+                    " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result)
                 |> String.concat ""
             let elseSql = fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue ""
             "CASE " + renderExpr ctx input + cases + elseSql + " END"
         | Expr.SearchedCase(branches, fallback) ->
             let cases =
                 branches
-                |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Condition + " THEN " + renderExpr ctx branch.Result)
+                |> List.map (fun (branch: SearchedCaseBranch) ->
+                    " WHEN " + renderExpr ctx branch.Condition + " THEN " + renderExpr ctx branch.Result)
                 |> String.concat ""
             let elseSql = fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue ""
             "CASE" + cases + elseSql + " END"
@@ -174,11 +176,13 @@ module internal RewriteRenderer =
         | Expr.Between(value, lower, upper, negated) ->
             let keyword = if negated then " NOT BETWEEN " else " BETWEEN "
             renderExpr ctx value + keyword + renderExpr ctx lower + " AND " + renderExpr ctx upper
-        | Expr.IsNull(value, negated) -> renderExpr ctx value + (if negated then " IS NOT NULL" else " IS NULL")
+        | Expr.IsNull(value, negated) ->
+            renderExpr ctx value + (if negated then " IS NOT NULL" else " IS NULL")
         | Expr.ScalarSubquery query -> "(" + renderQuery ctx query + ")"
-        | Expr.Exists(query, negated) -> (if negated then "NOT EXISTS (" else "EXISTS (") + renderQuery ctx query + ")"
+        | Expr.Exists(query, negated) ->
+            (if negated then "NOT EXISTS (" else "EXISTS (") + renderQuery ctx query + ")"
 
-    and private renderWindow ctx window =
+    and private renderWindow (ctx: RenderContext) (window: WindowSpec) : string =
         let parts = ResizeArray<string>()
         if not window.PartitionBy.IsEmpty then
             parts.Add("PARTITION BY " + (window.PartitionBy |> List.map (renderExpr ctx) |> String.concat ", "))
@@ -187,7 +191,10 @@ module internal RewriteRenderer =
         match window.Frame with
         | None -> ()
         | Some frame ->
-            let unitText = match frame.Unit with | WindowFrameUnit.Rows -> "ROWS" | WindowFrameUnit.Range -> "RANGE"
+            let unitText =
+                match frame.Unit with
+                | WindowFrameUnit.Rows -> "ROWS"
+                | WindowFrameUnit.Range -> "RANGE"
             let frameSql =
                 match frame.End with
                 | None -> unitText + " " + frameBoundText frame.Start
@@ -195,7 +202,7 @@ module internal RewriteRenderer =
             parts.Add(frameSql)
         String.concat " " parts
 
-    and private renderOrderBy ctx order =
+    and private renderOrderBy (ctx: RenderContext) (order: OrderBy) : string =
         let direction = if order.Descending then " DESC" else " ASC"
         let nulls =
             match order.NullOrdering with
@@ -212,7 +219,7 @@ module internal RewriteRenderer =
                 | _ -> " NULLS LAST"
         renderExpr ctx order.Expression + direction + nulls
 
-    and private renderSource ctx source =
+    and private renderSource (ctx: RenderContext) (source: TableSource) : string =
         match source with
         | TableSource.NamedTable(identifier, alias) ->
             renderIdentifier ctx.Provider identifier
@@ -220,10 +227,10 @@ module internal RewriteRenderer =
         | TableSource.DerivedTable(query, alias) ->
             "(" + renderQuery ctx query + ") AS " + renderAlias ctx.Provider alias
 
-    and private renderSelect ctx select =
+    and private renderSelect (ctx: RenderContext) (select: Select) : string =
         let projection =
             select.Projection
-            |> List.map (fun item ->
+            |> List.map (fun (item: SelectItem) ->
                 renderExpr ctx item.Expression
                 + (item.Alias |> Option.map (fun alias -> " AS " + renderAlias ctx.Provider alias) |> Option.defaultValue ""))
             |> String.concat ", "
@@ -233,11 +240,12 @@ module internal RewriteRenderer =
             sql <- sql + " " + joinText join.Kind + " " + renderSource ctx join.Source
             join.Predicate |> Option.iter (fun predicate -> sql <- sql + " ON " + renderExpr ctx predicate)
         select.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
-        if not select.GroupBy.IsEmpty then sql <- sql + " GROUP BY " + (select.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
+        if not select.GroupBy.IsEmpty then
+            sql <- sql + " GROUP BY " + (select.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
         select.Having |> Option.iter (fun predicate -> sql <- sql + " HAVING " + renderExpr ctx predicate)
         sql
 
-    and private renderPaging ctx query sql =
+    and private renderPaging (ctx: RenderContext) (query: Query) (sql: string) : string =
         match ctx.Provider with
         | PostgreSql
         | SQLite
@@ -264,14 +272,15 @@ module internal RewriteRenderer =
             let withOffset = query.Offset |> Option.map (fun value -> sql + " OFFSET " + string value + " ROWS") |> Option.defaultValue sql
             query.Limit |> Option.map (fun value -> withOffset + " FETCH NEXT " + string value + " ROWS ONLY") |> Option.defaultValue withOffset
 
-    and private renderQuery ctx query =
+    and private renderQuery (ctx: RenderContext) (query: Query) : string =
         let mutable sql = renderSelect ctx query.Head
         for branch in query.SetOperations do
             sql <- sql + " " + setText branch.Operator + " " + renderQuery ctx branch.Query
-        if not query.OrderBy.IsEmpty then sql <- sql + " ORDER BY " + (query.OrderBy |> List.map (renderOrderBy ctx) |> String.concat ", ")
+        if not query.OrderBy.IsEmpty then
+            sql <- sql + " ORDER BY " + (query.OrderBy |> List.map (renderOrderBy ctx) |> String.concat ", ")
         renderPaging ctx query sql
 
-    let private renderReturning ctx items =
+    let private renderReturning (ctx: RenderContext) (items: SelectItem list) : string =
         if items.IsEmpty then ""
         else
             match ctx.Provider with
@@ -280,13 +289,13 @@ module internal RewriteRenderer =
             | Firebird ->
                 " RETURNING "
                 + (items
-                   |> List.map (fun item ->
+                   |> List.map (fun (item: SelectItem) ->
                        renderExpr ctx item.Expression
                        + (item.Alias |> Option.map (fun alias -> " AS " + renderAlias ctx.Provider alias) |> Option.defaultValue ""))
                    |> String.concat ", ")
             | _ -> invalidOp "RETURNING requires provider-specific lowering before rendering."
 
-    let private renderInsert ctx insert =
+    let private renderInsert (ctx: RenderContext) (insert: Insert) : string =
         let columns =
             if insert.Columns.IsEmpty then ""
             else " (" + (insert.Columns |> List.map (renderAlias ctx.Provider) |> String.concat ", ") + ")"
@@ -295,25 +304,28 @@ module internal RewriteRenderer =
             | Some query, _ -> " " + renderQuery ctx query
             | None, rows when not rows.IsEmpty ->
                 " VALUES "
-                + (rows |> List.map (fun row -> "(" + (row |> List.map (renderExpr ctx) |> String.concat ", ") + ")") |> String.concat ", ")
+                + (rows
+                   |> List.map (fun row -> "(" + (row |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
+                   |> String.concat ", ")
             | _ -> " DEFAULT VALUES"
         "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + sourceSql + renderReturning ctx insert.Returning
 
-    let private renderUpdate ctx update =
+    let private renderUpdate (ctx: RenderContext) (update: Update) : string =
         let assignments =
             update.Assignments
-            |> List.map (fun assignment -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value)
+            |> List.map (fun (assignment: Assignment) ->
+                renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value)
             |> String.concat ", "
         let mutable sql = "UPDATE " + renderIdentifier ctx.Provider update.Target + " SET " + assignments
         update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
         sql + renderReturning ctx update.Returning
 
-    let private renderDelete ctx delete =
+    let private renderDelete (ctx: RenderContext) (delete: Delete) : string =
         let mutable sql = "DELETE FROM " + renderIdentifier ctx.Provider delete.Target
         delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
         sql + renderReturning ctx delete.Returning
 
-    let render provider executable =
+    let render (provider: Provider) executable : RenderedCommand =
         let ctx = RenderContext(provider)
         let document = Executable.value executable
         let sql =
