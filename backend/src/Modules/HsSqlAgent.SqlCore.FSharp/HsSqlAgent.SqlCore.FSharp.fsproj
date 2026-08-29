@@ -47,6 +47,7 @@
     <Compile Include="FunctionalDmlReturningExpressionCapabilityRules.fs" />
     <Compile Include="FunctionalNativeSetTailScope.fs" />
     <Compile Include="FunctionalNativeBackendCompatibility.fs" />
+    <Compile Include="FunctionalDmlReturningSqlRewriter.fs" />
     <Compile Include="FunctionalPipeline.fs" />
     <Compile Include="Facade.fs" />
   </ItemGroup>
