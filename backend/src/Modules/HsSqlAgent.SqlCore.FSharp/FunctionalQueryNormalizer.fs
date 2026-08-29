@@ -44,7 +44,7 @@ module internal FunctionalQueryNormalizer =
                 | "NOTEXISTS" -> "NOT EXISTS"
                 | operatorText -> operatorText
 
-        let failIfUnsupported error =
+        let failIfUnsupported (error: string | null) =
             match error with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
