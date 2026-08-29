@@ -27,6 +27,7 @@
     <Compile Include="FunctionalSqlTextParser.fs" />
     <Compile Include="FunctionalQueryBinder.fs" />
     <Compile Include="FunctionalDmlBinder.fs" />
+    <Compile Include="FunctionalProviderFunctionNormalizer.fs" />
     <Compile Include="FunctionalQueryNormalizer.fs" />
     <Compile Include="FunctionalDmlNormalizer.fs" />
     <Compile Include="FunctionalAstRewriter.fs" />

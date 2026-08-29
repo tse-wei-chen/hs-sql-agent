@@ -12,14 +12,13 @@ open HsSqlAgent.SqlCore.Models
 
 /// F# ownership boundary for query normalization.
 ///
-/// Statement/source traversal, primitive expression normalization, CAST traversal, and canonical
-/// function families live here. Provider-registry translation remains behind the legacy function
-/// oracle until its cross-dialect semantic mapping is moved independently.
+/// Statement/source traversal, primitive expression normalization, CAST traversal, canonical
+/// function families, and provider-registry semantic translation live in F#. Focused semantic
+/// helpers remain for CAST types, DATEDIFF, and temporal format-token translation.
 module internal FunctionalQueryNormalizer =
 
     type private Context =
         {
-            Facts: QueryFacts
             SourceDialect: SqlAgentToolType
             TargetProvider: SqlAgentToolType
         }
@@ -71,42 +70,6 @@ module internal FunctionalQueryNormalizer =
         | _ -> ()
 
         normalized
-
-    let private normalizeFunctionWithLegacyOracle
-        (context: Context)
-        (expression: FunctionCallExpr) =
-
-        let carrier =
-            SelectStatement(
-                ImmutableArray<CteDefinition>.Empty,
-                false,
-                ImmutableArray.Create(SelectItem(expression, null, expression.Span)),
-                null,
-                ImmutableArray<JoinSource>.Empty,
-                null,
-                ImmutableArray<SqlExpr>.Empty,
-                null,
-                ImmutableArray<OrderByItem>.Empty,
-                Nullable<int>(),
-                Nullable<int>(),
-                expression.Span)
-
-        let normalized =
-            CoreSqlNormalizer
-                .CreateDefault()
-                .Normalize(
-                    BoundStatement(
-                        carrier,
-                        context.Facts,
-                        context.SourceDialect),
-                    context.TargetProvider)
-
-        match normalized.Statement with
-        | :? SelectStatement as select when select.Select.Length = 1 ->
-            select.Select[0].Expression
-        | other ->
-            raise (SqlCompilationException(
-                $"Legacy function normalization oracle returned unexpected carrier {other.GetType().Name}."))
 
     let rec private normalizeStatement
         (context: Context)
@@ -441,44 +404,51 @@ module internal FunctionalQueryNormalizer =
             | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
                 canonicalStringAggregate ()
 
-            | _ ->
-                normalizeFunctionWithLegacyOracle context functionCall
+            | kind ->
+                raise (SqlCompilationException(
+                    "Unsupported source function canonicalization kind '" +
+                    string kind + "' for function '" + sourceName + "'."))
 
-        if SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) then
-            if normalizedArguments.Length <> 1 then
-                raise (SqlCompilationException($"{sourceName} requires exactly 1 argument."))
+        match SqlSourceFunctionRegistry.Find(sourceName) with
+        | contract when not (isNull contract) ->
+            normalizeRegisteredFamily contract
+        | _ ->
+            if SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) then
+                if normalizedArguments.Length <> 1 then
+                    raise (SqlCompilationException($"{sourceName} requires exactly 1 argument."))
 
-            canonicalFunction
-                "CORE_DATE_PART"
-                (ImmutableArray.Create<SqlExpr>(
-                    LiteralExpr(sourceName, functionCall.Span) :> SqlExpr,
-                    normalizedArguments[0]))
-        else
-            match sourceName with
-            | "CURRENT_DATE" ->
-                if normalizedArguments.Length <> 0 then
-                    raise (SqlCompilationException("CURRENT_DATE does not accept arguments."))
-                withName "CORE_CURRENT_DATE"
-            | "CURRENT_TIME" ->
-                if normalizedArguments.Length <> 0 then
-                    raise (SqlCompilationException("CURRENT_TIME does not accept arguments."))
-                withName "CORE_CURRENT_TIME"
-            | "CURRENT_TIMESTAMP" ->
-                if normalizedArguments.Length <> 0 then
-                    raise (SqlCompilationException("CURRENT_TIMESTAMP does not accept arguments."))
-                withName "CORE_CURRENT_TIMESTAMP"
-            | "COALESCE" ->
-                if normalizedArguments.Length < 2 then
-                    raise (SqlCompilationException("COALESCE requires at least 2 arguments."))
-                withName "COALESCE"
-            | _ when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceName) ->
-                withName sourceName
-            | _ ->
-                match SqlSourceFunctionRegistry.Find(sourceName) with
-                | null ->
-                    normalizeFunctionWithLegacyOracle context functionCall
-                | contract ->
-                    normalizeRegisteredFamily contract
+                canonicalFunction
+                    "CORE_DATE_PART"
+                    (ImmutableArray.Create<SqlExpr>(
+                        LiteralExpr(sourceName, functionCall.Span) :> SqlExpr,
+                        normalizedArguments[0]))
+            else
+                match sourceName with
+                | "CURRENT_DATE" ->
+                    if normalizedArguments.Length <> 0 then
+                        raise (SqlCompilationException("CURRENT_DATE does not accept arguments."))
+                    withName "CORE_CURRENT_DATE"
+                | "CURRENT_TIME" ->
+                    if normalizedArguments.Length <> 0 then
+                        raise (SqlCompilationException("CURRENT_TIME does not accept arguments."))
+                    withName "CORE_CURRENT_TIME"
+                | "CURRENT_TIMESTAMP" ->
+                    if normalizedArguments.Length <> 0 then
+                        raise (SqlCompilationException("CURRENT_TIMESTAMP does not accept arguments."))
+                    withName "CORE_CURRENT_TIMESTAMP"
+                | "COALESCE" ->
+                    if normalizedArguments.Length < 2 then
+                        raise (SqlCompilationException("COALESCE requires at least 2 arguments."))
+                    withName "COALESCE"
+                | _ when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceName) ->
+                    withName sourceName
+                | _ ->
+                    FunctionalProviderFunctionNormalizer.normalize
+                        context.SourceDialect
+                        context.TargetProvider
+                        sourceName
+                        normalizedFunction
+                        normalizedArguments
 
     and private normalizeExpression
         (context: Context)
@@ -595,7 +565,6 @@ module internal FunctionalQueryNormalizer =
 
         let context =
             {
-                Facts = statement.Facts
                 SourceDialect = statement.SourceDialect
                 TargetProvider = targetProvider
             }
