@@ -22,9 +22,13 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> Provider.Firebird
         | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
 
-    let private parameters (values: (obj | null) list) =
+    let private parameters targetProvider (values: (obj | null) list) =
+        let prefix =
+            match targetProvider with
+            | SqlAgentToolType.Oracle -> ":p"
+            | _ -> "@p"
         values
-        |> List.mapi (fun index value -> SqlParameterValue("@p" + string index, value))
+        |> List.mapi (fun index value -> SqlParameterValue(prefix + string index, value))
         |> ImmutableArray.CreateRange
 
     let private statementKind (sql: string) =
@@ -44,7 +48,7 @@ module internal RewriteFacadeAdapter =
                 { Provider = provider targetProvider
                   Policy = policy }
                 sql
-        let parameterValues = parameters rendered.Parameters
+        let parameterValues = parameters targetProvider rendered.Parameters
         let command =
             CompiledSqlCommand(
                 rendered.Sql,
