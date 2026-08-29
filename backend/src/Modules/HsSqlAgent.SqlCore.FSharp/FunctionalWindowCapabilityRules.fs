@@ -60,45 +60,69 @@ type internal SqlWindowCapabilityRules private () =
         provider: SqlAgentToolType) : string | null =
         ArgumentNullException.ThrowIfNull(windowed)
 
-        let functionCall = SqlWindowCapabilityRules.DirectWindowFunction(windowed.Expression)
-        if isNull functionCall then
-            null
-        else
+        match SqlWindowCapabilityRules.DirectWindowFunction(windowed.Expression) with
+        | null -> null
+        | functionCall ->
             let name =
                 SqlWindowCapabilityRules.IdentifierText(functionCall.Name).ToUpperInvariant()
+
             let contract = SqlCanonicalFunctionRegistry.Find(name)
 
             let functionError =
-                if not (isNull contract)
-                   && contract.TargetCapabilityFamily = SqlCanonicalTargetCapabilityFamily.WindowFunction then
+                match contract with
+                | null -> null
+                | contractValue
+                    when contractValue.TargetCapabilityFamily = SqlCanonicalTargetCapabilityFamily.WindowFunction ->
                     SqlWindowCapabilityRules.FunctionValidationError(name, provider)
-                else
-                    null
+                | _ -> null
 
             if not (isNull functionError) then
                 functionError
-            elif not (isNull windowed.Window.Frame)
-                 && not (isNull contract)
-                 && contract.IsWindowFrameInsensitive
-                 && (provider = SqlAgentToolType.MsSqlServer
-                     || provider = SqlAgentToolType.Oracle) then
-                SqlWindowCapabilityRules.CapabilityError(
-                    provider,
-                    "window.frame." + name.ToLowerInvariant())
-            elif provider = SqlAgentToolType.MsSqlServer
-                 && not (isNull contract)
-                 && contract.Kind = SqlCanonicalFunctionKind.Window
-                 && windowed.Window.OrderBy.IsDefaultOrEmpty then
-                SqlWindowCapabilityRules.CapabilityError(provider, "window.order_by")
-            elif provider = SqlAgentToolType.MsSqlServer
-                 && not (isNull windowed.Window.Frame)
-                 && windowed.Window.Frame.Unit = WindowFrameUnitKind.Range
-                 && (SqlWindowCapabilityRules.HasOffsetBound(windowed.Window.Frame.Start)
-                     || (not (isNull windowed.Window.Frame.End)
-                         && SqlWindowCapabilityRules.HasOffsetBound(windowed.Window.Frame.End))) then
-                SqlWindowCapabilityRules.CapabilityError(provider, "window.range_offset")
             else
-                null
+                let frameInsensitiveError =
+                    match contract, windowed.Window.Frame with
+                    | contractValue, frame
+                        when not (isNull contractValue)
+                             && not (isNull frame)
+                             && contractValue.IsWindowFrameInsensitive
+                             && (provider = SqlAgentToolType.MsSqlServer
+                                 || provider = SqlAgentToolType.Oracle) ->
+                        SqlWindowCapabilityRules.CapabilityError(
+                            provider,
+                            "window.frame." + name.ToLowerInvariant())
+                    | _ -> null
+
+                if not (isNull frameInsensitiveError) then
+                    frameInsensitiveError
+                else
+                    let orderByError =
+                        match contract with
+                        | null -> null
+                        | contractValue
+                            when provider = SqlAgentToolType.MsSqlServer
+                                 && contractValue.Kind = SqlCanonicalFunctionKind.Window
+                                 && windowed.Window.OrderBy.IsDefaultOrEmpty ->
+                            SqlWindowCapabilityRules.CapabilityError(provider, "window.order_by")
+                        | _ -> null
+
+                    if not (isNull orderByError) then
+                        orderByError
+                    else
+                        match windowed.Window.Frame with
+                        | null -> null
+                        | frame
+                            when provider = SqlAgentToolType.MsSqlServer
+                                 && frame.Unit = WindowFrameUnitKind.Range ->
+                            let hasEndOffset =
+                                match frame.End with
+                                | null -> false
+                                | endBound -> SqlWindowCapabilityRules.HasOffsetBound(endBound)
+
+                            if SqlWindowCapabilityRules.HasOffsetBound(frame.Start) || hasEndOffset then
+                                SqlWindowCapabilityRules.CapabilityError(provider, "window.range_offset")
+                            else
+                                null
+                        | _ -> null
 
     static member BasicMatrixCapability(provider: SqlAgentToolType) =
         ignore provider
