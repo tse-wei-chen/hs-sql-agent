@@ -62,6 +62,7 @@
     <Compile Include="FunctionalSqlServerPagingRenderer.fs" />
     <Compile Include="FunctionalExpressionShape.fs" />
     <Compile Include="FunctionalNativeExpressionRenderer.fs" />
+    <Compile Include="FunctionalDuExpressionRenderer.fs" />
     <Compile Include="FunctionalNativeQueryRenderer.fs" />
     <Compile Include="FunctionalPipeline.fs" />
     <Compile Include="Facade.fs" />
