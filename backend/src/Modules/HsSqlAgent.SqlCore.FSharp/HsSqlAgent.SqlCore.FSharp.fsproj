@@ -58,6 +58,7 @@
     <Compile Include="FunctionalJsonCapabilityRules.fs" />
     <Compile Include="FunctionalTemporalCanonicalRenderer.fs" />
     <Compile Include="FunctionalStructuredTextCanonicalRenderer.fs" />
+    <Compile Include="FunctionalStringAggregateRenderer.fs" />
     <Compile Include="FunctionalNativeExpressionRenderer.fs" />
     <Compile Include="FunctionalNativeQueryRenderer.fs" />
     <Compile Include="FunctionalPipeline.fs" />
