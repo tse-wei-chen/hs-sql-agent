@@ -45,12 +45,21 @@ module internal RewriteFacadeAdapter =
         | token :: _ -> invalidArg "sql" ("Unsupported SQL statement at offset " + string token.Start + ".")
         | [] -> invalidArg "sql" "SQL text cannot be empty."
 
+    let private shouldSurfaceAsCompilationError (message: string) =
+        message.Contains("requires provider-specific lowering", StringComparison.Ordinal)
+        || message.Contains("requires lowering for this provider", StringComparison.Ordinal)
+        || message.Contains("requires provider lowering", StringComparison.Ordinal)
+        || message.Contains("lowering is not available", StringComparison.Ordinal)
+        || message.Contains("OFFSET requires ORDER BY", StringComparison.Ordinal)
+        || message.Contains("RETURNING is not supported", StringComparison.Ordinal)
+
     let private compileRewrite options sql =
         try
             RewritePipeline.compile options sql
         with
         | :? SqlCompilationException -> reraise()
-        | :? InvalidOperationException as ex -> raise (SqlCompilationException(ex.Message, ex))
+        | :? InvalidOperationException as ex when shouldSurfaceAsCompilationError ex.Message ->
+            raise (SqlCompilationException(ex.Message, ex))
 
     let private compile (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (policy: ExecutionPolicy) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
