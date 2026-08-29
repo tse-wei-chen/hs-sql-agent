@@ -12,7 +12,7 @@ open HsSqlAgent.SqlCore.Models
 /// F# ownership boundary for structural native-expression lowering.
 /// Provider-sensitive literal/interval/canonical-function leaves and the specialized Oracle/SQL
 /// Server boolean-CASE predicate bridge remain in the legacy renderer while structural recursion,
-/// casts, ordinary functions, FILTER, ordinary CASE, and window lowering are owned here.
+/// casts, ordinary functions, POSITION, FILTER, ordinary CASE, and window lowering are owned here.
 module internal FunctionalNativeExpressionRenderer =
 
     let private emptyBindings = ImmutableArray<obj | null>.Empty
@@ -159,7 +159,30 @@ module internal FunctionalNativeExpressionRenderer =
                 | null -> SqlCanonicalNativeLoweringKind.Ordinary
                 | value -> value.NativeLoweringKind
 
-            if loweringKind <> SqlCanonicalNativeLoweringKind.Ordinary then
+            if loweringKind = SqlCanonicalNativeLoweringKind.Position then
+                if functionCall.Arguments.Length <> 2 then
+                    raise (SqlCompilationException(
+                        "Canonical function '" + name + "' requires 2 argument(s)."))
+
+                let haystack: NativeSqlFragment =
+                    render renderer renderSubquery functionCall.Arguments[0]
+                let needle: NativeSqlFragment =
+                    render renderer renderSubquery functionCall.Arguments[1]
+
+                match renderer.Provider with
+                | SqlAgentToolType.MsSqlServer ->
+                    combine ("CHARINDEX(" + needle.Sql + ", " + haystack.Sql + ")") needle haystack
+                | SqlAgentToolType.Postgres ->
+                    combine ("STRPOS(" + haystack.Sql + ", " + needle.Sql + ")") haystack needle
+                | SqlAgentToolType.MySQL ->
+                    combine ("LOCATE(" + needle.Sql + ", " + haystack.Sql + ")") needle haystack
+                | SqlAgentToolType.Sqlite
+                | SqlAgentToolType.Oracle ->
+                    combine ("INSTR(" + haystack.Sql + ", " + needle.Sql + ")") haystack needle
+                | SqlAgentToolType.Firebird ->
+                    combine ("POSITION(" + needle.Sql + ", " + haystack.Sql + ")") needle haystack
+                | _ -> raise (SqlCompilationException("Unsupported position provider."))
+            elif loweringKind <> SqlCanonicalNativeLoweringKind.Ordinary then
                 renderer.RenderExpressionForFunctional(expression, renderSubquery)
             else
                 if not (safeFunctionName.IsMatch(name)) then
