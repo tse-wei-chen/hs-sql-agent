@@ -7,33 +7,55 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// Producing ExecutableSql is therefore impossible without a ValidatedSql value.
 module internal RewritePolicy =
 
+    type MutationSafety =
+        | RequirePredicate
+        | AllowAllRows
+
+    type RowCap =
+        | Unlimited
+        | MaxRows of PositiveRowCount
+
     type ExecutionPolicy =
-        { AllowUnboundedUpdate: bool
-          AllowUnboundedDelete: bool
-          QueryMaxRows: int }
+        { UpdateSafety: MutationSafety
+          DeleteSafety: MutationSafety
+          QueryRows: RowCap }
+        member this.AllowUnboundedUpdate =
+            match this.UpdateSafety with
+            | AllowAllRows -> true
+            | RequirePredicate -> false
+        member this.AllowUnboundedDelete =
+            match this.DeleteSafety with
+            | AllowAllRows -> true
+            | RequirePredicate -> false
+        member this.QueryMaxRows =
+            match this.QueryRows with
+            | Unlimited -> 0
+            | MaxRows count -> PositiveRowCount.value count
 
     let safeDefaults =
-        { AllowUnboundedUpdate = false
-          AllowUnboundedDelete = false
-          QueryMaxRows = 0 }
+        { UpdateSafety = RequirePredicate
+          DeleteSafety = RequirePredicate
+          QueryRows = Unlimited }
 
-    let private clampQueryLimit (maxRows: int) (query: Query) =
-        if maxRows <= 0 then query
-        else
+    let private clampQueryLimit (rowCap: RowCap) (query: Query) =
+        match rowCap with
+        | Unlimited -> query
+        | MaxRows maxRows ->
+            let maxValue = PositiveRowCount.value maxRows
             let limit =
                 match query.Limit with
-                | None -> Some maxRows
-                | Some value -> Some(min value maxRows)
+                | None -> Some maxValue
+                | Some value -> Some(min value maxValue)
             { query with Limit = limit }
 
     let private authorizeDocument policy document =
         let statement =
             match document.Statement with
             | QueryStatement query ->
-                QueryStatement(clampQueryLimit policy.QueryMaxRows query)
-            | UpdateStatement update when update.Where.IsNone && not policy.AllowUnboundedUpdate ->
+                QueryStatement(clampQueryLimit policy.QueryRows query)
+            | UpdateStatement update when update.Where.IsNone && policy.UpdateSafety = RequirePredicate ->
                 invalidOp "Execution policy rejects UPDATE without a WHERE predicate."
-            | DeleteStatement delete when delete.Where.IsNone && not policy.AllowUnboundedDelete ->
+            | DeleteStatement delete when delete.Where.IsNone && policy.DeleteSafety = RequirePredicate ->
                 invalidOp "Execution policy rejects DELETE without a WHERE predicate."
             | statement -> statement
         { document with Statement = statement }

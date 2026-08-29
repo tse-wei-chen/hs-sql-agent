@@ -5,6 +5,7 @@ open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Execution
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
@@ -89,7 +90,10 @@ module internal RewriteFacadeAdapter =
             targetProvider)
 
     let compileQuery (sql: string) (targetProvider: SqlAgentToolType) (policyVersion: string) (queryMaxRows: int) =
-        let policy = { RewritePolicy.safeDefaults with QueryMaxRows = queryMaxRows }
+        let queryRows =
+            if queryMaxRows <= 0 then RowCap.Unlimited
+            else RowCap.MaxRows(PositiveRowCount.create queryMaxRows)
+        let policy = { RewritePolicy.safeDefaults with QueryRows = queryRows }
         let command = compile sql targetProvider policyVersion policy
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command

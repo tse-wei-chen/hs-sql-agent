@@ -28,6 +28,16 @@ module internal CoreModel =
 
         let parts (Identifier parts) = parts
 
+    /// Positive row counts are trusted once constructed. Magic zero/negative sentinels do not enter the core model.
+    type PositiveRowCount = private PositiveRowCount of int
+
+    module PositiveRowCount =
+        let create value =
+            if value <= 0 then invalidArg (nameof value) "Row count must be positive."
+            PositiveRowCount value
+
+        let value (PositiveRowCount value) = value
+
     type UnaryOperator =
         | Not
         | Negate
@@ -80,17 +90,39 @@ module internal CoreModel =
         | Rows
         | Range
 
+    /// Window offsets cannot be negative once inside the typed core.
+    type FrameOffset = private FrameOffset of int
+
+    module FrameOffset =
+        let create value =
+            if value < 0 then invalidArg (nameof value) "Window frame offset cannot be negative."
+            FrameOffset value
+
+        let value (FrameOffset value) = value
+
     type WindowFrameBound =
         | UnboundedPreceding
-        | Preceding of int
+        | Preceding of FrameOffset
         | CurrentRow
-        | Following of int
+        | Following of FrameOffset
         | UnboundedFollowing
+
+    /// A frame is either a single bound or a BETWEEN pair; End=None is no longer a forgeable state.
+    type WindowFrameExtent =
+        | SingleBound of WindowFrameBound
+        | BetweenBounds of WindowFrameBound * WindowFrameBound
 
     type WindowFrame =
         { Unit: WindowFrameUnit
-          Start: WindowFrameBound
-          End: WindowFrameBound option }
+          Extent: WindowFrameExtent }
+        member this.Start =
+            match this.Extent with
+            | SingleBound start
+            | BetweenBounds(start, _) -> start
+        member this.End =
+            match this.Extent with
+            | SingleBound _ -> None
+            | BetweenBounds(_, finish) -> Some finish
 
     type ScalarValue =
         | Null
@@ -105,6 +137,19 @@ module internal CoreModel =
         | OffsetDateTime of DateTimeOffset
         | Duration of TimeSpan
         | Bytes of byte array
+
+    /// Raw interval text is accepted only at the parser boundary and is then trusted as a distinct semantic value.
+    type IntervalLiteral = private IntervalLiteral of string
+
+    module IntervalLiteral =
+        let create value =
+            if String.IsNullOrWhiteSpace(value) then
+                invalidArg (nameof value) "INTERVAL literal cannot be empty."
+            if value.IndexOfAny([| '\000'; '\r'; '\n' |]) >= 0 then
+                invalidArg (nameof value) "INTERVAL literal contains invalid control characters."
+            IntervalLiteral value
+
+        let value (IntervalLiteral value) = value
 
     type CastType = private CastType of string
 
@@ -135,7 +180,7 @@ module internal CoreModel =
     type Expr =
         | Column of Identifier
         | Literal of ScalarValue
-        | Interval of string
+        | Interval of IntervalLiteral
         | Unary of UnaryOperator * Expr
         | Binary of BinaryOperator * Expr * Expr
         | FunctionCall of FunctionCall
