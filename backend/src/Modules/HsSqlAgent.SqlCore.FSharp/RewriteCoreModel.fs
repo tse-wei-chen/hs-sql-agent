@@ -28,6 +28,25 @@ module internal CoreModel =
 
         let parts (Identifier parts) = parts
 
+    /// Generic non-empty sequence used where SQL grammar requires one or more elements.
+    type NonEmpty<'T> = private NonEmpty of head: 'T * tail: 'T list
+
+    module NonEmpty =
+        let create head tail = NonEmpty(head, tail)
+
+        let ofList argumentName values =
+            match values with
+            | head :: tail -> NonEmpty(head, tail)
+            | [] -> invalidArg argumentName "Collection must contain at least one item."
+
+        let toList (NonEmpty(head, tail)) = head :: tail
+
+        let map mapping (NonEmpty(head, tail)) =
+            NonEmpty(mapping head, tail |> List.map mapping)
+
+        let iter action values =
+            values |> toList |> List.iter action
+
     /// Positive row counts are trusted once constructed. Magic zero/negative sentinels do not enter the core model.
     type PositiveRowCount = private PositiveRowCount of int
 
@@ -249,12 +268,13 @@ module internal CoreModel =
 
     and Select =
         { Distinct: bool
-          Projection: SelectItem list
+          ProjectionItems: NonEmpty<SelectItem>
           From: TableSource option
           Joins: Join list
           Where: Expr option
           GroupBy: Expr list
           Having: Expr option }
+        member this.Projection = NonEmpty.toList this.ProjectionItems
 
     and SetBranch =
         { Operator: SetOperator
@@ -272,8 +292,9 @@ module internal CoreModel =
           Value: Expr }
 
     /// INSERT source is exactly one of VALUES, query source, or DEFAULT VALUES.
+    /// VALUES contains at least one row and every row contains at least one expression.
     type InsertInput =
-        | Values of Expr list list
+        | Values of NonEmpty<NonEmpty<Expr>>
         | QuerySource of Query
         | DefaultValues
 
@@ -284,7 +305,7 @@ module internal CoreModel =
           Returning: SelectItem list }
         member this.Rows =
             match this.Input with
-            | Values rows -> rows
+            | Values rows -> rows |> NonEmpty.toList |> List.map NonEmpty.toList
             | QuerySource _
             | DefaultValues -> []
         member this.Source =
@@ -295,9 +316,10 @@ module internal CoreModel =
 
     type Update =
         { Target: Identifier
-          Assignments: Assignment list
+          AssignmentItems: NonEmpty<Assignment>
           Where: Expr option
           Returning: SelectItem list }
+        member this.Assignments = NonEmpty.toList this.AssignmentItems
 
     type Delete =
         { Target: Identifier

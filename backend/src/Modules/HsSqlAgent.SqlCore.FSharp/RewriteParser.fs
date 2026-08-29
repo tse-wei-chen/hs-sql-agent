@@ -36,22 +36,13 @@ module internal RewriteParser =
         | _ -> false
 
     let private acceptKeyword keyword (cursor: Cursor) =
-        if isKeyword keyword cursor.Current then
-            cursor.Advance()
-            true
-        else false
+        if isKeyword keyword cursor.Current then cursor.Advance(); true else false
 
     let private acceptSymbol symbol (cursor: Cursor) =
-        if isSymbol symbol cursor.Current then
-            cursor.Advance()
-            true
-        else false
+        if isSymbol symbol cursor.Current then cursor.Advance(); true else false
 
     let private acceptOperator operator (cursor: Cursor) =
-        if isOperator operator cursor.Current then
-            cursor.Advance()
-            true
-        else false
+        if isOperator operator cursor.Current then cursor.Advance(); true else false
 
     let private expectKeyword keyword (cursor: Cursor) =
         if not (acceptKeyword keyword cursor) then fail cursor.Current ("Expected " + keyword)
@@ -66,37 +57,28 @@ module internal RewriteParser =
         let token = cursor.Take()
         match token.Kind with
         | Identifier(value, quoted) ->
-            { Value = value
-              WasQuoted = quoted
-              Span = { Start = token.Start; Length = token.Length } }
+            { Value = value; WasQuoted = quoted; Span = { Start = token.Start; Length = token.Length } }
         | _ -> fail token "Expected identifier"
 
     let private identifier (cursor: Cursor) : Identifier =
         let parts = ResizeArray<IdentifierPart>()
         parts.Add(identifierPart cursor)
-        while acceptSymbol '.' cursor do
-            parts.Add(identifierPart cursor)
+        while acceptSymbol '.' cursor do parts.Add(identifierPart cursor)
         Identifier.create (parts |> Seq.toList)
 
     let private functionName (identifier: Identifier) : FunctionName =
-        identifier
-        |> Identifier.parts
-        |> List.map (fun (part: IdentifierPart) -> part.Value)
-        |> String.concat "."
-        |> FunctionName.create
+        identifier |> Identifier.parts |> List.map (fun part -> part.Value) |> String.concat "." |> FunctionName.create
 
     let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor
 
     and private parseOr (cursor: Cursor) : Expr =
         let mutable left = parseAnd cursor
-        while acceptKeyword "OR" cursor do
-            left <- Expr.Binary(BinaryOperator.Or, left, parseAnd cursor)
+        while acceptKeyword "OR" cursor do left <- Expr.Binary(BinaryOperator.Or, left, parseAnd cursor)
         left
 
     and private parseAnd (cursor: Cursor) : Expr =
         let mutable left = parseComparison cursor
-        while acceptKeyword "AND" cursor do
-            left <- Expr.Binary(BinaryOperator.And, left, parseComparison cursor)
+        while acceptKeyword "AND" cursor do left <- Expr.Binary(BinaryOperator.And, left, parseComparison cursor)
         left
 
     and private parseComparison (cursor: Cursor) : Expr =
@@ -112,24 +94,17 @@ module internal RewriteParser =
             | Operator "<=" -> cursor.Advance(); left <- Expr.Binary(BinaryOperator.LessThanOrEqual, left, parseConcat cursor)
             | Keyword "LIKE" -> cursor.Advance(); left <- Expr.Binary(BinaryOperator.Like, left, parseConcat cursor)
             | Keyword "ILIKE" -> cursor.Advance(); left <- Expr.Binary(BinaryOperator.ILike, left, parseConcat cursor)
-            | Keyword "IS" ->
-                cursor.Advance()
-                let negated = acceptKeyword "NOT" cursor
-                expectKeyword "NULL" cursor
-                left <- Expr.IsNull(left, negated)
+            | Keyword "IS" -> cursor.Advance(); let negated = acceptKeyword "NOT" cursor in expectKeyword "NULL" cursor; left <- Expr.IsNull(left, negated)
             | Keyword "IN" -> cursor.Advance(); left <- parseInTail cursor left false
             | Keyword "BETWEEN" -> cursor.Advance(); left <- parseBetweenTail cursor left false
-            | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) ->
-                cursor.Advance(); cursor.Advance(); left <- parseInTail cursor left true
-            | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) ->
-                cursor.Advance(); cursor.Advance(); left <- parseBetweenTail cursor left true
+            | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseInTail cursor left true
+            | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseBetweenTail cursor left true
             | _ -> keepGoing <- false
         left
 
     and private parseInTail (cursor: Cursor) (value: Expr) (negated: bool) : Expr =
         expectSymbol '(' cursor
-        if isKeyword "SELECT" cursor.Current then
-            invalidOp "IN (subquery) is not implemented in the rewrite AST yet."
+        if isKeyword "SELECT" cursor.Current then invalidOp "IN (subquery) is not implemented in the rewrite AST yet."
         let items = ResizeArray<Expr>()
         if not (acceptSymbol ')' cursor) then
             items.Add(parseExpression cursor)
@@ -140,13 +115,11 @@ module internal RewriteParser =
     and private parseBetweenTail (cursor: Cursor) (value: Expr) (negated: bool) : Expr =
         let lower = parseConcat cursor
         expectKeyword "AND" cursor
-        let upper = parseConcat cursor
-        Expr.Between(value, lower, upper, negated)
+        Expr.Between(value, lower, parseConcat cursor, negated)
 
     and private parseConcat (cursor: Cursor) : Expr =
         let mutable left = parseAdd cursor
-        while acceptOperator "||" cursor do
-            left <- Expr.Binary(BinaryOperator.Concat, left, parseAdd cursor)
+        while acceptOperator "||" cursor do left <- Expr.Binary(BinaryOperator.Concat, left, parseAdd cursor)
         left
 
     and private parseAdd (cursor: Cursor) : Expr =
@@ -186,16 +159,8 @@ module internal RewriteParser =
         | Keyword "NULL" -> cursor.Advance(); Expr.Literal ScalarValue.Null
         | Keyword "TRUE" -> cursor.Advance(); Expr.Literal(ScalarValue.Boolean true)
         | Keyword "FALSE" -> cursor.Advance(); Expr.Literal(ScalarValue.Boolean false)
-        | Symbol '(' when isKeyword "SELECT" (cursor.Peek 1) ->
-            cursor.Advance()
-            let query = parseQuery cursor
-            expectSymbol ')' cursor
-            Expr.ScalarSubquery query
-        | Symbol '(' ->
-            cursor.Advance()
-            let expression = parseExpression cursor
-            expectSymbol ')' cursor
-            expression
+        | Symbol '(' when isKeyword "SELECT" (cursor.Peek 1) -> cursor.Advance(); let query = parseQuery cursor in expectSymbol ')' cursor; Expr.ScalarSubquery query
+        | Symbol '(' -> cursor.Advance(); let expression = parseExpression cursor in expectSymbol ')' cursor; expression
         | Identifier _ ->
             let name = identifier cursor
             if acceptSymbol '(' cursor then
@@ -205,17 +170,13 @@ module internal RewriteParser =
                     arguments.Add(parseExpression cursor)
                     while acceptSymbol ',' cursor do arguments.Add(parseExpression cursor)
                     expectSymbol ')' cursor
-                Expr.FunctionCall
-                    { Name = functionName name
-                      Arguments = arguments |> Seq.toList
-                      IsDistinct = distinct }
+                Expr.FunctionCall { Name = functionName name; Arguments = arguments |> Seq.toList; IsDistinct = distinct }
             else Expr.Column name
         | _ -> fail token "Expected expression"
 
     and private parseSelectItem (cursor: Cursor) : SelectItem =
         let expression = parseExpression cursor
-        let alias = if acceptKeyword "AS" cursor then Some(identifierPart cursor) else None
-        { Expression = expression; Alias = alias }
+        { Expression = expression; Alias = if acceptKeyword "AS" cursor then Some(identifierPart cursor) else None }
 
     and private parseReturning (cursor: Cursor) : SelectItem list =
         if not (acceptKeyword "RETURNING" cursor) then []
@@ -230,22 +191,14 @@ module internal RewriteParser =
             let query = parseQuery cursor
             expectSymbol ')' cursor
             acceptKeyword "AS" cursor |> ignore
-            let alias = identifierPart cursor
-            TableSource.DerivedTable(query, alias)
+            TableSource.DerivedTable(query, identifierPart cursor)
         else
             let name = identifier cursor
-            let alias =
-                if acceptKeyword "AS" cursor then Some(identifierPart cursor)
-                else
-                    match cursor.Current.Kind with
-                    | Identifier _ -> Some(identifierPart cursor)
-                    | _ -> None
+            let alias = if acceptKeyword "AS" cursor then Some(identifierPart cursor) else match cursor.Current.Kind with | Identifier _ -> Some(identifierPart cursor) | _ -> None
             TableSource.NamedTable(name, alias)
 
     and private parseJoin (cursor: Cursor) : Join =
-        if acceptKeyword "CROSS" cursor then
-            expectKeyword "JOIN" cursor
-            Join.CrossJoin(parseTableSource cursor)
+        if acceptKeyword "CROSS" cursor then expectKeyword "JOIN" cursor; Join.CrossJoin(parseTableSource cursor)
         else
             let kind =
                 if acceptKeyword "INNER" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Inner
@@ -258,9 +211,7 @@ module internal RewriteParser =
             expectKeyword "ON" cursor
             Join.OnJoin(kind, source, parseExpression cursor)
 
-    and private startsJoin (cursor: Cursor) =
-        [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS" ]
-        |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
+    and private startsJoin (cursor: Cursor) = [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS" ] |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
 
     and private parseSelect (cursor: Cursor) : Select =
         expectKeyword "SELECT" cursor
@@ -273,13 +224,10 @@ module internal RewriteParser =
         while startsJoin cursor do joins.Add(parseJoin cursor)
         let where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
         let groupBy = ResizeArray<Expr>()
-        if acceptKeyword "GROUP" cursor then
-            expectKeyword "BY" cursor
-            groupBy.Add(parseExpression cursor)
-            while acceptSymbol ',' cursor do groupBy.Add(parseExpression cursor)
+        if acceptKeyword "GROUP" cursor then expectKeyword "BY" cursor; groupBy.Add(parseExpression cursor); while acceptSymbol ',' cursor do groupBy.Add(parseExpression cursor)
         let having = if acceptKeyword "HAVING" cursor then Some(parseExpression cursor) else None
         { Distinct = distinct
-          Projection = projection |> Seq.toList
+          ProjectionItems = projection |> Seq.toList |> NonEmpty.ofList "projection"
           From = from
           Joins = joins |> Seq.toList
           Where = where
@@ -287,68 +235,44 @@ module internal RewriteParser =
           Having = having }
 
     and private parseOrderBy (cursor: Cursor) : OrderBy list =
-        if not (acceptKeyword "ORDER" cursor) then []
-        else
+        if not (acceptKeyword "ORDER" cursor) then [] else
             expectKeyword "BY" cursor
             let items = ResizeArray<OrderBy>()
-            let parseItem () : OrderBy =
+            let parseItem () =
                 let expression = parseExpression cursor
-                let descending =
-                    if acceptKeyword "DESC" cursor then true
-                    else acceptKeyword "ASC" cursor |> ignore; false
-                let nullOrdering =
-                    if acceptKeyword "NULLS" cursor then
-                        if acceptKeyword "FIRST" cursor then NullOrdering.NullsFirst
-                        elif acceptKeyword "LAST" cursor then NullOrdering.NullsLast
-                        else fail cursor.Current "Expected FIRST or LAST after NULLS"
-                    else NullOrdering.Default
-                { Expression = expression
-                  Descending = descending
-                  NullOrdering = nullOrdering }
+                let descending = if acceptKeyword "DESC" cursor then true else acceptKeyword "ASC" cursor |> ignore; false
+                let nullOrdering = if acceptKeyword "NULLS" cursor then if acceptKeyword "FIRST" cursor then NullOrdering.NullsFirst elif acceptKeyword "LAST" cursor then NullOrdering.NullsLast else fail cursor.Current "Expected FIRST or LAST after NULLS" else NullOrdering.Default
+                { Expression = expression; Descending = descending; NullOrdering = nullOrdering }
             items.Add(parseItem())
             while acceptSymbol ',' cursor do items.Add(parseItem())
             items |> Seq.toList
 
-    and private parseNonNegativeInt (context: string) (cursor: Cursor) : int =
+    and private parseNonNegativeInt context (cursor: Cursor) =
         let token = cursor.Take()
-        match token.Kind with
-        | IntegerLiteral value when value <= int64 System.Int32.MaxValue -> int value
-        | _ -> fail token (context + " requires a non-negative integer")
+        match token.Kind with | IntegerLiteral value when value <= int64 System.Int32.MaxValue -> int value | _ -> fail token (context + " requires a non-negative integer")
 
-    and private parseSetOperator (cursor: Cursor) : SetOperator option =
-        if acceptKeyword "UNION" cursor then
-            if acceptKeyword "ALL" cursor then Some SetOperator.UnionAll
-            else Some SetOperator.Union
+    and private parseSetOperator (cursor: Cursor) =
+        if acceptKeyword "UNION" cursor then if acceptKeyword "ALL" cursor then Some SetOperator.UnionAll else Some SetOperator.Union
         elif acceptKeyword "INTERSECT" cursor then Some SetOperator.Intersect
         elif acceptKeyword "EXCEPT" cursor then Some SetOperator.Except
         else None
 
-    and private parseQueryTail (cursor: Cursor) : OrderBy list * int option * int option =
+    and private parseQueryTail (cursor: Cursor) =
         let orderBy = parseOrderBy cursor
-        let mutable limit : int option = None
-        let mutable offset : int option = None
-
+        let mutable limit = None
+        let mutable offset = None
         if acceptKeyword "LIMIT" cursor then
             let first = parseNonNegativeInt "LIMIT" cursor
-            if acceptSymbol ',' cursor then
-                offset <- Some first
-                limit <- Some(parseNonNegativeInt "LIMIT count" cursor)
-            else
-                limit <- Some first
-                if acceptKeyword "OFFSET" cursor then
-                    offset <- Some(parseNonNegativeInt "OFFSET" cursor)
+            if acceptSymbol ',' cursor then offset <- Some first; limit <- Some(parseNonNegativeInt "LIMIT count" cursor)
+            else limit <- Some first; if acceptKeyword "OFFSET" cursor then offset <- Some(parseNonNegativeInt "OFFSET" cursor)
         elif acceptKeyword "OFFSET" cursor then
             offset <- Some(parseNonNegativeInt "OFFSET" cursor)
-            acceptKeyword "ROW" cursor |> ignore
-            acceptKeyword "ROWS" cursor |> ignore
+            acceptKeyword "ROW" cursor |> ignore; acceptKeyword "ROWS" cursor |> ignore
             if acceptKeyword "FETCH" cursor then
-                if not (acceptKeyword "FIRST" cursor || acceptKeyword "NEXT" cursor) then
-                    fail cursor.Current "Expected FIRST or NEXT after FETCH"
+                if not (acceptKeyword "FIRST" cursor || acceptKeyword "NEXT" cursor) then fail cursor.Current "Expected FIRST or NEXT after FETCH"
                 limit <- Some(parseNonNegativeInt "FETCH" cursor)
-                if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then
-                    fail cursor.Current "Expected ROW or ROWS after FETCH count"
+                if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then fail cursor.Current "Expected ROW or ROWS after FETCH count"
                 expectKeyword "ONLY" cursor
-
         orderBy, limit, offset
 
     and private parseQuery (cursor: Cursor) : Query =
@@ -359,88 +283,59 @@ module internal RewriteParser =
             match parseSetOperator cursor with
             | Some operator ->
                 let branchHead = parseSelect cursor
-                branches.Add
-                    { Operator = operator
-                      Query =
-                        { Head = branchHead
-                          SetOperations = []
-                          OrderBy = []
-                          Limit = None
-                          Offset = None } }
+                branches.Add { Operator = operator; Query = { Head = branchHead; SetOperations = []; OrderBy = []; Limit = None; Offset = None } }
             | None -> scanning <- false
         let orderBy, limit, offset = parseQueryTail cursor
-        { Head = head
-          SetOperations = branches |> Seq.toList
-          OrderBy = orderBy
-          Limit = limit
-          Offset = offset }
+        { Head = head; SetOperations = branches |> Seq.toList; OrderBy = orderBy; Limit = limit; Offset = offset }
 
     and private parseInsert (cursor: Cursor) : Insert =
-        expectKeyword "INSERT" cursor
-        expectKeyword "INTO" cursor
+        expectKeyword "INSERT" cursor; expectKeyword "INTO" cursor
         let target = identifier cursor
         let columns = ResizeArray<IdentifierPart>()
-        if acceptSymbol '(' cursor then
-            columns.Add(identifierPart cursor)
-            while acceptSymbol ',' cursor do columns.Add(identifierPart cursor)
-            expectSymbol ')' cursor
+        if acceptSymbol '(' cursor then columns.Add(identifierPart cursor); while acceptSymbol ',' cursor do columns.Add(identifierPart cursor); expectSymbol ')' cursor
         let input =
             if acceptKeyword "VALUES" cursor then
-                let rows = ResizeArray<Expr list>()
-                let parseRow () : Expr list =
+                let rows = ResizeArray<NonEmpty<Expr>>()
+                let parseRow () =
                     expectSymbol '(' cursor
                     let values = ResizeArray<Expr>()
                     values.Add(parseExpression cursor)
                     while acceptSymbol ',' cursor do values.Add(parseExpression cursor)
                     expectSymbol ')' cursor
-                    values |> Seq.toList
+                    values |> Seq.toList |> NonEmpty.ofList "values"
                 rows.Add(parseRow())
                 while acceptSymbol ',' cursor do rows.Add(parseRow())
-                InsertInput.Values(rows |> Seq.toList)
-            elif isKeyword "SELECT" cursor.Current then
-                InsertInput.QuerySource(parseQuery cursor)
-            elif acceptKeyword "DEFAULT" cursor then
-                expectKeyword "VALUES" cursor
-                InsertInput.DefaultValues
+                InsertInput.Values(rows |> Seq.toList |> NonEmpty.ofList "rows")
+            elif isKeyword "SELECT" cursor.Current then InsertInput.QuerySource(parseQuery cursor)
+            elif acceptKeyword "DEFAULT" cursor then expectKeyword "VALUES" cursor; InsertInput.DefaultValues
             else fail cursor.Current "Expected VALUES, SELECT, or DEFAULT VALUES"
-        { Target = target
-          Columns = columns |> Seq.toList
-          Input = input
-          Returning = parseReturning cursor }
+        { Target = target; Columns = columns |> Seq.toList; Input = input; Returning = parseReturning cursor }
 
     and private parseUpdate (cursor: Cursor) : Update =
         expectKeyword "UPDATE" cursor
         let target = identifier cursor
         expectKeyword "SET" cursor
         let assignments = ResizeArray<Assignment>()
-        let parseAssignment () : Assignment =
-            let targetColumn = identifier cursor
-            expectOperator "=" cursor
-            { Target = targetColumn; Value = parseExpression cursor }
+        let parseAssignment () = let targetColumn = identifier cursor in expectOperator "=" cursor; { Target = targetColumn; Value = parseExpression cursor }
         assignments.Add(parseAssignment())
         while acceptSymbol ',' cursor do assignments.Add(parseAssignment())
-        let where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
-        let returning = parseReturning cursor
         { Target = target
-          Assignments = assignments |> Seq.toList
-          Where = where
-          Returning = returning }
+          AssignmentItems = assignments |> Seq.toList |> NonEmpty.ofList "assignments"
+          Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
+          Returning = parseReturning cursor }
 
     and private parseDelete (cursor: Cursor) : Delete =
-        expectKeyword "DELETE" cursor
-        expectKeyword "FROM" cursor
+        expectKeyword "DELETE" cursor; expectKeyword "FROM" cursor
         let target = identifier cursor
-        let where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
-        let returning = parseReturning cursor
         { Target = target
-          Where = where
-          Returning = returning }
+          Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
+          Returning = parseReturning cursor }
 
     let parse (sql: string) =
         let tokens = RewriteLexer.tokenize sql
         let cursor = Cursor(tokens)
         let start = cursor.Current.Start
-        let statement : Statement =
+        let statement =
             match cursor.Current.Kind with
             | Keyword "SELECT" -> Statement.QueryStatement(parseQuery cursor)
             | Keyword "INSERT" -> Statement.InsertStatement(parseInsert cursor)
@@ -448,9 +343,5 @@ module internal RewriteParser =
             | Keyword "DELETE" -> Statement.DeleteStatement(parseDelete cursor)
             | _ -> fail cursor.Current "Expected SELECT, INSERT, UPDATE, or DELETE"
         acceptSymbol ';' cursor |> ignore
-        match cursor.Current.Kind with
-        | End -> ()
-        | _ -> fail cursor.Current "Unexpected trailing token"
-        Parsed.create
-            { Statement = statement
-              Span = { Start = start; Length = sql.Length - start } }
+        match cursor.Current.Kind with | End -> () | _ -> fail cursor.Current "Unexpected trailing token"
+        Parsed.create { Statement = statement; Span = { Start = start; Length = sql.Length - start } }
