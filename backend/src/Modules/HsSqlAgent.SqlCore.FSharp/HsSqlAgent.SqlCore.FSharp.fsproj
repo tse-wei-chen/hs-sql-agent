@@ -42,6 +42,7 @@
     <Compile Include="FunctionalAggregateLocalOrderingGuard.fs" />
     <Compile Include="FunctionalAggregateFilterProfileValidator.fs" />
     <Compile Include="FunctionalSourceDialectValidator.fs" />
+    <Compile Include="FunctionalDmlReturningExpressionCapabilityRules.fs" />
     <Compile Include="FunctionalPipeline.fs" />
     <Compile Include="Facade.fs" />
   </ItemGroup>
