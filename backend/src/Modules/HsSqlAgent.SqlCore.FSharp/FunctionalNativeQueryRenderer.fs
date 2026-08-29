@@ -151,7 +151,7 @@ module internal FunctionalNativeQueryRenderer =
 
         let renderer = NativeSqlRenderer(provider, targetProfile)
         let fragment = renderStatement renderer plan.Statement FunctionalQueryPosition.Root
-        let finalizedSql, finalizedParameters = NativeSqlParameterizer.Finalize(fragment, provider)
+        let struct (finalizedSql, finalizedParameters) = NativeSqlParameterizer.Finalize(fragment, provider)
         let command =
             CompiledSqlCommand(
                 finalizedSql,
