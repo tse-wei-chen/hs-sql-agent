@@ -59,7 +59,7 @@ module internal FunctionalNativeQueryRenderer =
         if ctes.IsDefaultOrEmpty then
             NativeSqlFragment.Empty
         else
-            let mutable sqlParts = ResizeArray<string>()
+            let sqlParts = ResizeArray<string>()
             let mutable bindings = ImmutableArray<obj>.Empty
             for cte in ctes do
                 if not cte.ColumnAliases.IsDefaultOrEmpty then
@@ -68,10 +68,11 @@ module internal FunctionalNativeQueryRenderer =
                 if cte.Name.Parts.Length <> 1 then
                     raise (SqlCompilationException("CTE name must be unqualified."))
 
-                let query = renderStatement renderer cte.Query FunctionalQueryPosition.CteDefinition
+                let query: NativeSqlFragment =
+                    renderStatement renderer cte.Query FunctionalQueryPosition.CteDefinition
                 let name = CoreIdentifierSqlRenderer.Render(cte.Name, renderer.Provider, allowWildcard = false)
                 sqlParts.Add(name + " AS (" + query.Sql + ")")
-                bindings <- bindings.AddRange(query.Bindings)
+                bindings <- bindings.AddRange(query.Bindings : ImmutableArray<obj>)
 
             NativeSqlFragment("WITH " + String.Join(", ", sqlParts), bindings)
 
@@ -153,8 +154,8 @@ module internal FunctionalNativeQueryRenderer =
         let finalized = NativeSqlParameterizer.Finalize(fragment, provider)
         let command =
             CompiledSqlCommand(
-                finalized.Sql,
-                finalized.Parameters,
+                finalized.Item1,
+                finalized.Item2,
                 SqlStatementKind.Select,
                 String.Empty,
                 provider)
