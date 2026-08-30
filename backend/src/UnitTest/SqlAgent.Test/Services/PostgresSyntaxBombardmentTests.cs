@@ -122,6 +122,21 @@ public sealed class PostgresSyntaxBombardmentTests
             "FILTER (WHERE",
             "orders");
         yield return Case(
+            "lag-window-frame",
+            "SELECT LAG(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders",
+            "LAG",
+            "orders");
+        yield return Case(
+            "round-avg",
+            "SELECT ROUND(AVG(amount), 2) FROM orders",
+            "ROUND",
+            "orders");
+        yield return Case(
+            "coalesce",
+            "SELECT COALESCE(customer_id, 0) FROM orders",
+            "COALESCE",
+            "orders");
+        yield return Case(
             "ilike",
             "SELECT id FROM users WHERE name ILIKE 'a%'",
             "ILIKE",
@@ -190,6 +205,21 @@ public sealed class PostgresSyntaxBombardmentTests
             "current-timestamp-interval",
             "SELECT CURRENT_TIMESTAMP - INTERVAL '1 day' AS shifted FROM orders LIMIT 1",
             "INTERVAL",
+            "orders");
+        yield return Case(
+            "current-date",
+            "SELECT CURRENT_DATE AS value FROM orders",
+            "CURRENT_DATE",
+            "orders");
+        yield return Case(
+            "current-time",
+            "SELECT CURRENT_TIME AS value FROM orders",
+            "CURRENT_TIME",
+            "orders");
+        yield return Case(
+            "current-timestamp",
+            "SELECT CURRENT_TIMESTAMP AS value FROM orders",
+            "CURRENT_TIMESTAMP",
             "orders");
         yield return Case(
             "standard-cast",
@@ -537,6 +567,32 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return ParserCase(
             "timestamp-keyword-function-form",
             "SELECT TIMESTAMP(created_at) FROM events");
+        yield return ParserCase(
+            "legacy-complex-cte-cast-having",
+            @"WITH SystemMax AS (
+                SELECT MAX(order_date) AS max_system_date FROM orders
+            )
+            SELECT
+                c.customer_id,
+                c.company_name,
+                c.contact_name,
+                c.phone,
+                sm.max_system_date,
+                MAX(o.order_date) AS last_order_date,
+                (sm.max_system_date::date - MAX(o.order_date)::date) AS days_since_last_order
+            FROM customers c
+            LEFT JOIN orders o ON c.customer_id = o.customer_id
+            CROSS JOIN SystemMax sm
+            GROUP BY
+                c.customer_id,
+                c.company_name,
+                c.contact_name,
+                c.phone,
+                sm.max_system_date
+            HAVING
+                (sm.max_system_date::date - MAX(o.order_date)::date) > 180
+                OR MAX(o.order_date) IS NULL
+            ORDER BY days_since_last_order DESC;");
     }
 
     public static IEnumerable<object[]> ExplicitFailClosedPostgresSyntax()
