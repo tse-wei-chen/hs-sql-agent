@@ -368,7 +368,7 @@ module internal RewriteFacadeAdapter =
         || message.Contains("Pagination requires", StringComparison.Ordinal)
         || message.Contains("OFFSET pagination", StringComparison.Ordinal)
 
-    let private run options sql =
+    let private run (options: RewritePipeline.CompileOptions) (sql: string) =
         try
             let parsed =
                 RewriteParser.parseForWith

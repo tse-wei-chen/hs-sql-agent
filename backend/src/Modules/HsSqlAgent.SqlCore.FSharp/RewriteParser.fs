@@ -368,7 +368,7 @@ module internal RewriteParser =
             text.Substring(0, text.Length - 6)
         else text
 
-    let private tryParseLocalTimestamp text =
+    let private tryParseLocalTimestamp (text: string) =
         let mutable value = DateTime.MinValue
         if DateTime.TryParseExact(
             text,
