@@ -343,23 +343,77 @@ module internal RewriteParser =
             | _ -> fail token "Invalid TIME literal"
         | _ -> fail token "TIME requires a string literal"
 
+    let private localTimestampFormats =
+        [| "yyyy-MM-dd HH:mm:ss"
+           "yyyy-MM-dd HH:mm:ss.FFFFFFF"
+           "yyyy-MM-dd'T'HH:mm:ss"
+           "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF" |]
+
+    let private hasExplicitTimestampOffset (text: string) =
+        if text.EndsWith("Z", StringComparison.OrdinalIgnoreCase) then true
+        elif text.Length < 6 then false
+        else
+            let start = text.Length - 6
+            (text[start] = '+' || text[start] = '-')
+            && Char.IsDigit(text[start + 1])
+            && Char.IsDigit(text[start + 2])
+            && text[start + 3] = ':'
+            && Char.IsDigit(text[start + 4])
+            && Char.IsDigit(text[start + 5])
+
+    let private timestampLocalPart (text: string) =
+        if text.EndsWith("Z", StringComparison.OrdinalIgnoreCase) then
+            text.Substring(0, text.Length - 1)
+        elif hasExplicitTimestampOffset text then
+            text.Substring(0, text.Length - 6)
+        else text
+
+    let private tryParseLocalTimestamp text =
+        let mutable value = DateTime.MinValue
+        if DateTime.TryParseExact(
+            text,
+            localTimestampFormats,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            &value) then
+            Some(DateTime.SpecifyKind(value, DateTimeKind.Unspecified))
+        else None
+
     let private parseTimestampLiteral (cursor: Cursor) =
         let token = cursor.Take()
         match token.Kind with
         | StringLiteral text ->
-            match DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
-            | true, value -> ScalarValue.LocalDateTime value
-            | _ -> fail token "Invalid TIMESTAMP literal"
+            match tryParseLocalTimestamp (timestampLocalPart text) with
+            | None -> fail token "Invalid TIMESTAMP literal"
+            | Some _ when hasExplicitTimestampOffset text ->
+                match DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
+                | true, value -> ScalarValue.OffsetDateTime value
+                | _ -> fail token "Invalid TIMESTAMP literal"
+            | Some local -> ScalarValue.LocalDateTime local
         | _ -> fail token "TIMESTAMP requires a string literal"
 
     let private parseOffsetTimestampLiteral (cursor: Cursor) =
         let token = cursor.Take()
         match token.Kind with
-        | StringLiteral text ->
-            match DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
-            | true, value -> ScalarValue.OffsetDateTime value
-            | _ -> fail token "Invalid TIMESTAMP WITH TIME ZONE literal"
+        | StringLiteral text when hasExplicitTimestampOffset text ->
+            match tryParseLocalTimestamp (timestampLocalPart text) with
+            | None -> fail token "Invalid TIMESTAMP WITH TIME ZONE literal"
+            | Some _ ->
+                match DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
+                | true, value -> ScalarValue.OffsetDateTime value
+                | _ -> fail token "Invalid TIMESTAMP WITH TIME ZONE literal"
+        | StringLiteral _ -> fail token "TIMESTAMP WITH TIME ZONE requires an explicit UTC offset or Z suffix"
         | _ -> fail token "TIMESTAMP WITH TIME ZONE requires a string literal"
+
+    let private parseLocalTimestampLiteral (cursor: Cursor) =
+        let token = cursor.Take()
+        match token.Kind with
+        | StringLiteral text when not (hasExplicitTimestampOffset text) ->
+            match tryParseLocalTimestamp text with
+            | Some value -> ScalarValue.LocalDateTime value
+            | None -> fail token "Invalid TIMESTAMP WITHOUT TIME ZONE literal"
+        | StringLiteral _ -> fail token "TIMESTAMP WITHOUT TIME ZONE cannot contain a UTC offset or Z suffix"
+        | _ -> fail token "TIMESTAMP WITHOUT TIME ZONE requires a string literal"
 
     let private applyTypedCast (cursor: Cursor) expression target =
         match expression, CastType.value target with
@@ -774,6 +828,12 @@ module internal RewriteParser =
                 if cursor.Dialect <> SourceDialect.PostgreSql then
                     typedTemporalSourceError cursor "TIMESTAMP WITH TIME ZONE"
                 Literal(parseOffsetTimestampLiteral cursor)
+            elif acceptKeyword "WITHOUT" cursor then
+                if not (acceptKeyword "TIME" cursor && acceptKeyword "ZONE" cursor) then
+                    fail cursor.Current "Expected TIME ZONE after TIMESTAMP WITHOUT"
+                if cursor.Dialect <> SourceDialect.PostgreSql then
+                    typedTemporalSourceError cursor "TIMESTAMP WITHOUT TIME ZONE"
+                Literal(parseLocalTimestampLiteral cursor)
             else
                 match cursor.Dialect with
                 | SourceDialect.PostgreSql

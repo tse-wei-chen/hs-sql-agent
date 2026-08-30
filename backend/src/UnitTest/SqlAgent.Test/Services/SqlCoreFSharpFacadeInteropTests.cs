@@ -30,6 +30,42 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
     }
 
+    [Theory]
+    [InlineData("-- audit comment\nSELECT id FROM users WHERE id = 1")]
+    [InlineData("/* audit comment */ SELECT id FROM users WHERE id = 1")]
+    public void Facade_QueryTextPipeline_DerivesKindFromParsedStatement(string sql)
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-comment-prefix-v2",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+
+        var command = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation,
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(SqlStatementKind.Query, command.Kind);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 1));
+    }
+
+    [Fact]
+    public void Facade_DmlTextPipeline_DerivesKindFromParsedStatementAfterComment()
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-comment-prefix-dml-v2",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+
+        var command = SqlCoreFacade.CompileDml(
+            "/* audit comment */ UPDATE users SET name = 'Ada' WHERE id = 1",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation);
+
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+    }
+
     [Fact]
     public void Facade_DmlTextPipeline_CompilesParameterizedCommand()
     {

@@ -233,7 +233,18 @@ module internal RewriteFacadeAdapter =
         { DoubleQuote = doubleQuote
           Backtick = delimiter SqlSourceLexicalFeatures.BacktickQuotedIdentifier
           Bracket = delimiter SqlSourceLexicalFeatures.BracketQuotedIdentifier
-          Backslash = backslash }
+          Backslash = backslash
+          HashLineComment = grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashLineComment)
+          DashDashCommentRequiresSeparator =
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.DashDashCommentRequiresSeparator)
+          PostgresEscapeString =
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.PostgresEscapeString)
+          PostgresDollarQuotedString =
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.PostgresDollarQuotedString)
+          OracleQuotedString =
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.OracleQuotedString)
+          HashPrefixedIdentifier =
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier) }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { EnforceDialectSyntax = true
@@ -358,7 +369,13 @@ module internal RewriteFacadeAdapter =
         || message.Contains("OFFSET pagination", StringComparison.Ordinal)
 
     let private run options sql =
-        try RewritePipeline.compile options sql
+        try
+            let parsed =
+                RewriteParser.parseForWith
+                    options.SourceSemantics
+                    options.SourceDialect
+                    sql
+            parsed, RewritePipeline.compileParsed options parsed
         with
         | :? UnauthorizedAccessException -> reraise()
         | :? SqlCompilationException -> reraise()
@@ -370,7 +387,7 @@ module internal RewriteFacadeAdapter =
 
     let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        let rendered =
+        let parsed, rendered =
             run
                 { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
                   SourceSemantics = sourceSemantics source sourceProfile
@@ -387,13 +404,7 @@ module internal RewriteFacadeAdapter =
                   AllowedTables = allowed }
                 sql
         let parameterValues = parameters target rendered.Parameters
-        let trimmed = sql.TrimStart()
-        let kind =
-            if trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Query
-            elif trimmed.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("UPDATE OR INSERT", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Insert
-            elif trimmed.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Update
-            elif trimmed.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase) then SqlStatementKind.Delete
-            else invalidArg "sql" "Unsupported SQL statement."
+        let kind = RewriteCompatibilityAstAdapter.kind parsed
         let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, target, ReturnsRows = rendered.ReturnsRows)
         let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
         CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
