@@ -153,7 +153,7 @@ type SqlCapabilityMatrix private () =
                 cap("provider.target_profile","provider",supported,
                     "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings.")
                 cap("provider.source_profile","provider",supported,
-                    "Raw SQL compilation accepts a separate optional source runtime profile; absent profile-dependent capabilities remain fail-closed.")
+                    "Raw SQL compilation accepts a separate optional source runtime profile. MySQL PIPES_AS_CONCAT (or ANSI) enables source || concatenation, ANSI_QUOTES enables double-quoted identifiers, and NO_BACKSLASH_ESCAPES changes string-literal semantics; ANSI does not imply NO_BACKSLASH_ESCAPES. LIKE under NO_BACKSLASH_ESCAPES requires an explicit single-character ESCAPE. Omitting a required source-profile capability remains fail-closed.")
                 cap("provider.unique_key_metadata","provider",supported,"Provider metadata inventories enforced unique-key sources.")
                 cap("select.basic","query",translated,"SELECT/WHERE/GROUP BY/HAVING/ORDER BY and JOIN are represented structurally.")
                 cap("join.right","query",rightJoinStatus,
@@ -172,7 +172,11 @@ type SqlCapabilityMatrix private () =
                 cap("expression.arithmetic","expression",translated,"Arithmetic operators are preserved structurally.")
                 cap("numeric.decimal_extended","numeric",decimalStatus,decimalDetail)
                 cap("expression.modulo","expression",modulo, if modulo=translated then "MOD(left, right) lowering preserves modulo semantics." else "Native modulo operator is supported.")
-                cap("expression.concat","expression",concatStatus, if provider=SqlAgentToolType.MySQL then "Canonical concatenation lowers through CONCAT(left, right)." else "Canonical concatenation uses the declared provider contract.")
+                cap("expression.concat","expression",concatStatus,
+                    if provider=SqlAgentToolType.MySQL then
+                        "Canonical concatenation lowers through CONCAT(left, right). MySQL source || requires PIPES_AS_CONCAT (or ANSI) in the separate source profile; target profile alone cannot authorize source semantics."
+                    else
+                        "Canonical concatenation uses the declared provider contract.")
                 cap("expression.like_escape","expression",translated,"Explicit LIKE ESCAPE is represented structurally.")
                 cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
                 cap("expression.boolean_literal_source","expression",translated,"Raw boolean literal source syntax is dialect-profiled.")
