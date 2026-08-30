@@ -664,7 +664,11 @@ module internal RewriteParser =
             else parts.Add(identifierPart cursor)
         let name = Identifier.create (parts |> Seq.toList)
         if wildcard then Wildcard(Some name)
-        elif acceptSymbol '(' cursor then
+        elif isSymbol '(' cursor.Current then
+            let nameParts = Identifier.parts name
+            if nameParts.Length <> 1 || nameParts.Head.WasQuoted then
+                fail cursor.Current "Quoted or qualified function identifiers are not supported by the portable Core grammar"
+            cursor.Advance()
             let distinct = acceptKeyword "DISTINCT" cursor
             let arguments = ResizeArray<Expr>()
             let mutable aggregateOrderBy : OrderBy list = []

@@ -90,10 +90,10 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
-    public void Bind_QuotedCanonicalLookingFunction_FailsBeforeNormalization()
+    public void Parse_QuotedCanonicalLookingFunction_FailsBeforeNormalization()
     {
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            Compile(
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
                 "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
                 SqlAgentToolType.Postgres));
         Assert.Contains("quoted or qualified function identifier", error.Message, StringComparison.OrdinalIgnoreCase);
