@@ -52,6 +52,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "WITH",
             "orders");
         yield return Case(
+            "trailing-semicolon-select",
+            "SELECT id FROM users;",
+            "SELECT",
+            "users");
+        yield return Case(
+            "trailing-semicolon-cte",
+            "WITH recent AS (SELECT id FROM orders) SELECT id FROM recent;",
+            "WITH",
+            "orders");
+        yield return Case(
             "derived-table",
             "SELECT q.id FROM (SELECT id FROM users WHERE active = TRUE) q",
             "SELECT",
