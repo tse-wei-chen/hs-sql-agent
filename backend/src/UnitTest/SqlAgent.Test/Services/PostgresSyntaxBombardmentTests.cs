@@ -412,6 +412,32 @@ public sealed class PostgresSyntaxBombardmentTests
     }
 
     [Fact]
+    public void PositiveIntegerLiteral_PreservesLegacyClrType()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT 1 FROM users",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var literal = Assert.IsType<LiteralExpr>(Assert.Single(select.Select).Expression);
+        Assert.IsType<int>(literal.Value);
+        Assert.Equal(1, literal.Value);
+    }
+
+    [Fact]
+    public void NegativeIntegerLiteral_PreservesLegacyClrType()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT -1 FROM users",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var literal = Assert.IsType<LiteralExpr>(Assert.Single(select.Select).Expression);
+        Assert.IsType<int>(literal.Value);
+        Assert.Equal(-1, literal.Value);
+    }
+
+    [Fact]
     public void PrefixNot_PreservesLegacyPredicatePrecedence()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
