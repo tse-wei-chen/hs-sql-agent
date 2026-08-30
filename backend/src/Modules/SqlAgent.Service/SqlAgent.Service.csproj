@@ -18,8 +18,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" />
-		<ProjectReference Include="../HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj" PrivateAssets="All" />
+		<ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" PrivateAssets="All" />
+		<ProjectReference Include="../HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj" />
@@ -33,8 +33,6 @@
 		<InternalsVisibleTo Include="SqlAgent.Test" />
 	</ItemGroup>
 
-	<!-- SQL compiler and provider runtime contracts/implementations now have separate assembly owners.
-	     Keep source paths stable during the extraction so namespace/path churn is not mixed with package boundaries. -->
 	<ItemGroup>
 		<Compile Remove="Core/Analysis/**/*.cs" />
 		<Compile Remove="Core/Ast/**/*.cs" />

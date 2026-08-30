@@ -3,9 +3,9 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
-    <AssemblyName>HsSqlAgent.SqlCore.FSharp</AssemblyName>
+    <AssemblyName>HsSqlAgent.SqlCore</AssemblyName>
     <RootNamespace>HsSqlAgent.SqlCore</RootNamespace>
-    <IsPackable>false</IsPackable>
+    <IsPackable>true</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
@@ -14,6 +14,21 @@
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>HsSqlAgent.SqlCore</PackageId>
+    <Authors>tse-wei-chen</Authors>
+    <Company>hs-sql-agent</Company>
+    <Description>Provider-driver-free F# SQL parser, closed AST, validation, normalization and cross-database compiler core for HsSqlAgent.</Description>
+    <PackageTags>sql;compiler;parser;ast;database;dialect;validation;fsharp</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,14 +44,32 @@
     <Compile Include="RewritePipeline.fs" />
     <Compile Include="RewriteFacadeAdapter.fs" />
     <Compile Include="Facade.fs" />
+    <Compile Include="LegacyCompilerFacade.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" />
+    <ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" PrivateAssets="All" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../HsSqlAgent.SqlCore/README.md" Pack="true" PackagePath="\" Link="README.md" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyContractsToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+
+  <Target Name="CopyContractsToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)"
+        Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'
+          And '%(ReferenceCopyLocalPaths.Filename)' == 'HsSqlAgent.SqlCore.Contracts'" />
+    </ItemGroup>
+  </Target>
 
 </Project>

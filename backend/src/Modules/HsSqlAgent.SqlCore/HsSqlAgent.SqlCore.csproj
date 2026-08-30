@@ -4,9 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>HsSqlAgent.SqlCore</AssemblyName>
+    <AssemblyName>HsSqlAgent.SqlCore.Contracts</AssemblyName>
     <RootNamespace>HsSqlAgent.SqlCore</RootNamespace>
-    <IsPackable>true</IsPackable>
+    <IsPackable>false</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -16,32 +16,16 @@
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <PackageId>HsSqlAgent.SqlCore</PackageId>
-    <Authors>tse-wei-chen</Authors>
-    <Company>hs-sql-agent</Company>
-    <Description>Provider-driver-free SQL parser, AST, validation, normalization and cross-database compiler core for HsSqlAgent.</Description>
-    <PackageTags>sql;compiler;parser;ast;database;dialect;validation</PackageTags>
-    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-  </PropertyGroup>
-
   <ItemGroup>
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="HsSqlAgent.SqlCore.FSharp" />
+    <InternalsVisibleTo Include="HsSqlAgent.SqlCore" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="SqlTranslation/Functions/Definitions/*.json" />
-    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

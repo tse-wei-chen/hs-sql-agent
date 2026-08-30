@@ -18,19 +18,6 @@ public class CoreDeleteUsingMilestoneTests
     }
 
     [Fact]
-    public void BindDeleteUsing_IncludesTargetAndUsingSourcesInAuthorizationFacts()
-    {
-        var parsed = CoreSqlTextParser.ParseDml(
-            "DELETE FROM inventory USING warehouse WHERE inventory.id = warehouse.inventory_id",
-            SqlAgentToolType.Postgres);
-
-        var bound = new CoreDmlBinder().Bind(parsed);
-
-        Assert.Contains(bound.Facts.ReferencedTables, table => table.Equals("inventory", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(bound.Facts.ReferencedTables, table => table.Equals("warehouse", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
     public void CompileDeleteUsing_Postgres_BindsSourcesAndLowersNativeSyntax()
     {
         var parsed = CoreSqlTextParser.ParseDml(

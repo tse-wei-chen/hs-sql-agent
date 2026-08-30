@@ -1,4 +1,3 @@
-using HsSqlAgent.SqlCore.Core.Lowering;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -6,35 +5,26 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCorePackageBoundaryTests
 {
     [Fact]
-    public void CompilerSurface_IsOwnedBySqlCoreAssembly()
+    public void CompilerSurface_IsOwnedByFSharpSqlCoreAssembly()
     {
-        var coreAssembly = typeof(CoreSqlCompiler).Assembly;
+        var coreAssembly = typeof(SqlCoreFacade).Assembly;
+        var contractsAssembly = typeof(CoreSqlTextParser).Assembly;
 
         Assert.Equal("HsSqlAgent.SqlCore", coreAssembly.GetName().Name);
+        Assert.Same(coreAssembly, typeof(CoreSqlCompiler).Assembly);
         Assert.Same(coreAssembly, typeof(CoreDmlCompiler).Assembly);
-        Assert.Same(coreAssembly, typeof(CoreSqlTextParser).Assembly);
-        Assert.Same(coreAssembly, typeof(SqlCapabilityMatrix).Assembly);
-        Assert.Same(coreAssembly, typeof(NativeSqlRenderer).Assembly);
+
+        Assert.Equal("HsSqlAgent.SqlCore.Contracts", contractsAssembly.GetName().Name);
+        Assert.Same(contractsAssembly, typeof(SqlCapabilityMatrix).Assembly);
+        Assert.Same(contractsAssembly, typeof(SqlTemporalLiteralParser).Assembly);
+
         Assert.NotSame(coreAssembly, typeof(MySqlProvider).Assembly);
         Assert.Equal("HsSqlAgent.Provider.MySql", typeof(MySqlProvider).Assembly.GetName().Name);
     }
 
     [Fact]
-    public void TemporalLiteralParser_IsPublicSqlCoreSurface()
+    public void SqlCoreAssemblies_DoNotReferenceRuntimeDatabaseDriversOrDapper()
     {
-        Assert.True(typeof(SqlTemporalLiteralParser).IsPublic);
-        Assert.Equal("HsSqlAgent.SqlCore", typeof(SqlTemporalLiteralParser).Assembly.GetName().Name);
-    }
-
-    [Fact]
-    public void SqlCoreAssembly_DoesNotReferenceRuntimeDatabaseDriversOrDapper()
-    {
-        var references = typeof(CoreSqlCompiler).Assembly
-            .GetReferencedAssemblies()
-            .Select(reference => reference.Name)
-            .Where(name => name is not null)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
         var forbidden = new[]
         {
             "Dapper",
@@ -48,7 +38,16 @@ public sealed class SqlCorePackageBoundaryTests
             "FirebirdSql.Data.FirebirdClient"
         };
 
-        foreach (var dependency in forbidden)
-            Assert.DoesNotContain(dependency, references);
+        foreach (var assembly in new[] { typeof(SqlCoreFacade).Assembly, typeof(CoreSqlTextParser).Assembly })
+        {
+            var references = assembly
+                .GetReferencedAssemblies()
+                .Select(reference => reference.Name)
+                .Where(name => name is not null)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var dependency in forbidden)
+                Assert.DoesNotContain(dependency, references);
+        }
     }
 }

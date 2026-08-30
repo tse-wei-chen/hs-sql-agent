@@ -116,9 +116,11 @@ module internal RewriteStages =
             let normalized = arguments |> List.map normalizeExpr
             match normalized with
             | [ value; pattern ] -> RegexMatch(value, pattern)
-            | _ ->
+            | values ->
                 raise (SqlCompilationException(
-                    "Function 'CORE_REGEX_MATCH' requires 2 argument(s)."))
+                    "Function 'CORE_REGEX_MATCH' requires 2 argument(s); received "
+                    + string values.Length
+                    + "."))
         | RegexMatch(value, pattern) ->
             RegexMatch(normalizeExpr value, normalizeExpr pattern)
         | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map normalizeExpr }

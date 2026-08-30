@@ -31,7 +31,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" />
+    <ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" PrivateAssets="All" />
+    <ProjectReference Include="../HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
