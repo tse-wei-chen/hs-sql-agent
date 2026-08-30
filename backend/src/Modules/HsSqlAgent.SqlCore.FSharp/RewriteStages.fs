@@ -1663,7 +1663,7 @@ module internal RewriteStages =
     let private nestedCteSupported targetRuntime =
         SqlNestedCteCapabilityRules.SupportsTarget(targetProvider targetRuntime)
 
-    let private validateCtePlacement targetRuntime position ctes =
+    let private validateCtePlacement targetRuntime position (ctes: Cte list) =
         if not ctes.IsEmpty && not (nestedCteSupported targetRuntime) then
             match position with
             | RootQuery | InsertSelectSource -> ()
