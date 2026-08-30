@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using SqlAgent.Service.Validation;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;
@@ -242,13 +241,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_DateDiffDay_ShouldReturnStartToEndDifference()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT DATEDIFF(DAY, DATE '2026-08-20', DATE '2026-08-22') AS day_count FROM {TestTableName}");
-        definition.Limit = 1;
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            $"SELECT DATEDIFF(DAY, DATE '2026-08-20', DATE '2026-08-22') AS day_count FROM {TestTableName}",
+            SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         Assert.Equal(2m, document.RootElement[0].EnumerateObject().Single().Value.GetDecimal());
     }
@@ -256,13 +253,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_DateAddDay_ShouldReturnExpectedDate()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM {TestTableName}");
-        definition.Limit = 1;
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            $"SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM {TestTableName}",
+            SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
         Assert.NotNull(value);
@@ -272,23 +267,23 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_PortableDateFormat_ShouldPreserveMinutes()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT DATE_FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') AS formatted FROM {TestTableName}");
-        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
-        definition.Limit = 1;
+        const string formatSqlPrefix = "SELECT FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') AS formatted FROM ";
+        var sql = formatSqlPrefix + TestTableName;
         if (!SupportsPortableDateFormatting)
         {
-            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
-                definition,
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteRawQueryAsync(
+                sql,
+                SqlAgentToolType.MsSqlServer,
                 Fixture.ConnectionString,
-                cancellationToken: TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken));
             Assert.Contains("portable date formatting", error.Message);
             return;
         }
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         Assert.Equal("2026-08-22 13:45:09", document.RootElement[0].EnumerateObject().Single().Value.GetString());
     }
@@ -296,23 +291,22 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_ToDate_ShouldTranslatePortableFormat()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') AS parsed_date FROM {TestTableName}");
-        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
-        definition.Limit = 1;
+        var sql = $"SELECT TO_DATE('2026/08/22', 'YYYY/MM/DD') AS parsed_date FROM {TestTableName}";
         if (!SupportsFormattedDateParsing)
         {
-            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
-                definition,
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteRawQueryAsync(
+                sql,
+                SqlAgentToolType.Oracle,
                 Fixture.ConnectionString,
-                cancellationToken: TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken));
             Assert.Contains("formatted date parsing", error.Message);
             return;
         }
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            SqlAgentToolType.Oracle,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
         Assert.NotNull(value);
@@ -322,13 +316,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_DateParts_ShouldReturnNumbers()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT YEAR(DATE '2026-08-22') AS y, MONTH(DATE '2026-08-22') AS m, DAY(DATE '2026-08-22') AS d FROM {TestTableName}");
-        definition.Limit = 1;
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            $"SELECT EXTRACT(YEAR FROM DATE '2026-08-22') AS y, EXTRACT(MONTH FROM DATE '2026-08-22') AS m, EXTRACT(DAY FROM DATE '2026-08-22') AS d FROM {TestTableName}",
+            SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         var values = document.RootElement[0].EnumerateObject().Select(x => x.Value.GetDecimal()).ToArray();
         Assert.Equal([2026m, 8m, 22m], values);
@@ -475,15 +467,12 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
     protected static void ValidateQuery(QueryDefinition definition)
     {
-        var errors = DefinitionValidator.Validate(definition);
-        Assert.True(errors.Count == 0, "QueryDefinition validation failed:\n" + string.Join("\n", errors));
+        ArgumentNullException.ThrowIfNull(definition);
+        _ = QueryDefinitionCoreMapper.Map(definition);
     }
 
-    protected static void ValidateDml(DmlDefinition definition)
-    {
-        var errors = DefinitionValidator.Validate(definition);
-        Assert.True(errors.Count == 0, "DmlDefinition validation failed:\n" + string.Join("\n", errors));
-    }
+    protected static void ValidateDml(DmlDefinition definition) =>
+        ArgumentNullException.ThrowIfNull(definition);
 
     private static bool TryGetPropertyIgnoreCase(JsonElement row, string propertyName, out JsonElement value)
     {

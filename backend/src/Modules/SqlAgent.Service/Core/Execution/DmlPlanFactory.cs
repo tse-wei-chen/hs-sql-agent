@@ -69,7 +69,7 @@ public sealed class DmlPlanFactory(
             null,
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
-        var resolvedMutation = parsedMutation with { Statement = resolvedStatement };
+        var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedStatement);
 
         var mutationCommand = CompileMutation(
             resolvedMutation,
@@ -164,8 +164,8 @@ public sealed class DmlPlanFactory(
             MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
             null,
             insert.Target.Span);
-        var resolvedInsert = insert with { Target = resolvedTarget };
-        var resolvedMutation = parsedMutation with { Statement = resolvedInsert };
+        var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
+        var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedInsert);
 
         var mutationCommand = CompileMutation(
             resolvedMutation,
@@ -314,22 +314,70 @@ public sealed class DmlPlanFactory(
             $"Statement '{statement.GetType().Name}' is not a supported row-set DML mutation.")
     };
 
+    private static ParsedStatement CloneParsedWithStatement(
+        ParsedStatement source,
+        SqlStatement statement) =>
+        new(
+            statement,
+            source.SourceDialect,
+            source.EnforceSourceDialectSyntax,
+            source.SourceProfile);
+
     private static SqlStatement ReplaceTarget(
         SqlStatement statement,
-        NamedTableSource resolvedTarget) => statement switch
+        NamedTableSource resolvedTarget)
     {
-        UpdateStatement update => update with { Target = resolvedTarget },
-        DeleteStatement delete => delete with { Target = resolvedTarget },
-        InsertStatement insert => insert with { Target = resolvedTarget },
-        _ => throw new InvalidOperationException(
-            $"Statement '{statement.GetType().Name}' is not a supported DML mutation.")
-    };
+        switch (statement)
+        {
+            case UpdateStatement update:
+            {
+                var clone = new UpdateStatement(
+                    resolvedTarget,
+                    update.Assignments,
+                    update.Predicate,
+                    update.Span)
+                {
+                    From = update.From,
+                    Returning = update.Returning
+                };
+                return clone;
+            }
+            case DeleteStatement delete:
+            {
+                var clone = new DeleteStatement(
+                    resolvedTarget,
+                    delete.Predicate,
+                    delete.Span)
+                {
+                    Using = delete.Using,
+                    Returning = delete.Returning
+                };
+                return clone;
+            }
+            case InsertStatement insert:
+            {
+                var clone = new InsertStatement(
+                    resolvedTarget,
+                    insert.Columns,
+                    insert.Source,
+                    insert.Span)
+                {
+                    Conflict = insert.Conflict,
+                    Returning = insert.Returning
+                };
+                return clone;
+            }
+            default:
+                throw new InvalidOperationException(
+                    $"Statement '{statement.GetType().Name}' is not a supported DML mutation.");
+        }
+    }
 
     private static SqlIdentifier MetadataIdentifier(params string[] parts) =>
         new(
             parts.Select(part => new IdentifierPart(
                     part,
-                    WasQuoted: true,
+                    true,
                     SourceSpan.Unknown))
                 .ToImmutableArray(),
             SourceSpan.Unknown);

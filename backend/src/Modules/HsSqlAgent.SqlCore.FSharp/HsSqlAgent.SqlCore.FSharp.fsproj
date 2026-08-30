@@ -34,6 +34,7 @@
 
   <ItemGroup>
     <Compile Include="ClrContracts.fs" />
+    <Compile Include="CompatibilityTemporalLiteralParser.fs" />
     <Compile Include="LegacyDtoContracts.fs" />
     <Compile Include="CompatibilityAstTypes.fs" />
     <Compile Include="LegacyDtoMapper.fs" />
