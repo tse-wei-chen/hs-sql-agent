@@ -242,7 +242,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     public async Task ExecuteQueryAsync_DateDiffDay_ShouldReturnStartToEndDifference()
     {
         var json = await Strategy.ExecuteRawQueryAsync(
-            $"SELECT DATEDIFF(DAY, DATE '2026-08-20', DATE '2026-08-22') AS day_count FROM {TestTableName}",
+            $"SELECT DATEDIFF(DAY, CAST('2026-08-20' AS DATE), CAST('2026-08-22' AS DATE)) AS day_count FROM {TestTableName}",
             SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
             TestContext.Current.CancellationToken);
@@ -254,7 +254,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     public async Task ExecuteQueryAsync_DateAddDay_ShouldReturnExpectedDate()
     {
         var json = await Strategy.ExecuteRawQueryAsync(
-            $"SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM {TestTableName}",
+            $"SELECT DATEADD(DAY, 2, CAST('2026-08-20' AS DATE)) AS due_date FROM {TestTableName}",
             SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
             TestContext.Current.CancellationToken);

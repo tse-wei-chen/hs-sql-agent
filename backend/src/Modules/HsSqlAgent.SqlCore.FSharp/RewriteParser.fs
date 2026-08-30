@@ -215,6 +215,81 @@ module internal RewriteParser =
                  .Replace(" , ", ",", StringComparison.Ordinal)
         |> CastType.create
 
+    let private parsePostfixCastType (cursor: Cursor) =
+        let parts = ResizeArray<string>()
+        let mutable depth = 0
+        let mutable scanning = true
+        let isBoundary token =
+            if depth <> 0 then false
+            else
+                match token.Kind with
+                | End
+                | Symbol ','
+                | Symbol ')' -> true
+                | Keyword "WHERE"
+                | Keyword "RETURNING"
+                | Keyword "FROM"
+                | Keyword "GROUP"
+                | Keyword "HAVING"
+                | Keyword "ORDER"
+                | Keyword "LIMIT"
+                | Keyword "OFFSET"
+                | Keyword "FETCH"
+                | Keyword "WHEN"
+                | Keyword "THEN"
+                | Keyword "ELSE"
+                | Keyword "END"
+                | Keyword "AND"
+                | Keyword "OR" -> true
+                | Operator "="
+                | Operator "<>"
+                | Operator "!="
+                | Operator ">"
+                | Operator "<"
+                | Operator ">="
+                | Operator "<="
+                | Operator "+"
+                | Operator "-"
+                | Operator "*"
+                | Operator "/"
+                | Operator "%"
+                | Operator "||" -> true
+                | _ -> false
+
+        while scanning && not (isBoundary cursor.Current) do
+            match cursor.Current.Kind with
+            | Identifier(value, _) | Keyword value ->
+                parts.Add(value)
+                cursor.Advance()
+            | IntegerLiteral value when value >= 0L ->
+                parts.Add(string value)
+                cursor.Advance()
+            | Symbol '(' ->
+                parts.Add("(")
+                depth <- depth + 1
+                cursor.Advance()
+            | Symbol ')' when depth > 0 ->
+                parts.Add(")")
+                depth <- depth - 1
+                cursor.Advance()
+            | Symbol ',' when depth > 0 ->
+                parts.Add(",")
+                cursor.Advance()
+            | _ ->
+                scanning <- false
+
+        if parts.Count = 0 then fail cursor.Current "PostgreSQL CAST shorthand requires a target type"
+        if depth <> 0 then fail cursor.Current "Unterminated PostgreSQL CAST target type"
+
+        parts
+        |> Seq.toList
+        |> String.concat " "
+        |> fun value ->
+            value.Replace("( ", "(", StringComparison.Ordinal)
+                 .Replace(" )", ")", StringComparison.Ordinal)
+                 .Replace(" , ", ",", StringComparison.Ordinal)
+        |> CastType.create
+
     let private parseDateLiteral (cursor: Cursor) =
         let token = cursor.Take()
         match token.Kind with
@@ -397,7 +472,7 @@ module internal RewriteParser =
                         + string token.Start + ", span ["
                         + string token.Start + ".." + string finish + ")."))
                 cursor.Advance()
-                expression <- Cast(expression, parseCastType cursor)
+                expression <- Cast(expression, parsePostfixCastType cursor)
             elif acceptKeyword "WITHIN" cursor then
                 expectKeyword "GROUP" cursor
                 expectSymbol '(' cursor
@@ -595,6 +670,33 @@ module internal RewriteParser =
             cursor.Advance(); Literal(parseDateLiteral cursor)
         | Keyword "TIME" -> cursor.Advance(); Literal(parseTimeLiteral cursor)
         | Keyword "TIMESTAMP" -> cursor.Advance(); Literal(parseTimestampLiteral cursor)
+        | Keyword "CURRENT_DATE" ->
+            cursor.Advance()
+            FunctionCall
+                { Name = FunctionName.create "CURRENT_DATE"
+                  Arguments = []
+                  IsDistinct = false
+                  AggregateOrderBy = []
+                  AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                  AggregateSeparator = None }
+        | Keyword "CURRENT_TIME" ->
+            cursor.Advance()
+            FunctionCall
+                { Name = FunctionName.create "CURRENT_TIME"
+                  Arguments = []
+                  IsDistinct = false
+                  AggregateOrderBy = []
+                  AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                  AggregateSeparator = None }
+        | Keyword "CURRENT_TIMESTAMP" ->
+            cursor.Advance()
+            FunctionCall
+                { Name = FunctionName.create "CURRENT_TIMESTAMP"
+                  Arguments = []
+                  IsDistinct = false
+                  AggregateOrderBy = []
+                  AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                  AggregateSeparator = None }
         | Keyword "INTERVAL" ->
             requireSourceCapability cursor.SourceExpressions.IntervalLiteral
             cursor.Advance()
@@ -789,14 +891,22 @@ module internal RewriteParser =
         if acceptKeyword "LIMIT" cursor then
             if cursor.Dialect = SourceDialect.SqlServer || cursor.Dialect = SourceDialect.Oracle || cursor.Dialect = SourceDialect.Firebird then
                 fail cursor.Current "LIMIT is not valid in this source dialect"
-            let first = parseNonNegativeRowCount "LIMIT" cursor
-            if acceptSymbol ',' cursor then
-                if cursor.Dialect <> SourceDialect.MySql then fail cursor.Current "LIMIT offset,count is only valid in MySQL"
-                offset <- Some first
-                limit <- Some(parseNonNegativeRowCount "LIMIT count" cursor)
+            if acceptKeyword "ALL" cursor then
+                if cursor.Dialect <> SourceDialect.PostgreSql then
+                    fail cursor.Current "LIMIT ALL is only valid in the PostgreSQL source dialect"
+                if acceptKeyword "OFFSET" cursor then
+                    offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
+                if isKeyword "FETCH" cursor.Current then
+                    fail cursor.Current "LIMIT ALL cannot be combined with FETCH"
             else
-                limit <- Some first
-                if acceptKeyword "OFFSET" cursor then offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
+                let first = parseNonNegativeRowCount "LIMIT" cursor
+                if acceptSymbol ',' cursor then
+                    if cursor.Dialect <> SourceDialect.MySql then fail cursor.Current "LIMIT offset,count is only valid in MySQL"
+                    offset <- Some first
+                    limit <- Some(parseNonNegativeRowCount "LIMIT count" cursor)
+                else
+                    limit <- Some first
+                    if acceptKeyword "OFFSET" cursor then offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
         elif acceptKeyword "OFFSET" cursor then
             offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
             acceptKeyword "ROW" cursor |> ignore

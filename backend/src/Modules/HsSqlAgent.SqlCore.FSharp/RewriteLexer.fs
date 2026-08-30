@@ -73,7 +73,7 @@ module internal RewriteLexer =
               "RECURSIVE"; "CASE"; "WHEN"; "THEN"; "ELSE"; "END"; "CAST"; "EXTRACT"; "DATE"; "TIME"; "TIMESTAMP"
               "INTERVAL"; "USING"; "CONFLICT"; "DO"; "NOTHING"; "EXCLUDED"; "MATCHING"; "DUPLICATE"; "KEY"
               "FILTER"; "OVER"; "PARTITION"; "RANGE"; "UNBOUNDED"; "PRECEDING"; "FOLLOWING"; "CURRENT"
-              "SEPARATOR"; "WITHIN" ]
+              "SEPARATOR"; "WITHIN"; "CURRENT_DATE"; "CURRENT_TIME"; "CURRENT_TIMESTAMP" ]
 
     let private isIdentifierStart c = Char.IsLetter(c) || c = '_'
     let private isIdentifierPart c = Char.IsLetterOrDigit(c) || c = '_' || c = '$'
