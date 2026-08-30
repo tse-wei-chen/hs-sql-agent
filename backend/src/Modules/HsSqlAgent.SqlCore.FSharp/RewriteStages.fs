@@ -247,8 +247,13 @@ module internal RewriteStages =
         let sourceName = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
 
         let sourceContract = SqlSourceFunctionRegistry.Find(sourceName)
+        let requireSourceContract () =
+            match Option.ofObj sourceContract with
+            | Some contract -> contract
+            | None -> invalidOp ("Source function contract '" + sourceName + "' was unexpectedly absent.")
+
         if not (isNull sourceContract) then
-            match sourceContract.ValidationError(sourceTool, arguments.Length) with
+            match (requireSourceContract ()).ValidationError(sourceTool, arguments.Length) with
             | null -> ()
             | message -> compilationError message
 
@@ -278,7 +283,7 @@ module internal RewriteStages =
                 compilationError (sourceName + " requires exactly 1 argument.")
             canonicalCall call "CORE_DATE_PART" [ Literal(ScalarValue.Text sourceName); arguments.Head ]
         | None when not (isNull sourceContract) ->
-            match sourceContract.CanonicalizationKind with
+            match (requireSourceContract ()).CanonicalizationKind with
             | SqlSourceFunctionCanonicalizationKind.DateAdd ->
                 if arguments.Length <> 3 then compilationError "DATEADD requires exactly 3 arguments."
                 let unit =
@@ -413,11 +418,13 @@ module internal RewriteStages =
             FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
 
         | None ->
-            let sourceDefinition = functionRegistry.Find(sourceTool, sourceName, arguments.Length)
-            if isNull sourceDefinition then
-                compilationError (
-                    "Function '" + sourceName + "' is not registered for source dialect "
-                    + string sourceTool + "; normalization was rejected.")
+            let sourceDefinition =
+                match functionRegistry.Find(sourceTool, sourceName, arguments.Length) |> Option.ofObj with
+                | Some definition -> definition
+                | None ->
+                    compilationError (
+                        "Function '" + sourceName + "' is not registered for source dialect "
+                        + string sourceTool + "; normalization was rejected.")
             if not sourceDefinition.Semantic.HasValue then
                 compilationError ("Function '" + sourceName + "' has no portable semantic mapping from " + string sourceTool + ".")
 
@@ -448,11 +455,13 @@ module internal RewriteStages =
                         "Provider-specific null function '" + sourceName
                         + "' is not translated across dialects because its type-conversion rules differ from COALESCE.")
                 | _ ->
-                    let targetDefinition = functionRegistry.Find(targetTool, semantic, arguments.Length)
-                    if isNull targetDefinition then
-                        compilationError (
-                            "Semantic function '" + string semantic + "' with " + string arguments.Length
-                            + " argument(s) is not supported by " + string targetTool + ".")
+                    let targetDefinition =
+                        match functionRegistry.Find(targetTool, semantic, arguments.Length) |> Option.ofObj with
+                        | Some definition -> definition
+                        | None ->
+                            compilationError (
+                                "Semantic function '" + string semantic + "' with " + string arguments.Length
+                                + " argument(s) is not supported by " + string targetTool + ".")
                     if targetDefinition.TranslationKind = FunctionTranslationKind.Template
                        || targetDefinition.TranslationKind = FunctionTranslationKind.Specialized then
                         compilationError (
