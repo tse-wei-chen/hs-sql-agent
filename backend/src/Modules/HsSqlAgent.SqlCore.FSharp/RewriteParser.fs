@@ -775,7 +775,7 @@ module internal RewriteParser =
         expectSymbol ')' cursor
         Extract(field, value)
 
-    and private parseFunctionExpression (name: Identifier) cursor =
+    and private parseFunctionExpression (name: Identifier) (cursor: Cursor) =
         let nameParts = Identifier.parts name
         if nameParts.Length <> 1 || nameParts.Head.WasQuoted then
             fail cursor.Current "Quoted or qualified function identifiers are not supported by the portable Core grammar"
@@ -830,7 +830,7 @@ module internal RewriteParser =
                   AggregateOrderSyntax = aggregateOrderSyntax
                   AggregateSeparator = aggregateSeparator }
 
-    and private parseKeywordFunctionExpression cursor =
+    and private parseKeywordFunctionExpression (cursor: Cursor) =
         let token = cursor.Take()
         let part =
             match token.Kind with
