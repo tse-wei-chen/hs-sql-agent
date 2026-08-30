@@ -1287,10 +1287,10 @@ module internal RewriteRenderer =
         delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         sql + renderReturning ctx delete.Returning
 
-    let render provider executable : RenderedCommand =
-        let targetRuntime = Executable.targetRuntime executable
+    let render provider (executable: RewritePolicy.ExecutableSql) : RenderedCommand =
+        let targetRuntime = RewritePolicy.Executable.targetRuntime executable
         let ctx = RenderContext(provider, targetRuntime)
-        let document = Executable.value executable
+        let document = RewritePolicy.Executable.value executable
         let sql, returnsRows =
             match document.Statement with
             | Statement.QueryStatement query -> renderQuery ctx query, false

@@ -2,6 +2,7 @@ using System.Reflection;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -64,6 +65,38 @@ public sealed class SqlCoreFSharpFacadeInteropTests
                 SqlAgentToolType.Postgres,
                 validation,
                 new SqlExecutionPlanPolicy()));
+    }
+
+
+    [Fact]
+    public void Facade_TryCompileQuery_ReportsGrammarFailuresAsParseErrors()
+    {
+        var result = SqlCoreFacade.TryCompileQuery(
+            "SELECT FROM",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("fsharp-parse-contract-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.False(result.Success);
+        Assert.Equal("SQL_PARSE_ERROR", result.ErrorCode);
+    }
+
+    [Fact]
+    public void LegacyParsedStatement_CompilationUsesCurrentStatement_NotOriginalRawSql()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery("SELECT 1", SqlAgentToolType.Postgres);
+        var replacement = CoreSqlTextParser.ParseQuery("SELECT 2", SqlAgentToolType.Postgres);
+        parsed.Statement = replacement.Statement;
+
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("fsharp-parsed-statement-contract-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 2));
+        Assert.DoesNotContain(command.Parameters, parameter => Equals(parameter.Value, 1));
     }
 
     [Fact]

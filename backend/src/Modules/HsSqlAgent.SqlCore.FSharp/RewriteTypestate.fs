@@ -77,8 +77,6 @@ module internal Typestate =
     type ParsedSql = private ParsedSql of Document
     type BoundSql = private BoundSql of Document
     type CanonicalSql = private CanonicalSql of Document
-    type ValidatedSql = private ValidatedSql of Document * TargetRuntime
-    type ExecutableSql = private ExecutableSql of Document * TargetRuntime
 
     module Parsed =
         let internal create document = ParsedSql document
@@ -92,16 +90,6 @@ module internal Typestate =
         let internal create document = CanonicalSql document
         let internal value (CanonicalSql document) = document
 
-    module Validated =
-        let internal create document targetRuntime = ValidatedSql(document, targetRuntime)
-        let internal value (ValidatedSql(document, _)) = document
-        let internal targetRuntime (ValidatedSql(_, targetRuntime)) = targetRuntime
-
-    module Executable =
-        let internal create document targetRuntime = ExecutableSql(document, targetRuntime)
-        let internal value (ExecutableSql(document, _)) = document
-        let internal targetRuntime (ExecutableSql(_, targetRuntime)) = targetRuntime
-
     /// Stage transitions accept only the immediately preceding typestate.
     module Transition =
         let bind transform parsed =
@@ -109,16 +97,3 @@ module internal Typestate =
 
         let normalize transform bound =
             bound |> Bound.value |> transform |> Canonical.create
-
-        let validate targetRuntime transform canonical =
-            canonical
-            |> Canonical.value
-            |> transform
-            |> fun document -> Validated.create document targetRuntime
-
-        let authorize transform validated =
-            let targetRuntime = Validated.targetRuntime validated
-            validated
-            |> Validated.value
-            |> transform
-            |> fun document -> Executable.create document targetRuntime

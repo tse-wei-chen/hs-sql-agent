@@ -6,6 +6,12 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 module internal RewritePolicy =
 
+    type ExecutableSql = private ExecutableSql of Document * TargetRuntime
+
+    module Executable =
+        let internal value (ExecutableSql(document, _)) = document
+        let internal targetRuntime (ExecutableSql(_, targetRuntime)) = targetRuntime
+
     type MutationSafety = RequirePredicate | AllowAllRows
     type RowCap = Unlimited | MaxRows of PositiveRowCount
 
@@ -39,4 +45,7 @@ module internal RewritePolicy =
             | statement -> statement
         { document with Statement = statement }
 
-    let authorize policy validated = Transition.authorize (authorizeDocument policy) validated
+    let authorize policy (validated: RewriteStages.ValidatedSql) =
+        let targetRuntime = RewriteStages.Validated.targetRuntime validated
+        let document = RewriteStages.Validated.value validated
+        ExecutableSql(authorizeDocument policy document, targetRuntime)

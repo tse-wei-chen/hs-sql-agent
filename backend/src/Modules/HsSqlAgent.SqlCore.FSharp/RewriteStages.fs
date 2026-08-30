@@ -12,6 +12,12 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 module internal RewriteStages =
 
+    type ValidatedSql = private ValidatedSql of Document * TargetRuntime
+
+    module Validated =
+        let internal value (ValidatedSql(document, _)) = document
+        let internal targetRuntime (ValidatedSql(_, targetRuntime)) = targetRuntime
+
     let private functionRegistry : IFunctionRegistry =
         FunctionRegistry(FunctionDefinitionLoader.LoadEmbedded()) :> IFunctionRegistry
 
@@ -3117,18 +3123,18 @@ module internal RewriteStages =
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
 
     let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
-        Transition.validate targetRuntime (fun document ->
-            validateNestedCteDocument targetRuntime document
-            validateNoFromDocument targetRuntime document
-            proveSourceFilterDocument sourceExpressions document
-            proveSourceFilterDocument targetExpressions document
-            validateSemanticDocument targetRuntime document
-            let validated = validateDocument allowedTables document
-            proveTargetDocument targetRuntime targetExpressions validated |> ignore
-            proveTargetJoins sourceJoins validated
-            proveTargetJoins targetJoins validated
-            proveOrderingAndPaging targetRuntime targetOrdering validated
-            proveTargetDml sourceDml validated
-            proveTargetDml targetDml validated
-            proveConflicts targetRuntime conflictProofs validated
-            validated) canonical
+        let document = Canonical.value canonical
+        validateNestedCteDocument targetRuntime document
+        validateNoFromDocument targetRuntime document
+        proveSourceFilterDocument sourceExpressions document
+        proveSourceFilterDocument targetExpressions document
+        validateSemanticDocument targetRuntime document
+        let validated = validateDocument allowedTables document
+        proveTargetDocument targetRuntime targetExpressions validated |> ignore
+        proveTargetJoins sourceJoins validated
+        proveTargetJoins targetJoins validated
+        proveOrderingAndPaging targetRuntime targetOrdering validated
+        proveTargetDml sourceDml validated
+        proveTargetDml targetDml validated
+        proveConflicts targetRuntime conflictProofs validated
+        ValidatedSql(validated, targetRuntime)

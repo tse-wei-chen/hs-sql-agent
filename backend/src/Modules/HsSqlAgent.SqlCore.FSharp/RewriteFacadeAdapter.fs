@@ -10,6 +10,7 @@ open HsSqlAgent.SqlCore.Core.Execution
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
+open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
@@ -359,6 +360,9 @@ module internal RewriteFacadeAdapter =
         with
         | :? UnauthorizedAccessException -> reraise()
         | :? SqlCompilationException -> reraise()
+        | :? SqlParseException -> reraise()
+        | :? ArgumentException as ex when String.Equals(ex.ParamName, "sql", StringComparison.Ordinal) ->
+            raise (SqlParseException(ex.Message, ex))
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (SqlCompilationException(ex.Message, ex))
 
@@ -435,38 +439,32 @@ module internal RewriteFacadeAdapter =
     let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed =
         let source = parsed.SourceDialect
         if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
-            compile
-                source
-                target
-                parsed.SourceProfile
-                targetProfile
-                conflictTargetAssurance
-                policyVersion
-                policy
-                allowed
-                parsed.RawSql
-        else
-            let rendered =
-                runParsed
-                    { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
-                      SourceSemantics = parsedSourceSemantics parsed
-                      Provider = provider target
-                      TargetRuntime = targetRuntime target targetProfile
-                      SourceProfile = parsed.SourceProfile
-                      TargetProfile = targetProfile
-                      TargetExpressions = targetExpressionProofs target targetProfile
-                      TargetJoins = targetJoinProofs target targetProfile
-                      TargetOrdering = targetNullOrdering target
-                      TargetDml = targetDmlProofs target targetProfile
-                      ConflictProofs = conflictProofs target targetProfile conflictTargetAssurance
-                      Policy = policy
-                      AllowedTables = allowed }
-                    (RewriteLegacyAstAdapter.toParsed parsed.Statement)
-            let kind = legacyKind parsed.Statement
-            let parameterValues = parameters target rendered.Parameters
-            let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, target, ReturnsRows = rendered.ReturnsRows)
-            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-            CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
+            // Preserve the source-dialect syntax check without making RawSql the executable source
+            // of truth. Callers of the compatibility ParsedStatement API may intentionally replace
+            // Statement after parsing; compilation must consume that statement, not silently reparse
+            // the original text.
+            parseSourceValidated parsed.RawSql source parsed.SourceProfile |> ignore
+        let rendered =
+            runParsed
+                { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
+                  SourceSemantics = parsedSourceSemantics parsed
+                  Provider = provider target
+                  TargetRuntime = targetRuntime target targetProfile
+                  SourceProfile = parsed.SourceProfile
+                  TargetProfile = targetProfile
+                  TargetExpressions = targetExpressionProofs target targetProfile
+                  TargetJoins = targetJoinProofs target targetProfile
+                  TargetOrdering = targetNullOrdering target
+                  TargetDml = targetDmlProofs target targetProfile
+                  ConflictProofs = conflictProofs target targetProfile conflictTargetAssurance
+                  Policy = policy
+                  AllowedTables = allowed }
+                (RewriteLegacyAstAdapter.toParsed parsed.Statement)
+        let kind = legacyKind parsed.Statement
+        let parameterValues = parameters target rendered.Parameters
+        let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, target, ReturnsRows = rendered.ReturnsRows)
+        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+        CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
 
     let compileQueryParsedValidated (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(parsed)
