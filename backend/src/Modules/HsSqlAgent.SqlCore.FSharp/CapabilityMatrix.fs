@@ -78,20 +78,66 @@ type SqlCapabilityMatrix private () =
                 if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(3,39)) then translated else rejected
             else translated
 
-        let filterStatus =
+        let profileServerVersion =
+            match profile with
+            | null -> None
+            | nonNullProfile ->
+                match nonNullProfile.ServerVersion with
+                | null -> None
+                | version -> Some version
+
+        let filterStatus, filterDetail =
             match provider with
             | SqlAgentToolType.Postgres ->
-                match profile with
-                | null -> supported
-                | nonNullProfile ->
-                    match nonNullProfile.ServerVersion with
-                    | null -> supported
-                    | version when version.CompareTo(Version(9,4)) < 0 -> rejected
-                    | _ -> supported
-            | SqlAgentToolType.Sqlite -> if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(3,30)) then supported else rejected
-            | SqlAgentToolType.Firebird -> if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(4,0)) then supported else rejected
-            | SqlAgentToolType.Oracle -> if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(26,0)) then supported else rejected
-            | _ -> rejected
+                match profileServerVersion with
+                | Some version when version.CompareTo(Version(9,4)) < 0 ->
+                    rejected,
+                    "Aggregate FILTER requires PostgreSQL target ServerVersion 9.4+; the declared target version "
+                    + string version + " is too old."
+                | _ ->
+                    supported,
+                    "Native aggregate FILTER is supported by PostgreSQL 9.4+. An explicitly declared older target ServerVersion is rejected; an omitted version retains Core's current-supported-release baseline."
+            | SqlAgentToolType.Sqlite ->
+                match profileServerVersion with
+                | None ->
+                    rejected,
+                    "Aggregate FILTER remains fail-closed unless the Sqlite target capability profile explicitly declares ServerVersion 3.30 or newer."
+                | Some version when version.CompareTo(Version(3,30)) < 0 ->
+                    rejected,
+                    "Aggregate FILTER requires Sqlite target ServerVersion 3.30+; the declared target version "
+                    + string version + " is too old."
+                | Some version ->
+                    supported,
+                    "Native aggregate FILTER is enabled by the declared Sqlite target ServerVersion "
+                    + string version + ", satisfying the 3.30+ runtime contract."
+            | SqlAgentToolType.Firebird ->
+                match profileServerVersion with
+                | None ->
+                    rejected,
+                    "Aggregate FILTER remains fail-closed unless the Firebird target capability profile explicitly declares ServerVersion 4.0 or newer."
+                | Some version when version.CompareTo(Version(4,0)) < 0 ->
+                    rejected,
+                    "Aggregate FILTER requires Firebird target ServerVersion 4.0+; the declared target version "
+                    + string version + " is too old."
+                | Some version ->
+                    supported,
+                    "Native aggregate FILTER is enabled by the declared Firebird target ServerVersion "
+                    + string version + ", satisfying the 4.0+ runtime contract."
+            | SqlAgentToolType.Oracle ->
+                match profileServerVersion with
+                | None ->
+                    rejected,
+                    "Aggregate FILTER remains fail-closed unless the Oracle target capability profile explicitly declares ServerVersion 26.0 or newer."
+                | Some version when version.CompareTo(Version(26,0)) < 0 ->
+                    rejected,
+                    "Aggregate FILTER requires Oracle target ServerVersion 26.0+; the declared target version "
+                    + string version + " is too old."
+                | Some _ ->
+                    supported,
+                    "Oracle AI Database 26ai+ target profiles support native aggregate FILTER. Core additionally requires each FILTER condition to contain no subqueries, window functions, or outer references before Oracle lowering is authorized."
+            | _ ->
+                rejected,
+                "Aggregate FILTER has no declared portable target contract for " + string provider + "."
 
         let aggregateOrderingStatus, aggregateOrderingDetail =
             match provider with
@@ -230,7 +276,7 @@ type SqlCapabilityMatrix private () =
                         "PostgreSQL interval semantics are supported natively. Core canonicalizes INTERVAL 'literal' and emits the decoded interval value as a bound parameter cast to interval, so runtime data is kept out of target SQL text. Raw Core SQL accepts this PostgreSQL-style source literal only when the declared source dialect is PostgreSQL; structured Core input is independent of the raw source-syntax gate."
                     else
                         "PostgreSQL-style INTERVAL 'literal' has no declared target equivalent for this provider. Raw SQL that parses into this Core interval-literal shape is also rejected when the declared source dialect is non-PostgreSQL; provider-native interval forms such as MySQL INTERVAL expr unit require a separate structured translation contract.")
-                cap("expression.filter","expression",filterStatus,"Aggregate FILTER is gated by provider/runtime profile.")
+                cap("expression.filter","expression",filterStatus,filterDetail)
                 cap("aggregate.string","aggregate",translated,"String aggregation lowers to provider-native syntax.")
                 cap("aggregate.string.ordering","aggregate",aggregateOrderingStatus,aggregateOrderingDetail)
                 cap("aggregate.string.dynamic_separator","aggregate",rejected,"Dynamic aggregate separators remain fail-closed.")
