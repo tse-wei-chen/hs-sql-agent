@@ -72,6 +72,37 @@ public sealed class PostgresSyntaxBoundaryTests
     }
 
     [Fact]
+    public void TypedQueryRuntime_CompilesPostgresFullOuterJoin()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+
+        var policy = new SecurityPolicyModel
+        {
+            QueryMaxRows = 100,
+            QueryTimeoutSeconds = 30,
+            RequireWhereForUpdate = true,
+            RequireWhereForDelete = true,
+            AllowFullTableUpdate = false,
+            AllowFullTableDelete = false,
+            DmlMaxAffectedRows = 100
+        };
+
+        const string sql =
+            "SELECT u.id FROM public.users u FULL OUTER JOIN public.orders o ON u.id = o.user_id";
+
+        var command = runtime.Compile(
+            provider.Object,
+            sql,
+            SqlAgentToolType.Postgres,
+            policy,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users", "public.orders" });
+
+        Assert.Contains("FULL OUTER JOIN", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TypedQueryRuntime_CompilesWildcardCteWithoutTreatingAliasAsPhysicalTable()
     {
         var runtime = new TypedQueryRuntime();

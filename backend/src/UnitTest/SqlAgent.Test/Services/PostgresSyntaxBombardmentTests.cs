@@ -84,7 +84,7 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Case(
             "full-outer-join",
             "SELECT a.id FROM alpha a FULL OUTER JOIN beta b ON a.id = b.id",
-            "FULL JOIN",
+            "FULL OUTER JOIN",
             "alpha,beta");
         yield return Case(
             "group-having",
