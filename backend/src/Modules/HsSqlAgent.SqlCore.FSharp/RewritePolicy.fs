@@ -33,8 +33,8 @@ module internal RewritePolicy =
         let statement =
             match document.Statement with
             | QueryStatement query -> QueryStatement(clampQueryLimit policy.QueryRows query)
-            | UpdateStatement update when update.Where.IsNone && policy.UpdateSafety = RequirePredicate -> invalidOp "Execution policy rejects UPDATE without a WHERE predicate."
-            | DeleteStatement delete when delete.Where.IsNone && policy.DeleteSafety = RequirePredicate -> invalidOp "Execution policy rejects DELETE without a WHERE predicate."
+            | UpdateStatement update when update.Where.IsNone && policy.UpdateSafety = RequirePredicate -> raise (UnauthorizedAccessException("Security policy denies UPDATE without WHERE."))
+            | DeleteStatement delete when delete.Where.IsNone && policy.DeleteSafety = RequirePredicate -> raise (UnauthorizedAccessException("Security policy denies DELETE without WHERE."))
             | statement -> statement
         { document with Statement = statement }
 

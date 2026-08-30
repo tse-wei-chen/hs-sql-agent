@@ -50,6 +50,18 @@ module internal RewriteFacadeAdapter =
             else RowCap.MaxRows(PositiveRowCount.create queryMaxRows)
         { RewritePolicy.safeDefaults with QueryRows = queryRows }
 
+    let private mutationSafety requireWhere allowFullTable =
+        if not requireWhere && allowFullTable then MutationSafety.AllowAllRows
+        else MutationSafety.RequirePredicate
+
+    let private dmlPolicy (policy: DmlCompilationPolicy | null) =
+        match policy with
+        | null -> RewritePolicy.safeDefaults
+        | value ->
+            { RewritePolicy.safeDefaults with
+                UpdateSafety = mutationSafety value.RequireWhereForUpdate value.AllowFullTableUpdate
+                DeleteSafety = mutationSafety value.RequireWhereForDelete value.AllowFullTableDelete }
+
     let private compilationErrorMessage (message: string) =
         message.StartsWith("INSERT ", StringComparison.Ordinal)
         || message.StartsWith("CTE ", StringComparison.Ordinal)
@@ -101,9 +113,9 @@ module internal RewriteFacadeAdapter =
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
-    let compileDmlValidated sql source target (validationContext: SqlPlanValidationContext) =
+    let compileDmlValidated sql source target (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target validationContext.PolicyVersion RewritePolicy.safeDefaults (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command

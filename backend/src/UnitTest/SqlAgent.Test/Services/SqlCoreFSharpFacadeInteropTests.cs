@@ -402,6 +402,52 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextDmlPolicy_AllowsExplicitFullTableUpdateLikeLegacy()
+    {
+        const string sql = "UPDATE users SET name = 'b'";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-dml-policy-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy(
+            RequireWhereForUpdate: false,
+            RequireWhereForDelete: true,
+            AllowFullTableUpdate: true,
+            AllowFullTableDelete: false);
+        var assurance = DmlConflictTargetAssurance.FromPrimaryKey(new[] { "id" });
+
+        var parsed = CoreSqlTextParser.ParseDml(
+            sql,
+            SqlAgentToolType.Postgres,
+            sourceProfile);
+        var legacy = CoreDmlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                targetProfile,
+                assurance);
+
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile,
+            assurance);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Kind, migrated.Kind);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Fact]
     public void Facade_FunctionalSourceProfileRewrite_MatchesLegacyCompiler()
     {
         const string sql =

@@ -42,8 +42,8 @@ module private FacadeCompile =
     let queryText sql sourceDialect targetProvider validationContext executionPolicy =
         RewriteFacadeAdapter.compileQueryValidated sql sourceDialect targetProvider validationContext executionPolicy
 
-    let dmlText sql sourceDialect targetProvider validationContext =
-        RewriteFacadeAdapter.compileDmlValidated sql sourceDialect targetProvider validationContext
+    let dmlText sql sourceDialect targetProvider validationContext policy =
+        RewriteFacadeAdapter.compileDmlValidated sql sourceDialect targetProvider validationContext policy
 
 /// C#-oriented facade. SQL-text compilation is owned by the closed F# DU pipeline.
 /// ParsedStatement overloads remain solely as a source-compatible CLR boundary for callers that
@@ -101,7 +101,7 @@ type SqlCoreFacade private () =
 
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
-        FacadeCompile.dmlText sql sourceDialect targetProvider validationContext
+        FacadeCompile.dmlText sql sourceDialect targetProvider validationContext policy null
 
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, policy: DmlCompilationPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile, conflictTargetAssurance: DmlConflictTargetAssurance) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
