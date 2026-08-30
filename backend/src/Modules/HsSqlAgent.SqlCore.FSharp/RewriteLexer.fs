@@ -352,15 +352,50 @@ module internal RewriteLexer =
                         i <- i + 1
                 if not closed then invalidArg "sql" ("Unterminated quoted identifier at offset " + string start + ".")
                 add (Identifier(buffer.ToString(), true)) start i
-            elif Char.IsDigit(c) then
+            elif Char.IsDigit(c) || (c = '.' && i + 1 < length && Char.IsDigit(sql[i + 1])) then
                 let start = i
+                let mutable hasDigits = false
                 let mutable hasDot = false
-                while i < length && (Char.IsDigit(sql[i]) || (sql[i] = '.' && not hasDot && i + 1 < length && Char.IsDigit(sql[i + 1]))) do
-                    if sql[i] = '.' then hasDot <- true
+                let mutable hasExponent = false
+
+                while i < length && Char.IsDigit(sql[i]) do
+                    hasDigits <- true
                     i <- i + 1
+
+                if i < length && sql[i] = '.' then
+                    hasDot <- true
+                    i <- i + 1
+                    while i < length && Char.IsDigit(sql[i]) do
+                        hasDigits <- true
+                        i <- i + 1
+
+                if not hasDigits then
+                    parseError "Invalid numeric literal." start (max 1 (i - start))
+
+                if i < length && (sql[i] = 'e' || sql[i] = 'E') then
+                    hasExponent <- true
+                    i <- i + 1
+                    if i < length && (sql[i] = '+' || sql[i] = '-') then
+                        i <- i + 1
+                    let exponentStart = i
+                    while i < length && Char.IsDigit(sql[i]) do
+                        i <- i + 1
+                    if i = exponentStart then
+                        parseError "Invalid numeric exponent." start (max 1 (i - start))
+
+                if i < length && (sql[i] = '.' || isConfiguredIdentifierStart sql[i]) then
+                    let invalidStart = i
+                    while i < length && (sql[i] = '.' || isConfiguredIdentifierPart sql[i]) do
+                        i <- i + 1
+                    parseError "Invalid numeric literal." start (max 1 (i - start))
+
                 let text = sql.Substring(start, i - start)
-                if hasDot then add (DecimalLiteral(Decimal.Parse(text, CultureInfo.InvariantCulture))) start i
-                else add (IntegerLiteral(Int64.Parse(text, CultureInfo.InvariantCulture))) start i
+                if not hasDot && not hasExponent then
+                    match Int64.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
+                    | true, value -> add (IntegerLiteral value) start i
+                    | _ -> add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
+                else
+                    add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
             elif isConfiguredIdentifierStart c then
                 let start = i
                 i <- i + 1
