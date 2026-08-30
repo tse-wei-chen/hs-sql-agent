@@ -65,13 +65,13 @@ module internal SqlSourceDialectGrammarRules =
             | value -> raise (ArgumentOutOfRangeException("sourceDialect", value, "No source grammar contract."))
         SqlSourceDialectGrammarContract(flags)
 
-    let UsesMySqlAnsiQuotedIdentifiers(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile) =
+    let UsesMySqlAnsiQuotedIdentifiers(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
         sourceDialect = SqlAgentToolType.MySQL
         && not (isNull sourceProfile)
         && sourceProfile.Provider = SqlAgentToolType.MySQL
         && (sourceProfile.HasSessionMode("ANSI_QUOTES") || sourceProfile.HasSessionMode("ANSI"))
 
-    let UsesMySqlNoBackslashEscapes(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile) =
+    let UsesMySqlNoBackslashEscapes(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
         sourceDialect = SqlAgentToolType.MySQL
         && not (isNull sourceProfile)
         && sourceProfile.Provider = SqlAgentToolType.MySQL
@@ -81,23 +81,23 @@ module internal SqlConcatCapabilityRules =
     let private v14 = Version(14,0)
     let private v17 = Version(17,0)
 
-    let SupportsMySqlPipesAsConcat(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile) =
+    let SupportsMySqlPipesAsConcat(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
         sourceDialect = SqlAgentToolType.MySQL
         && not (isNull sourceProfile)
         && sourceProfile.Provider = SqlAgentToolType.MySQL
         && (sourceProfile.HasSessionMode("PIPES_AS_CONCAT") || sourceProfile.HasSessionMode("ANSI"))
 
-    let SourceSemanticValidationError(sourceDialect: SqlAgentToolType) =
+    let SourceSemanticValidationError(sourceDialect: SqlAgentToolType) : string | null =
         if sourceDialect = SqlAgentToolType.MySQL then
             "MySQL '||' semantics depend on PIPES_AS_CONCAT sql_mode; Core rejects the operator because session sql_mode is not part of the compilation plan."
         else null
 
-    let RawSourceSyntaxError(sourceDialect: SqlAgentToolType) =
+    let RawSourceSyntaxError(sourceDialect: SqlAgentToolType) : string | null =
         if sourceDialect = SqlAgentToolType.MsSqlServer then
             "Raw SQL Server source operator '||' remains fail-closed. SQL Server 2025 (17.x) introduces ANSI pipes concatenation, but Core has not yet declared a T-SQL 17.x source grammar/precedence contract."
         else null
 
-    let EvaluateSqlServerTarget(targetProfile: SqlProviderCapabilityProfile) =
+    let EvaluateSqlServerTarget(targetProfile: SqlProviderCapabilityProfile | null) =
         if isNull targetProfile || targetProfile.Provider <> SqlAgentToolType.MsSqlServer then SqlServerConcatTargetMode.Rejected
         elif not (isNull targetProfile.ServerVersion)
              && targetProfile.ServerVersion.CompareTo(v17) >= 0
@@ -109,7 +109,7 @@ module internal SqlConcatCapabilityRules =
             if String.Equals(setting, "ON", StringComparison.OrdinalIgnoreCase) then SqlServerConcatTargetMode.PlusOperator
             else SqlServerConcatTargetMode.Rejected
 
-    let SqlServerTargetValidationError(targetProfile: SqlProviderCapabilityProfile) =
+    let SqlServerTargetValidationError(targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         let version = if isNull targetProfile || isNull targetProfile.ServerVersion then "undeclared" else targetProfile.ServerVersion.ToString()
         let compatibility = if isNull targetProfile || not targetProfile.CompatibilityLevel.HasValue then "undeclared" else string targetProfile.CompatibilityLevel.Value
         let concatNull = if isNull targetProfile then "undeclared" else targetProfile.GetSessionSetting("CONCAT_NULL_YIELDS_NULL") |> Option.ofObj |> Option.defaultValue "undeclared"
@@ -121,13 +121,13 @@ module internal SqlConcatCapabilityRules =
 
 module internal SqlIlikeCapabilityRules =
     let SupportsTarget(provider: SqlAgentToolType) = provider = SqlAgentToolType.Postgres
-    let SourceValidationError(sourceDialect: SqlAgentToolType) =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
         if sourceDialect = SqlAgentToolType.Postgres then null
         else "ILIKE is PostgreSQL-specific and is not valid for source dialect " + string sourceDialect + "."
 
 module internal SqlIntervalLiteralCapabilityRules =
     let IsTargetSupported(provider: SqlAgentToolType) = provider = SqlAgentToolType.Postgres
-    let SourceValidationError(sourceDialect: SqlAgentToolType) =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
         if sourceDialect = SqlAgentToolType.Postgres then null
         else
             "INTERVAL 'literal' is not valid for declared source dialect " + string sourceDialect
@@ -135,7 +135,7 @@ module internal SqlIntervalLiteralCapabilityRules =
 
 module internal SqlModuloCapabilityRules =
     let private usesFunction provider = provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird
-    let SourceValidationError(sourceDialect: SqlAgentToolType) =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
         if usesFunction sourceDialect then
             "Operator '%' is not valid portable source syntax for " + string sourceDialect + "; use the provider's MOD function instead."
         else null
@@ -144,7 +144,7 @@ module internal SqlNullOrderingCapabilityRules =
     let RequiresTargetRewrite(provider: SqlAgentToolType) =
         provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.MsSqlServer
 
-    let SourceValidationError(sourceDialect: SqlAgentToolType, nullOrdering: HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind) =
+    let SourceValidationError(sourceDialect: SqlAgentToolType, nullOrdering: HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind) : string | null =
         if nullOrdering = HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind.Default || not (RequiresTargetRewrite sourceDialect) then null
         else
             let modifier = if nullOrdering = HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind.First then "NULLS FIRST" else "NULLS LAST"
@@ -152,28 +152,28 @@ module internal SqlNullOrderingCapabilityRules =
             + string sourceDialect + " in the Core source capability profile."
 
 module internal SqlStandaloneTimeCapabilityRules =
-    let TargetValidationError(provider: SqlAgentToolType) =
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
         if provider <> SqlAgentToolType.Oracle then null
         else "Oracle has no standalone TIME data type. SQL capability 'literal.time' is not supported by provider Oracle for this Core plan."
 
 module internal SqlDmlUpdateFromCapabilityRules =
-    let TargetValidationError(provider: SqlAgentToolType) =
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
         if provider = SqlAgentToolType.Postgres then null
         else "SQL capability 'dml.update.from' remains fail-closed for provider " + string provider
              + "; equivalent mutation, duplicate-match, alias, and runtime-version semantics are not yet proven."
 
 module internal SqlDmlDeleteUsingCapabilityRules =
-    let TargetValidationError(provider: SqlAgentToolType) =
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
         if provider = SqlAgentToolType.Postgres then null
         else "SQL capability 'dml.delete.using' remains fail-closed for provider " + string provider
              + "; equivalent joined-delete, target-row, alias, and duplicate-match semantics are not yet proven."
 
 module internal SqlDmlReturningExpressionCapabilityRules =
-    let SourceValidationError(sourceDialect: SqlAgentToolType) =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
         if sourceDialect = SqlAgentToolType.Postgres then null
         else "SQL capability 'dml.returning.expression' is currently declared only for the PostgreSQL source dialect; source dialect "
              + string sourceDialect + " remains fail-closed."
-    let TargetValidationError(provider: SqlAgentToolType) =
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
         if provider = SqlAgentToolType.Postgres then null
         else "SQL capability 'dml.returning.expression' is currently lowered only for PostgreSQL targets; target provider "
              + string provider + " remains fail-closed."
@@ -183,7 +183,7 @@ module internal SqlDmlReturningCapabilityRules =
     let private firebirdVersion = Version(5,0)
     let private atLeast (actual: Version) required = not (isNull actual) && actual.CompareTo(required) >= 0
 
-    let SourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version) =
+    let SourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version | null) : string | null =
         let supported =
             match sourceDialect with
             | SqlAgentToolType.Postgres -> true
@@ -200,7 +200,7 @@ module internal SqlDmlReturningCapabilityRules =
             | SqlAgentToolType.MySQL -> "MySQL has no declared DML RETURNING result-row syntax in the Core MySQL 8.4 source profile."
             | _ -> "DML RETURNING is not represented for source dialect " + string sourceDialect + "."
 
-    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         let supported =
             match provider with
             | SqlAgentToolType.Postgres -> true
@@ -223,10 +223,10 @@ module internal SqlDmlUpsertCapabilityRules =
     let private sqliteVersion = Version(3,24)
     let private mysqlAliasVersion = Version(8,0,19)
     let private atLeastVersion (actual: Version) required = not (isNull actual) && actual.CompareTo(required) >= 0
-    let private profileAtLeast (profile: SqlProviderCapabilityProfile) provider required =
+    let private profileAtLeast (profile: SqlProviderCapabilityProfile | null) provider required =
         not (isNull profile) && profile.Provider = provider && atLeastVersion profile.ServerVersion required
 
-    let OnConflictSourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version) =
+    let OnConflictSourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version | null) : string | null =
         let supported =
             sourceDialect = SqlAgentToolType.Postgres
             || (sourceDialect = SqlAgentToolType.Sqlite && atLeastVersion sourceServerVersion sqliteVersion)
@@ -240,7 +240,7 @@ module internal SqlDmlUpsertCapabilityRules =
                 "Source dialect " + string sourceDialect + " uses MERGE-style upsert semantics, which require a separate source-row cardinality contract and remain fail-closed."
             | _ -> "Portable INSERT conflict handling is not represented for source dialect " + string sourceDialect + "."
 
-    let DirectTargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+    let DirectTargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         let supported = provider = SqlAgentToolType.Postgres || (provider = SqlAgentToolType.Sqlite && profileAtLeast targetProfile provider sqliteVersion)
         if supported then null
         else
@@ -252,14 +252,14 @@ module internal SqlDmlUpsertCapabilityRules =
                 "Portable INSERT conflict handling is not represented as an unconditional target capability for provider " + string provider + "."
             | _ -> "Portable INSERT conflict handling is not represented for target provider " + string provider + "."
 
-    let MySqlConditionalTargetValidationError(targetProfile: SqlProviderCapabilityProfile) =
+    let MySqlConditionalTargetValidationError(targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         if profileAtLeast targetProfile SqlAgentToolType.MySQL mysqlAliasVersion then null
         else "MySQL conflict lowering requires an explicit target capability profile with ServerVersion 8.0.19 or newer so Core can use the proposed-row alias form instead of deprecated VALUES(column) semantics."
 
 module internal SqlJoinCapabilityRules =
     let private sqliteMin = Version(3,39)
     let private normalize (kind: string) = kind.Trim().ToUpperInvariant()
-    let private sqliteError kind (profile: SqlProviderCapabilityProfile) side =
+    let private sqliteError kind (profile: SqlProviderCapabilityProfile | null) side =
         let cap = if kind = "RIGHT" then "join.right" else "join.full"
         if isNull profile || isNull profile.ServerVersion then
             "SQL capability '" + cap + "' requires a declared SQLite " + side + " capability profile with ServerVersion 3.39+."
@@ -267,14 +267,14 @@ module internal SqlJoinCapabilityRules =
             "SQL capability '" + cap + "' requires SQLite " + side + " ServerVersion 3.39+; declared version is " + profile.ServerVersion.ToString() + "."
         else null
 
-    let SourceValidationError(joinKind: string, sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile) =
+    let SourceValidationError(joinKind: string, sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         let kind = normalize joinKind
         if kind = "FULL" && sourceDialect = SqlAgentToolType.MySQL then
             "Raw MySQL FULL OUTER JOIN is not valid source syntax. SQL capability 'join.full' is not supported by source provider MySQL."
         elif sourceDialect = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind sourceProfile "source"
         else null
 
-    let TargetValidationError(joinKind: string, provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+    let TargetValidationError(joinKind: string, provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         let kind = normalize joinKind
         if kind = "FULL" && provider = SqlAgentToolType.MySQL then
             "SQL capability 'join.full' is not supported by provider MySQL for this Core plan."
@@ -295,12 +295,12 @@ module internal SqlAggregateFilterCapabilityRules =
         | SqlAgentToolType.Oracle -> Some oracle
         | _ -> None
 
-    let RawSourceSyntaxError(sourceDialect: SqlAgentToolType) =
+    let RawSourceSyntaxError(sourceDialect: SqlAgentToolType) : string | null =
         match minimum sourceDialect with
         | Some _ -> null
         | None -> "Aggregate FILTER (WHERE ...) is not valid for declared source dialect " + string sourceDialect + " in the Core source capability profile."
 
-    let ValidationError(provider: SqlAgentToolType, profile: SqlProviderCapabilityProfile, side: string) =
+    let ValidationError(provider: SqlAgentToolType, profile: SqlProviderCapabilityProfile | null, side: string) : string | null =
         match minimum provider with
         | None -> "SQL capability 'expression.filter' is not supported by provider " + string provider + " for " + side + " SQL."
         | Some min when provider = SqlAgentToolType.Postgres ->
@@ -314,7 +314,7 @@ module internal SqlAggregateFilterCapabilityRules =
                 "SQL capability 'expression.filter' requires " + string provider + " " + side + " ServerVersion " + min.ToString() + "+; declared version is " + profile.ServerVersion.ToString() + "."
             else null
 
-    let PredicateValidationError(provider: SqlAgentToolType, side: string, feature: SqlAggregateFilterPredicateFeature) =
+    let PredicateValidationError(provider: SqlAgentToolType, side: string, feature: SqlAggregateFilterPredicateFeature) : string | null =
         if provider <> SqlAgentToolType.Oracle then null
         else
             let restriction =
@@ -327,13 +327,13 @@ module internal SqlAggregateFilterCapabilityRules =
 
 module internal SqlFirebirdTimeZoneTypeCapabilityRules =
     let MinimumVersion = Version(4,0)
-    let SupportsTargetProfile(targetProfile: SqlProviderCapabilityProfile) =
+    let SupportsTargetProfile(targetProfile: SqlProviderCapabilityProfile | null) =
         not (isNull targetProfile)
         && targetProfile.Provider = SqlAgentToolType.Firebird
         && not (isNull targetProfile.ServerVersion)
         && targetProfile.ServerVersion.CompareTo(MinimumVersion) >= 0
 
-    let CastTargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile, typeName: string) =
+    let CastTargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null, typeName: string) : string | null =
         let normalized = String.Join(" ", typeName.Trim().ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries))
         let timezoneType =
             normalized.EndsWith(" WITH TIME ZONE", StringComparison.Ordinal)
@@ -344,7 +344,7 @@ module internal SqlFirebirdTimeZoneTypeCapabilityRules =
             + typeName + "' because TIME WITH TIME ZONE and TIMESTAMP WITH TIME ZONE were introduced in Firebird 4.0."
 
 module internal SqlOffsetTimestampCapabilityRules =
-    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         let supported =
             match provider with
             | SqlAgentToolType.MySQL -> false
@@ -359,7 +359,7 @@ module internal SqlOffsetTimestampCapabilityRules =
 
 module internal SqlRegexCapabilityRules =
     let private minVersion = Version(17,0)
-    let SupportsTarget(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+    let SupportsTarget(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) =
         match provider with
         | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL | SqlAgentToolType.Oracle -> true
         | SqlAgentToolType.MsSqlServer ->
@@ -371,19 +371,19 @@ module internal SqlRegexCapabilityRules =
             && targetProfile.CompatibilityLevel.Value >= 170
         | _ -> false
 
-    let ProviderValidationError(provider: SqlAgentToolType) =
+    let ProviderValidationError(provider: SqlAgentToolType) : string | null =
         if provider = SqlAgentToolType.Sqlite || provider = SqlAgentToolType.Firebird then
             "SQL capability 'function.regex_match' is not supported by provider " + string provider + " for this Core plan."
         else null
 
-    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         if SupportsTarget(provider, targetProfile) then null
         elif provider = SqlAgentToolType.MsSqlServer then
             "SQL capability 'function.regex_match' requires a declared SQL Server target capability profile with ServerVersion 17.0 or newer and compatibility level 170 or above."
         else "SQL capability 'function.regex_match' is not supported by provider " + string provider + " for this Core plan."
 
 module internal SqlScalarBooleanCapabilityRules =
-    let TargetValidationError(provider: SqlAgentToolType, capability: string) =
+    let TargetValidationError(provider: SqlAgentToolType, capability: string) : string | null =
         if provider <> SqlAgentToolType.Oracle && provider <> SqlAgentToolType.MsSqlServer then null
         else "SQL capability '" + capability + "' is not supported by provider " + string provider + " for this Core plan."
 
@@ -392,7 +392,7 @@ module internal SqlNestedCteCapabilityRules =
         provider = SqlAgentToolType.Postgres || provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.Sqlite
 
 module internal SqlTemporalFormatCapabilityRules =
-    let TargetValidationError(canonicalFunctionName: string, provider: SqlAgentToolType) =
+    let TargetValidationError(canonicalFunctionName: string, provider: SqlAgentToolType) : string | null =
         match canonicalFunctionName with
         | "CORE_DATE_FORMAT" when provider <> SqlAgentToolType.Firebird -> null
         | "CORE_DATE_FORMAT" ->
@@ -405,7 +405,7 @@ module internal SqlTemporalFormatCapabilityRules =
         | value -> raise (ArgumentOutOfRangeException("canonicalFunctionName", value, "Unsupported canonical temporal format function."))
 
 module internal SqlJsonCapabilityRules =
-    let TargetValidationError(canonicalFunctionName: string, provider: SqlAgentToolType) =
+    let TargetValidationError(canonicalFunctionName: string, provider: SqlAgentToolType) : string | null =
         match canonicalFunctionName with
         | "CORE_JSON_EXTRACT" when provider = SqlAgentToolType.Postgres || provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.Sqlite -> null
         | "CORE_JSON_EXTRACT" -> "SQL capability 'function.json_extract' is not supported by provider " + string provider + " for this Core plan."
@@ -415,18 +415,18 @@ module internal SqlJsonCapabilityRules =
 
 module internal SqlWindowCapabilityRules =
     let SupportsAggregateInWindowSpecification(provider: SqlAgentToolType) = provider = SqlAgentToolType.Postgres
-    let FunctionValidationError(functionName: string, provider: SqlAgentToolType) =
+    let FunctionValidationError(functionName: string, provider: SqlAgentToolType) : string | null =
         if provider = SqlAgentToolType.MsSqlServer then
             "SQL capability 'function." + functionName.Trim().ToLowerInvariant() + "' is not supported by provider MsSqlServer for this Core plan."
         else null
-    let LiteralOffsetValidationError(functionName: string, offset: int64, provider: SqlAgentToolType) =
+    let LiteralOffsetValidationError(functionName: string, offset: int64, provider: SqlAgentToolType) : string | null =
         if offset < 0L && (provider = SqlAgentToolType.MsSqlServer || provider = SqlAgentToolType.MySQL) then
             "SQL capability 'function." + functionName.Trim().ToLowerInvariant() + ".negative_offset' is not supported by provider "
             + string provider + " for this Core plan."
         else null
 
 module internal SqlCurrentTemporalCapabilityRules =
-    let SourceValidationError(kind: SqlCurrentTemporalKind, sourceDialect: SqlAgentToolType) =
+    let SourceValidationError(kind: SqlCurrentTemporalKind, sourceDialect: SqlAgentToolType) : string | null =
         let supported =
             match kind with
             | SqlCurrentTemporalKind.Date -> sourceDialect <> SqlAgentToolType.MsSqlServer
@@ -441,7 +441,7 @@ module internal SqlCurrentTemporalCapabilityRules =
                 else string sourceDialect
             "Function '" + fn + "' is not valid for declared source dialect " + dialect + " in the Core source capability profile."
 
-    let TargetValidationError(kind: SqlCurrentTemporalKind, provider: SqlAgentToolType) =
+    let TargetValidationError(kind: SqlCurrentTemporalKind, provider: SqlAgentToolType) : string | null =
         if kind <> SqlCurrentTemporalKind.Time || provider <> SqlAgentToolType.Oracle then null
         else "SQL capability 'function.current_time' is not supported by provider Oracle for this Core plan."
 
@@ -449,7 +449,7 @@ module internal SqlDatePartCapabilityRules =
     let private normalize (rawPart: string) = rawPart.Trim().ToUpperInvariant()
     let IsRepresentedPart(rawPart: string) =
         match normalize rawPart with "YEAR" | "MONTH" | "DAY" | "QUARTER" -> true | _ -> false
-    let TargetValidationError(rawPart: string, provider: SqlAgentToolType) =
+    let TargetValidationError(rawPart: string, provider: SqlAgentToolType) : string | null =
         let part = normalize rawPart
         let supported =
             match part with
@@ -475,7 +475,7 @@ module internal SqlDateMathCapabilityRules =
         | "SECOND" | "SS" | "S" -> "SECOND"
         | _ -> raise (SqlCompilationException("Unsupported " + surfaceName + " date-part unit '" + rawUnit + "'."))
 
-    let TargetValidationError(rawUnit: string, provider: SqlAgentToolType, functionName: string) =
+    let TargetValidationError(rawUnit: string, provider: SqlAgentToolType, functionName: string) : string | null =
         let surface = if functionName = "CORE_DATE_ADD" then "DATEADD" elif functionName = "CORE_DATE_DIFF" then "DATEDIFF" else functionName
         let unit = NormalizeUnit(rawUnit, surface)
         let supported =
@@ -532,19 +532,19 @@ type internal SqlCanonicalLiteralArgumentValidationKind =
     | WindowOffset = 1
 
 [<Sealed>]
-type internal SqlCanonicalPlanShapeRule(kind, argumentIndex, validationMessage: string, capabilityId: string) =
+type internal SqlCanonicalPlanShapeRule(kind, argumentIndex, validationMessage: string | null, capabilityId: string | null) =
     member _.Kind: SqlCanonicalPlanShapeValidationKind = kind
     member _.ArgumentIndex = argumentIndex
     member _.ValidationMessage = validationMessage
     member _.CapabilityId = capabilityId
 
 [<Sealed>]
-type internal SqlCanonicalLiteralArgumentRule(argumentIndex, kind, validationMessage: string) =
+type internal SqlCanonicalLiteralArgumentRule(argumentIndex, kind, validationMessage: string | null) =
     member _.ArgumentIndex = argumentIndex
     member _.Kind: SqlCanonicalLiteralArgumentValidationKind = kind
     member _.ValidationMessage = validationMessage
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type internal SqlCanonicalFunctionContract(
     name: string,
     minArguments: int,
@@ -655,7 +655,7 @@ module internal SqlCanonicalFunctionRegistry =
             ImmutableArray.Create(SqlCanonicalPlanShapeRule(SqlCanonicalPlanShapeValidationKind.LiteralStringRequired,1,null,"aggregate.string.dynamic_separator"))
         d
 
-    let Find(name: string) =
+    let Find(name: string) : SqlCanonicalFunctionContract | null =
         if String.IsNullOrWhiteSpace(name) then null
         else
             match contracts.TryGetValue(name.Trim()) with
@@ -692,13 +692,13 @@ type internal SqlSourceFunctionDialectRule(dialect, minArguments, maxArguments: 
     member _.Accepts(value: SqlAgentToolType, argumentCount: int) =
         value = dialect && argumentCount >= minArguments && (not maxArguments.HasValue || argumentCount <= maxArguments.Value)
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type internal SqlSourceFunctionContract(name, kind, detail: string, rules: IReadOnlyList<SqlSourceFunctionDialectRule>) =
     member _.Name = name
     member _.CanonicalizationKind: SqlSourceFunctionCanonicalizationKind = kind
     member _.Detail = detail
     member _.DialectRules = rules
-    member _.ValidationError(sourceDialect: SqlAgentToolType, argumentCount: int) =
+    member _.ValidationError(sourceDialect: SqlAgentToolType, argumentCount: int) : string | null =
         if rules |> Seq.exists (fun r -> r.Accepts(sourceDialect, argumentCount)) then null
         else "Function '" + name + "' is not valid for declared source dialect " + string sourceDialect + " in the Core source capability profile. " + detail
     member _.SupportsAggregateSeparatorClause(sourceDialect: SqlAgentToolType) =
@@ -730,6 +730,6 @@ module internal SqlSourceFunctionRegistry =
           contract "GROUP_CONCAT" SqlSourceFunctionCanonicalizationKind.StringAggregate "GROUP_CONCAT is modeled for MySQL source syntax and SQLite with one or two arguments; the SEPARATOR clause is MySQL-only." [anySep SqlAgentToolType.MySQL; range SqlAgentToolType.Sqlite 1 2]
           contract "LISTAGG" SqlSourceFunctionCanonicalizationKind.StringAggregate "LISTAGG is modeled for Oracle source syntax with one or two arguments." [range SqlAgentToolType.Oracle 1 2]
           contract "LIST" SqlSourceFunctionCanonicalizationKind.StringAggregate "LIST is modeled for Firebird source syntax with one or two arguments." [range SqlAgentToolType.Firebird 1 2] ]
-    let Find(name: string) =
+    let Find(name: string) : SqlSourceFunctionContract | null =
         if String.IsNullOrWhiteSpace(name) then null
         else data |> List.tryFind (fun c -> String.Equals(c.Name,name.Trim(),StringComparison.OrdinalIgnoreCase)) |> Option.defaultValue null

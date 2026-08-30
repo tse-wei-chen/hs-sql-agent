@@ -69,7 +69,7 @@ type FunctionTranslationKind =
     | Template = 3
     | Specialized = 4
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type FunctionDefinition(
     dialect: SqlAgentToolType,
     name: string,
@@ -78,8 +78,8 @@ type FunctionDefinition(
     minArguments: int,
     maxArguments: Nullable<int>,
     translationKind: FunctionTranslationKind,
-    template: string,
-    translator: string,
+    template: string | null,
+    translator: string | null,
     portability: FunctionPortability) =
     member _.Dialect = dialect
     member _.Name = name
@@ -95,8 +95,8 @@ type FunctionDefinition(
         count >= minArguments && (not maxArguments.HasValue || count <= maxArguments.Value)
 
 type IFunctionRegistry =
-    abstract Find: SqlAgentToolType * string * int -> FunctionDefinition
-    abstract Find: SqlAgentToolType * SemanticFunction * int -> FunctionDefinition
+    abstract Find: SqlAgentToolType * string * int -> FunctionDefinition | null
+    abstract Find: SqlAgentToolType * SemanticFunction * int -> FunctionDefinition | null
 
 module private FunctionCatalog =
     let emptyAliases = Array.empty<string> :> IReadOnlyList<string>

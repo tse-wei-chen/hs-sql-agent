@@ -117,13 +117,13 @@ open System
 open System.Collections.Generic
 open HsSqlAgent.SqlCore.Enums
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type SqlProviderCapabilityProfile(
     provider: SqlAgentToolType,
-    serverVersion: Version,
+    serverVersion: Version | null,
     compatibilityLevel: Nullable<int>,
-    sessionModes: IReadOnlySet<string>,
-    sessionSettings: IReadOnlyDictionary<string, string>) =
+    sessionModes: IReadOnlySet<string> | null,
+    sessionSettings: IReadOnlyDictionary<string, string> | null) =
 
     new(provider: SqlAgentToolType) =
         SqlProviderCapabilityProfile(provider, null, Nullable(), null, null)
@@ -154,7 +154,7 @@ type SqlProviderCapabilityProfile(
         && not (isNull sessionModes)
         && (sessionModes |> Seq.exists (fun candidate -> String.Equals(candidate, mode, StringComparison.OrdinalIgnoreCase)))
 
-    member _.GetSessionSetting(name: string) =
+    member _.GetSessionSetting(name: string) : string | null =
         if String.IsNullOrWhiteSpace(name) || isNull sessionSettings then null
         else
             sessionSettings
@@ -169,7 +169,7 @@ type internal SqlProviderCapabilityProfileValidationIssue =
 
 [<AbstractClass; Sealed>]
 type internal SqlProviderCapabilityProfileRules private () =
-    static member ValidationIssue(profile: SqlProviderCapabilityProfile, expectedProvider: SqlAgentToolType) =
+    static member ValidationIssue(profile: SqlProviderCapabilityProfile | null, expectedProvider: SqlAgentToolType) =
         if isNull profile then SqlProviderCapabilityProfileValidationIssue.None
         elif profile.Provider <> expectedProvider then SqlProviderCapabilityProfileValidationIssue.ProviderMismatch
         elif profile.CompatibilityLevel.HasValue && profile.CompatibilityLevel.Value < 0 then
