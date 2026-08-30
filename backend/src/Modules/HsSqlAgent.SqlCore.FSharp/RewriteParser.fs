@@ -477,22 +477,29 @@ module internal RewriteParser =
 
     and private parseAnd (cursor: Cursor) =
         let start = cursor.Current.Start
-        let mutable left = parseComparison cursor
-        while acceptKeyword "AND" cursor do left <- Binary(BinaryOperator.And, left, parseComparison cursor)
+        let mutable left = parseNot cursor
+        while acceptKeyword "AND" cursor do left <- Binary(BinaryOperator.And, left, parseNot cursor)
         markExpr start cursor left
+
+    and private parseNot (cursor: Cursor) =
+        let start = cursor.Current.Start
+        if acceptKeyword "NOT" cursor then
+            Unary(UnaryOperator.Not, parseNot cursor) |> markExpr start cursor
+        else
+            parseComparison cursor
 
     and private parseComparison (cursor: Cursor) =
         let start = cursor.Current.Start
-        let mutable left = parseConcat cursor
+        let mutable left = parseAdd cursor
         let mutable keepGoing = true
         while keepGoing do
             match cursor.Current.Kind with
-            | Operator "=" -> cursor.Advance(); left <- Binary(BinaryOperator.Equal, left, parseConcat cursor)
-            | Operator "<>" | Operator "!=" -> cursor.Advance(); left <- Binary(BinaryOperator.NotEqual, left, parseConcat cursor)
-            | Operator ">" -> cursor.Advance(); left <- Binary(BinaryOperator.GreaterThan, left, parseConcat cursor)
-            | Operator "<" -> cursor.Advance(); left <- Binary(BinaryOperator.LessThan, left, parseConcat cursor)
-            | Operator ">=" -> cursor.Advance(); left <- Binary(BinaryOperator.GreaterThanOrEqual, left, parseConcat cursor)
-            | Operator "<=" -> cursor.Advance(); left <- Binary(BinaryOperator.LessThanOrEqual, left, parseConcat cursor)
+            | Operator "=" -> cursor.Advance(); left <- Binary(BinaryOperator.Equal, left, parseAdd cursor)
+            | Operator "<>" | Operator "!=" -> cursor.Advance(); left <- Binary(BinaryOperator.NotEqual, left, parseAdd cursor)
+            | Operator ">" -> cursor.Advance(); left <- Binary(BinaryOperator.GreaterThan, left, parseAdd cursor)
+            | Operator "<" -> cursor.Advance(); left <- Binary(BinaryOperator.LessThan, left, parseAdd cursor)
+            | Operator ">=" -> cursor.Advance(); left <- Binary(BinaryOperator.GreaterThanOrEqual, left, parseAdd cursor)
+            | Operator "<=" -> cursor.Advance(); left <- Binary(BinaryOperator.LessThanOrEqual, left, parseAdd cursor)
             | Keyword "LIKE" -> cursor.Advance(); left <- parseLikeTail cursor left false false
             | Keyword "ILIKE" ->
                 requireSourceCapability cursor.SourceExpressions.ILike
@@ -517,7 +524,7 @@ module internal RewriteParser =
         markExpr start cursor left
 
     and private parseLikeTail cursor value negated caseInsensitive =
-        let pattern = parseConcat cursor
+        let pattern = parseAdd cursor
         let hasExplicitEscape = acceptKeyword "ESCAPE" cursor
         if cursor.MySqlNoBackslashEscapes && not hasExplicitEscape then
             fail cursor.Current
@@ -551,9 +558,9 @@ module internal RewriteParser =
             InList(value, items |> Seq.toList |> NonEmpty.ofList "items", negated)
 
     and private parseBetweenTail cursor value negated =
-        let lower = parseConcat cursor
+        let lower = parseAdd cursor
         expectKeyword "AND" cursor
-        let upper = parseConcat cursor
+        let upper = parseAdd cursor
         Between(value, lower, upper, negated)
 
     and private parseConcat cursor =
@@ -578,6 +585,15 @@ module internal RewriteParser =
             match cursor.Current.Kind with
             | Operator "+" -> cursor.Advance(); left <- Binary(BinaryOperator.Add, left, parseMultiply cursor)
             | Operator "-" -> cursor.Advance(); left <- Binary(BinaryOperator.Subtract, left, parseMultiply cursor)
+            | Operator "||" ->
+                if cursor.Dialect = SourceDialect.MySql then
+                    let message =
+                        match SqlConcatCapabilityRules.SourceSemanticValidationError(SqlAgentToolType.MySQL) with
+                        | null -> "MySQL '||' semantics require an explicit PIPES_AS_CONCAT or ANSI source-session contract."
+                        | value -> value
+                    raise (SqlCompilationException(message))
+                cursor.Advance()
+                left <- Binary(BinaryOperator.Concat, left, parseMultiply cursor)
             | _ -> keepGoing <- false
         markExpr start cursor left
 
@@ -603,7 +619,6 @@ module internal RewriteParser =
 
     and private parseUnary cursor =
         match cursor.Current.Kind with
-        | Keyword "NOT" -> cursor.Advance(); Unary(UnaryOperator.Not, parseUnary cursor)
         | Operator "-" ->
             let sign = cursor.Take()
             match cursor.Current.Kind with
