@@ -1216,7 +1216,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
         Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
         Assert.StartsWith("UPDATE OR INSERT INTO", migrated.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("MATCHING ("id")", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(@"MATCHING (""id"")", migrated.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1318,8 +1318,8 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Sql, migrated.Sql);
         Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
         Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
-        Assert.Contains(""id" = EXCLUDED."id"", migrated.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(""name" = EXCLUDED."name"", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(@"""id"" = EXCLUDED.""id""", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(@"""name"" = EXCLUDED.""name""", migrated.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
