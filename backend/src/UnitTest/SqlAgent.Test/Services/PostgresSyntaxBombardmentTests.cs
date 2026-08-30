@@ -417,6 +417,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "LIMIT",
             "users");
         yield return Case(
+            "fetch-first-without-order",
+            "SELECT id FROM users FETCH FIRST 5 ROWS ONLY",
+            "LIMIT",
+            "users");
+        yield return Case(
+            "fetch-first-without-from",
+            "SELECT 1 FETCH FIRST 1 ROW ONLY",
+            "LIMIT",
+            "");
+        yield return Case(
             "offset-fetch",
             "SELECT id FROM users ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
             "OFFSET",
