@@ -1126,8 +1126,19 @@ module internal RewriteParser =
         while scanning do
             match parseSetOperator cursor with
             | Some operator ->
-                let branchHead, branchTop = parseSelectWithCtes cursor []
-                branches.Add { Operator = operator; Query = { Head = branchHead; SetOperations = []; OrderBy = []; Limit = branchTop; Offset = None } }
+                let branchQuery =
+                    if acceptSymbol '(' cursor then
+                        let query = parseQuery cursor
+                        expectSymbol ')' cursor
+                        query
+                    else
+                        let branchHead, branchTop = parseSelectWithCtes cursor []
+                        { Head = branchHead
+                          SetOperations = []
+                          OrderBy = []
+                          Limit = branchTop
+                          Offset = None }
+                branches.Add { Operator = operator; Query = branchQuery }
             | None -> scanning <- false
         let orderBy, tailLimit, offset = parseQueryTail cursor
         let limit = match top, tailLimit with Some value, None -> Some value | None, value -> value | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
