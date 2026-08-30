@@ -297,6 +297,31 @@ public sealed class PostgresSyntaxBombardmentTests
             "percent",
             "events");
         yield return Case(
+            "contextual-projection-alias-zone",
+            "SELECT id zone FROM events",
+            "zone",
+            "events");
+        yield return Case(
+            "contextual-projection-alias-conflict",
+            "SELECT id conflict FROM events",
+            "conflict",
+            "events");
+        yield return Case(
+            "contextual-projection-alias-date",
+            "SELECT id date FROM events",
+            "date",
+            "events");
+        yield return Case(
+            "contextual-table-alias-zone",
+            "SELECT zone.id FROM events zone",
+            "zone",
+            "events");
+        yield return Case(
+            "contextual-derived-alias-zone",
+            "SELECT zone.id FROM (SELECT id FROM events) AS zone",
+            "zone",
+            "events");
+        yield return Case(
             "cte-wildcard",
             "WITH recent AS (SELECT * FROM orders) SELECT * FROM recent",
             "WITH",
