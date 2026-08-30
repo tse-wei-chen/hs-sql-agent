@@ -490,38 +490,37 @@ module internal RewriteParser =
 
     and private parseComparison (cursor: Cursor) =
         let start = cursor.Current.Start
-        let mutable left = parseAdd cursor
-        let mutable keepGoing = true
-        while keepGoing do
+        let left = parseAdd cursor
+        let result =
             match cursor.Current.Kind with
-            | Operator "=" -> cursor.Advance(); left <- Binary(BinaryOperator.Equal, left, parseAdd cursor)
-            | Operator "<>" | Operator "!=" -> cursor.Advance(); left <- Binary(BinaryOperator.NotEqual, left, parseAdd cursor)
-            | Operator ">" -> cursor.Advance(); left <- Binary(BinaryOperator.GreaterThan, left, parseAdd cursor)
-            | Operator "<" -> cursor.Advance(); left <- Binary(BinaryOperator.LessThan, left, parseAdd cursor)
-            | Operator ">=" -> cursor.Advance(); left <- Binary(BinaryOperator.GreaterThanOrEqual, left, parseAdd cursor)
-            | Operator "<=" -> cursor.Advance(); left <- Binary(BinaryOperator.LessThanOrEqual, left, parseAdd cursor)
-            | Keyword "LIKE" -> cursor.Advance(); left <- parseLikeTail cursor left false false
+            | Operator "=" -> cursor.Advance(); Binary(BinaryOperator.Equal, left, parseAdd cursor)
+            | Operator "<>" | Operator "!=" -> cursor.Advance(); Binary(BinaryOperator.NotEqual, left, parseAdd cursor)
+            | Operator ">" -> cursor.Advance(); Binary(BinaryOperator.GreaterThan, left, parseAdd cursor)
+            | Operator "<" -> cursor.Advance(); Binary(BinaryOperator.LessThan, left, parseAdd cursor)
+            | Operator ">=" -> cursor.Advance(); Binary(BinaryOperator.GreaterThanOrEqual, left, parseAdd cursor)
+            | Operator "<=" -> cursor.Advance(); Binary(BinaryOperator.LessThanOrEqual, left, parseAdd cursor)
+            | Keyword "LIKE" -> cursor.Advance(); parseLikeTail cursor left false false
             | Keyword "ILIKE" ->
                 requireSourceCapability cursor.SourceExpressions.ILike
                 cursor.Advance()
-                left <- parseLikeTail cursor left false true
+                parseLikeTail cursor left false true
             | Keyword "IS" ->
                 cursor.Advance()
                 let negated = acceptKeyword "NOT" cursor
                 expectKeyword "NULL" cursor
-                left <- IsNull(left, negated)
-            | Keyword "IN" -> cursor.Advance(); left <- parseInTail cursor left false
-            | Keyword "BETWEEN" -> cursor.Advance(); left <- parseBetweenTail cursor left false
-            | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseInTail cursor left true
-            | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseBetweenTail cursor left true
-            | Keyword "NOT" when isKeyword "LIKE" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseLikeTail cursor left true false
+                IsNull(left, negated)
+            | Keyword "IN" -> cursor.Advance(); parseInTail cursor left false
+            | Keyword "BETWEEN" -> cursor.Advance(); parseBetweenTail cursor left false
+            | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseInTail cursor left true
+            | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseBetweenTail cursor left true
+            | Keyword "NOT" when isKeyword "LIKE" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseLikeTail cursor left true false
             | Keyword "NOT" when isKeyword "ILIKE" (cursor.Peek 1) ->
                 requireSourceCapability cursor.SourceExpressions.ILike
                 cursor.Advance()
                 cursor.Advance()
-                left <- parseLikeTail cursor left true true
-            | _ -> keepGoing <- false
-        markExpr start cursor left
+                parseLikeTail cursor left true true
+            | _ -> left
+        markExpr start cursor result
 
     and private parseLikeTail cursor value negated caseInsensitive =
         let pattern = parseAdd cursor
@@ -863,7 +862,11 @@ module internal RewriteParser =
             parseIdentifierExpression cursor
         | Keyword "TIME" when isSymbol '(' (cursor.Peek 1) ->
             parseIdentifierExpression cursor
-        | Keyword "TIME" ->
+        | Keyword "TIME"
+            when (match (cursor.Peek 1).Kind with
+                  | StringLiteral _ -> true
+                  | Keyword "WITH" -> true
+                  | _ -> false) ->
             match cursor.Dialect with
             | SourceDialect.PostgreSql
             | SourceDialect.MySql
@@ -876,9 +879,16 @@ module internal RewriteParser =
             | SourceDialect.SQLite
             | SourceDialect.Oracle ->
                 typedTemporalSourceError cursor "TIME"
+        | Keyword "TIME" ->
+            parseIdentifierExpression cursor
         | Keyword "TIMESTAMP" when isSymbol '(' (cursor.Peek 1) ->
             parseIdentifierExpression cursor
-        | Keyword "TIMESTAMP" ->
+        | Keyword "TIMESTAMP"
+            when (match (cursor.Peek 1).Kind with
+                  | StringLiteral _
+                  | Keyword "WITH"
+                  | Keyword "WITHOUT" -> true
+                  | _ -> false) ->
             cursor.Advance()
             if acceptKeyword "WITH" cursor then
                 if not (acceptKeyword "TIME" cursor && acceptKeyword "ZONE" cursor) then
@@ -902,6 +912,8 @@ module internal RewriteParser =
                 | SourceDialect.SqlServer
                 | SourceDialect.SQLite ->
                     typedTemporalSourceError cursor "TIMESTAMP"
+        | Keyword "TIMESTAMP" ->
+            parseIdentifierExpression cursor
         | Keyword "CURRENT_DATE" ->
             cursor.Advance()
             if acceptSymbol '(' cursor then expectSymbol ')' cursor
