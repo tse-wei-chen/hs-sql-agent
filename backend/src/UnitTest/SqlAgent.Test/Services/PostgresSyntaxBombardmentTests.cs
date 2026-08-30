@@ -122,6 +122,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT",
             "events");
         yield return Case(
+            "time-without-time-zone",
+            "SELECT TIME WITHOUT TIME ZONE '09:30:15' AS report_time FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
             "bare-timestamp-column",
             "SELECT timestamp FROM events",
             "timestamp",
@@ -131,6 +136,26 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT TIMESTAMP '2026-08-21 09:30:15' AS happened_at FROM events",
             "SELECT",
             "events");
+        yield return Case(
+            "leading-decimal-literal",
+            "SELECT .5 FROM users",
+            "SELECT",
+            "users");
+        yield return Case(
+            "trailing-decimal-literal",
+            "SELECT 1. FROM users",
+            "SELECT",
+            "users");
+        yield return Case(
+            "scientific-literal",
+            "SELECT 1e2 FROM users",
+            "SELECT",
+            "users");
+        yield return Case(
+            "scientific-negative-exponent-literal",
+            "SELECT 1E-2 FROM users",
+            "SELECT",
+            "users");
         yield return Case(
             "interval-arithmetic",
             "SELECT created_at + INTERVAL '1 day' FROM events",
