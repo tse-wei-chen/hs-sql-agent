@@ -6,6 +6,7 @@ open System
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Models
+open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
@@ -224,7 +225,7 @@ module internal RewriteCompatibilityAstAdapter =
                 |> ImmutableArray.CreateRange
             HsSqlAgent.SqlCore.Core.Ast.SimpleCaseExpr(
                 mapped,
-                fallback |> Option.map exprOf |> Option.defaultValue null,
+                fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                 unknown)
 
         | Expr.SearchedCase(branches, fallback) ->
@@ -236,7 +237,7 @@ module internal RewriteCompatibilityAstAdapter =
                         exprOf branch.Condition,
                         exprOf branch.Result))
                 |> ImmutableArray.CreateRange,
-                fallback |> Option.map exprOf |> Option.defaultValue null,
+                fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                 unknown)
 
         | Expr.InList(value, items, negated) ->
@@ -286,9 +287,9 @@ module internal RewriteCompatibilityAstAdapter =
                     | WindowFrameUnit.Rows -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows
                     | WindowFrameUnit.Range -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range
                 let start = frameBound value.Start
-                let finish = value.End |> Option.map frameBound |> Option.defaultValue null
+                let finish = value.End |> Option.map frameBound |> Option.defaultValue (Unchecked.defaultof<_>)
                 HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, unknown))
-            |> Option.defaultValue null
+            |> Option.defaultValue (Unchecked.defaultof<_>)
         HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
             window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
             window.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
@@ -315,7 +316,7 @@ module internal RewriteCompatibilityAstAdapter =
             HsSqlAgent.SqlCore.Core.Ast.JoinSource(
                 "CROSS",
                 tableSourceOf source,
-                null,
+                Unchecked.defaultof<_>,
                 unknown)
         | Join.OnJoin(kind, source, predicate) ->
             let text =
@@ -355,11 +356,11 @@ module internal RewriteCompatibilityAstAdapter =
             select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
             select.Distinct,
             select.Projection |> List.map selectItemOf |> ImmutableArray.CreateRange,
-            select.From |> Option.map tableSourceOf |> Option.defaultValue null,
+            select.From |> Option.map tableSourceOf |> Option.defaultValue (Unchecked.defaultof<_>),
             select.Joins |> List.map joinOf |> ImmutableArray.CreateRange,
-            select.Where |> Option.map exprOf |> Option.defaultValue null,
+            select.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
             select.GroupBy |> List.map exprOf |> ImmutableArray.CreateRange,
-            select.Having |> Option.map exprOf |> Option.defaultValue null,
+            select.Having |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
             orderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
             limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
             offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
@@ -477,7 +478,7 @@ module internal RewriteCompatibilityAstAdapter =
                     |> ImmutableArray.CreateRange,
                     source,
                     unknown)
-            result.Conflict <- insert.Conflict |> Option.map conflictOf |> Option.defaultValue null
+            result.Conflict <- insert.Conflict |> Option.map conflictOf |> Option.defaultValue (Unchecked.defaultof<_>)
             result.Returning <- insert.Returning |> List.map returningOf |> ImmutableArray.CreateRange
             result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
@@ -492,7 +493,7 @@ module internal RewriteCompatibilityAstAdapter =
                             exprOf assignment.Value,
                             unknown))
                     |> ImmutableArray.CreateRange,
-                    update.Where |> Option.map exprOf |> Option.defaultValue null,
+                    update.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                     unknown)
             result.From <- update.From |> List.map (namedDmlSource "UPDATE FROM") |> ImmutableArray.CreateRange
             result.Returning <- update.Returning |> List.map returningOf |> ImmutableArray.CreateRange
@@ -502,7 +503,7 @@ module internal RewriteCompatibilityAstAdapter =
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
                     HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(identifierOf delete.Target, null, unknown),
-                    delete.Where |> Option.map exprOf |> Option.defaultValue null,
+                    delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                     unknown)
             result.Using <- delete.Using |> List.map (namedDmlSource "DELETE USING") |> ImmutableArray.CreateRange
             result.Returning <- delete.Returning |> List.map returningOf |> ImmutableArray.CreateRange
