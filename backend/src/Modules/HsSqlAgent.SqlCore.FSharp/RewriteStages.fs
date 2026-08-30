@@ -420,6 +420,10 @@ module internal RewriteStages =
         | DeleteStatement delete ->
             delete.Using |> List.iter (proveTargetJoinSource proofs)
 
+    let private requireDmlCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> raise (SqlCompilationException(message))
+
     let private isRichReturningItem (item: SelectItem) =
         match item.Expression with
         | Column identifier when Identifier.parts identifier |> List.length = 1 -> false
@@ -428,9 +432,9 @@ module internal RewriteStages =
 
     let private proveReturning (proofs: DmlProofs) items =
         if not (List.isEmpty items) then
-            requireCapability proofs.Returning
+            requireDmlCapability proofs.Returning
             if items |> List.exists isRichReturningItem then
-                requireCapability proofs.ReturningExpression
+                requireDmlCapability proofs.ReturningExpression
 
     let private proveTargetDml (proofs: DmlProofs) document =
         match document.Statement with
@@ -438,10 +442,10 @@ module internal RewriteStages =
         | InsertStatement insert ->
             proveReturning proofs insert.Returning
         | UpdateStatement update ->
-            if not update.From.IsEmpty then requireCapability proofs.UpdateFrom
+            if not update.From.IsEmpty then requireDmlCapability proofs.UpdateFrom
             proveReturning proofs update.Returning
         | DeleteStatement delete ->
-            if not delete.Using.IsEmpty then requireCapability proofs.DeleteUsing
+            if not delete.Using.IsEmpty then requireDmlCapability proofs.DeleteUsing
             proveReturning proofs delete.Returning
 
     let private exactColumnSetMatch (left: string list) (right: string list) =
