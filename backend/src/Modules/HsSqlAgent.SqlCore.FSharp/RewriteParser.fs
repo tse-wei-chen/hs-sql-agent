@@ -1313,8 +1313,14 @@ module internal RewriteParser =
             expectKeyword "CONFLICT" cursor
             expectSymbol '(' cursor
             let targets = ResizeArray<Identifier>()
-            targets.Add(singlePartIdentifier (identifierPart cursor))
-            while acceptSymbol ',' cursor do targets.Add(singlePartIdentifier (identifierPart cursor))
+            let seenTargets = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            let parseTarget () =
+                let part = identifierPart cursor
+                if not (seenTargets.Add part.Value) then
+                    fail cursor.Current ("ON CONFLICT target column '" + part.Value + "' is declared more than once")
+                singlePartIdentifier part
+            targets.Add(parseTarget())
+            while acceptSymbol ',' cursor do targets.Add(parseTarget())
             expectSymbol ')' cursor
             expectKeyword "DO" cursor
             let action =
@@ -1322,8 +1328,12 @@ module internal RewriteParser =
                 elif acceptKeyword "UPDATE" cursor then
                     expectKeyword "SET" cursor
                     let assignments = ResizeArray<ConflictAssignment>()
+                    let seenAssignments = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
                     let parseAssignment () : ConflictAssignment =
-                        let target = singlePartIdentifier (identifierPart cursor)
+                        let targetPart = identifierPart cursor
+                        if not (seenAssignments.Add targetPart.Value) then
+                            fail cursor.Current ("ON CONFLICT UPDATE assigns column '" + targetPart.Value + "' more than once")
+                        let target = singlePartIdentifier targetPart
                         expectOperator "=" cursor
                         expectKeyword "EXCLUDED" cursor
                         expectSymbol '.' cursor
