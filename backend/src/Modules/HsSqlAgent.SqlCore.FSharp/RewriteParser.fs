@@ -1434,12 +1434,20 @@ module internal RewriteParser =
         expectKeyword "UPDATE" cursor
         let target = identifier cursor
         match cursor.Current.Kind with
-        | Identifier _ -> fail cursor.Current "UPDATE target aliases are not supported by the portable grammar"
+        | Identifier _
+        | Keyword "AS" -> fail cursor.Current "UPDATE target aliases are not supported by the portable grammar"
         | _ -> ()
         expectKeyword "SET" cursor
         let assignments = ResizeArray<Assignment>()
+        let seenAssignments = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
         let parseAssignment () =
             let targetColumn = identifier cursor
+            let parts = Identifier.parts targetColumn
+            if parts.Length <> 1 then
+                fail cursor.Current "UPDATE assignment columns must be unqualified"
+            let columnName = parts.Head.Value
+            if not (seenAssignments.Add columnName) then
+                fail cursor.Current ("UPDATE assigns column '" + columnName + "' more than once")
             expectOperator "=" cursor
             { Target = targetColumn; Value = parseExpression cursor }
         assignments.Add(parseAssignment())
@@ -1459,6 +1467,10 @@ module internal RewriteParser =
         expectKeyword "DELETE" cursor
         expectKeyword "FROM" cursor
         let target = identifier cursor
+        match cursor.Current.Kind with
+        | Identifier _
+        | Keyword "AS" -> fail cursor.Current "DELETE target aliases are not supported by the portable grammar"
+        | _ -> ()
         let using =
             if acceptKeyword "USING" cursor then
                 if cursor.Dialect <> SourceDialect.PostgreSql then fail cursor.Current "DELETE ... USING is only supported in the PostgreSQL source dialect"
