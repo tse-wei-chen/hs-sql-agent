@@ -21,11 +21,18 @@ module internal RewritePipeline =
           Policy: ExecutionPolicy
           AllowedTables: string list option }
 
-    let compile options sql =
-        sql
-        |> RewriteParser.parseForWith options.SourceSemantics options.SourceDialect
+    let private finish options parsed =
+        parsed
         |> RewriteBinder.bind
         |> RewriteStages.normalize options.SourceSemantics.Expressions.RegexMatch
         |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.SourceSemantics.Expressions options.TargetExpressions options.TargetJoins options.TargetOrdering options.TargetDml options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider
+
+    let compileParsed options parsed =
+        finish options parsed
+
+    let compile options sql =
+        sql
+        |> RewriteParser.parseForWith options.SourceSemantics options.SourceDialect
+        |> finish options

@@ -372,3 +372,84 @@ module internal RewriteFacadeAdapter =
         let command = compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command
+
+
+    let private legacyKind (statement: HsSqlAgent.SqlCore.Core.Ast.SqlStatement) =
+        match statement with
+        | :? HsSqlAgent.SqlCore.Core.Ast.SelectStatement
+        | :? HsSqlAgent.SqlCore.Core.Ast.QueryStatement -> SqlStatementKind.Query
+        | :? HsSqlAgent.SqlCore.Core.Ast.InsertStatement -> SqlStatementKind.Insert
+        | :? HsSqlAgent.SqlCore.Core.Ast.UpdateStatement -> SqlStatementKind.Update
+        | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement -> SqlStatementKind.Delete
+        | value -> raise (SqlCompilationException("Unsupported legacy statement '" + value.GetType().Name + "'."))
+
+    let private parsedSourceSemantics (parsed: ParsedStatement) =
+        if parsed.EnforceSourceDialectSyntax then
+            sourceSemantics parsed.SourceDialect parsed.SourceProfile
+        else
+            RewriteParser.SourceSemantics.defaultValue
+
+    let private runParsed options parsed =
+        try RewritePipeline.compileParsed options parsed
+        with
+        | :? UnauthorizedAccessException -> reraise()
+        | :? SqlCompilationException -> reraise()
+        | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
+            raise (SqlCompilationException(ex.Message, ex))
+
+    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed =
+        let source = parsed.SourceDialect
+        let rendered =
+            runParsed
+                { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
+                  SourceSemantics = parsedSourceSemantics parsed
+                  Provider = provider target
+                  TargetRuntime = targetRuntime target targetProfile
+                  TargetExpressions = targetExpressionProofs target targetProfile
+                  TargetJoins = targetJoinProofs target targetProfile
+                  TargetOrdering = targetNullOrdering target
+                  TargetDml = targetDmlProofs target targetProfile
+                  ConflictProofs = conflictProofs target targetProfile conflictTargetAssurance
+                  Policy = policy
+                  AllowedTables = allowed }
+                (RewriteLegacyAstAdapter.toParsed parsed.Statement)
+        let kind = legacyKind parsed.Statement
+        let parameterValues = parameters target rendered.Parameters
+        let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, target, ReturnsRows = rendered.ReturnsRows)
+        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+        CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
+
+    let compileQueryParsedValidated (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
+        ArgumentNullException.ThrowIfNull(parsed)
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
+        let command =
+            compileParsed
+                parsed
+                target
+                targetProfile
+                null
+                validationContext.PolicyVersion
+                (queryPolicy executionPolicy.QueryMaxRows)
+                (allowedTables validationContext.AllowedTables)
+        if command.Kind <> SqlStatementKind.Query then
+            invalidArg "parsed" "CompileQuery requires a SELECT statement."
+        command
+
+    let compileDmlParsedValidated (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
+        ArgumentNullException.ThrowIfNull(parsed)
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
+        let command =
+            compileParsed
+                parsed
+                target
+                targetProfile
+                conflictTargetAssurance
+                validationContext.PolicyVersion
+                (dmlPolicy policy)
+                (allowedTables validationContext.AllowedTables)
+        if command.Kind = SqlStatementKind.Query then
+            invalidArg "parsed" "CompileDml requires INSERT, UPDATE, or DELETE."
+        command
