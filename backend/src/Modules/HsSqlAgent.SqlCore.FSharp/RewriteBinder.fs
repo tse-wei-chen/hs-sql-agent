@@ -225,7 +225,19 @@ module internal RewriteBinder =
             bound @ [ value ], next)
 
     let private bindAssignment scope (assignment: Assignment) = { assignment with Value = bindExpr scope assignment.Value }
-    let private bindReturning scope items = items |> List.map (fun (item: SelectItem) -> { item with Expression = bindExpr scope item.Expression })
+
+    let private bindReturning scope (items: ReturningItem list) =
+        items
+        |> List.map (function
+            | ReturningColumn(identifier, alias) ->
+                match bindExpr scope (Column identifier) with
+                | BoundColumn(boundIdentifier, _)
+                | Column boundIdentifier -> ReturningColumn(boundIdentifier, alias)
+                | _ -> invalidOp "RETURNING column binding produced a non-column expression."
+            | ReturningWildcard alias ->
+                ReturningWildcard alias
+            | ReturningExpression(expression, alias) ->
+                ReturningExpression(bindExpr scope expression, alias))
 
     let private bindDocument (document: Document) : Document =
         let statement =

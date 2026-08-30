@@ -406,7 +406,8 @@ module internal RewriteStages =
             expressionReferencesColumn value || (items |> NonEmpty.toList |> List.exists expressionReferencesColumn)
         | InSubquery(value, _, _) | Between(value, _, _, _) ->
             expressionReferencesColumn value
-        | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ | ScalarSubquery _ | Exists _ -> false
+        | ScalarSubquery _ | Exists _ -> true
+        | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> false
 
     let private validateAggregateCall enforceSource source sourceProfile target targetProfile (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
@@ -921,10 +922,15 @@ module internal RewriteStages =
                     { branch with Query = normalizeQuery sourceDialect target branch.Query })
             OrderBy = query.OrderBy |> List.map (normalizeOrderBy sourceDialect target) }
 
-    let private normalizeReturning source target items =
+    let private normalizeReturning source target (items: ReturningItem list) =
         items
-        |> List.map (fun (item: SelectItem) ->
-            { item with Expression = normalizeExpr source target item.Expression })
+        |> List.map (function
+            | ReturningColumn(identifier, alias) ->
+                ReturningColumn(identifier, alias)
+            | ReturningWildcard alias ->
+                ReturningWildcard alias
+            | ReturningExpression(expression, alias) ->
+                ReturningExpression(normalizeExpr source target expression, alias))
 
     let private normalizeDocument source target document =
         let statement =
@@ -1516,19 +1522,142 @@ module internal RewriteStages =
         | ProvenCapability -> ()
         | RejectedCapability message -> raise (SqlCompilationException(message))
 
-    let private isRichReturningItem (item: SelectItem) =
-        match item.Expression with
-        | Column identifier
-        | BoundColumn(identifier, _)
-            when Identifier.parts identifier |> List.length = 1 -> false
-        | Wildcard None -> false
-        | _ -> true
+    let private returningNodeName = function
+        | Column _ -> "ColumnExpr"
+        | BoundColumn _ -> "BoundColumnExpr"
+        | Wildcard _ -> "WildcardExpr"
+        | OrderOrdinal _ -> "OrderByOrdinalExpr"
+        | Literal _ -> "LiteralExpr"
+        | Interval _ -> "IntervalExpr"
+        | Unary _ -> "UnaryExpr"
+        | Binary _ -> "BinaryExpr"
+        | Like _ -> "BinaryExpr"
+        | RawRegexCall _ | RegexMatch _ -> "RegexExpr"
+        | FunctionCall _ -> "FunctionCallExpr"
+        | FilteredAggregate _ -> "FilterExpr"
+        | Windowed _ -> "WindowedExpr"
+        | Cast _ -> "CastExpr"
+        | Extract _ -> "ExtractExpr"
+        | SimpleCase _ -> "SimpleCaseExpr"
+        | SearchedCase _ -> "CaseExpr"
+        | InList _ -> "InExpr"
+        | InSubquery _ | ScalarSubquery _ -> "SubqueryExpr"
+        | Between _ -> "BetweenExpr"
+        | IsNull _ -> "IsNullExpr"
+        | Exists _ -> "ExistsExpr"
 
-    let private proveReturning (proofs: DmlProofs) items =
+    let private returningExpressionError detail =
+        raise (SqlCompilationException(
+            "SQL capability 'dml.returning.expression' " + detail + " remains fail-closed."))
+
+    let rec private validateRichReturningExpression expression =
+        let validateColumn identifier =
+            if Identifier.parts identifier |> List.length <> 1 then
+                returningExpressionError "accepts unqualified target-row columns only; qualified/source-table references"
+
+        match expression with
+        | Column identifier
+        | BoundColumn(identifier, _) ->
+            validateColumn identifier
+        | Literal _ -> ()
+        | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
+            validateRichReturningExpression operand
+        | Binary((BinaryOperator.Add
+                 | BinaryOperator.Subtract
+                 | BinaryOperator.Multiply
+                 | BinaryOperator.Divide
+                 | BinaryOperator.Modulo
+                 | BinaryOperator.Concat), left, right) ->
+            validateRichReturningExpression left
+            validateRichReturningExpression right
+        | Cast(value, _) ->
+            validateRichReturningExpression value
+        | FunctionCall call ->
+            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+            | Some contract
+                when contract.Kind = SqlCanonicalFunctionKind.Scalar
+                     && contract.IsDirectPortable
+                     && not call.IsDistinct
+                     && contract.AcceptsArgumentCount(call.Arguments.Length) ->
+                call.Arguments |> List.iter validateRichReturningExpression
+            | _ ->
+                returningExpressionError (
+                    "accepts only registered direct-portable scalar functions with canonical arity and no DISTINCT; function '"
+                    + name + "'")
+        | SimpleCase(input, branches, fallback) ->
+            validateRichReturningExpression input
+            branches |> NonEmpty.iter (fun branch ->
+                validateRichReturningExpression branch.Match
+                validateRichReturningExpression branch.Result)
+            fallback |> Option.iter validateRichReturningExpression
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                validateRichReturningPredicate branch.Condition
+                validateRichReturningExpression branch.Result)
+            fallback |> Option.iter validateRichReturningExpression
+        | Unary(UnaryOperator.Not, _)
+        | Binary((BinaryOperator.Equal
+                 | BinaryOperator.NotEqual
+                 | BinaryOperator.GreaterThan
+                 | BinaryOperator.LessThan
+                 | BinaryOperator.GreaterThanOrEqual
+                 | BinaryOperator.LessThanOrEqual
+                 | BinaryOperator.And
+                 | BinaryOperator.Or), _, _)
+        | Like _
+        | IsNull _
+        | Between _
+        | InList _ ->
+            validateRichReturningPredicate expression
+        | _ ->
+            returningExpressionError (
+                "accepts only the proven target-row scalar/predicate subset; expression node "
+                + returningNodeName expression)
+
+    and private validateRichReturningPredicate expression =
+        match expression with
+        | Unary(UnaryOperator.Not, operand) ->
+            validateRichReturningPredicate operand
+        | Binary((BinaryOperator.And | BinaryOperator.Or), left, right) ->
+            validateRichReturningPredicate left
+            validateRichReturningPredicate right
+        | Binary((BinaryOperator.Equal
+                 | BinaryOperator.NotEqual
+                 | BinaryOperator.GreaterThan
+                 | BinaryOperator.LessThan
+                 | BinaryOperator.GreaterThanOrEqual
+                 | BinaryOperator.LessThanOrEqual), left, right) ->
+            validateRichReturningExpression left
+            validateRichReturningExpression right
+        | Like(value, pattern, _, _, _) ->
+            validateRichReturningExpression value
+            validateRichReturningExpression pattern
+        | IsNull(value, _) ->
+            validateRichReturningExpression value
+        | Between(value, lower, upper, _) ->
+            validateRichReturningExpression value
+            validateRichReturningExpression lower
+            validateRichReturningExpression upper
+        | InList(value, items, _) ->
+            validateRichReturningExpression value
+            items |> NonEmpty.iter validateRichReturningExpression
+        | _ ->
+            returningExpressionError (
+                "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
+                + returningNodeName expression)
+
+    let private proveReturning (proofs: DmlProofs) (items: ReturningItem list) =
         if not (List.isEmpty items) then
             requireDmlCapability proofs.Returning
-            if items |> List.exists isRichReturningItem then
+            let rich =
+                items
+                |> List.choose (function
+                    | ReturningExpression(expression, _) -> Some expression
+                    | ReturningColumn _ | ReturningWildcard _ -> None)
+            if not rich.IsEmpty then
                 requireDmlCapability proofs.ReturningExpression
+                rich |> List.iter validateRichReturningExpression
 
     let private proveTargetDml (proofs: DmlProofs) document =
         match document.Statement with
@@ -2065,6 +2194,24 @@ module internal RewriteStages =
 
     and private validateNestedCteQuery targetRuntime position query =
         validateNestedCteSelect targetRuntime position query.Head
+
+        if position = ScalarSubqueryPosition
+           && not query.Head.Ctes.IsEmpty
+           && not query.SetOperations.IsEmpty
+           && not query.OrderBy.IsEmpty then
+            let portableSetTailOrder expression =
+                match expression with
+                | OrderOrdinal _ -> true
+                | Column identifier
+                | BoundColumn(identifier, ProjectionAlias) ->
+                    Identifier.parts identifier |> List.length = 1
+                | _ -> false
+            if query.OrderBy
+               |> List.exists (fun order -> not (portableSetTailOrder order.Expression)) then
+                cteScopeError (
+                    "scalar/EXISTS subquery with a root CTE and set-operation tail can order only by an output name "
+                    + "or output ordinal; rich ordering expressions would require an unproven scope barrier")
+
         query.SetOperations |> List.iter (fun branch ->
             validateNestedCteQuery targetRuntime SetBranchPosition branch.Query)
         query.OrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
@@ -2930,7 +3077,7 @@ module internal RewriteStages =
     let private rejectVolatileMutationPredicate expression =
         if containsVolatileRandom expression then
             raise (SqlCompilationException(
-                "Nondeterministic function in UPDATE/DELETE predicate is not allowed before mutation."))
+                "Nondeterministic function in UPDATE/DELETE predicate is not allowed before mutation because the approved row set must be deterministic."))
 
     let private validateSemanticDocument targetRuntime document =
         match document.Statement with
@@ -2972,9 +3119,9 @@ module internal RewriteStages =
         Transition.validate targetRuntime (fun document ->
             validateNestedCteDocument targetRuntime document
             validateNoFromDocument targetRuntime document
-            validateSemanticDocument targetRuntime document
             proveSourceFilterDocument sourceExpressions document
             proveSourceFilterDocument targetExpressions document
+            validateSemanticDocument targetRuntime document
             let validated = validateDocument allowedTables document
             proveTargetDocument targetRuntime targetExpressions validated |> ignore
             proveTargetJoins sourceJoins validated

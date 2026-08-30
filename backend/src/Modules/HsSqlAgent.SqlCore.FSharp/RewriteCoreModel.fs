@@ -274,6 +274,21 @@ module internal CoreModel =
           Limit: NonNegativeRowCount option
           Offset: NonNegativeRowCount option }
 
+    type ReturningItem =
+        | ReturningColumn of Identifier * IdentifierPart option
+        | ReturningWildcard of IdentifierPart option
+        | ReturningExpression of Expr * IdentifierPart option
+        member this.Expression =
+            match this with
+            | ReturningColumn(identifier, _) -> Column identifier
+            | ReturningWildcard _ -> Wildcard None
+            | ReturningExpression(expression, _) -> expression
+        member this.Alias =
+            match this with
+            | ReturningColumn(_, alias)
+            | ReturningWildcard alias
+            | ReturningExpression(_, alias) -> alias
+
     type Assignment = { Target: Identifier; Value: Expr }
 
     type ConflictAssignment =
@@ -298,7 +313,7 @@ module internal CoreModel =
           Columns: IdentifierPart list
           Input: InsertInput
           Conflict: InsertConflict option
-          Returning: SelectItem list }
+          Returning: ReturningItem list }
         member this.Rows =
             match this.Input with
             | Values rows -> rows |> NonEmpty.toList |> List.map NonEmpty.toList
@@ -313,14 +328,14 @@ module internal CoreModel =
           AssignmentItems: NonEmpty<Assignment>
           From: TableSource list
           Where: Expr option
-          Returning: SelectItem list }
+          Returning: ReturningItem list }
         member this.Assignments = NonEmpty.toList this.AssignmentItems
 
     type Delete =
         { Target: Identifier
           Using: TableSource list
           Where: Expr option
-          Returning: SelectItem list }
+          Returning: ReturningItem list }
 
     type Statement =
         | QueryStatement of Query

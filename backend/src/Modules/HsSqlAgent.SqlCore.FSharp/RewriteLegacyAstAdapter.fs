@@ -426,14 +426,17 @@ module internal RewriteLegacyAstAdapter =
     and private returningItemOf (item: HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem) =
         match item with
         | :? HsSqlAgent.SqlCore.Core.Ast.DmlReturningColumnItem as column ->
-            { SelectItem.Expression = Column(identifierOf column.Identifier)
-              Alias = None }
+            let identifier = identifierOf column.Identifier
+            if Identifier.parts identifier |> List.length = 1 then
+                ReturningColumn(identifier, None)
+            else
+                ReturningExpression(Column identifier, None)
         | :? HsSqlAgent.SqlCore.Core.Ast.DmlReturningWildcardItem ->
-            { SelectItem.Expression = Wildcard None
-              Alias = None }
+            ReturningWildcard None
         | :? HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem as expression ->
-            { SelectItem.Expression = exprOf expression.Expression
-              Alias = Option.ofObj expression.Alias |> Option.map partOf }
+            ReturningExpression(
+                exprOf expression.Expression,
+                Option.ofObj expression.Alias |> Option.map partOf)
         | _ -> failClosed "DML RETURNING item" item
 
     and private insertConflictOf (conflict: HsSqlAgent.SqlCore.Core.Ast.InsertConflictClause) =

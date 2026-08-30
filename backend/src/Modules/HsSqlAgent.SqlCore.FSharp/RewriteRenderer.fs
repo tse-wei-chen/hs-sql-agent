@@ -405,15 +405,31 @@ module internal RewriteRenderer =
             match SqlDateMathCapabilityRules.TargetValidationError(unit, tool, "CORE_DATE_DIFF") with
             | null -> ()
             | message -> fail message
-            let startValue = renderExpr ctx call.Arguments[1]
-            let finish = renderExpr ctx call.Arguments[2]
             match ctx.Provider with
-            | SqlServer -> "DATEDIFF(" + unit + ", " + startValue + ", " + finish + ")"
-            | MySql -> "TIMESTAMPDIFF(" + unit + ", " + startValue + ", " + finish + ")"
-            | PostgreSql -> "(CAST(" + finish + " AS date) - CAST(" + startValue + " AS date))"
-            | Oracle -> "(CAST(" + finish + " AS DATE) - CAST(" + startValue + " AS DATE))"
-            | SQLite -> "(JULIANDAY(" + finish + ") - JULIANDAY(" + startValue + "))"
-            | Firebird -> "DATEDIFF(" + unit + " FROM " + startValue + " TO " + finish + ")"
+            | PostgreSql ->
+                let finish = renderExpr ctx call.Arguments[2]
+                let startValue = renderExpr ctx call.Arguments[1]
+                "(CAST(" + finish + " AS date) - CAST(" + startValue + " AS date))"
+            | Oracle ->
+                let finish = renderExpr ctx call.Arguments[2]
+                let startValue = renderExpr ctx call.Arguments[1]
+                "(CAST(" + finish + " AS DATE) - CAST(" + startValue + " AS DATE))"
+            | SQLite ->
+                let finish = renderExpr ctx call.Arguments[2]
+                let startValue = renderExpr ctx call.Arguments[1]
+                "(JULIANDAY(" + finish + ") - JULIANDAY(" + startValue + "))"
+            | SqlServer ->
+                let startValue = renderExpr ctx call.Arguments[1]
+                let finish = renderExpr ctx call.Arguments[2]
+                "DATEDIFF(" + unit + ", " + startValue + ", " + finish + ")"
+            | MySql ->
+                let startValue = renderExpr ctx call.Arguments[1]
+                let finish = renderExpr ctx call.Arguments[2]
+                "TIMESTAMPDIFF(" + unit + ", " + startValue + ", " + finish + ")"
+            | Firebird ->
+                let startValue = renderExpr ctx call.Arguments[1]
+                let finish = renderExpr ctx call.Arguments[2]
+                "DATEDIFF(" + unit + " FROM " + startValue + " TO " + finish + ")"
 
         | "CORE_DATE_PART" ->
             requireCount 2
@@ -1072,7 +1088,7 @@ module internal RewriteRenderer =
         else
             renderQueryCore ctx query
 
-    let private renderReturning (ctx: RenderContext) items =
+    let private renderReturning (ctx: RenderContext) (items: ReturningItem list) =
         if List.isEmpty items then ""
         else
             match ctx.Provider with

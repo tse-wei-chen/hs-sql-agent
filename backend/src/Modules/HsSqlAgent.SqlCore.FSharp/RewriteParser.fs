@@ -581,21 +581,24 @@ module internal RewriteParser =
         if not (acceptKeyword "RETURNING" cursor) then []
         else
             requireSourceCapability cursor.SourceDml.Returning
-            let items = ResizeArray<SelectItem>()
-            items.Add(parseSelectItem cursor)
-            while acceptSymbol ',' cursor do items.Add(parseSelectItem cursor)
+
+            let classify (item: SelectItem) =
+                match item.Expression with
+                | Column identifier when Identifier.parts identifier |> List.length = 1 ->
+                    ReturningColumn(identifier, item.Alias)
+                | Wildcard None ->
+                    ReturningWildcard item.Alias
+                | expression ->
+                    requireSourceCapability cursor.SourceDml.ReturningExpression
+                    ReturningExpression(expression, item.Alias)
+
+            let items = ResizeArray<ReturningItem>()
+            items.Add(parseSelectItem cursor |> classify)
+            while acceptSymbol ',' cursor do items.Add(parseSelectItem cursor |> classify)
             let values = items |> Seq.toList
-            if values.Length > 1 && values |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then
+            if values.Length > 1
+               && values |> List.exists (function ReturningWildcard _ -> true | _ -> false) then
                 fail cursor.Current "RETURNING wildcard cannot be combined with other expressions"
-            let hasExpressionItem =
-                values
-                |> List.exists (fun item ->
-                    match item.Expression with
-                    | Column identifier when Identifier.parts identifier |> List.length = 1 -> false
-                    | Wildcard None -> false
-                    | _ -> true)
-            if hasExpressionItem then
-                requireSourceCapability cursor.SourceDml.ReturningExpression
             values
 
     and private parseTableSource cursor =
