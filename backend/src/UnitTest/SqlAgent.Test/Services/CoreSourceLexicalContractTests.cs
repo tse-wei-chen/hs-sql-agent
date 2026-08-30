@@ -12,7 +12,8 @@ public sealed class CoreSourceLexicalContractTests
 
         Assert.Equal(2, command.Parameters.Length);
         Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 1L);
-        Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 2L);
+        Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == -2L);
+        Assert.Contains("-", command.Sql, StringComparison.Ordinal);
     }
 
     [Theory]
