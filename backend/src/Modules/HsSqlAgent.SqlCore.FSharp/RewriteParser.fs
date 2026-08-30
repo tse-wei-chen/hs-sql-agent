@@ -1245,6 +1245,8 @@ module internal RewriteParser =
             | NamedTable(_, None) as source -> source
             | NamedTable(_, Some _) ->
                 fail cursor.Current "UPDATE FROM / DELETE USING source aliases are not supported by the portable grammar"
+            | CteTable _ ->
+                fail cursor.Current "UPDATE FROM / DELETE USING CTE sources are not supported by the portable grammar"
             | DerivedTable _ ->
                 fail cursor.Current "UPDATE FROM / DELETE USING derived sources and aliases are not supported by the portable grammar"
 
