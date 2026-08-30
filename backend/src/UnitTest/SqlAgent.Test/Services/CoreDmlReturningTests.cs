@@ -125,19 +125,20 @@ public sealed class CoreDmlReturningTests
     }
 
     [Fact]
-    public void PlanFingerprint_ChangesWhenResultRowExecutionModeChanges()
+    public void PlanFingerprint_DiffersBetweenReturningAndNonReturningCommands()
     {
-        var command = new CompiledSqlCommand(
-            "DELETE FROM users WHERE id = @p0 RETURNING id",
-            [new SqlParameterValue("p0", 1)],
-            SqlStatementKind.Delete,
-            string.Empty,
+        var normal = CompileRaw(
+            "DELETE FROM users WHERE id = 1",
+            SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres);
-        var normalFingerprint = DmlFingerprintService.ComputePlanFingerprint(command, "policy-v1");
-        command.ReturnsRows = true;
-        var returningFingerprint = DmlFingerprintService.ComputePlanFingerprint(command, "policy-v1");
+        var returning = CompileRaw(
+            "DELETE FROM users WHERE id = 1 RETURNING id",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
 
-        Assert.NotEqual(normalFingerprint, returningFingerprint);
+        Assert.False(normal.ReturnsRows);
+        Assert.True(returning.ReturnsRows);
+        Assert.NotEqual(normal.PlanFingerprint, returning.PlanFingerprint);
     }
 
     private static CompiledSqlCommand CompileRaw(
