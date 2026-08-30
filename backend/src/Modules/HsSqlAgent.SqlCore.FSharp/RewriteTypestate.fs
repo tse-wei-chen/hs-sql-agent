@@ -21,9 +21,16 @@ module internal Typestate =
         | NativeNullOrdering
         | RewriteNullOrdering
 
+    type FilterPredicateProofs =
+        { OuterReference: CapabilityProof
+          Subquery: CapabilityProof
+          WindowFunction: CapabilityProof }
+
     type ExpressionProofs =
         { ILike: CapabilityProof
-          IntervalLiteral: CapabilityProof }
+          IntervalLiteral: CapabilityProof
+          AggregateFilter: CapabilityProof
+          FilterPredicate: FilterPredicateProofs }
 
     type DmlProofs =
         { Returning: CapabilityProof

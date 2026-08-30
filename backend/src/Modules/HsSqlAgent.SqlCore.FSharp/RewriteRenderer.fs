@@ -155,7 +155,7 @@ module internal RewriteRenderer =
             name + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
         | Expr.FilteredAggregate(value, predicate) ->
             match ctx.Provider with
-            | PostgreSql | SQLite | Firebird -> renderExpr ctx value + " FILTER (WHERE " + renderExpr ctx predicate + ")"
+            | PostgreSql | SQLite | Oracle | Firebird -> renderExpr ctx value + " FILTER (WHERE " + renderExpr ctx predicate + ")"
             | _ -> invalidOp "Aggregate FILTER requires provider-specific lowering before rendering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
         | Expr.Cast(value, targetType) -> "CAST(" + renderExpr ctx value + " AS " + CastType.value targetType + ")"

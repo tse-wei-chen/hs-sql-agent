@@ -286,6 +286,164 @@ module internal RewriteStages =
         | ProvenCapability -> ()
         | RejectedCapability message -> invalidOp message
 
+    let rec private proveFilterPredicate (proofs: FilterPredicateProofs) expression =
+        match expression with
+        | BoundColumn(_, OuterRowSource) ->
+            requireExpressionCapability proofs.OuterReference
+        | Column _
+        | BoundColumn(_, LocalRowSource)
+        | BoundColumn(_, ProjectionAlias)
+        | Wildcard _
+        | OrderOrdinal _
+        | Literal _
+        | Interval _ -> ()
+        | Unary(_, operand) ->
+            proveFilterPredicate proofs operand
+        | Binary(_, left, right) ->
+            proveFilterPredicate proofs left
+            proveFilterPredicate proofs right
+        | Like(value, pattern, _, _, _) ->
+            proveFilterPredicate proofs value
+            proveFilterPredicate proofs pattern
+        | FunctionCall call ->
+            call.Arguments |> List.iter (proveFilterPredicate proofs)
+        | FilteredAggregate(value, predicate) ->
+            proveFilterPredicate proofs value
+            proveFilterPredicate proofs predicate
+        | Windowed(value, window) ->
+            requireExpressionCapability proofs.WindowFunction
+            proveFilterPredicate proofs value
+            window.PartitionBy |> List.iter (proveFilterPredicate proofs)
+            window.OrderBy |> List.iter (fun order -> proveFilterPredicate proofs order.Expression)
+        | Cast(value, _)
+        | Extract(_, value) ->
+            proveFilterPredicate proofs value
+        | SimpleCase(input, branches, fallback) ->
+            proveFilterPredicate proofs input
+            branches |> NonEmpty.iter (fun branch ->
+                proveFilterPredicate proofs branch.Match
+                proveFilterPredicate proofs branch.Result)
+            fallback |> Option.iter (proveFilterPredicate proofs)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                proveFilterPredicate proofs branch.Condition
+                proveFilterPredicate proofs branch.Result)
+            fallback |> Option.iter (proveFilterPredicate proofs)
+        | InList(value, items, _) ->
+            proveFilterPredicate proofs value
+            items |> NonEmpty.iter (proveFilterPredicate proofs)
+        | InSubquery(value, _, _) ->
+            proveFilterPredicate proofs value
+            requireExpressionCapability proofs.Subquery
+        | Between(value, lower, upper, _) ->
+            proveFilterPredicate proofs value
+            proveFilterPredicate proofs lower
+            proveFilterPredicate proofs upper
+        | IsNull(value, _) ->
+            proveFilterPredicate proofs value
+        | ScalarSubquery _
+        | Exists _ ->
+            requireExpressionCapability proofs.Subquery
+
+    let rec private proveSourceFilterExpr (expressionProofs: ExpressionProofs) expression =
+        match expression with
+        | Column _
+        | BoundColumn _
+        | Wildcard _
+        | OrderOrdinal _
+        | Literal _
+        | Interval _ -> ()
+        | Unary(_, operand) ->
+            proveSourceFilterExpr expressionProofs operand
+        | Binary(_, left, right) ->
+            proveSourceFilterExpr expressionProofs left
+            proveSourceFilterExpr expressionProofs right
+        | Like(value, pattern, _, _, _) ->
+            proveSourceFilterExpr expressionProofs value
+            proveSourceFilterExpr expressionProofs pattern
+        | FunctionCall call ->
+            call.Arguments |> List.iter (proveSourceFilterExpr expressionProofs)
+        | FilteredAggregate(value, predicate) ->
+            proveFilterPredicate expressionProofs.FilterPredicate predicate
+            proveSourceFilterExpr expressionProofs value
+            proveSourceFilterExpr expressionProofs predicate
+        | Windowed(value, window) ->
+            proveSourceFilterExpr expressionProofs value
+            window.PartitionBy |> List.iter (proveSourceFilterExpr expressionProofs)
+            window.OrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
+        | Cast(value, _)
+        | Extract(_, value) ->
+            proveSourceFilterExpr expressionProofs value
+        | SimpleCase(input, branches, fallback) ->
+            proveSourceFilterExpr expressionProofs input
+            branches |> NonEmpty.iter (fun branch ->
+                proveSourceFilterExpr expressionProofs branch.Match
+                proveSourceFilterExpr expressionProofs branch.Result)
+            fallback |> Option.iter (proveSourceFilterExpr expressionProofs)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                proveSourceFilterExpr expressionProofs branch.Condition
+                proveSourceFilterExpr expressionProofs branch.Result)
+            fallback |> Option.iter (proveSourceFilterExpr expressionProofs)
+        | InList(value, items, _) ->
+            proveSourceFilterExpr expressionProofs value
+            items |> NonEmpty.iter (proveSourceFilterExpr expressionProofs)
+        | InSubquery(value, query, _) ->
+            proveSourceFilterExpr expressionProofs value
+            proveSourceFilterQuery expressionProofs query
+        | Between(value, lower, upper, _) ->
+            proveSourceFilterExpr expressionProofs value
+            proveSourceFilterExpr expressionProofs lower
+            proveSourceFilterExpr expressionProofs upper
+        | IsNull(value, _) ->
+            proveSourceFilterExpr expressionProofs value
+        | ScalarSubquery query
+        | Exists(query, _) ->
+            proveSourceFilterQuery expressionProofs query
+
+    and private proveSourceFilterSource expressionProofs source =
+        match source with
+        | NamedTable _
+        | CteTable _ -> ()
+        | DerivedTable(query, _) ->
+            proveSourceFilterQuery expressionProofs query
+
+    and private proveSourceFilterSelect expressionProofs select =
+        select.Ctes |> List.iter (fun cte -> proveSourceFilterQuery expressionProofs cte.Query)
+        select.Projection |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
+        select.From |> Option.iter (proveSourceFilterSource expressionProofs)
+        select.Joins |> List.iter (fun join ->
+            proveSourceFilterSource expressionProofs join.Source
+            join.Predicate |> Option.iter (proveSourceFilterExpr expressionProofs))
+        select.Where |> Option.iter (proveSourceFilterExpr expressionProofs)
+        select.GroupBy |> List.iter (proveSourceFilterExpr expressionProofs)
+        select.Having |> Option.iter (proveSourceFilterExpr expressionProofs)
+
+    and private proveSourceFilterQuery expressionProofs query =
+        proveSourceFilterSelect expressionProofs query.Head
+        query.SetOperations |> List.iter (fun branch -> proveSourceFilterQuery expressionProofs branch.Query)
+        query.OrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
+
+    let private proveSourceFilterDocument expressionProofs document =
+        match document.Statement with
+        | QueryStatement query ->
+            proveSourceFilterQuery expressionProofs query
+        | InsertStatement insert ->
+            match insert.Input with
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveSourceFilterExpr expressionProofs))
+            | QuerySource query -> proveSourceFilterQuery expressionProofs query
+            | DefaultValues -> ()
+            insert.Returning |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveSourceFilterExpr expressionProofs assignment.Value)
+            update.From |> List.iter (proveSourceFilterSource expressionProofs)
+            update.Where |> Option.iter (proveSourceFilterExpr expressionProofs)
+            update.Returning |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (proveSourceFilterSource expressionProofs)
+            delete.Where |> Option.iter (proveSourceFilterExpr expressionProofs)
+            delete.Returning |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
+
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ -> ()
@@ -305,6 +463,8 @@ module internal RewriteStages =
         | FunctionCall call ->
             call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
         | FilteredAggregate(value, predicate) ->
+            requireExpressionCapability expressionProofs.AggregateFilter
+            proveFilterPredicate expressionProofs.FilterPredicate predicate
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs predicate
         | Windowed(value, window) ->
@@ -860,9 +1020,10 @@ module internal RewriteStages =
                     validateFirebirdConflict proofs insert conflict
         | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
 
-    let validate allowedTables targetRuntime targetExpressions targetJoins targetOrdering targetDml conflictProofs canonical =
+    let validate allowedTables targetRuntime sourceExpressions targetExpressions targetJoins targetOrdering targetDml conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
             let validated = validateDocument allowedTables document
+            proveSourceFilterDocument sourceExpressions validated
             proveTargetDocument targetRuntime targetExpressions validated |> ignore
             proveTargetJoins targetJoins validated
             proveOrderingAndPaging targetRuntime targetOrdering validated

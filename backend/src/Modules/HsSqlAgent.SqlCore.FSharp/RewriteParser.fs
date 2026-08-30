@@ -32,9 +32,16 @@ module internal RewriteParser =
             { RightJoin = ProvenCapability
               FullJoin = ProvenCapability }
 
+        let private permissiveFilterPredicate =
+            { OuterReference = ProvenCapability
+              Subquery = ProvenCapability
+              WindowFunction = ProvenCapability }
+
         let private permissiveExpressions =
             { ILike = ProvenCapability
-              IntervalLiteral = ProvenCapability }
+              IntervalLiteral = ProvenCapability
+              AggregateFilter = ProvenCapability
+              FilterPredicate = permissiveFilterPredicate }
 
         let private permissiveDml =
             { Returning = ProvenCapability
@@ -355,6 +362,7 @@ module internal RewriteParser =
             if acceptOperator "::" cursor then
                 expression <- Cast(expression, parseCastType cursor)
             elif acceptKeyword "FILTER" cursor then
+                requireSourceCapability cursor.SourceExpressions.AggregateFilter
                 expectSymbol '(' cursor
                 expectKeyword "WHERE" cursor
                 let predicate = parseExpression cursor

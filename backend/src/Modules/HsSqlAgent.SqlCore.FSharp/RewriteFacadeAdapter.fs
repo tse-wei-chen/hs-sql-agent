@@ -73,13 +73,39 @@ module internal RewriteFacadeAdapter =
         else
             TargetNullOrdering.NativeNullOrdering
 
-    let private sourceExpressionProofs source : ExpressionProofs =
+    let private filterPredicateProofs provider side : FilterPredicateProofs =
+        { OuterReference =
+            SqlAggregateFilterCapabilityRules.PredicateValidationError(
+                provider,
+                side,
+                SqlAggregateFilterPredicateFeature.OuterReference)
+            |> capabilityProof
+          Subquery =
+            SqlAggregateFilterCapabilityRules.PredicateValidationError(
+                provider,
+                side,
+                SqlAggregateFilterPredicateFeature.Subquery)
+            |> capabilityProof
+          WindowFunction =
+            SqlAggregateFilterCapabilityRules.PredicateValidationError(
+                provider,
+                side,
+                SqlAggregateFilterPredicateFeature.WindowFunction)
+            |> capabilityProof }
+
+    let private sourceExpressionProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
+        let filterError =
+            match SqlAggregateFilterCapabilityRules.RawSourceSyntaxError(source) with
+            | null -> SqlAggregateFilterCapabilityRules.ValidationError(source, sourceProfile, "source")
+            | value -> value
         { ILike =
             SqlIlikeCapabilityRules.SourceValidationError(source)
             |> capabilityProof
           IntervalLiteral =
             SqlIntervalLiteralCapabilityRules.SourceValidationError(source)
-            |> capabilityProof }
+            |> capabilityProof
+          AggregateFilter = filterError |> capabilityProof
+          FilterPredicate = filterPredicateProofs source "source" }
 
     let private providerName = function
         | SqlAgentToolType.Postgres -> "Postgres"
@@ -90,7 +116,7 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> "Firebird"
         | value -> string value
 
-    let private targetExpressionProofs target : ExpressionProofs =
+    let private targetExpressionProofs target (targetProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
         { ILike =
             if SqlIlikeCapabilityRules.SupportsTarget(target) then
                 CapabilityProof.ProvenCapability
@@ -106,7 +132,11 @@ module internal RewriteFacadeAdapter =
                 CapabilityProof.RejectedCapability(
                     "SQL capability 'expression.interval' is not supported by provider "
                     + providerName target
-                    + " for this Core plan.") }
+                    + " for this Core plan.")
+          AggregateFilter =
+            SqlAggregateFilterCapabilityRules.ValidationError(target, targetProfile, "target")
+            |> capabilityProof
+          FilterPredicate = filterPredicateProofs target "target" }
 
     let private sourceDmlProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : DmlProofs =
         let sourceVersion : Version | null =
@@ -175,7 +205,7 @@ module internal RewriteFacadeAdapter =
             else
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
           Joins = sourceJoinProofs source sourceProfile
-          Expressions = sourceExpressionProofs source
+          Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile
           OnConflict = sourceOnConflictProof source sourceProfile
           Ordering = sourceOrderingProofs source
@@ -297,7 +327,7 @@ module internal RewriteFacadeAdapter =
                   SourceSemantics = sourceSemantics source sourceProfile
                   Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
-                  TargetExpressions = targetExpressionProofs target
+                  TargetExpressions = targetExpressionProofs target targetProfile
                   TargetJoins = targetJoinProofs target targetProfile
                   TargetOrdering = targetNullOrdering target
                   TargetDml = targetDmlProofs target targetProfile

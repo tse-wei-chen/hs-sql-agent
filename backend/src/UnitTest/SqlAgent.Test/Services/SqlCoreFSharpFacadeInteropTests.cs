@@ -2532,6 +2532,249 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    [Fact]
+    public void Facade_TextQuery_MySqlSourceAggregateFilter_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-mysql-source-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_SqliteFilterWithoutSourceVersion_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-sqlite-source-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Sqlite);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Sqlite,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_SqliteFilterSource330MissingTargetVersion_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 30));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-sqlite-target-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Sqlite, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Sqlite,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy,
+                sourceProfile,
+                null));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_SqliteFilter330_MatchesLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 30));
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 30));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-sqlite330-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Sqlite, sourceProfile);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            targetProfile);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("FILTER (WHERE", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_Oracle26TargetFilter_MatchesLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Oracle,
+            ServerVersion: new Version(26, 0));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-oracle26-target-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Oracle,
+            validation,
+            policy,
+            targetProfile);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle,
+            validation,
+            policy,
+            null,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("FILTER (WHERE", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(
+        "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders")]
+    [InlineData(
+        "SELECT SUM(amount) FILTER (WHERE ROW_NUMBER() OVER (ORDER BY id) > 1) FROM orders")]
+    [InlineData(
+        "SELECT u.id, (SELECT SUM(o.amount) FILTER (WHERE o.user_id = u.id) FROM orders o) AS total FROM users u")]
+    public void Facade_TextQuery_Oracle26TargetFilterUnsafePredicate_RemainsFailClosedLikeLegacy(
+        string sql)
+    {
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Oracle,
+            ServerVersion: new Version(26, 0));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-oracle26-predicate-v1",
+            new HashSet<string>(
+                new[] { "orders", "customers", "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Oracle,
+                validation,
+                policy,
+                targetProfile));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Oracle,
+                validation,
+                policy,
+                null,
+                targetProfile));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_Oracle26SourceFilterSubquery_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Oracle,
+            ServerVersion: new Version(26, 0));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-oracle26-source-v1",
+            new HashSet<string>(
+                new[] { "orders", "customers" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Oracle, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Oracle,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                sourceProfile,
+                null));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> QueryValidatorFailureParityCases()
     {
         yield return new object[]
