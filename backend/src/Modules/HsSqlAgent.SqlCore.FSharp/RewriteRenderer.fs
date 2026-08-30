@@ -17,18 +17,60 @@ module internal RewriteRenderer =
 
     type private RenderContext(provider: Provider, targetRuntime: TargetRuntime) =
         let parameters = ResizeArray<obj | null>()
+        let sharedParameters = Dictionary<string, string * (obj | null)>(StringComparer.Ordinal)
+        let mutable sharedScope: string option = None
+        let mutable sharedOrdinal = 0
+
+        let parameterName index =
+            match provider with Oracle -> ":p" + string index | _ -> "@p" + string index
+
         member _.Provider = provider
         member _.TargetRuntime = targetRuntime
-        member _.Bind(value: obj | null) =
-            let index = parameters.Count
-            parameters.Add(value)
-            match provider with Oracle -> ":p" + string index | _ -> "@p" + string index
+
+        member this.Bind(value: obj | null) =
+            match sharedScope with
+            | Some scope ->
+                let key = scope + ":" + string sharedOrdinal
+                sharedOrdinal <- sharedOrdinal + 1
+                this.BindShared(key, value)
+            | None ->
+                let name = parameterName parameters.Count
+                parameters.Add(value)
+                name
+
+        member _.BindShared(key: string, value: obj | null) =
+            match sharedParameters.TryGetValue(key) with
+            | true, (name, existing) ->
+                if not (Object.Equals(existing, value)) then
+                    raise (SqlCompilationException(
+                        "Native SQL renderer reused semantic binding key '" + key + "' for different values."))
+                name
+            | false, _ ->
+                let name = parameterName parameters.Count
+                parameters.Add(value)
+                sharedParameters.Add(key, (name, value))
+                name
+
+        member _.WithSharedBindings(scope: string, action: unit -> 'T) : 'T =
+            let previousScope = sharedScope
+            let previousOrdinal = sharedOrdinal
+            sharedScope <- Some scope
+            sharedOrdinal <- 0
+            try action ()
+            finally
+                sharedScope <- previousScope
+                sharedOrdinal <- previousOrdinal
+
         member _.Parameters = parameters |> Seq.toList
 
     let private quotePart provider (part: IdentifierPart) =
         let raw =
-            if part.WasQuoted then part.Value
-            else match provider with Oracle | Firebird -> part.Value.ToUpperInvariant() | _ -> part.Value
+            if part.WasQuoted || part.PreserveSpelling then part.Value
+            else
+                match provider with
+                | PostgreSql -> part.Value.ToLowerInvariant()
+                | Oracle | Firebird -> part.Value.ToUpperInvariant()
+                | _ -> part.Value
         match provider with
         | MySql -> "`" + raw.Replace("`", "``") + "`"
         | SqlServer -> "[" + raw.Replace("]", "]]" ) + "]"
@@ -312,7 +354,7 @@ module internal RewriteRenderer =
             | message -> fail message
             let value = renderExpr ctx call.Arguments[0]
             let formatValue = literalText "date format" call.Arguments[1]
-            let format = ctx.Bind(box formatValue)
+            let format = ctx.BindShared("date-format:" + formatValue, box formatValue)
             match ctx.Provider with
             | SqlServer -> "FORMAT(" + value + ", " + format + ")"
             | PostgreSql
@@ -328,7 +370,7 @@ module internal RewriteRenderer =
             | message -> fail message
             let value = renderExpr ctx call.Arguments[0]
             let formatValue = literalText "date parse format" call.Arguments[1]
-            let format = ctx.Bind(box formatValue)
+            let format = ctx.BindShared("date-parse-format:" + formatValue, box formatValue)
             match ctx.Provider with
             | MySql -> "DATE(STR_TO_DATE(" + value + ", " + format + "))"
             | PostgreSql
@@ -491,7 +533,27 @@ module internal RewriteRenderer =
         | TableSource.DerivedTable(query, alias) -> "(" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
 
     and private renderSelectBody (ctx: RenderContext) (select: Select) =
-        let projection = select.Projection |> List.map (fun item -> renderExpr ctx item.Expression + (item.Alias |> Option.map (fun alias -> " AS " + renderAlias ctx.Provider alias) |> Option.defaultValue "")) |> String.concat ", "
+        let groupScope expression =
+            if ctx.Provider <> PostgreSql then None
+            else
+                select.GroupBy
+                |> List.tryFindIndex (fun grouped -> Expr.equivalent expression grouped)
+                |> Option.map (fun index -> "postgres-group:" + string index)
+
+        let renderProjectionExpression expression =
+            match groupScope expression with
+            | Some scope -> ctx.WithSharedBindings(scope, fun () -> renderExpr ctx expression)
+            | None -> renderExpr ctx expression
+
+        let projection =
+            select.Projection
+            |> List.map (fun item ->
+                renderProjectionExpression item.Expression
+                + (item.Alias
+                   |> Option.map (fun alias -> " AS " + renderAlias ctx.Provider alias)
+                   |> Option.defaultValue ""))
+            |> String.concat ", "
+
         let mutable sql = "SELECT " + (if select.Distinct then "DISTINCT " else "") + projection
         select.From |> Option.iter (fun source -> sql <- sql + " FROM " + renderSource ctx source)
         if select.From.IsNone then
@@ -500,7 +562,16 @@ module internal RewriteRenderer =
             sql <- sql + " " + joinText join.Kind + " " + renderSource ctx join.Source
             join.Predicate |> Option.iter (fun predicate -> sql <- sql + " ON " + renderExpr ctx predicate)
         select.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
-        if not select.GroupBy.IsEmpty then sql <- sql + " GROUP BY " + (select.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
+        if not select.GroupBy.IsEmpty then
+            let grouped =
+                select.GroupBy
+                |> List.mapi (fun index expression ->
+                    if ctx.Provider = PostgreSql then
+                        ctx.WithSharedBindings("postgres-group:" + string index, fun () -> renderExpr ctx expression)
+                    else
+                        renderExpr ctx expression)
+                |> String.concat ", "
+            sql <- sql + " GROUP BY " + grouped
         select.Having |> Option.iter (fun predicate -> sql <- sql + " HAVING " + renderExpr ctx predicate)
         sql
 
@@ -517,7 +588,7 @@ module internal RewriteRenderer =
                     + renderQueryCore ctx branchNoTail
                     + ") AS "
                     + renderAlias ctx.Provider
-                        { Value = "_set_branch"; WasQuoted = false; Span = { Start = 0; Length = 0 } }
+                        { Value = "_set_branch"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             sql <- sql + " " + setText branch.Operator + " " + branchSql
         sql
 
@@ -565,6 +636,7 @@ module internal RewriteRenderer =
             |> List.mapi (fun index _ ->
                 { Value = "_core_page_" + string index
                   WasQuoted = false
+                  PreserveSpelling = false
                   Span = { Start = 0; Length = 0 } })
         let baseAlias = "[_core_page_base]"
         let wrapperAlias = "[results_wrapper]"
@@ -605,6 +677,7 @@ module internal RewriteRenderer =
                         let hidden =
                             { Value = "_core_page_order_" + string orderIndex
                               WasQuoted = false
+                              PreserveSpelling = false
                               Span = { Start = 0; Length = 0 } }
                         baseProjection.Add(renderExpr ctx order.Expression + " AS " + renderAlias ctx.Provider hidden)
                         hidden
@@ -686,6 +759,7 @@ module internal RewriteRenderer =
             |> List.mapi (fun index _ ->
                 { Value = "_core_page_" + string index
                   WasQuoted = false
+                  PreserveSpelling = false
                   Span = { Start = 0; Length = 0 } })
         let setAlias = "[_set]"
         let baseAlias = "[_core_page_base]"
@@ -787,7 +861,7 @@ module internal RewriteRenderer =
             let prefix = renderCtes ctx query.Head.Ctes
             let body = renderSetBody ctx query
             let top = ctx.Bind(box (NonNegativeRowCount.value limit))
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; Span = { Start = 0; Length = 0 } }
+            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             prefix
             + "SELECT TOP ("
             + top
@@ -800,7 +874,7 @@ module internal RewriteRenderer =
         | _ ->
             let prefix = renderCtes ctx query.Head.Ctes
             let body = renderSetBody ctx query
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; Span = { Start = 0; Length = 0 } }
+            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             let wrapper = "SELECT * FROM (" + body + ")" + tableAliasPrefix ctx.Provider + alias
             let ordered = wrapper + renderOrderClause ctx true query.OrderBy
             prefix + renderPaging ctx query ordered
@@ -901,6 +975,7 @@ module internal RewriteRenderer =
                     MySql
                     { Value = aliasName
                       WasQuoted = false
+                      PreserveSpelling = false
                       Span = { Start = 0; Length = 0 } }
             let assignments =
                 match conflict.Action with

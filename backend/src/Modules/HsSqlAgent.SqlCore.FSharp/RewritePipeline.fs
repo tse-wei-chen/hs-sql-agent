@@ -31,7 +31,7 @@ module internal RewritePipeline =
             options.SourceSemantics.Expressions.RegexMatch
             options.SourceSemantics.Ordering
             options.SourceSemantics.MySqlPipes
-        |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.SourceSemantics.Expressions options.TargetExpressions options.TargetJoins options.TargetOrdering options.TargetDml options.ConflictProofs
+        |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.SourceSemantics.Expressions options.TargetExpressions options.SourceSemantics.Joins options.TargetJoins options.TargetOrdering options.SourceSemantics.Dml options.TargetDml options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider
 

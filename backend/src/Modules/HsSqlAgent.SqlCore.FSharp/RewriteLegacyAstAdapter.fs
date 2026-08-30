@@ -26,6 +26,7 @@ module internal RewriteLegacyAstAdapter =
     let private partOf (part: HsSqlAgent.SqlCore.Core.Ast.IdentifierPart) : IdentifierPart =
         { Value = part.Value
           WasQuoted = part.WasQuoted
+          PreserveSpelling = part.PreserveSpelling
           Span = spanOf part.Span }
 
     let private identifierOf (identifier: HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier) =
@@ -212,12 +213,16 @@ module internal RewriteLegacyAstAdapter =
                 match binary.Right with
                 | :? HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr as subquery ->
                     InSubquery(left, queryOfStatement subquery.Query, false)
-                | _ -> failClosed "IN subquery expression" binary
+                | _ ->
+                    raise (SqlCompilationException(
+                        "Canonical binary IN/NOT IN requires a scalar subquery RHS; expression lists must use InExpr."))
             | "NOT IN", _ ->
                 match binary.Right with
                 | :? HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr as subquery ->
                     InSubquery(left, queryOfStatement subquery.Query, true)
-                | _ -> failClosed "NOT IN subquery expression" binary
+                | _ ->
+                    raise (SqlCompilationException(
+                        "Canonical binary IN/NOT IN requires a scalar subquery RHS; expression lists must use InExpr."))
             | _, Some operator -> Binary(operator, left, right)
             | _ -> failClosed ("binary operator '" + binary.Operator + "'") binary
 

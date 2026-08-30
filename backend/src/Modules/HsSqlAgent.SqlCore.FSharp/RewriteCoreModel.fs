@@ -14,6 +14,7 @@ module internal CoreModel =
     type IdentifierPart =
         { Value: string
           WasQuoted: bool
+          PreserveSpelling: bool
           Span: Span }
 
     type Identifier = private Identifier of IdentifierPart list
@@ -36,7 +37,8 @@ module internal CoreModel =
             && List.forall2
                 (fun leftPart rightPart ->
                     leftPart.Value = rightPart.Value
-                    && leftPart.WasQuoted = rightPart.WasQuoted)
+                    && leftPart.WasQuoted = rightPart.WasQuoted
+                    && leftPart.PreserveSpelling = rightPart.PreserveSpelling)
                 leftParts
                 rightParts
 

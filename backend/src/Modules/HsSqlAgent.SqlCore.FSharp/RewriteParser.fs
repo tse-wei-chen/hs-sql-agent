@@ -141,7 +141,7 @@ module internal RewriteParser =
     let private partFromToken token =
         match token.Kind with
         | Identifier(value, quoted) ->
-            { Value = value; WasQuoted = quoted; Span = { Start = token.Start; Length = token.Length } }
+            { Value = value; WasQuoted = quoted; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
         | _ -> fail token "Expected identifier"
 
     let private identifierPart (cursor: Cursor) = cursor.Take() |> partFromToken

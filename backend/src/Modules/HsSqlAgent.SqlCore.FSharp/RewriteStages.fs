@@ -2163,6 +2163,20 @@ module internal RewriteStages =
                && window.OrderBy.IsEmpty then
                 raise (targetCapabilityError provider "window.order_by")
 
+    let private validateScalarSubqueryShape (query: Query) =
+        let projection = query.Head.Projection
+        if projection
+           |> List.exists (fun item ->
+               match item.Expression with
+               | Wildcard _ -> true
+               | _ -> false) then
+            raise (SqlCompilationException(
+                "Scalar subquery projection width must be statically known and cannot contain a wildcard."))
+        if projection.Length <> 1 then
+            raise (SqlCompilationException(
+                "Scalar subquery must project exactly one expression; projected "
+                + string projection.Length + "."))
+
     let rec private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
         match context with
         | ProjectionClause -> validateBooleanScalar targetRuntime "expression.boolean_select" expression
@@ -2251,6 +2265,7 @@ module internal RewriteStages =
             items |> NonEmpty.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
         | InSubquery(value, query, _) ->
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+            validateScalarSubqueryShape query
             validateSemanticQuery targetRuntime query
         | Between(value, lower, upper, _) ->
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
@@ -2258,7 +2273,10 @@ module internal RewriteStages =
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow upper
         | IsNull(value, _) ->
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | ScalarSubquery query | Exists(query, _) ->
+        | ScalarSubquery query ->
+            validateScalarSubqueryShape query
+            validateSemanticQuery targetRuntime query
+        | Exists(query, _) ->
             validateSemanticQuery targetRuntime query
 
     and private validateSemanticTable targetRuntime source =
@@ -2304,15 +2322,251 @@ module internal RewriteStages =
                         + " does not match head projection width " + string expected + "."))
                 | _ -> ()
             | None -> ())
+        let headHasWildcard =
+            query.Head.Projection
+            |> List.exists (fun item ->
+                match item.Expression with
+                | Wildcard _ -> true
+                | _ -> false)
         query.OrderBy
         |> List.iter (fun order ->
             match order.Expression with
-            | OrderOrdinal ordinal when PositiveRowCount.value ordinal > query.Head.Projection.Length ->
+            | OrderOrdinal ordinal
+                when not headHasWildcard
+                     && PositiveRowCount.value ordinal > query.Head.Projection.Length ->
                 raise (SqlCompilationException(
                     "ORDER BY output position " + string (PositiveRowCount.value ordinal)
                     + " exceeds projection width " + string query.Head.Projection.Length + "."))
             | _ -> ()
             validateSemanticExpr targetRuntime OrderByClause false false order.Expression)
+
+    let private noFromReferenceError identifier =
+        raise (SqlCompilationException(
+            "Column reference '" + Identifier.text identifier
+            + "' requires a FROM source in the portable Core query model."))
+
+    let rec private validateNoFromExpression allowWildcard expression =
+        match expression with
+        | Literal _ | Interval _ | OrderOrdinal _ -> ()
+        | Column identifier ->
+            noFromReferenceError identifier
+        | BoundColumn(_, ColumnBinding.OuterRowSource) ->
+            ()
+        | BoundColumn(identifier, _) ->
+            noFromReferenceError identifier
+        | Wildcard _ when allowWildcard -> ()
+        | Wildcard None ->
+            raise (SqlCompilationException(
+                "Column reference '*' requires a FROM source in the portable Core query model."))
+        | Wildcard(Some identifier) ->
+            noFromReferenceError identifier
+        | Unary(_, operand) ->
+            validateNoFromExpression false operand
+        | Binary(_, left, right) ->
+            validateNoFromExpression false left
+            validateNoFromExpression false right
+        | Like(value, pattern, _, _, _) ->
+            validateNoFromExpression false value
+            validateNoFromExpression false pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (validateNoFromExpression false)
+        | RegexMatch(value, pattern) ->
+            validateNoFromExpression false value
+            validateNoFromExpression false pattern
+        | FunctionCall call ->
+            let name =
+                FunctionName.value call.Name
+                |> fun value -> value.Trim().ToUpperInvariant()
+            call.Arguments
+            |> List.iteri (fun index argument ->
+                let allowFunctionWildcard =
+                    name = "COUNT"
+                    && index = 0
+                    && (match argument with
+                        | Wildcard None -> true
+                        | _ -> false)
+                validateNoFromExpression allowFunctionWildcard argument)
+            call.AggregateOrderBy
+            |> List.iter (fun order ->
+                validateNoFromExpression false order.Expression)
+        | FilteredAggregate(value, predicate) ->
+            validateNoFromExpression false value
+            validateNoFromExpression false predicate
+        | Windowed(value, window) ->
+            validateNoFromExpression false value
+            window.PartitionBy |> List.iter (validateNoFromExpression false)
+            window.OrderBy
+            |> List.iter (fun order ->
+                validateNoFromExpression false order.Expression)
+        | Cast(value, _) | Extract(_, value) ->
+            validateNoFromExpression false value
+        | SimpleCase(input, branches, fallback) ->
+            validateNoFromExpression false input
+            branches
+            |> NonEmpty.iter (fun branch ->
+                validateNoFromExpression false branch.Match
+                validateNoFromExpression false branch.Result)
+            fallback |> Option.iter (validateNoFromExpression false)
+        | SearchedCase(branches, fallback) ->
+            branches
+            |> NonEmpty.iter (fun branch ->
+                validateNoFromExpression false branch.Condition
+                validateNoFromExpression false branch.Result)
+            fallback |> Option.iter (validateNoFromExpression false)
+        | InList(value, items, _) ->
+            validateNoFromExpression false value
+            items |> NonEmpty.iter (validateNoFromExpression false)
+        | InSubquery(value, query, _) ->
+            validateNoFromExpression false value
+            validateNoFromQuery query
+        | Between(value, lower, upper, _) ->
+            validateNoFromExpression false value
+            validateNoFromExpression false lower
+            validateNoFromExpression false upper
+        | IsNull(value, _) ->
+            validateNoFromExpression false value
+        | ScalarSubquery query | Exists(query, _) ->
+            validateNoFromQuery query
+
+    and private visitNestedNoFromExpression expression =
+        match expression with
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Unary(_, operand) ->
+            visitNestedNoFromExpression operand
+        | Binary(_, left, right) ->
+            visitNestedNoFromExpression left
+            visitNestedNoFromExpression right
+        | Like(value, pattern, _, _, _)
+        | RegexMatch(value, pattern) ->
+            visitNestedNoFromExpression value
+            visitNestedNoFromExpression pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter visitNestedNoFromExpression
+        | FunctionCall call ->
+            call.Arguments |> List.iter visitNestedNoFromExpression
+            call.AggregateOrderBy
+            |> List.iter (fun order ->
+                visitNestedNoFromExpression order.Expression)
+        | FilteredAggregate(value, predicate) ->
+            visitNestedNoFromExpression value
+            visitNestedNoFromExpression predicate
+        | Windowed(value, window) ->
+            visitNestedNoFromExpression value
+            window.PartitionBy |> List.iter visitNestedNoFromExpression
+            window.OrderBy
+            |> List.iter (fun order ->
+                visitNestedNoFromExpression order.Expression)
+        | Cast(value, _) | Extract(_, value) ->
+            visitNestedNoFromExpression value
+        | SimpleCase(input, branches, fallback) ->
+            visitNestedNoFromExpression input
+            branches
+            |> NonEmpty.iter (fun branch ->
+                visitNestedNoFromExpression branch.Match
+                visitNestedNoFromExpression branch.Result)
+            fallback |> Option.iter visitNestedNoFromExpression
+        | SearchedCase(branches, fallback) ->
+            branches
+            |> NonEmpty.iter (fun branch ->
+                visitNestedNoFromExpression branch.Condition
+                visitNestedNoFromExpression branch.Result)
+            fallback |> Option.iter visitNestedNoFromExpression
+        | InList(value, items, _) ->
+            visitNestedNoFromExpression value
+            items |> NonEmpty.iter visitNestedNoFromExpression
+        | InSubquery(value, query, _) ->
+            visitNestedNoFromExpression value
+            validateNoFromQuery query
+        | Between(value, lower, upper, _) ->
+            visitNestedNoFromExpression value
+            visitNestedNoFromExpression lower
+            visitNestedNoFromExpression upper
+        | IsNull(value, _) ->
+            visitNestedNoFromExpression value
+        | ScalarSubquery query | Exists(query, _) ->
+            validateNoFromQuery query
+
+    and private validateNoFromSource source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) ->
+            validateNoFromQuery query
+
+    and private validateNoFromSelect select =
+        select.Ctes
+        |> List.iter (fun cte ->
+            validateNoFromQuery cte.Query)
+        select.From |> Option.iter validateNoFromSource
+        select.Joins
+        |> List.iter (fun join ->
+            validateNoFromSource join.Source
+            join.Predicate |> Option.iter visitNestedNoFromExpression)
+
+        match select.From with
+        | Some _ ->
+            select.Projection
+            |> List.iter (fun item ->
+                visitNestedNoFromExpression item.Expression)
+            select.Where |> Option.iter visitNestedNoFromExpression
+            select.GroupBy |> List.iter visitNestedNoFromExpression
+            select.Having |> Option.iter visitNestedNoFromExpression
+        | None ->
+            if not select.Joins.IsEmpty then
+                raise (SqlCompilationException(
+                    "A Core SELECT cannot contain JOIN sources without a primary FROM source."))
+            select.Projection
+            |> List.iter (fun item ->
+                validateNoFromExpression false item.Expression)
+            select.Where |> Option.iter (validateNoFromExpression false)
+            select.GroupBy |> List.iter (validateNoFromExpression false)
+            select.Having |> Option.iter (validateNoFromExpression false)
+
+    and private validateNoFromQuery query =
+        validateNoFromSelect query.Head
+        query.SetOperations
+        |> List.iter (fun branch ->
+            validateNoFromQuery branch.Query)
+        query.OrderBy
+        |> List.iter (fun order ->
+            match order.Expression with
+            | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
+            | _ ->
+                if query.Head.From.IsNone then
+                    validateNoFromExpression false order.Expression
+                else
+                    visitNestedNoFromExpression order.Expression)
+
+    let private validateNoFromDocument targetRuntime document =
+        let _ = targetRuntime
+        match document.Statement with
+        | QueryStatement query ->
+            validateNoFromQuery query
+        | InsertStatement insert ->
+            match insert.Input with
+            | QuerySource query ->
+                validateNoFromQuery query
+            | Values rows ->
+                rows
+                |> NonEmpty.iter (NonEmpty.iter visitNestedNoFromExpression)
+            | DefaultValues -> ()
+            insert.Returning
+            |> List.iter (fun item ->
+                visitNestedNoFromExpression item.Expression)
+        | UpdateStatement update ->
+            update.From |> List.iter validateNoFromSource
+            update.AssignmentItems
+            |> NonEmpty.iter (fun item ->
+                visitNestedNoFromExpression item.Value)
+            update.Where |> Option.iter visitNestedNoFromExpression
+            update.Returning
+            |> List.iter (fun item ->
+                visitNestedNoFromExpression item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter validateNoFromSource
+            delete.Where |> Option.iter visitNestedNoFromExpression
+            delete.Returning
+            |> List.iter (fun item ->
+                visitNestedNoFromExpression item.Expression)
 
     let private validateSemanticDocument targetRuntime document =
         match document.Statement with
@@ -2346,16 +2600,19 @@ module internal RewriteStages =
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
 
-    let validate allowedTables targetRuntime sourceExpressions targetExpressions targetJoins targetOrdering targetDml conflictProofs canonical =
+    let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
             validateNestedCteDocument targetRuntime document
+            validateNoFromDocument targetRuntime document
             validateSemanticDocument targetRuntime document
             proveSourceFilterDocument sourceExpressions document
             proveSourceFilterDocument targetExpressions document
             let validated = validateDocument allowedTables document
             proveTargetDocument targetRuntime targetExpressions validated |> ignore
+            proveTargetJoins sourceJoins validated
             proveTargetJoins targetJoins validated
             proveOrderingAndPaging targetRuntime targetOrdering validated
+            proveTargetDml sourceDml validated
             proveTargetDml targetDml validated
             proveConflicts targetRuntime conflictProofs validated
             validated) canonical
