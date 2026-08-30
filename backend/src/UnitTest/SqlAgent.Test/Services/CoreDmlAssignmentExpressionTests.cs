@@ -71,7 +71,8 @@ public class CoreDmlAssignmentExpressionTests
         Assert.DoesNotContain("2026-08-23", command.Sql, StringComparison.Ordinal);
         Assert.Equal(2, command.Parameters.Count(parameter =>
             parameter.Value is DateTime dateTime && dateTime == new DateTime(2026, 8, 23)));
-        Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 11077L);
+        Assert.Contains(command.Parameters, parameter =>
+            parameter.Value is long value && value == 11077L);
     }
 
     [Fact]
