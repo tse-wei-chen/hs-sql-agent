@@ -222,13 +222,33 @@ public sealed class PostgresSyntaxBombardmentTests
             "UNION ALL",
             "alpha,beta");
         yield return Case(
+            "select-all",
+            "SELECT ALL id FROM users",
+            "SELECT",
+            "users");
+        yield return Case(
+            "union-distinct-explicit",
+            "SELECT id FROM alpha UNION DISTINCT SELECT id FROM beta",
+            "UNION",
+            "alpha,beta");
+        yield return Case(
             "intersect",
             "SELECT id FROM alpha INTERSECT SELECT id FROM beta",
             "INTERSECT",
             "alpha,beta");
         yield return Case(
+            "intersect-distinct-explicit",
+            "SELECT id FROM alpha INTERSECT DISTINCT SELECT id FROM beta",
+            "INTERSECT",
+            "alpha,beta");
+        yield return Case(
             "except",
             "SELECT id FROM alpha EXCEPT SELECT id FROM beta",
+            "EXCEPT",
+            "alpha,beta");
+        yield return Case(
+            "except-distinct-explicit",
+            "SELECT id FROM alpha EXCEPT DISTINCT SELECT id FROM beta",
             "EXCEPT",
             "alpha,beta");
         yield return Case(
