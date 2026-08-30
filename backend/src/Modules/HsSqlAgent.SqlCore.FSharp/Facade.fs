@@ -7,7 +7,6 @@ open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
-open HsSqlAgent.SqlCore.Internal
 open HsSqlAgent.SqlCore.Rewrite
 
 [<Sealed>]
@@ -19,7 +18,9 @@ type SqlCoreTryResult<'T>(success: bool, value: 'T, errorCode: string, errorMess
     member _.Diagnostics = diagnostics
 
 module private FacadeResult =
-    let private noDiagnostics : IReadOnlyList<string> = Array.Empty<string>() :> IReadOnlyList<string>
+    let private noDiagnostics : IReadOnlyList<string> =
+        Array.Empty<string>() :> IReadOnlyList<string>
+
     let private codeFor (ex: exn) =
         match ex with
         | :? SqlParseException -> "SQL_PARSE_ERROR"
@@ -27,98 +28,167 @@ module private FacadeResult =
         | :? UnauthorizedAccessException -> "SQL_POLICY_DENIED"
         | :? ArgumentException -> "INVALID_ARGUMENT"
         | _ -> "SQLCORE_ERROR"
+
     let capture<'T> (action: unit -> 'T) : SqlCoreTryResult<'T> =
-        try SqlCoreTryResult<'T>(true, action(), Unchecked.defaultof<string>, Unchecked.defaultof<string>, noDiagnostics)
-        with ex -> SqlCoreTryResult<'T>(false, Unchecked.defaultof<'T>, codeFor ex, ex.Message, noDiagnostics)
+        try
+            SqlCoreTryResult<'T>(
+                true,
+                action(),
+                Unchecked.defaultof<string>,
+                Unchecked.defaultof<string>,
+                noDiagnostics)
+        with ex ->
+            SqlCoreTryResult<'T>(
+                false,
+                Unchecked.defaultof<'T>,
+                codeFor ex,
+                ex.Message,
+                noDiagnostics)
 
 module private FacadeCompile =
     let validateProfile provider argumentName (profile: SqlProviderCapabilityProfile) =
         ArgumentNullException.ThrowIfNull(profile)
         if profile.Provider <> provider then
-            invalidArg argumentName ("Capability profile declares provider " + string profile.Provider + ", but compilation declares " + string provider + ".")
+            invalidArg
+                argumentName
+                ("Capability profile declares provider "
+                 + string profile.Provider
+                 + ", but compilation declares "
+                 + string provider
+                 + ".")
         if profile.CompatibilityLevel.HasValue && profile.CompatibilityLevel.Value < 0 then
-            raise (ArgumentOutOfRangeException(argumentName, profile.CompatibilityLevel.Value, "Provider compatibility level must be non-negative."))
+            raise (
+                ArgumentOutOfRangeException(
+                    argumentName,
+                    profile.CompatibilityLevel.Value,
+                    "Provider compatibility level must be non-negative."))
 
     let queryText sql sourceDialect targetProvider sourceProfile targetProfile validationContext executionPolicy =
-        RewriteFacadeAdapter.compileQueryValidated sql sourceDialect targetProvider sourceProfile targetProfile validationContext executionPolicy
+        RewriteFacadeAdapter.compileQueryValidated
+            sql
+            sourceDialect
+            targetProvider
+            sourceProfile
+            targetProfile
+            validationContext
+            executionPolicy
 
     let dmlText sql sourceDialect targetProvider sourceProfile targetProfile validationContext policy conflictTargetAssurance =
-        RewriteFacadeAdapter.compileDmlValidated sql sourceDialect targetProvider sourceProfile targetProfile validationContext policy conflictTargetAssurance
+        RewriteFacadeAdapter.compileDmlValidated
+            sql
+            sourceDialect
+            targetProvider
+            sourceProfile
+            targetProfile
+            validationContext
+            policy
+            conflictTargetAssurance
 
-/// C#-oriented facade. SQL-text compilation is owned by the closed F# DU pipeline.
-/// ParsedStatement overloads remain solely as a source-compatible CLR boundary for callers that
-/// already constructed the historical public AST; they are not a fallback from text compilation.
+/// CLR-friendly compiler facade. All SQL text enters the closed F# DU + typestate pipeline.
+/// Historical ParsedStatement/AST overloads intentionally do not cross this boundary.
 [<AbstractClass; Sealed>]
 type SqlCoreFacade private () =
 
-    static member ParseQuery(sql: string, sourceDialect: SqlAgentToolType) : ParsedStatement =
-        let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect null
-        FunctionalAst.verify parsed.Statement |> ignore
-        parsed
-
-    static member ParseQuery(sql: string, sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile) : ParsedStatement =
-        let parsed = FunctionalSqlTextParser.parseQuery sql sourceDialect sourceProfile
-        FunctionalAst.verify parsed.Statement |> ignore
-        parsed
-
-    static member ParseDml(sql: string, sourceDialect: SqlAgentToolType) : ParsedStatement =
-        let parsed = FunctionalSqlTextParser.parseDml sql sourceDialect null
-        FunctionalAst.verify parsed.Statement |> ignore
-        parsed
-
-    static member ParseDml(sql: string, sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile) : ParsedStatement =
-        let parsed = FunctionalSqlTextParser.parseDml sql sourceDialect sourceProfile
-        FunctionalAst.verify parsed.Statement |> ignore
-        parsed
-
-    static member CompileQuery(parsed: ParsedStatement, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy) : CompiledSqlCommand =
-        FunctionalAst.verify parsed.Statement |> ignore
-        FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy null
-
-    static member CompileQuery(parsed: ParsedStatement, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy, targetProfile: SqlProviderCapabilityProfile | null) : CompiledSqlCommand =
-        FunctionalAst.verify parsed.Statement |> ignore
-        FunctionalPipeline.compileQuery parsed targetProvider validationContext executionPolicy targetProfile
-
-    static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy) : CompiledSqlCommand =
+    static member CompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
-        FacadeCompile.queryText sql sourceDialect targetProvider null null validationContext executionPolicy
+        FacadeCompile.queryText
+            sql
+            sourceDialect
+            targetProvider
+            null
+            null
+            validationContext
+            executionPolicy
 
-    static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
+    static member CompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        sourceProfile: SqlProviderCapabilityProfile,
+        targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         FacadeCompile.validateProfile sourceDialect "sourceProfile" sourceProfile
         FacadeCompile.validateProfile targetProvider "targetProfile" targetProfile
-        FacadeCompile.queryText sql sourceDialect targetProvider sourceProfile targetProfile validationContext executionPolicy
+        FacadeCompile.queryText
+            sql
+            sourceDialect
+            targetProvider
+            sourceProfile
+            targetProfile
+            validationContext
+            executionPolicy
 
-    static member CompileDml(parsed: ParsedStatement, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
-        FunctionalAst.verify parsed.Statement |> ignore
-        FunctionalPipeline.compileDml parsed targetProvider validationContext null null null
-
-    static member CompileDml(parsed: ParsedStatement, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, policy: DmlCompilationPolicy | null, targetProfile: SqlProviderCapabilityProfile | null, conflictTargetAssurance: DmlConflictTargetAssurance | null) : CompiledSqlCommand =
-        FunctionalAst.verify parsed.Statement |> ignore
-        FunctionalPipeline.compileDml parsed targetProvider validationContext policy targetProfile conflictTargetAssurance
-
-    static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
+    static member CompileDml(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
-        FacadeCompile.dmlText sql sourceDialect targetProvider null null validationContext null null
+        FacadeCompile.dmlText
+            sql
+            sourceDialect
+            targetProvider
+            null
+            null
+            validationContext
+            null
+            null
 
-    static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, policy: DmlCompilationPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile, conflictTargetAssurance: DmlConflictTargetAssurance) : CompiledSqlCommand =
+    static member CompileDml(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        policy: DmlCompilationPolicy,
+        sourceProfile: SqlProviderCapabilityProfile,
+        targetProfile: SqlProviderCapabilityProfile,
+        conflictTargetAssurance: DmlConflictTargetAssurance) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(policy)
         ArgumentNullException.ThrowIfNull(conflictTargetAssurance)
         FacadeCompile.validateProfile sourceDialect "sourceProfile" sourceProfile
         FacadeCompile.validateProfile targetProvider "targetProfile" targetProfile
-        FacadeCompile.dmlText sql sourceDialect targetProvider sourceProfile targetProfile validationContext policy conflictTargetAssurance
+        FacadeCompile.dmlText
+            sql
+            sourceDialect
+            targetProvider
+            sourceProfile
+            targetProfile
+            validationContext
+            policy
+            conflictTargetAssurance
 
-    static member TryParseQuery(sql: string, sourceDialect: SqlAgentToolType) : SqlCoreTryResult<ParsedStatement> =
-        FacadeResult.capture (fun () -> SqlCoreFacade.ParseQuery(sql, sourceDialect))
+    static member TryCompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy) : SqlCoreTryResult<CompiledSqlCommand> =
+        FacadeResult.capture (fun () ->
+            SqlCoreFacade.CompileQuery(
+                sql,
+                sourceDialect,
+                targetProvider,
+                validationContext,
+                executionPolicy))
 
-    static member TryParseDml(sql: string, sourceDialect: SqlAgentToolType) : SqlCoreTryResult<ParsedStatement> =
-        FacadeResult.capture (fun () -> SqlCoreFacade.ParseDml(sql, sourceDialect))
-
-    static member TryCompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy) : SqlCoreTryResult<CompiledSqlCommand> =
-        FacadeResult.capture (fun () -> SqlCoreFacade.CompileQuery(sql, sourceDialect, targetProvider, validationContext, executionPolicy))
-
-    static member TryCompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : SqlCoreTryResult<CompiledSqlCommand> =
-        FacadeResult.capture (fun () -> SqlCoreFacade.CompileDml(sql, sourceDialect, targetProvider, validationContext))
+    static member TryCompileDml(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext) : SqlCoreTryResult<CompiledSqlCommand> =
+        FacadeResult.capture (fun () ->
+            SqlCoreFacade.CompileDml(
+                sql,
+                sourceDialect,
+                targetProvider,
+                validationContext))
