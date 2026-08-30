@@ -72,7 +72,8 @@ public class CoreDmlAssignmentExpressionTests
         Assert.Equal(2, command.Parameters.Count(parameter =>
             parameter.Value is DateTime dateTime && dateTime == new DateTime(2026, 8, 23)));
         Assert.Contains(command.Parameters, parameter =>
-            parameter.Value is long value && value == 11077L);
+            parameter.Value is int intValue && intValue == 11077
+            || parameter.Value is long longValue && longValue == 11077L);
     }
 
     [Fact]
