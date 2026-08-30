@@ -61,7 +61,10 @@ type SqlCapabilityMatrix private () =
             match provider with
             | SqlAgentToolType.MySQL -> translated
             | SqlAgentToolType.MsSqlServer ->
-                if SqlConcatCapabilityRules.EvaluateSqlServerTarget(profile) = SqlServerConcatTargetMode.Rejected then rejected else translated
+                match SqlConcatCapabilityRules.EvaluateSqlServerTarget(profile) with
+                | SqlServerConcatTargetMode.Rejected -> rejected
+                | SqlServerConcatTargetMode.PlusOperator -> translated
+                | SqlServerConcatTargetMode.NativePipes -> supported
             | _ -> supported
 
         let rightJoinStatus =
@@ -199,10 +202,19 @@ type SqlCapabilityMatrix private () =
                 cap("numeric.decimal_extended","numeric",decimalStatus,decimalDetail)
                 cap("expression.modulo","expression",modulo, if modulo=translated then "MOD(left, right) lowering preserves modulo semantics." else "Native modulo operator is supported.")
                 cap("expression.concat","expression",concatStatus,
-                    if provider=SqlAgentToolType.MySQL then
-                        "Canonical concatenation lowers through CONCAT(left, right). MySQL source || requires PIPES_AS_CONCAT (or ANSI) in the separate source profile; target profile alone cannot authorize source semantics."
-                    else
-                        "Canonical concatenation uses the declared provider contract.")
+                    match provider with
+                    | SqlAgentToolType.MySQL ->
+                        "Canonical string concatenation is translated to CONCAT(left, right). Raw MySQL source || is accepted as concatenation only when the separate source capability profile declares PIPES_AS_CONCAT or ANSI sql_mode; without that source-session contract it remains fail-closed because MySQL otherwise interprets || as logical OR. A target profile alone never authorizes the source spelling."
+                    | SqlAgentToolType.MsSqlServer ->
+                        match SqlConcatCapabilityRules.EvaluateSqlServerTarget(profile) with
+                        | SqlServerConcatTargetMode.NativePipes ->
+                            "Declared SQL Server 2025 (17.x) / compatibility-level-170+ target emits native ANSI ||, whose NULL behavior does not depend on CONCAT_NULL_YIELDS_NULL."
+                        | SqlServerConcatTargetMode.PlusOperator ->
+                            "Canonical concatenation is translated to + only because the declared target proves ANSI NULL propagation through SQL Server 14.x+ or explicit CONCAT_NULL_YIELDS_NULL=ON."
+                        | SqlServerConcatTargetMode.Rejected ->
+                            "SQL Server concatenation is fail-closed without runtime proof: declare ServerVersion 14.0+ or CONCAT_NULL_YIELDS_NULL=ON; ServerVersion 17.0+ with CompatibilityLevel 170+ can emit native ANSI ||."
+                    | _ ->
+                        "The provider-native || operator is emitted.")
                 cap("expression.like_escape","expression",translated,
                     "Explicit single-character literal LIKE ESCAPE is represented structurally and emitted for all target providers while the pattern remains parameterized. Dynamic, empty, multi-character, and control-character escape specifications fail-closed. MySQL NO_BACKSLASH_ESCAPES source requires the explicit escape contract for raw LIKE; target rendering does not rely on provider-default escape semantics.")
                 cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
