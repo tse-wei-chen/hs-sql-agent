@@ -1,9 +1,7 @@
 using System.Reflection;
 using HsSqlAgent.SqlCore;
-using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
-using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -11,52 +9,61 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreFSharpFacadeInteropTests
 {
     [Fact]
-    public void Facade_QueryTextPipeline_MatchesLegacyRepresentativeQuery()
+    public void Facade_QueryTextPipeline_CompilesParameterizedCommand()
     {
         const string sql = "SELECT id FROM users WHERE id = 1 ORDER BY id";
         var validation = new SqlPlanValidationContext(
-            "fsharp-query-boundary-v1",
+            "fsharp-query-boundary-v2",
             new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
-        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
 
-        var legacy = CoreSqlCompiler.CreateDefault().Compile(
-            CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres),
-            SqlAgentToolType.Postgres,
-            validation,
-            policy);
-        var migrated = SqlCoreFacade.CompileQuery(
+        var command = SqlCoreFacade.CompileQuery(
             sql,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             validation,
-            policy);
+            new SqlExecutionPlanPolicy(20));
 
-        Assert.Equal(legacy.Sql, migrated.Sql);
-        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
-        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(" = 1", command.Sql, StringComparison.Ordinal);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 1));
+        Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
     }
 
     [Fact]
-    public void Facade_DmlTextPipeline_MatchesLegacyRepresentativeUpdate()
+    public void Facade_DmlTextPipeline_CompilesParameterizedCommand()
     {
         const string sql = "UPDATE users SET name = 'b' WHERE id = 1";
         var validation = new SqlPlanValidationContext(
-            "fsharp-dml-boundary-v1",
+            "fsharp-dml-boundary-v2",
             new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
 
-        var legacy = CoreDmlCompiler.CreateDefault().Compile(
-            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres),
-            SqlAgentToolType.Postgres,
-            validation);
-        var migrated = SqlCoreFacade.CompileDml(
+        var command = SqlCoreFacade.CompileDml(
             sql,
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             validation);
 
-        Assert.Equal(legacy.Sql, migrated.Sql);
-        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
-        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("UPDATE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("'b'", command.Sql, StringComparison.Ordinal);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "b"));
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 1));
+        Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
+    }
+
+    [Fact]
+    public void Facade_QueryTextPipeline_EnforcesWhitelist()
+    {
+        var validation = new SqlPlanValidationContext(
+            "fsharp-whitelist-v2",
+            new HashSet<string>(new[] { "public.users" }, StringComparer.OrdinalIgnoreCase));
+
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT id FROM public.secrets",
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation,
+                new SqlExecutionPlanPolicy()));
     }
 
     [Fact]

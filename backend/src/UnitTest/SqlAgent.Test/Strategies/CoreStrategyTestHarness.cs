@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Core.Execution;
