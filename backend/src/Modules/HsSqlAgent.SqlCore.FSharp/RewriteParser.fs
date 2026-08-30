@@ -980,7 +980,7 @@ module internal RewriteParser =
                 | Identifier _ -> Some(identifierPart cursor)
                 | Keyword "FETCH" when not (isKeyword "FIRST" (cursor.Peek 1) || isKeyword "NEXT" (cursor.Peek 1)) ->
                     Some(identifierPart cursor)
-                | Keyword value when isContextualIdentifierKeyword value ->
+                | Keyword value when value <> "FETCH" && isContextualIdentifierKeyword value ->
                     Some(identifierPart cursor)
                 | _ -> None
         { Expression = expression; Alias = alias }
@@ -1037,7 +1037,7 @@ module internal RewriteParser =
                     | Identifier _ -> Some(identifierPart cursor)
                     | Keyword "FETCH" when not (isKeyword "FIRST" (cursor.Peek 1) || isKeyword "NEXT" (cursor.Peek 1)) ->
                         Some(identifierPart cursor)
-                    | Keyword value when isContextualIdentifierKeyword value ->
+                    | Keyword value when value <> "FETCH" && isContextualIdentifierKeyword value ->
                         Some(identifierPart cursor)
                     | _ -> None
             NamedTable(name, alias)
