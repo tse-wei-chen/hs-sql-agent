@@ -57,6 +57,47 @@ public sealed class CoreStrategyTestHarness<TStrategy>
             new SqlExecutionPolicy { QueryTimeoutSeconds = 30 },
             cancellationToken);
 
+    public async Task<string> ExecuteRawQueryAsync(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        string? connectionString = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sql);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        await using var connection = _provider.Connections.Create(connectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw _provider.Errors.Map(ex, "query");
+        }
+
+        var command = SqlCoreFacade.CompileQuery(
+            sql,
+            sourceDialect,
+            DbType,
+            new SqlPlanValidationContext("provider-integration-raw"),
+            new SqlExecutionPlanPolicy());
+
+        try
+        {
+            var execution = await _executor.ExecuteQueryAsync(
+                command,
+                connection,
+                30,
+                cancellationToken);
+            return JsonSerializer.Serialize(execution.Rows);
+        }
+        catch (Exception ex)
+        {
+            throw _provider.Errors.Map(ex, "query");
+        }
+    }
+
     public async Task<string> ExecuteQueryAsync(
         QueryDefinition definition,
         string? connectionString,

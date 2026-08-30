@@ -15,7 +15,6 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);3261;3262</NoWarn>
-    <NoWarn>$(NoWarn);3261;3262</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -35,7 +34,9 @@
 
   <ItemGroup>
     <Compile Include="ClrContracts.fs" />
+    <Compile Include="LegacyDtoContracts.fs" />
     <Compile Include="CompatibilityAstTypes.fs" />
+    <Compile Include="LegacyDtoMapper.fs" />
     <Compile Include="CapabilityContracts.fs" />
     <Compile Include="CapabilityMatrix.fs" />
     <Compile Include="TranslationContracts.fs" />
