@@ -97,7 +97,7 @@ module internal RewriteParser =
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
 
-    let private rememberNodeSpan start (cursor: Cursor) (node: obj) =
+    let private rememberNodeSpan start (cursor: Cursor) (node: obj | null) =
         Parsed.rememberSpan node
             { Start = start
               Length = max 0 (cursor.Current.Start - start) }
