@@ -110,8 +110,7 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldPreserveParsedModuloComparisonAndBooleanOperators()
     {
-        var harness = new CoreStrategyTestHarness<SqliteStrategy>(Strategy);
-        var json = await harness.ExecuteRawQueryAsync(
+        var json = await Strategy.ExecuteRawQueryAsync(
             "SELECT Age % 10 AS remainder, Age >= 30 AS is_senior, " +
             "Age >= 30 AND Active = TRUE AS matches FROM Users ORDER BY Id LIMIT 1",
             SqlAgentToolType.Sqlite,

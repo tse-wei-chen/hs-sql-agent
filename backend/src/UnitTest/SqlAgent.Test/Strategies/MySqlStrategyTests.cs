@@ -160,8 +160,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     public async Task ExecuteQueryAsync_PostgresStringAggBackslashQuoteSeparator_ExecutesOnMySql()
     {
         const string separator = "\\'雪";
-        var harness = new CoreStrategyTestHarness<MySqlStrategy>(Strategy);
-        var json = await harness.ExecuteRawQueryAsync(
+        var json = await Strategy.ExecuteRawQueryAsync(
             "SELECT STRING_AGG(name, '\\''雪') AS names FROM users",
             SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
@@ -184,8 +183,7 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     [Fact]
     public async Task ExecuteQueryAsync_PostgresStringAggCustomSeparator_ExecutesOnMySql()
     {
-        var harness = new CoreStrategyTestHarness<MySqlStrategy>(Strategy);
-        var json = await harness.ExecuteRawQueryAsync(
+        var json = await Strategy.ExecuteRawQueryAsync(
             "SELECT STRING_AGG(name, '|') AS names FROM users",
             SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
