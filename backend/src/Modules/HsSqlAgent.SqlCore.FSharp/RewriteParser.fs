@@ -977,9 +977,11 @@ module internal RewriteParser =
             if acceptKeyword "AS" cursor then Some(identifierPart cursor)
             else
                 match cursor.Current.Kind with
-                | Identifier _
-                | Keyword "KEY"
-                | Keyword "FETCH" -> Some(identifierPart cursor)
+                | Identifier _ -> Some(identifierPart cursor)
+                | Keyword "FETCH" when not (isKeyword "FIRST" (cursor.Peek 1) || isKeyword "NEXT" (cursor.Peek 1)) ->
+                    Some(identifierPart cursor)
+                | Keyword value when isContextualIdentifierKeyword value ->
+                    Some(identifierPart cursor)
                 | _ -> None
         { Expression = expression; Alias = alias }
 
@@ -1023,6 +1025,8 @@ module internal RewriteParser =
             acceptKeyword "AS" cursor |> ignore
             match cursor.Current.Kind with
             | Identifier _ -> DerivedTable(query, identifierPart cursor)
+            | Keyword value when isContextualIdentifierKeyword value ->
+                DerivedTable(query, identifierPart cursor)
             | _ -> fail cursor.Current "Derived table requires an alias"
         else
             let name = identifier cursor
@@ -1031,8 +1035,9 @@ module internal RewriteParser =
                 else
                     match cursor.Current.Kind with
                     | Identifier _ -> Some(identifierPart cursor)
-                    | Keyword "KEY" -> Some(identifierPart cursor)
                     | Keyword "FETCH" when not (isKeyword "FIRST" (cursor.Peek 1) || isKeyword "NEXT" (cursor.Peek 1)) ->
+                        Some(identifierPart cursor)
+                    | Keyword value when isContextualIdentifierKeyword value ->
                         Some(identifierPart cursor)
                     | _ -> None
             NamedTable(name, alias)
