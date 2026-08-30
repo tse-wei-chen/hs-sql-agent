@@ -11,10 +11,11 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// No compiler stage is implemented here: after conversion every path uses the same typestate pipeline.
 module internal RewriteLegacyAstAdapter =
 
-    let private failClosed context (node: obj) =
+    let private failClosed context (node: obj | null) =
         let nodeName =
-            if isNull node then "<null>"
-            else node.GetType().Name
+            match node with
+            | null -> "<null>"
+            | value -> value.GetType().Name
         raise (SqlCompilationException(
             "Unsupported " + context + " at the legacy AST compatibility boundary: " + nodeName))
 
@@ -47,7 +48,10 @@ module internal RewriteLegacyAstAdapter =
         | JsonValueKind.Undefined -> ScalarValue.Null
         | JsonValueKind.True -> ScalarValue.Boolean true
         | JsonValueKind.False -> ScalarValue.Boolean false
-        | JsonValueKind.String -> ScalarValue.Text(json.GetString())
+        | JsonValueKind.String ->
+            match json.GetString() with
+            | null -> ScalarValue.Null
+            | value -> ScalarValue.Text value
         | JsonValueKind.Number ->
             let mutable integer = 0L
             let mutable number = 0M
@@ -105,9 +109,10 @@ module internal RewriteLegacyAstAdapter =
         | _ -> None
 
     let private escapeOf (escape: string | null) =
-        if isNull escape then None
-        elif escape.Length = 1 then Some(LikeEscape.create escape[0])
-        else raise (SqlCompilationException("LIKE ESCAPE requires exactly one character."))
+        match escape with
+        | null -> None
+        | value when value.Length = 1 -> Some(LikeEscape.create value[0])
+        | _ -> raise (SqlCompilationException("LIKE ESCAPE requires exactly one character."))
 
     let private binaryOperator (value: string) =
         match value.ToUpperInvariant() with
