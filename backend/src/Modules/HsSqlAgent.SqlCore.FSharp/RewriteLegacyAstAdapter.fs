@@ -176,7 +176,14 @@ module internal RewriteLegacyAstAdapter =
                 if column.IsOuterReference then ColumnBinding.OuterRowSource else ColumnBinding.LocalRowSource)
 
         | :? HsSqlAgent.SqlCore.Core.Ast.LiteralExpr as literal ->
-            Literal(scalarValueOf literal.Value)
+            match literal.Value with
+            | :? HsSqlAgent.SqlCore.Core.Ast.OrderByOrdinalValue as ordinal ->
+                if ordinal.Position <= 0 then
+                    raise (SqlCompilationException(
+                        "ORDER BY output position must be positive; received " + string ordinal.Position + "."))
+                OrderOrdinal(PositiveRowCount.create ordinal.Position)
+            | _ ->
+                Literal(scalarValueOf literal.Value)
 
         | :? HsSqlAgent.SqlCore.Core.Ast.ColumnExpr as column ->
             wildcardOf column.Name

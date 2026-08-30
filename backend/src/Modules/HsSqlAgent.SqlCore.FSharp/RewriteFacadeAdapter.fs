@@ -210,7 +210,8 @@ module internal RewriteFacadeAdapter =
           Backslash = backslash }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
-        { MySqlPipes =
+        { EnforceDialectSyntax = true
+          MySqlPipes =
             if SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(source, sourceProfile) then
                 RewriteParser.MySqlPipesSemantics.PipesAsConcat
             else

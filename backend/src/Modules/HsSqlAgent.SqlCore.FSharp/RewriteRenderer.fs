@@ -497,7 +497,16 @@ module internal RewriteRenderer =
         let mutable sql = renderSelectBody ctx headNoCtes
         for branch in query.SetOperations do
             let branchNoTail = { branch.Query with OrderBy = []; Limit = None; Offset = None }
-            sql <- sql + " " + setText branch.Operator + " " + renderQueryCore ctx branchNoTail
+            let branchSql =
+                if branchNoTail.Head.Ctes.IsEmpty then
+                    renderQueryCore ctx branchNoTail
+                else
+                    "SELECT * FROM ("
+                    + renderQueryCore ctx branchNoTail
+                    + ") AS "
+                    + renderAlias ctx.Provider
+                        { Value = "_set_branch"; WasQuoted = false; Span = { Start = 0; Length = 0 } }
+            sql <- sql + " " + setText branch.Operator + " " + branchSql
         sql
 
     and private renderOrderClause (ctx: RenderContext) setTail orderBy =

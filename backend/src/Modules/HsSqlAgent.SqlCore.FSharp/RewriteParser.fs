@@ -19,7 +19,8 @@ module internal RewriteParser =
         | PipesAsConcat
 
     type SourceSemantics =
-        { MySqlPipes: MySqlPipesSemantics
+        { EnforceDialectSyntax: bool
+          MySqlPipes: MySqlPipesSemantics
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
@@ -55,7 +56,8 @@ module internal RewriteParser =
               NullsLast = ProvenCapability }
 
         let defaultValue =
-            { MySqlPipes = RejectAmbiguousPipes
+            { EnforceDialectSyntax = false
+              MySqlPipes = RejectAmbiguousPipes
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
@@ -64,7 +66,8 @@ module internal RewriteParser =
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
-            { MySqlPipes = PipesAsConcat
+            { EnforceDialectSyntax = true
+              MySqlPipes = PipesAsConcat
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml

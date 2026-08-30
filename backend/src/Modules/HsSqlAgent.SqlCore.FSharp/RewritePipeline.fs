@@ -24,7 +24,7 @@ module internal RewritePipeline =
     let private finish options parsed =
         parsed
         |> RewriteBinder.bind
-        |> RewriteStages.normalize options.SourceDialect options.TargetRuntime options.SourceSemantics.Expressions.RegexMatch
+        |> RewriteStages.normalize options.SourceSemantics.EnforceDialectSyntax options.SourceDialect options.TargetRuntime options.SourceSemantics.Expressions.RegexMatch
         |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.SourceSemantics.Expressions options.TargetExpressions options.TargetJoins options.TargetOrdering options.TargetDml options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider

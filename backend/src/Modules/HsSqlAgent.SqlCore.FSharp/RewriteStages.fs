@@ -133,6 +133,124 @@ module internal RewriteStages =
             delete.Where |> Option.iter (verifySourceRegexExpr regexProof)
             delete.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
 
+    let private validateRawSourceFunction source expression =
+        match expression with
+        | FunctionCall call ->
+            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            match SqlSourceFunctionRegistry.Find(name) |> Option.ofObj with
+            | Some contract ->
+                match contract.ValidationError(source, call.Arguments.Length) with
+                | null -> ()
+                | message -> compilationError message
+            | None ->
+                let currentKind =
+                    match name with
+                    | "CURRENT_DATE" -> Some SqlCurrentTemporalKind.Date
+                    | "CURRENT_TIME" -> Some SqlCurrentTemporalKind.Time
+                    | "CURRENT_TIMESTAMP" -> Some SqlCurrentTemporalKind.Timestamp
+                    | _ -> None
+                match currentKind with
+                | Some kind ->
+                    match SqlCurrentTemporalCapabilityRules.SourceValidationError(kind, source) with
+                    | null -> ()
+                    | message -> compilationError message
+                | None -> ()
+        | _ -> ()
+
+    let rec private validateRawSourceExpr source expression =
+        validateRawSourceFunction source expression
+        match expression with
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Unary(_, operand) -> validateRawSourceExpr source operand
+        | Binary(_, left, right) ->
+            validateRawSourceExpr source left
+            validateRawSourceExpr source right
+        | Like(value, pattern, _, _, _) ->
+            validateRawSourceExpr source value
+            validateRawSourceExpr source pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (validateRawSourceExpr source)
+        | RegexMatch(value, pattern) ->
+            validateRawSourceExpr source value
+            validateRawSourceExpr source pattern
+        | FunctionCall call ->
+            call.Arguments |> List.iter (validateRawSourceExpr source)
+            call.AggregateOrderBy |> List.iter (fun order -> validateRawSourceExpr source order.Expression)
+        | FilteredAggregate(value, predicate) ->
+            validateRawSourceExpr source value
+            validateRawSourceExpr source predicate
+        | Windowed(value, window) ->
+            validateRawSourceExpr source value
+            window.PartitionBy |> List.iter (validateRawSourceExpr source)
+            window.OrderBy |> List.iter (fun order -> validateRawSourceExpr source order.Expression)
+        | Cast(value, _) | Extract(_, value) ->
+            validateRawSourceExpr source value
+        | SimpleCase(input, branches, fallback) ->
+            validateRawSourceExpr source input
+            branches |> NonEmpty.iter (fun branch ->
+                validateRawSourceExpr source branch.Match
+                validateRawSourceExpr source branch.Result)
+            fallback |> Option.iter (validateRawSourceExpr source)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                validateRawSourceExpr source branch.Condition
+                validateRawSourceExpr source branch.Result)
+            fallback |> Option.iter (validateRawSourceExpr source)
+        | InList(value, items, _) ->
+            validateRawSourceExpr source value
+            items |> NonEmpty.iter (validateRawSourceExpr source)
+        | InSubquery(value, query, _) ->
+            validateRawSourceExpr source value
+            validateRawSourceQuery source query
+        | Between(value, lower, upper, _) ->
+            validateRawSourceExpr source value
+            validateRawSourceExpr source lower
+            validateRawSourceExpr source upper
+        | IsNull(value, _) ->
+            validateRawSourceExpr source value
+        | ScalarSubquery query | Exists(query, _) ->
+            validateRawSourceQuery source query
+
+    and private validateRawSourceTable source table =
+        match table with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) -> validateRawSourceQuery source query
+
+    and private validateRawSourceSelect source select =
+        select.Ctes |> List.iter (fun cte -> validateRawSourceQuery source cte.Query)
+        select.Projection |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
+        select.From |> Option.iter (validateRawSourceTable source)
+        select.Joins |> List.iter (fun join ->
+            validateRawSourceTable source join.Source
+            join.Predicate |> Option.iter (validateRawSourceExpr source))
+        select.Where |> Option.iter (validateRawSourceExpr source)
+        select.GroupBy |> List.iter (validateRawSourceExpr source)
+        select.Having |> Option.iter (validateRawSourceExpr source)
+
+    and private validateRawSourceQuery source query =
+        validateRawSourceSelect source query.Head
+        query.SetOperations |> List.iter (fun branch -> validateRawSourceQuery source branch.Query)
+        query.OrderBy |> List.iter (fun order -> validateRawSourceExpr source order.Expression)
+
+    let private validateRawSourceDocument source document =
+        match document.Statement with
+        | QueryStatement query -> validateRawSourceQuery source query
+        | InsertStatement insert ->
+            match insert.Input with
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (validateRawSourceExpr source))
+            | QuerySource query -> validateRawSourceQuery source query
+            | DefaultValues -> ()
+            insert.Returning |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems |> NonEmpty.iter (fun item -> validateRawSourceExpr source item.Value)
+            update.From |> List.iter (validateRawSourceTable source)
+            update.Where |> Option.iter (validateRawSourceExpr source)
+            update.Returning |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (validateRawSourceTable source)
+            delete.Where |> Option.iter (validateRawSourceExpr source)
+            delete.Returning |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
+
     let private emptyFunction name arguments =
         { FunctionCall.Name = FunctionName.create name
           Arguments = arguments
@@ -252,11 +370,6 @@ module internal RewriteStages =
             | Some contract -> contract
             | None -> invalidOp ("Source function contract '" + sourceName + "' was unexpectedly absent.")
 
-        if not (isNull sourceContract) then
-            match (requireSourceContract ()).ValidationError(sourceTool, arguments.Length) with
-            | null -> ()
-            | message -> compilationError message
-
         let currentKind =
             match sourceName with
             | "CURRENT_DATE" -> Some SqlCurrentTemporalKind.Date
@@ -266,18 +379,15 @@ module internal RewriteStages =
 
         match currentKind with
         | Some kind ->
-            match SqlCurrentTemporalCapabilityRules.SourceValidationError(kind, sourceTool) with
-            | null ->
-                let canonical =
-                    match kind with
-                    | SqlCurrentTemporalKind.Date -> "CORE_CURRENT_DATE"
-                    | SqlCurrentTemporalKind.Time -> "CORE_CURRENT_TIME"
-                    | SqlCurrentTemporalKind.Timestamp -> "CORE_CURRENT_TIMESTAMP"
-                    | value -> compilationError ("Unsupported current temporal kind '" + string value + "'.")
-                if not arguments.IsEmpty then
-                    compilationError (sourceName + " does not accept arguments.")
-                canonicalCall call canonical []
-            | message -> compilationError message
+            let canonical =
+                match kind with
+                | SqlCurrentTemporalKind.Date -> "CORE_CURRENT_DATE"
+                | SqlCurrentTemporalKind.Time -> "CORE_CURRENT_TIME"
+                | SqlCurrentTemporalKind.Timestamp -> "CORE_CURRENT_TIMESTAMP"
+                | value -> compilationError ("Unsupported current temporal kind '" + string value + "'.")
+            if not arguments.IsEmpty then
+                compilationError (sourceName + " does not accept arguments.")
+            canonicalCall call canonical []
         | None when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) ->
             if arguments.Length <> 1 then
                 compilationError (sourceName + " requires exactly 1 argument.")
@@ -565,10 +675,12 @@ module internal RewriteStages =
                         Returning = normalizeReturning source target delete.Returning }
         { document with Statement = statement }
 
-    let normalize sourceDialect targetRuntime sourceRegexProof bound =
+    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof bound =
         Transition.normalize
             (fun document ->
                 verifySourceRegexDocument sourceRegexProof document
+                if enforceDialectSyntax then
+                    validateRawSourceDocument (sourceProvider sourceDialect) document
                 normalizeDocument sourceDialect targetRuntime document)
             bound
 
@@ -1536,8 +1648,378 @@ module internal RewriteStages =
                     validateFirebirdConflict proofs insert conflict
         | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
 
+    type private QueryPosition =
+        | RootQuery
+        | InsertSelectSource
+        | CteDefinition
+        | DerivedTablePosition
+        | SetBranchPosition
+        | ScalarSubqueryPosition
+
+    let private cteScopeError detail =
+        raise (SqlCompilationException(
+            "SQL capability 'select.cte_scope' is not supported by the native SQL backend: " + detail + "."))
+
+    let private nestedCteSupported targetRuntime =
+        SqlNestedCteCapabilityRules.SupportsTarget(targetProvider targetRuntime)
+
+    let private validateCtePlacement targetRuntime position ctes =
+        if not ctes.IsEmpty && not (nestedCteSupported targetRuntime) then
+            match position with
+            | RootQuery | InsertSelectSource -> ()
+            | CteDefinition ->
+                cteScopeError (
+                    "provider " + string (targetProvider targetRuntime)
+                    + " has no declared portable nested-WITH-inside-a-CTE-definition contract")
+            | DerivedTablePosition ->
+                cteScopeError (
+                    "provider " + string (targetProvider targetRuntime)
+                    + " has no declared portable WITH-in-derived-table lowering contract")
+            | SetBranchPosition ->
+                cteScopeError (
+                    "provider " + string (targetProvider targetRuntime)
+                    + " has no declared portable WITH-in-set-operation-branch lowering contract")
+            | ScalarSubqueryPosition ->
+                cteScopeError (
+                    "provider " + string (targetProvider targetRuntime)
+                    + " has no declared portable WITH-at-the-root-of-a-scalar/EXISTS-subquery contract")
+
+    let rec private validateNestedCteExpr targetRuntime expression =
+        match expression with
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Unary(_, operand) -> validateNestedCteExpr targetRuntime operand
+        | Binary(_, left, right) ->
+            validateNestedCteExpr targetRuntime left
+            validateNestedCteExpr targetRuntime right
+        | Like(value, pattern, _, _, _) ->
+            validateNestedCteExpr targetRuntime value
+            validateNestedCteExpr targetRuntime pattern
+        | RawRegexCall(arguments, _) -> arguments |> List.iter (validateNestedCteExpr targetRuntime)
+        | RegexMatch(value, pattern) ->
+            validateNestedCteExpr targetRuntime value
+            validateNestedCteExpr targetRuntime pattern
+        | FunctionCall call ->
+            call.Arguments |> List.iter (validateNestedCteExpr targetRuntime)
+            call.AggregateOrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
+        | FilteredAggregate(value, predicate) ->
+            validateNestedCteExpr targetRuntime value
+            validateNestedCteExpr targetRuntime predicate
+        | Windowed(value, window) ->
+            validateNestedCteExpr targetRuntime value
+            window.PartitionBy |> List.iter (validateNestedCteExpr targetRuntime)
+            window.OrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
+        | Cast(value, _) | Extract(_, value) -> validateNestedCteExpr targetRuntime value
+        | SimpleCase(input, branches, fallback) ->
+            validateNestedCteExpr targetRuntime input
+            branches |> NonEmpty.iter (fun branch ->
+                validateNestedCteExpr targetRuntime branch.Match
+                validateNestedCteExpr targetRuntime branch.Result)
+            fallback |> Option.iter (validateNestedCteExpr targetRuntime)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                validateNestedCteExpr targetRuntime branch.Condition
+                validateNestedCteExpr targetRuntime branch.Result)
+            fallback |> Option.iter (validateNestedCteExpr targetRuntime)
+        | InList(value, items, _) ->
+            validateNestedCteExpr targetRuntime value
+            items |> NonEmpty.iter (validateNestedCteExpr targetRuntime)
+        | InSubquery(value, query, _) ->
+            validateNestedCteExpr targetRuntime value
+            validateNestedCteQuery targetRuntime ScalarSubqueryPosition query
+        | Between(value, lower, upper, _) ->
+            validateNestedCteExpr targetRuntime value
+            validateNestedCteExpr targetRuntime lower
+            validateNestedCteExpr targetRuntime upper
+        | IsNull(value, _) -> validateNestedCteExpr targetRuntime value
+        | ScalarSubquery query | Exists(query, _) ->
+            validateNestedCteQuery targetRuntime ScalarSubqueryPosition query
+
+    and private validateNestedCteTable targetRuntime source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) ->
+            validateNestedCteQuery targetRuntime DerivedTablePosition query
+
+    and private validateNestedCteSelect targetRuntime position select =
+        validateCtePlacement targetRuntime position select.Ctes
+        select.Ctes |> List.iter (fun cte ->
+            validateNestedCteQuery targetRuntime CteDefinition cte.Query)
+        select.From |> Option.iter (validateNestedCteTable targetRuntime)
+        select.Joins |> List.iter (fun join ->
+            validateNestedCteTable targetRuntime join.Source
+            join.Predicate |> Option.iter (validateNestedCteExpr targetRuntime))
+        select.Projection |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
+        select.Where |> Option.iter (validateNestedCteExpr targetRuntime)
+        select.GroupBy |> List.iter (validateNestedCteExpr targetRuntime)
+        select.Having |> Option.iter (validateNestedCteExpr targetRuntime)
+
+    and private validateNestedCteQuery targetRuntime position query =
+        validateNestedCteSelect targetRuntime position query.Head
+        query.SetOperations |> List.iter (fun branch ->
+            validateNestedCteQuery targetRuntime SetBranchPosition branch.Query)
+        query.OrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
+
+    let private validateNestedCteDocument targetRuntime document =
+        match document.Statement with
+        | QueryStatement query -> validateNestedCteQuery targetRuntime RootQuery query
+        | InsertStatement insert ->
+            match insert.Input with
+            | QuerySource query -> validateNestedCteQuery targetRuntime InsertSelectSource query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (validateNestedCteExpr targetRuntime))
+            | DefaultValues -> ()
+            insert.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems |> NonEmpty.iter (fun item -> validateNestedCteExpr targetRuntime item.Value)
+            update.From |> List.iter (validateNestedCteTable targetRuntime)
+            update.Where |> Option.iter (validateNestedCteExpr targetRuntime)
+            update.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (validateNestedCteTable targetRuntime)
+            delete.Where |> Option.iter (validateNestedCteExpr targetRuntime)
+            delete.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
+
+    type private ClauseContext =
+        | ProjectionClause
+        | PredicateClause
+        | GroupByClause
+        | HavingClause
+        | OrderByClause
+        | WindowSpecificationClause
+        | AssignmentClause
+        | InsertValueClause
+
+    let private clauseName = function
+        | ProjectionClause -> "SELECT"
+        | PredicateClause -> "WHERE/ON/FILTER"
+        | GroupByClause -> "GROUP BY"
+        | HavingClause -> "HAVING"
+        | OrderByClause -> "ORDER BY"
+        | WindowSpecificationClause -> "window specification"
+        | AssignmentClause -> "UPDATE SET"
+        | InsertValueClause -> "INSERT VALUES"
+
+    let rec private isDefinitelyBoolean targetRuntime expression =
+        match expression with
+        | Literal(ScalarValue.Boolean _) -> true
+        | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ -> true
+        | RegexMatch _ ->
+            SqlRegexCapabilityRules.SupportsTarget(targetProvider targetRuntime, null)
+        | Unary(UnaryOperator.Not, _) -> true
+        | Binary(operator, _, _) ->
+            match operator with
+            | BinaryOperator.Equal | BinaryOperator.NotEqual
+            | BinaryOperator.GreaterThan | BinaryOperator.LessThan
+            | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
+            | BinaryOperator.And | BinaryOperator.Or -> true
+            | _ -> false
+        | SimpleCase(_, branches, fallback) ->
+            let values =
+                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
+                @ (fallback |> Option.toList)
+            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
+        | SearchedCase(branches, fallback) ->
+            let values =
+                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
+                @ (fallback |> Option.toList)
+            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
+        | _ -> false
+
+    let private validateBooleanScalar targetRuntime capability expression =
+        if isDefinitelyBoolean targetRuntime expression then
+            match SqlScalarBooleanCapabilityRules.TargetValidationError(targetProvider targetRuntime, capability) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+
+    let private canonicalFunctionKind (call: FunctionCall) =
+        let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        name, SqlCanonicalFunctionRegistry.IsAggregate(name), SqlCanonicalFunctionRegistry.IsWindow(name)
+
+    let rec private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
+        match context with
+        | ProjectionClause -> validateBooleanScalar targetRuntime "expression.boolean_select" expression
+        | AssignmentClause -> validateBooleanScalar targetRuntime "dml.update.boolean_assignment" expression
+        | InsertValueClause -> validateBooleanScalar targetRuntime "dml.insert.boolean_value" expression
+        | _ -> ()
+
+        match expression with
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Unary(_, operand) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow operand
+        | Binary(_, left, right) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow left
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow right
+        | Like(value, pattern, _, _, _) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
+        | RegexMatch(value, pattern) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
+        | FunctionCall call ->
+            let name, isAggregate, isWindowFunction = canonicalFunctionKind call
+            if isAggregate then
+                let allowed =
+                    if withinWindow then
+                        context = ProjectionClause || context = OrderByClause
+                    else
+                        context = ProjectionClause
+                        || context = HavingClause
+                        || context = OrderByClause
+                        || (context = WindowSpecificationClause
+                            && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(targetProvider targetRuntime))
+                if not allowed then
+                    raise (SqlCompilationException(
+                        "Aggregate function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
+                if insideSetFunction then
+                    raise (SqlCompilationException(
+                        "Aggregate function '" + name + "' cannot be nested inside another aggregate or window function."))
+            if isWindowFunction then
+                if context <> ProjectionClause && context <> OrderByClause then
+                    raise (SqlCompilationException(
+                        "Window function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
+                if insideSetFunction then
+                    raise (SqlCompilationException(
+                        "Window function '" + name + "' cannot be nested inside another aggregate or window function."))
+            let nested = insideSetFunction || isAggregate || isWindowFunction
+            call.Arguments |> List.iter (validateSemanticExpr targetRuntime context nested false)
+            call.AggregateOrderBy
+            |> List.iter (fun order ->
+                validateSemanticExpr targetRuntime OrderByClause nested false order.Expression)
+        | FilteredAggregate(value, predicate) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+            validateSemanticExpr targetRuntime PredicateClause false false predicate
+        | Windowed(value, window) ->
+            if context <> ProjectionClause && context <> OrderByClause then
+                raise (SqlCompilationException(
+                    "Window expressions are not allowed in SQL clause '" + clauseName context + "'."))
+            if insideSetFunction then
+                raise (SqlCompilationException("Window functions cannot be nested inside aggregate or window functions."))
+            validateSemanticExpr targetRuntime context false true value
+            window.PartitionBy
+            |> List.iter (validateSemanticExpr targetRuntime WindowSpecificationClause false false)
+            window.OrderBy
+            |> List.iter (fun order ->
+                validateSemanticExpr targetRuntime WindowSpecificationClause false false order.Expression)
+        | Cast(value, _) | Extract(_, value) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+        | SimpleCase(input, branches, fallback) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow input
+            branches |> NonEmpty.iter (fun branch ->
+                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Match
+                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Result)
+            fallback |> Option.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                validateSemanticExpr targetRuntime PredicateClause false false branch.Condition
+                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Result)
+            fallback |> Option.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
+        | InList(value, items, _) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+            items |> NonEmpty.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
+        | InSubquery(value, query, _) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+            validateSemanticQuery targetRuntime query
+        | Between(value, lower, upper, _) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow lower
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow upper
+        | IsNull(value, _) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
+        | ScalarSubquery query | Exists(query, _) ->
+            validateSemanticQuery targetRuntime query
+
+    and private validateSemanticTable targetRuntime source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) -> validateSemanticQuery targetRuntime query
+
+    and private validateSemanticSelect targetRuntime select =
+        select.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
+        select.From |> Option.iter (validateSemanticTable targetRuntime)
+        select.Joins |> List.iter (fun join ->
+            validateSemanticTable targetRuntime join.Source
+            join.Predicate
+            |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false))
+        select.Projection
+        |> List.iter (fun item ->
+            validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
+        select.Where
+        |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false)
+        select.GroupBy
+        |> List.iter (validateSemanticExpr targetRuntime GroupByClause false false)
+        select.Having
+        |> Option.iter (validateSemanticExpr targetRuntime HavingClause false false)
+
+    and private validateSemanticQuery targetRuntime query =
+        validateSemanticSelect targetRuntime query.Head
+        let expectedWidth =
+            if query.Head.Projection |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then None
+            else Some query.Head.Projection.Length
+        query.SetOperations
+        |> List.iter (fun branch ->
+            validateSemanticQuery targetRuntime branch.Query
+            match expectedWidth with
+            | Some expected ->
+                let actual =
+                    if branch.Query.Head.Projection
+                       |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then None
+                    else Some branch.Query.Head.Projection.Length
+                match actual with
+                | Some value when value <> expected ->
+                    raise (SqlCompilationException(
+                        "Set operation projection width " + string value
+                        + " does not match head projection width " + string expected + "."))
+                | _ -> ()
+            | None -> ())
+        query.OrderBy
+        |> List.iter (fun order ->
+            match order.Expression with
+            | OrderOrdinal ordinal when PositiveRowCount.value ordinal > query.Head.Projection.Length ->
+                raise (SqlCompilationException(
+                    "ORDER BY output position " + string (PositiveRowCount.value ordinal)
+                    + " exceeds projection width " + string query.Head.Projection.Length + "."))
+            | _ -> ()
+            validateSemanticExpr targetRuntime OrderByClause false false order.Expression)
+
+    let private validateSemanticDocument targetRuntime document =
+        match document.Statement with
+        | QueryStatement query -> validateSemanticQuery targetRuntime query
+        | InsertStatement insert ->
+            match insert.Input with
+            | Values rows ->
+                rows
+                |> NonEmpty.iter (NonEmpty.iter (
+                    validateSemanticExpr targetRuntime InsertValueClause false false))
+            | QuerySource query -> validateSemanticQuery targetRuntime query
+            | DefaultValues -> ()
+            insert.Returning
+            |> List.iter (fun item ->
+                validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems
+            |> NonEmpty.iter (fun item ->
+                validateSemanticExpr targetRuntime AssignmentClause false false item.Value)
+            update.From |> List.iter (validateSemanticTable targetRuntime)
+            update.Where
+            |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false)
+            update.Returning
+            |> List.iter (fun item ->
+                validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (validateSemanticTable targetRuntime)
+            delete.Where
+            |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false)
+            delete.Returning
+            |> List.iter (fun item ->
+                validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
+
     let validate allowedTables targetRuntime sourceExpressions targetExpressions targetJoins targetOrdering targetDml conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
+            validateNestedCteDocument targetRuntime document
+            validateSemanticDocument targetRuntime document
             proveSourceFilterDocument sourceExpressions document
             proveSourceFilterDocument targetExpressions document
             let validated = validateDocument allowedTables document
