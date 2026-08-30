@@ -187,7 +187,7 @@ type SqlCoreInspection private () =
         ArgumentNullException.ThrowIfNull(sql)
 
         RewriteFacadeAdapter.parseSourceValidated sql sourceDialect null
-        |> RewriteBinder.bind
+        |> RewriteBinder.bind sourceDialect
         |> Bound.value
         |> Inspection.inspectDocument
 
@@ -204,6 +204,6 @@ type SqlCoreInspection private () =
                 RewriteLegacyAstAdapter.toParsed parsed.Statement
 
         native
-        |> RewriteBinder.bind
+        |> RewriteBinder.bind parsed.SourceDialect
         |> Bound.value
         |> Inspection.inspectDocument

@@ -1,26 +1,58 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 module internal RewriteBinder =
 
     type private SourceBinding =
-        { Qualifiers: string list
-          Alias: string option }
+        { QualifierKeys: string list
+          Alias: string option
+          AliasKey: string option }
 
     type private Scope =
         { Id: int
           Parent: Scope option
           Sources: SourceBinding list
-          VisibleCtes: string list }
+          VisibleCtes: string list
+          Dialect: SqlAgentToolType }
 
     let private identifierParts = Identifier.parts
     let private identifierText = Identifier.text
-    let private equalsName (left: string) (right: string) = StringComparer.OrdinalIgnoreCase.Equals(left, right)
-    let private containsQualifier qualifier (source: SourceBinding) = source.Qualifiers |> List.exists (equalsName qualifier)
-    let private containsName name values = values |> List.exists (equalsName name)
+
+    let private canonicalPart dialect (part: IdentifierPart) =
+        if part.WasQuoted then
+            match dialect with
+            | SqlAgentToolType.MySQL
+            | SqlAgentToolType.MsSqlServer
+            | SqlAgentToolType.Sqlite -> part.Value.ToUpperInvariant()
+            | _ -> part.Value
+        else
+            match dialect with
+            | SqlAgentToolType.Postgres -> part.Value.ToLowerInvariant()
+            | SqlAgentToolType.Oracle
+            | SqlAgentToolType.Firebird -> part.Value.ToUpperInvariant()
+            | SqlAgentToolType.MySQL
+            | SqlAgentToolType.MsSqlServer
+            | SqlAgentToolType.Sqlite -> part.Value.ToUpperInvariant()
+            | _ -> part.Value
+
+    let private partsKey dialect parts =
+        parts
+        |> List.map (fun part ->
+            let value = canonicalPart dialect part
+            string value.Length + ":" + value + ";")
+        |> String.concat String.Empty
+
+    let private identifierKey dialect identifier =
+        identifier |> identifierParts |> partsKey dialect
+
+    let private partKey dialect part = partsKey dialect [ part ]
+    let private equivalentPart dialect left right = StringComparer.Ordinal.Equals(partKey dialect left, partKey dialect right)
+    let private containsQualifier qualifierKey (source: SourceBinding) = source.QualifierKeys |> List.contains qualifierKey
+    let private containsName nameKey values = values |> List.contains nameKey
 
     let private localQualifierExists qualifier (scope: Scope) =
         scope.Sources |> List.exists (containsQualifier qualifier)
@@ -39,32 +71,42 @@ module internal RewriteBinder =
 
     let private scopeId parentScope = parentScope |> Option.map (fun (scope: Scope) -> scope.Id + 1) |> Option.defaultValue 0
 
-    let private sourceBinding (source: TableSource) : SourceBinding =
+    let private sourceBinding dialect (source: TableSource) : SourceBinding =
         match source with
         | NamedTable(name, alias) | CteTable(name, alias) ->
             let parts = identifierParts name
-            let tableTail = parts |> List.last |> fun part -> part.Value
-            let fullName = identifierText name
-            let qualifiers =
-                match alias with
-                | Some value -> [ value.Value ]
-                | None when equalsName tableTail fullName -> [ tableTail ]
-                | None -> [ tableTail; fullName ]
-            { Qualifiers = qualifiers; Alias = alias |> Option.map (fun value -> value.Value) }
-        | DerivedTable(_, alias) -> { Qualifiers = [ alias.Value ]; Alias = Some alias.Value }
+            let tailKey = parts |> List.last |> partKey dialect
+            let fullKey = identifierKey dialect name
+            let aliasKey = alias |> Option.map (partKey dialect)
+            let qualifierKeys =
+                match aliasKey with
+                | Some key -> [ key ]
+                | None when StringComparer.Ordinal.Equals(tailKey, fullKey) -> [ tailKey ]
+                | None -> [ tailKey; fullKey ]
+            { QualifierKeys = qualifierKeys
+              Alias = alias |> Option.map (fun value -> value.Value)
+              AliasKey = aliasKey }
+        | DerivedTable(_, alias) ->
+            { QualifierKeys = [ partKey dialect alias ]
+              Alias = Some alias.Value
+              AliasKey = Some(partKey dialect alias) }
 
     let private ensureDistinctAliases (scope: Scope) =
-        let aliases = scope.Sources |> List.choose (fun source -> source.Alias)
+        let aliases =
+            scope.Sources
+            |> List.choose (fun source ->
+                source.AliasKey |> Option.map (fun key -> key, source.Alias |> Option.defaultValue key))
         aliases
-        |> List.iteri (fun index alias ->
+        |> List.iteri (fun index (aliasKey, aliasDisplay) ->
             aliases
             |> List.skip (index + 1)
-            |> List.tryFind (equalsName alias)
-            |> Option.iter (fun _ -> invalidOp ("Duplicate table alias '" + alias + "' in SQL scope " + string scope.Id + ".")))
+            |> List.tryFind (fun (candidateKey, _) -> StringComparer.Ordinal.Equals(candidateKey, aliasKey))
+            |> Option.iter (fun _ ->
+                invalidOp ("Duplicate table alias '" + aliasDisplay + "' in SQL scope " + string scope.Id + ".")))
 
-    let private ensureQualifier scope qualifier context =
-        if not (localQualifierExists qualifier scope || ancestorQualifierExists qualifier scope) then
-            invalidOp (context + " references unknown table/alias qualifier '" + qualifier + "'.")
+    let private ensureQualifier scope qualifierKey qualifierDisplay context =
+        if not (localQualifierExists qualifierKey scope || ancestorQualifierExists qualifierKey scope) then
+            invalidOp (context + " references unknown table/alias qualifier '" + qualifierDisplay + "'.")
 
     let private bindColumn (scope: Scope) (identifier: Identifier) : Expr =
         match identifierParts identifier with
@@ -76,11 +118,13 @@ module internal RewriteBinder =
         | [ _ ] ->
             Column identifier
         | parts ->
-            let qualifier = parts |> List.take (parts.Length - 1) |> List.map (fun part -> part.Value) |> String.concat "."
+            let qualifierParts = parts |> List.take (parts.Length - 1)
+            let qualifier = qualifierParts |> List.map (fun part -> part.Value) |> String.concat "."
+            let qualifierKey = partsKey scope.Dialect qualifierParts
             let context = "Column '" + identifierText identifier + "'"
-            if localQualifierExists qualifier scope then
+            if localQualifierExists qualifierKey scope then
                 BoundColumn(identifier, ColumnBinding.LocalRowSource)
-            elif ancestorQualifierExists qualifier scope then
+            elif ancestorQualifierExists qualifierKey scope then
                 BoundColumn(identifier, ColumnBinding.OuterRowSource)
             else
                 invalidOp (context + " references unknown table/alias qualifier '" + qualifier + "'.")
@@ -91,7 +135,11 @@ module internal RewriteBinder =
         | BoundColumn _ -> expression
         | Wildcard(Some identifier) ->
             let qualifier = identifierText identifier
-            ensureQualifier scope qualifier ("Wildcard '" + qualifier + ".*'")
+            ensureQualifier
+                scope
+                (identifierKey scope.Dialect identifier)
+                qualifier
+                ("Wildcard '" + qualifier + ".*'")
             expression
         | Wildcard None | OrderOrdinal _ | Literal _ | Interval _ -> expression
         | Unary(op, operand) -> Unary(op, bindExpr scope operand)
@@ -116,11 +164,11 @@ module internal RewriteBinder =
         | SearchedCase(branches, fallback) ->
             SearchedCase(branches |> NonEmpty.map (fun (branch: SearchedCaseBranch) -> { Condition = bindExpr scope branch.Condition; Result = bindExpr scope branch.Result }), fallback |> Option.map (bindExpr scope))
         | InList(value, items, negated) -> InList(bindExpr scope value, items |> NonEmpty.map (bindExpr scope), negated)
-        | InSubquery(value, query, negated) -> InSubquery(bindExpr scope value, bindQuery (Some scope) scope.VisibleCtes query, negated)
+        | InSubquery(value, query, negated) -> InSubquery(bindExpr scope value, bindQuery scope.Dialect (Some scope) scope.VisibleCtes query, negated)
         | Between(value, lower, upper, negated) -> Between(bindExpr scope value, bindExpr scope lower, bindExpr scope upper, negated)
         | IsNull(value, negated) -> IsNull(bindExpr scope value, negated)
-        | ScalarSubquery query -> ScalarSubquery(bindQuery (Some scope) scope.VisibleCtes query)
-        | Exists(query, negated) -> Exists(bindQuery (Some scope) scope.VisibleCtes query, negated)
+        | ScalarSubquery query -> ScalarSubquery(bindQuery scope.Dialect (Some scope) scope.VisibleCtes query)
+        | Exists(query, negated) -> Exists(bindQuery scope.Dialect (Some scope) scope.VisibleCtes query, negated)
 
     and private bindOrderBy (scope: Scope) projectionAliases (orderBy: OrderBy) : OrderBy =
         let expression =
@@ -130,7 +178,7 @@ module internal RewriteBinder =
                 let name = reference.Value
                 let matches =
                     projectionAliases
-                    |> List.filter (fun (candidate: IdentifierPart) -> equalsName candidate.Value name)
+                    |> List.filter (fun (candidate: IdentifierPart) -> equivalentPart scope.Dialect candidate reference)
                 match matches with
                 | [ candidate ] when candidate.PreserveSpelling ->
                     BoundColumn(Identifier.create [ candidate ], ColumnBinding.ProjectionAlias)
@@ -149,24 +197,24 @@ module internal RewriteBinder =
             PartitionBy = window.PartitionBy |> List.map (bindExpr scope)
             OrderBy = window.OrderBy |> List.map (bindOrderBy scope []) }
 
-    and private bindTableSource (parentScope: Scope option) visibleCtes (source: TableSource) : TableSource =
+    and private bindTableSource dialect (parentScope: Scope option) visibleCtes (source: TableSource) : TableSource =
         match source with
-        | NamedTable(name, alias) when containsName (identifierText name) visibleCtes -> CteTable(name, alias)
+        | NamedTable(name, alias) when containsName (identifierKey dialect name) visibleCtes -> CteTable(name, alias)
         | NamedTable _ | CteTable _ -> source
-        | DerivedTable(query, alias) -> DerivedTable(bindQuery parentScope visibleCtes query, alias)
+        | DerivedTable(query, alias) -> DerivedTable(bindQuery dialect parentScope visibleCtes query, alias)
 
-    and private bindCtes inheritedCtes (ctes: Cte list) =
+    and private bindCtes dialect inheritedCtes (ctes: Cte list) =
         let mutable visible = inheritedCtes
         let bound = ResizeArray<Cte>()
         for cte in ctes do
-            let query = bindQuery None visible cte.Query
+            let query = bindQuery dialect None visible cte.Query
             bound.Add { cte with Query = query }
-            visible <- visible @ [ cte.Name.Value ]
+            visible <- visible @ [ partKey dialect cte.Name ]
         bound |> Seq.toList, visible
 
     and private bindJoin (scope: Scope) (join: Join) : Join * Scope =
-        let source = bindTableSource (Some scope) scope.VisibleCtes join.Source
-        let extended = { scope with Sources = scope.Sources @ [ sourceBinding source ] }
+        let source = bindTableSource scope.Dialect (Some scope) scope.VisibleCtes join.Source
+        let extended = { scope with Sources = scope.Sources @ [ sourceBinding scope.Dialect source ] }
         ensureDistinctAliases extended
         let boundJoin =
             match join with
@@ -174,11 +222,16 @@ module internal RewriteBinder =
             | OnJoin(kind, _, predicate) -> OnJoin(kind, source, bindExpr extended predicate)
         boundJoin, extended
 
-    and private bindSelect parentScope inheritedCtes (select: Select) : Select * Scope * string list =
-        let ctes, visibleCtes = bindCtes inheritedCtes select.Ctes
-        let from = select.From |> Option.map (bindTableSource parentScope visibleCtes)
-        let initialSources = from |> Option.map sourceBinding |> Option.toList
-        let initialScope : Scope = { Id = scopeId parentScope; Parent = parentScope; Sources = initialSources; VisibleCtes = visibleCtes }
+    and private bindSelect dialect parentScope inheritedCtes (select: Select) : Select * Scope * string list =
+        let ctes, visibleCtes = bindCtes dialect inheritedCtes select.Ctes
+        let from = select.From |> Option.map (bindTableSource dialect parentScope visibleCtes)
+        let initialSources = from |> Option.map (sourceBinding dialect) |> Option.toList
+        let initialScope : Scope =
+            { Id = scopeId parentScope
+              Parent = parentScope
+              Sources = initialSources
+              VisibleCtes = visibleCtes
+              Dialect = dialect }
         ensureDistinctAliases initialScope
         let joins, scope =
             (([], initialScope), select.Joins)
@@ -195,9 +248,12 @@ module internal RewriteBinder =
             GroupBy = select.GroupBy |> List.map (bindExpr scope)
             Having = select.Having |> Option.map (bindExpr scope) }, scope, visibleCtes
 
-    and private bindQuery parentScope inheritedCtes (query: Query) : Query =
-        let head, headScope, visibleCtes = bindSelect parentScope inheritedCtes query.Head
-        let setOperations = query.SetOperations |> List.map (fun (branch: SetBranch) -> { branch with Query = bindQuery parentScope visibleCtes branch.Query })
+    and private bindQuery dialect parentScope inheritedCtes (query: Query) : Query =
+        let head, headScope, visibleCtes = bindSelect dialect parentScope inheritedCtes query.Head
+        let setOperations =
+            query.SetOperations
+            |> List.map (fun (branch: SetBranch) ->
+                { branch with Query = bindQuery dialect parentScope visibleCtes branch.Query })
         let explicitAliases =
             head.Projection
             |> List.choose (fun item -> item.Alias)
@@ -219,8 +275,8 @@ module internal RewriteBinder =
     let private extendScopeWithSources (scope: Scope) sources =
         (([], scope), sources)
         ||> List.fold (fun (bound: TableSource list, current: Scope) source ->
-            let value = bindTableSource None current.VisibleCtes source
-            let next = { current with Sources = current.Sources @ [ sourceBinding value ] }
+            let value = bindTableSource current.Dialect None current.VisibleCtes source
+            let next = { current with Sources = current.Sources @ [ sourceBinding current.Dialect value ] }
             ensureDistinctAliases next
             bound @ [ value ], next)
 
@@ -239,21 +295,28 @@ module internal RewriteBinder =
             | ReturningExpression(expression, alias) ->
                 ReturningExpression(bindExpr scope expression, alias))
 
-    let private bindDocument (document: Document) : Document =
+    let private bindDocument dialect (document: Document) : Document =
         let statement =
             match document.Statement with
-            | QueryStatement query -> QueryStatement(bindQuery None [] query)
+            | QueryStatement query -> QueryStatement(bindQuery dialect None [] query)
             | InsertStatement insert ->
-                let emptyScope : Scope = { Id = 0; Parent = None; Sources = []; VisibleCtes = [] }
-                let targetScope = { emptyScope with Sources = [ sourceBinding (NamedTable(insert.Target, None)) ] }
+                let emptyScope : Scope =
+                    { Id = 0; Parent = None; Sources = []; VisibleCtes = []; Dialect = dialect }
+                let targetScope =
+                    { emptyScope with Sources = [ sourceBinding dialect (NamedTable(insert.Target, None)) ] }
                 let input =
                     match insert.Input with
                     | Values rows -> Values(rows |> NonEmpty.map (NonEmpty.map (bindExpr emptyScope)))
-                    | QuerySource query -> QuerySource(bindQuery None [] query)
+                    | QuerySource query -> QuerySource(bindQuery dialect None [] query)
                     | DefaultValues -> DefaultValues
                 InsertStatement { insert with Input = input; Returning = bindReturning targetScope insert.Returning }
             | UpdateStatement update ->
-                let baseScope : Scope = { Id = 0; Parent = None; Sources = [ sourceBinding (NamedTable(update.Target, None)) ]; VisibleCtes = [] }
+                let baseScope : Scope =
+                    { Id = 0
+                      Parent = None
+                      Sources = [ sourceBinding dialect (NamedTable(update.Target, None)) ]
+                      VisibleCtes = []
+                      Dialect = dialect }
                 let from, scope = extendScopeWithSources baseScope update.From
                 UpdateStatement
                     { update with
@@ -262,7 +325,12 @@ module internal RewriteBinder =
                         Where = update.Where |> Option.map (bindExpr scope)
                         Returning = bindReturning scope update.Returning }
             | DeleteStatement delete ->
-                let baseScope : Scope = { Id = 0; Parent = None; Sources = [ sourceBinding (NamedTable(delete.Target, None)) ]; VisibleCtes = [] }
+                let baseScope : Scope =
+                    { Id = 0
+                      Parent = None
+                      Sources = [ sourceBinding dialect (NamedTable(delete.Target, None)) ]
+                      VisibleCtes = []
+                      Dialect = dialect }
                 let usingSources, scope = extendScopeWithSources baseScope delete.Using
                 DeleteStatement
                     { delete with
@@ -271,4 +339,4 @@ module internal RewriteBinder =
                         Returning = bindReturning scope delete.Returning }
         { document with Statement = statement }
 
-    let bind parsed = Transition.bind bindDocument parsed
+    let bind sourceDialect parsed = Transition.bind (bindDocument sourceDialect) parsed

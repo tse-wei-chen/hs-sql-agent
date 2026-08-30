@@ -1,5 +1,6 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
+open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.RewriteParser
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
@@ -23,9 +24,17 @@ module internal RewritePipeline =
           Policy: ExecutionPolicy
           AllowedTables: string list option }
 
+    let private sourceProvider = function
+        | SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
+        | SourceDialect.MySql -> SqlAgentToolType.MySQL
+        | SourceDialect.SqlServer -> SqlAgentToolType.MsSqlServer
+        | SourceDialect.SQLite -> SqlAgentToolType.Sqlite
+        | SourceDialect.Oracle -> SqlAgentToolType.Oracle
+        | SourceDialect.Firebird -> SqlAgentToolType.Firebird
+
     let private finish options parsed =
         parsed
-        |> RewriteBinder.bind
+        |> RewriteBinder.bind (sourceProvider options.SourceDialect)
         |> RewriteStages.normalize
             options.SourceSemantics.EnforceDialectSyntax
             options.SourceDialect
