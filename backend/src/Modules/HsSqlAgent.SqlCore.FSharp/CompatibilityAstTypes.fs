@@ -12,7 +12,7 @@ type SourceSpan =
       End: int }
     static member Unknown = { Start = -1; End = -1 }
 
-[<AbstractClass>]
+[<AbstractClass; AllowNullLiteral>]
 type SqlNode(span: SourceSpan) =
     member _.Span = span
 
