@@ -22,9 +22,20 @@ module internal RewriteBinder =
     let private containsQualifier qualifier (source: SourceBinding) = source.Qualifiers |> List.exists (equalsName qualifier)
     let private containsName name values = values |> List.exists (equalsName name)
 
-    let rec private qualifierExists qualifier (scope: Scope) =
-        if scope.Sources |> List.exists (containsQualifier qualifier) then true
-        else match scope.Parent with Some parent -> qualifierExists qualifier parent | None -> false
+    let private localQualifierExists qualifier (scope: Scope) =
+        scope.Sources |> List.exists (containsQualifier qualifier)
+
+    let rec private ancestorQualifierExists qualifier (scope: Scope) =
+        match scope.Parent with
+        | Some parent when localQualifierExists qualifier parent -> true
+        | Some parent -> ancestorQualifierExists qualifier parent
+        | None -> false
+
+    let rec private ancestorHasSources (scope: Scope) =
+        match scope.Parent with
+        | Some parent when not parent.Sources.IsEmpty -> true
+        | Some parent -> ancestorHasSources parent
+        | None -> false
 
     let private scopeId parentScope = parentScope |> Option.map (fun (scope: Scope) -> scope.Id + 1) |> Option.defaultValue 0
 
@@ -52,21 +63,32 @@ module internal RewriteBinder =
             |> Option.iter (fun _ -> invalidOp ("Duplicate table alias '" + alias + "' in SQL scope " + string scope.Id + ".")))
 
     let private ensureQualifier scope qualifier context =
-        if not (qualifierExists qualifier scope) then
+        if not (localQualifierExists qualifier scope || ancestorQualifierExists qualifier scope) then
             invalidOp (context + " references unknown table/alias qualifier '" + qualifier + "'.")
 
-    let private bindColumn (scope: Scope) (identifier: Identifier) : Identifier =
+    let private bindColumn (scope: Scope) (identifier: Identifier) : Expr =
         match identifierParts identifier with
         | [] -> invalidOp "Column identifier cannot be empty."
-        | [ _ ] -> identifier
+        | [ _ ] when not scope.Sources.IsEmpty ->
+            BoundColumn(identifier, ColumnBinding.LocalRowSource)
+        | [ _ ] when ancestorHasSources scope ->
+            BoundColumn(identifier, ColumnBinding.OuterRowSource)
+        | [ _ ] ->
+            Column identifier
         | parts ->
             let qualifier = parts |> List.take (parts.Length - 1) |> List.map (fun part -> part.Value) |> String.concat "."
-            ensureQualifier scope qualifier ("Column '" + identifierText identifier + "'")
-            identifier
+            let context = "Column '" + identifierText identifier + "'"
+            if localQualifierExists qualifier scope then
+                BoundColumn(identifier, ColumnBinding.LocalRowSource)
+            elif ancestorQualifierExists qualifier scope then
+                BoundColumn(identifier, ColumnBinding.OuterRowSource)
+            else
+                invalidOp (context + " references unknown table/alias qualifier '" + qualifier + "'.")
 
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
         match expression with
-        | Column identifier -> Column(bindColumn scope identifier)
+        | Column identifier -> bindColumn scope identifier
+        | BoundColumn _ -> expression
         | Wildcard(Some identifier) ->
             let qualifier = identifierText identifier
             ensureQualifier scope qualifier ("Wildcard '" + qualifier + ".*'")
@@ -92,11 +114,27 @@ module internal RewriteBinder =
         | ScalarSubquery query -> ScalarSubquery(bindQuery (Some scope) scope.VisibleCtes query)
         | Exists(query, negated) -> Exists(bindQuery (Some scope) scope.VisibleCtes query, negated)
 
-    and private bindOrderBy (scope: Scope) (orderBy: OrderBy) : OrderBy =
-        { orderBy with Expression = bindExpr scope orderBy.Expression }
+    and private bindOrderBy (scope: Scope) projectionAliases (orderBy: OrderBy) : OrderBy =
+        let expression =
+            match orderBy.Expression with
+            | Column identifier when identifierParts identifier |> List.length = 1 ->
+                let name = identifierParts identifier |> List.head |> fun part -> part.Value
+                let matches = projectionAliases |> List.filter (equalsName name)
+                match matches with
+                | [ _ ] -> BoundColumn(identifier, ColumnBinding.ProjectionAlias)
+                | _ :: _ :: _ ->
+                    if scope.Sources.IsEmpty then
+                        invalidOp ("ORDER BY projection alias '" + name + "' is ambiguous in a no-FROM query.")
+                    else
+                        invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
+                | [] -> bindExpr scope orderBy.Expression
+            | _ -> bindExpr scope orderBy.Expression
+        { orderBy with Expression = expression }
 
     and private bindWindow (scope: Scope) (window: WindowSpec) : WindowSpec =
-        { window with PartitionBy = window.PartitionBy |> List.map (bindExpr scope); OrderBy = window.OrderBy |> List.map (bindOrderBy scope) }
+        { window with
+            PartitionBy = window.PartitionBy |> List.map (bindExpr scope)
+            OrderBy = window.OrderBy |> List.map (bindOrderBy scope []) }
 
     and private bindTableSource (parentScope: Scope option) visibleCtes (source: TableSource) : TableSource =
         match source with
@@ -147,7 +185,23 @@ module internal RewriteBinder =
     and private bindQuery parentScope inheritedCtes (query: Query) : Query =
         let head, headScope, visibleCtes = bindSelect parentScope inheritedCtes query.Head
         let setOperations = query.SetOperations |> List.map (fun (branch: SetBranch) -> { branch with Query = bindQuery parentScope visibleCtes branch.Query })
-        { query with Head = head; SetOperations = setOperations; OrderBy = query.OrderBy |> List.map (bindOrderBy headScope) }
+        let explicitAliases =
+            head.Projection
+            |> List.choose (fun item -> item.Alias |> Option.map (fun alias -> alias.Value))
+        let setOutputNames =
+            head.Projection
+            |> List.choose (fun item ->
+                match item.Alias, item.Expression with
+                | Some alias, _ -> Some alias.Value
+                | None, Column identifier
+                | None, BoundColumn(identifier, _) ->
+                    Identifier.parts identifier |> List.tryLast |> Option.map (fun part -> part.Value)
+                | _ -> None)
+        let orderAliases = if setOperations.IsEmpty then explicitAliases else setOutputNames
+        { query with
+            Head = head
+            SetOperations = setOperations
+            OrderBy = query.OrderBy |> List.map (bindOrderBy headScope orderAliases) }
 
     let private extendScopeWithSources (scope: Scope) sources =
         (([], scope), sources)

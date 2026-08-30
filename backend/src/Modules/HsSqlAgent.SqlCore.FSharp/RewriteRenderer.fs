@@ -108,7 +108,8 @@ module internal RewriteRenderer =
     let private projectionOutputName (item: SelectItem) =
         match item.Alias, item.Expression with
         | Some alias, _ -> alias
-        | None, Column identifier -> Identifier.parts identifier |> List.last
+        | None, Column identifier
+        | None, BoundColumn(identifier, _) -> Identifier.parts identifier |> List.last
         | _ -> invalidOp "Pagination requires every projected output to have a stable name; use explicit aliases for computed expressions."
 
     let private isSetQuery (query: Query) = not query.SetOperations.IsEmpty
@@ -116,7 +117,8 @@ module internal RewriteRenderer =
 
     let rec private renderExpr (ctx: RenderContext) expression =
         match expression with
-        | Expr.Column identifier -> renderIdentifier ctx.Provider identifier
+        | Expr.Column identifier
+        | Expr.BoundColumn(identifier, _) -> renderIdentifier ctx.Provider identifier
         | Expr.Wildcard None -> "*"
         | Expr.Wildcard(Some identifier) -> renderIdentifier ctx.Provider identifier + ".*"
         | Expr.OrderOrdinal ordinal -> string (PositiveRowCount.value ordinal)
@@ -195,7 +197,8 @@ module internal RewriteRenderer =
             if targetDefault then [ expression + direction ]
             else
                 match order.Expression with
-                | Column _ ->
+                | BoundColumn(_, LocalRowSource)
+                | BoundColumn(_, OuterRowSource) ->
                     let nullRank, nonNullRank = if explicitNulls = NullOrdering.NullsLast then 1, 0 else 0, 1
                     let nullRankSql = ctx.Bind(box nullRank)
                     let nonNullRankSql = ctx.Bind(box nonNullRank)
@@ -277,54 +280,250 @@ module internal RewriteRenderer =
     and private renderSqlServerOffset (ctx: RenderContext) (query: Query) =
         let projection = query.Head.Projection
         let outputNames = projection |> List.map projectionOutputName
-        let internalNames = outputNames |> List.mapi (fun index _ -> { Value = "_core_page_" + string index; WasQuoted = false; Span = { Start = 0; Length = 0 } })
+        let internalNames =
+            outputNames
+            |> List.mapi (fun index _ ->
+                { Value = "_core_page_" + string index
+                  WasQuoted = false
+                  Span = { Start = 0; Length = 0 } })
         let baseAlias = "[_core_page_base]"
         let wrapperAlias = "[results_wrapper]"
         let rowAlias = "[_core_page_row]"
-        let baseProjection =
-            (projection, internalNames)
-            ||> List.map2 (fun item alias -> renderExpr ctx item.Expression + " AS " + renderAlias ctx.Provider alias)
-            |> String.concat ", "
-        let mutable baseSql = "SELECT " + (if query.Head.Distinct then "DISTINCT " else "") + baseProjection
+        let baseProjection = ResizeArray<string>()
+        (projection, internalNames)
+        ||> List.iter2 (fun item alias ->
+            baseProjection.Add(renderExpr ctx item.Expression + " AS " + renderAlias ctx.Provider alias))
+
+        let projectionIndex (order: OrderBy) =
+            match order.Expression with
+            | OrderOrdinal ordinal ->
+                let index = PositiveRowCount.value ordinal - 1
+                if index >= 0 && index < projection.Length then Some index else None
+            | Column identifier
+            | BoundColumn(identifier, _) when Identifier.parts identifier |> List.length = 1 ->
+                let name = Identifier.parts identifier |> List.head |> fun part -> part.Value
+                let aliasMatches =
+                    projection
+                    |> List.indexed
+                    |> List.choose (fun (index, item) ->
+                        item.Alias
+                        |> Option.bind (fun alias ->
+                            if StringComparer.OrdinalIgnoreCase.Equals(alias.Value, name) then Some index else None))
+                match aliasMatches with
+                | [ index ] -> Some index
+                | _ :: _ :: _ -> invalidOp ("SQL Server OFFSET pagination ORDER BY alias '" + name + "' is ambiguous.")
+                | [] -> projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
+            | _ -> projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
+
+        let windowOrders =
+            query.OrderBy
+            |> List.mapi (fun orderIndex order ->
+                let orderAlias =
+                    match projectionIndex order with
+                    | Some index -> internalNames[index]
+                    | None when not query.Head.Distinct ->
+                        let hidden =
+                            { Value = "_core_page_order_" + string orderIndex
+                              WasQuoted = false
+                              Span = { Start = 0; Length = 0 } }
+                        baseProjection.Add(renderExpr ctx order.Expression + " AS " + renderAlias ctx.Provider hidden)
+                        hidden
+                    | None ->
+                        invalidOp "SQL Server DISTINCT OFFSET pagination requires every ORDER BY expression to resolve to a projected output."
+                renderAlias ctx.Provider orderAlias + (if order.Descending then " DESC" else " ASC"))
+
+        let mutable baseSql =
+            "SELECT "
+            + (if query.Head.Distinct then "DISTINCT " else "")
+            + (baseProjection |> Seq.toList |> String.concat ", ")
         query.Head.From |> Option.iter (fun source -> baseSql <- baseSql + " FROM " + renderSource ctx source)
         for join in query.Head.Joins do
             baseSql <- baseSql + " " + joinText join.Kind + " " + renderSource ctx join.Source
             join.Predicate |> Option.iter (fun predicate -> baseSql <- baseSql + " ON " + renderExpr ctx predicate)
         query.Head.Where |> Option.iter (fun predicate -> baseSql <- baseSql + " WHERE " + renderExpr ctx predicate)
-        if not query.Head.GroupBy.IsEmpty then baseSql <- baseSql + " GROUP BY " + (query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
+        if not query.Head.GroupBy.IsEmpty then
+            baseSql <- baseSql + " GROUP BY " + (query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
         query.Head.Having |> Option.iter (fun predicate -> baseSql <- baseSql + " HAVING " + renderExpr ctx predicate)
-        let resolveOrder (order: OrderBy) =
-            let index =
-                match order.Expression with
-                | OrderOrdinal ordinal -> PositiveRowCount.value ordinal - 1
-                | Column identifier ->
-                    let name = Identifier.parts identifier |> List.last |> fun part -> part.Value
-                    outputNames |> List.tryFindIndex (fun output -> StringComparer.OrdinalIgnoreCase.Equals(output.Value, name)) |> Option.defaultValue -1
-                | _ -> -1
-            if index < 0 || index >= internalNames.Length then invalidOp "SQL Server OFFSET pagination ORDER BY must resolve to a projected output."
-            let alias = renderAlias ctx.Provider internalNames[index]
-            alias + (if order.Descending then " DESC" else " ASC")
-        let windowOrder = if query.OrderBy.IsEmpty then "ORDER BY (SELECT 0)" else "ORDER BY " + (query.OrderBy |> List.map resolveOrder |> String.concat ", ")
-        let middleOutputs = internalNames |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias) |> String.concat ", "
-        let middleSql = "SELECT " + middleOutputs + ", ROW_NUMBER() OVER (" + windowOrder + ") AS " + rowAlias + " FROM (" + baseSql + ") AS " + baseAlias
+
+        let windowOrder =
+            if windowOrders.IsEmpty then "ORDER BY (SELECT 0)"
+            else "ORDER BY " + String.concat ", " windowOrders
+        let middleOutputs =
+            internalNames
+            |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
+            |> String.concat ", "
+        let middleSql =
+            "SELECT "
+            + middleOutputs
+            + ", ROW_NUMBER() OVER ("
+            + windowOrder
+            + ") AS "
+            + rowAlias
+            + " FROM ("
+            + baseSql
+            + ") AS "
+            + baseAlias
         let outerOutputs =
             (internalNames, outputNames)
-            ||> List.map2 (fun internalName externalName -> wrapperAlias + "." + renderAlias ctx.Provider internalName + " AS " + renderAlias ctx.Provider externalName)
+            ||> List.map2 (fun internalName externalName ->
+                wrapperAlias
+                + "."
+                + renderAlias ctx.Provider internalName
+                + " AS "
+                + renderAlias ctx.Provider externalName)
             |> String.concat ", "
         let offset = query.Offset |> Option.map NonNegativeRowCount.value |> Option.defaultValue 0
         let predicate =
             match query.Limit with
             | None -> wrapperAlias + "." + rowAlias + " >= " + ctx.Bind(box (int64 offset + 1L))
-            | Some limit -> wrapperAlias + "." + rowAlias + " BETWEEN " + ctx.Bind(box (int64 offset + 1L)) + " AND " + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
-        renderCtes ctx query.Head.Ctes + "SELECT " + outerOutputs + " FROM (" + middleSql + ") AS " + wrapperAlias + " WHERE " + predicate + " ORDER BY " + wrapperAlias + "." + rowAlias + " ASC"
+            | Some limit ->
+                wrapperAlias
+                + "."
+                + rowAlias
+                + " BETWEEN "
+                + ctx.Bind(box (int64 offset + 1L))
+                + " AND "
+                + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
+        renderCtes ctx query.Head.Ctes
+        + "SELECT "
+        + outerOutputs
+        + " FROM ("
+        + middleSql
+        + ") AS "
+        + wrapperAlias
+        + " WHERE "
+        + predicate
+        + " ORDER BY "
+        + wrapperAlias
+        + "."
+        + rowAlias
+        + " ASC"
+
+    and private renderSqlServerSetOffset (ctx: RenderContext) (query: Query) =
+        let outputNames = query.Head.Projection |> List.map projectionOutputName
+        let internalNames =
+            outputNames
+            |> List.mapi (fun index _ ->
+                { Value = "_core_page_" + string index
+                  WasQuoted = false
+                  Span = { Start = 0; Length = 0 } })
+        let setAlias = "[_set]"
+        let baseAlias = "[_core_page_base]"
+        let wrapperAlias = "[results_wrapper]"
+        let rowAlias = "[_core_page_row]"
+        let body = renderSetBody ctx query
+        let pageSourceOutputs =
+            (outputNames, internalNames)
+            ||> List.map2 (fun outputName internalName ->
+                setAlias
+                + "."
+                + renderAlias ctx.Provider outputName
+                + " AS "
+                + renderAlias ctx.Provider internalName)
+            |> String.concat ", "
+        let pageSource =
+            "SELECT " + pageSourceOutputs + " FROM (" + body + ") AS " + setAlias
+
+        let resolveOrder (order: OrderBy) =
+            let index =
+                match order.Expression with
+                | OrderOrdinal ordinal -> PositiveRowCount.value ordinal - 1
+                | Column identifier
+                | BoundColumn(identifier, _) when Identifier.parts identifier |> List.length = 1 ->
+                    let reference = Identifier.parts identifier |> List.head |> fun part -> part.Value
+                    let matches =
+                        outputNames
+                        |> List.indexed
+                        |> List.filter (fun (_, alias) -> StringComparer.OrdinalIgnoreCase.Equals(alias.Value, reference))
+                    match matches with
+                    | [ (index, _) ] -> index
+                    | _ -> invalidOp ("SQL Server set-operation OFFSET pagination ORDER BY reference '" + reference + "' is not a unique combined output name.")
+                | _ -> invalidOp "SQL Server set-operation OFFSET pagination supports ORDER BY output names or ordinals only."
+            if index < 0 || index >= internalNames.Length then
+                invalidOp "SQL Server set-operation OFFSET pagination ORDER BY position is outside the projected output width."
+            renderAlias ctx.Provider internalNames[index] + (if order.Descending then " DESC" else " ASC")
+
+        let windowOrder =
+            if query.OrderBy.IsEmpty then "ORDER BY (SELECT 0)"
+            else "ORDER BY " + (query.OrderBy |> List.map resolveOrder |> String.concat ", ")
+        let middleOutputs =
+            internalNames
+            |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
+            |> String.concat ", "
+        let middleSql =
+            "SELECT "
+            + middleOutputs
+            + ", ROW_NUMBER() OVER ("
+            + windowOrder
+            + ") AS "
+            + rowAlias
+            + " FROM ("
+            + pageSource
+            + ") AS "
+            + baseAlias
+        let outerOutputs =
+            (internalNames, outputNames)
+            ||> List.map2 (fun internalName externalName ->
+                wrapperAlias
+                + "."
+                + renderAlias ctx.Provider internalName
+                + " AS "
+                + renderAlias ctx.Provider externalName)
+            |> String.concat ", "
+        let offset = query.Offset |> Option.map NonNegativeRowCount.value |> Option.defaultValue 0
+        let predicate =
+            match query.Limit with
+            | None -> wrapperAlias + "." + rowAlias + " >= " + ctx.Bind(box (int64 offset + 1L))
+            | Some limit ->
+                wrapperAlias
+                + "."
+                + rowAlias
+                + " BETWEEN "
+                + ctx.Bind(box (int64 offset + 1L))
+                + " AND "
+                + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
+        renderCtes ctx query.Head.Ctes
+        + "SELECT "
+        + outerOutputs
+        + " FROM ("
+        + middleSql
+        + ") AS "
+        + wrapperAlias
+        + " WHERE "
+        + predicate
+        + " ORDER BY "
+        + wrapperAlias
+        + "."
+        + rowAlias
+        + " ASC"
 
     and private renderSetTailWrapper (ctx: RenderContext) (query: Query) =
-        let prefix = renderCtes ctx query.Head.Ctes
-        let body = renderSetBody ctx query
-        let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; Span = { Start = 0; Length = 0 } }
-        let wrapper = "SELECT * FROM (" + body + ")" + tableAliasPrefix ctx.Provider + alias
-        let ordered = wrapper + renderOrderClause ctx true query.OrderBy
-        prefix + renderPaging ctx query ordered
+        match ctx.Provider, query.Offset, query.Limit with
+        | SqlServer, Some offset, limit
+            when NonNegativeRowCount.value offset > 0
+                 && (limit |> Option.map NonNegativeRowCount.value <> Some 0) ->
+            renderSqlServerSetOffset ctx query
+        | SqlServer, _, Some limit ->
+            let prefix = renderCtes ctx query.Head.Ctes
+            let body = renderSetBody ctx query
+            let top = ctx.Bind(box (NonNegativeRowCount.value limit))
+            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; Span = { Start = 0; Length = 0 } }
+            prefix
+            + "SELECT TOP ("
+            + top
+            + ") * FROM ("
+            + body
+            + ")"
+            + tableAliasPrefix ctx.Provider
+            + alias
+            + renderOrderClause ctx true query.OrderBy
+        | _ ->
+            let prefix = renderCtes ctx query.Head.Ctes
+            let body = renderSetBody ctx query
+            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; Span = { Start = 0; Length = 0 } }
+            let wrapper = "SELECT * FROM (" + body + ")" + tableAliasPrefix ctx.Provider + alias
+            let ordered = wrapper + renderOrderClause ctx true query.OrderBy
+            prefix + renderPaging ctx query ordered
 
     and private renderQueryCore (ctx: RenderContext) (query: Query) =
         if isSetQuery query && hasTail query then renderSetTailWrapper ctx query

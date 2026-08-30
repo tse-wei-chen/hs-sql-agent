@@ -161,8 +161,14 @@ module internal CoreModel =
 
         let value (LikeEscape value) = value
 
+    type ColumnBinding =
+        | LocalRowSource
+        | OuterRowSource
+        | ProjectionAlias
+
     type Expr =
         | Column of Identifier
+        | BoundColumn of Identifier * ColumnBinding
         | Wildcard of Identifier option
         | OrderOrdinal of PositiveRowCount
         | Literal of ScalarValue

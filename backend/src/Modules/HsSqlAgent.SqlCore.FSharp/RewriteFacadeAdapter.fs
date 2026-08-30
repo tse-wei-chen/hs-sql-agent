@@ -55,6 +55,24 @@ module internal RewriteFacadeAdapter =
             SqlJoinCapabilityRules.TargetValidationError("FULL", target, targetProfile)
             |> capabilityProof }
 
+    let private sourceOrderingProofs source : SourceOrderingProofs =
+        { NullsFirst =
+            SqlNullOrderingCapabilityRules.SourceValidationError(
+                source,
+                HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind.First)
+            |> capabilityProof
+          NullsLast =
+            SqlNullOrderingCapabilityRules.SourceValidationError(
+                source,
+                HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind.Last)
+            |> capabilityProof }
+
+    let private targetNullOrdering target =
+        if SqlNullOrderingCapabilityRules.RequiresTargetRewrite(target) then
+            TargetNullOrdering.RewriteNullOrdering
+        else
+            TargetNullOrdering.NativeNullOrdering
+
     let private sourceExpressionProofs source : ExpressionProofs =
         { ILike =
             SqlIlikeCapabilityRules.SourceValidationError(source)
@@ -160,6 +178,7 @@ module internal RewriteFacadeAdapter =
           Expressions = sourceExpressionProofs source
           Dml = sourceDmlProofs source sourceProfile
           OnConflict = sourceOnConflictProof source sourceProfile
+          Ordering = sourceOrderingProofs source
           Lexical = sourceLexicalSemantics source sourceProfile }
 
     let private targetRuntime target (targetProfile: SqlProviderCapabilityProfile | null) =
@@ -280,6 +299,7 @@ module internal RewriteFacadeAdapter =
                   TargetRuntime = targetRuntime target targetProfile
                   TargetExpressions = targetExpressionProofs target
                   TargetJoins = targetJoinProofs target targetProfile
+                  TargetOrdering = targetNullOrdering target
                   TargetDml = targetDmlProofs target targetProfile
                   ConflictProofs = conflictProofs target targetProfile conflictTargetAssurance
                   Policy = policy

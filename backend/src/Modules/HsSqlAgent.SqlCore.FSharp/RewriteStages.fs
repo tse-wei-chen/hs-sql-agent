@@ -10,7 +10,7 @@ module internal RewriteStages =
 
     let rec private normalizeExpr expression =
         match expression with
-        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
         | Unary(Positive, operand) -> normalizeExpr operand
         | Unary(op, operand) -> Unary(op, normalizeExpr operand)
         | Binary(op, left, right) -> Binary(op, normalizeExpr left, normalizeExpr right)
@@ -125,7 +125,7 @@ module internal RewriteStages =
 
     let rec private validateExpr allowedTables expression =
         match expression with
-        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) -> validateExpr allowedTables operand
         | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
         | Like(value, pattern, _, _, _) ->
@@ -186,7 +186,9 @@ module internal RewriteStages =
         if duplicateAliases.Count > 0 then
             for order in query.OrderBy do
                 match order.Expression with
-                | Column identifier when Identifier.parts identifier |> List.length = 1 ->
+                | Column identifier
+                | BoundColumn(identifier, ProjectionAlias)
+                    when Identifier.parts identifier |> List.length = 1 ->
                     let name = identifierText identifier
                     if duplicateAliases.Contains name then
                         if query.Head.From.IsNone && query.Head.Joins.IsEmpty then
@@ -201,7 +203,8 @@ module internal RewriteStages =
         match expression with
         | Literal _ | Interval _ -> ()
         | ScalarSubquery _ | Exists _ -> ()
-        | Column identifier ->
+        | Column identifier
+        | BoundColumn(identifier, _) ->
             invalidOp ("INSERT VALUES scalar expression cannot reference column '" + identifierText identifier + "' outside a scalar subquery; use INSERT ... SELECT when the inserted value depends on a source row.")
         | Wildcard _ | OrderOrdinal _ -> invalidOp "INSERT VALUES scalar expression cannot contain a wildcard or ORDER BY ordinal."
         | Unary(_, operand) -> validateInsertValueScope operand
@@ -285,7 +288,7 @@ module internal RewriteStages =
 
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
-        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ -> ()
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ -> ()
         | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
         | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
         | Binary(BinaryOperator.Concat, left, right) ->
@@ -426,7 +429,9 @@ module internal RewriteStages =
 
     let private isRichReturningItem (item: SelectItem) =
         match item.Expression with
-        | Column identifier when Identifier.parts identifier |> List.length = 1 -> false
+        | Column identifier
+        | BoundColumn(identifier, _)
+            when Identifier.parts identifier |> List.length = 1 -> false
         | Wildcard None -> false
         | _ -> true
 
@@ -447,6 +452,240 @@ module internal RewriteStages =
         | DeleteStatement delete ->
             if not delete.Using.IsEmpty then requireDmlCapability proofs.DeleteUsing
             proveReturning proofs delete.Returning
+
+    let private orderingProviderName = function
+        | MySqlRuntime -> "MySQL"
+        | SqlServerRuntime _ -> "MsSqlServer"
+        | PostgreSqlRuntime -> "Postgres"
+        | SQLiteRuntime -> "Sqlite"
+        | OracleRuntime -> "Oracle"
+        | FirebirdRuntime -> "Firebird"
+
+    let private nullOrderingCapabilityError targetRuntime =
+        SqlCompilationException(
+            "SQL capability 'ordering.nulls' is not supported by provider "
+            + orderingProviderName targetRuntime
+            + " for this Core plan.")
+
+    let private targetDefaultNullOrdering (order: OrderBy) =
+        match order.NullOrdering with
+        | NullOrdering.Default -> true
+        | NullOrdering.NullsFirst -> not order.Descending
+        | NullOrdering.NullsLast -> order.Descending
+
+    let private requireRewriteableNullOrdering targetRuntime targetOrdering isStatementTail isDistinct isSetTail (order: OrderBy) =
+        match targetOrdering, order.NullOrdering with
+        | NativeNullOrdering, _
+        | RewriteNullOrdering, NullOrdering.Default -> ()
+        | RewriteNullOrdering, _ when targetDefaultNullOrdering order -> ()
+        | RewriteNullOrdering, _ ->
+            if isStatementTail && (isDistinct || isSetTail) then
+                raise (nullOrderingCapabilityError targetRuntime)
+            match order.Expression with
+            | BoundColumn(_, LocalRowSource)
+            | BoundColumn(_, OuterRowSource) -> ()
+            | Column _
+            | BoundColumn(_, ProjectionAlias)
+            | _ -> raise (nullOrderingCapabilityError targetRuntime)
+
+    let rec private proveOrderingExpr targetRuntime targetOrdering expression =
+        match expression with
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Unary(_, value) -> proveOrderingExpr targetRuntime targetOrdering value
+        | Binary(_, left, right) ->
+            proveOrderingExpr targetRuntime targetOrdering left
+            proveOrderingExpr targetRuntime targetOrdering right
+        | Like(value, pattern, _, _, _) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+            proveOrderingExpr targetRuntime targetOrdering pattern
+        | FunctionCall call ->
+            call.Arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
+        | FilteredAggregate(value, predicate) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+            proveOrderingExpr targetRuntime targetOrdering predicate
+        | Windowed(value, window) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+            window.PartitionBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
+            window.OrderBy
+            |> List.iter (fun order ->
+                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
+                proveOrderingExpr targetRuntime targetOrdering order.Expression)
+        | Cast(value, _) | Extract(_, value) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+        | SimpleCase(input, branches, fallback) ->
+            proveOrderingExpr targetRuntime targetOrdering input
+            branches |> NonEmpty.iter (fun branch ->
+                proveOrderingExpr targetRuntime targetOrdering branch.Match
+                proveOrderingExpr targetRuntime targetOrdering branch.Result)
+            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                proveOrderingExpr targetRuntime targetOrdering branch.Condition
+                proveOrderingExpr targetRuntime targetOrdering branch.Result)
+            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+        | InList(value, items, _) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+            items |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering)
+        | InSubquery(value, query, _) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+            proveOrderingQuery targetRuntime targetOrdering query
+        | Between(value, lower, upper, _) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+            proveOrderingExpr targetRuntime targetOrdering lower
+            proveOrderingExpr targetRuntime targetOrdering upper
+        | IsNull(value, _) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+        | ScalarSubquery query | Exists(query, _) ->
+            proveOrderingQuery targetRuntime targetOrdering query
+
+    and private proveOrderingSource targetRuntime targetOrdering source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) -> proveOrderingQuery targetRuntime targetOrdering query
+
+    and private proveOrderingSelect targetRuntime targetOrdering select =
+        select.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
+        select.Projection |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
+        select.From |> Option.iter (proveOrderingSource targetRuntime targetOrdering)
+        select.Joins |> List.iter (fun join ->
+            proveOrderingSource targetRuntime targetOrdering join.Source
+            join.Predicate |> Option.iter (proveOrderingExpr targetRuntime targetOrdering))
+        select.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+        select.GroupBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
+        select.Having |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+
+    and private proveOrderingQuery targetRuntime targetOrdering query =
+        proveOrderingSelect targetRuntime targetOrdering query.Head
+        query.SetOperations |> List.iter (fun branch -> proveOrderingQuery targetRuntime targetOrdering branch.Query)
+        let isSetTail = not query.SetOperations.IsEmpty
+        query.OrderBy
+        |> List.iter (fun order ->
+            requireRewriteableNullOrdering targetRuntime targetOrdering true query.Head.Distinct isSetTail order
+            proveOrderingExpr targetRuntime targetOrdering order.Expression)
+
+    let private stableProjectionNames context (query: Query) =
+        query.Head.Projection
+        |> List.map (fun item ->
+            match item.Alias, item.Expression with
+            | Some alias, _ -> alias
+            | None, Column identifier
+            | None, BoundColumn(identifier, _) ->
+                Identifier.parts identifier |> List.last
+            | _ ->
+                raise (SqlCompilationException(
+                    context
+                    + " requires every projected output to have a stable name; use explicit aliases for wildcard or computed expressions.")))
+
+    let private ensureUniqueOutputNames context names =
+        let seen = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        names
+        |> List.iter (fun (name: IdentifierPart) ->
+            if not (seen.Add name.Value) then
+                raise (SqlCompilationException(
+                    context + " requires unique set-result output names before the legacy ROW_NUMBER wrapper.")))
+
+    let private projectionOrderIndex (projection: SelectItem list) (order: OrderBy) =
+        match order.Expression with
+        | OrderOrdinal ordinal ->
+            let index = PositiveRowCount.value ordinal - 1
+            if index >= 0 && index < projection.Length then Some index else None
+        | Column identifier
+        | BoundColumn(identifier, _)
+            when Identifier.parts identifier |> List.length = 1 ->
+            let reference = Identifier.parts identifier |> List.head |> fun part -> part.Value
+            let aliasMatches =
+                projection
+                |> List.indexed
+                |> List.choose (fun (index, item) ->
+                    item.Alias
+                    |> Option.bind (fun alias ->
+                        if StringComparer.OrdinalIgnoreCase.Equals(alias.Value, reference) then Some index else None))
+            match aliasMatches with
+            | [ index ] -> Some index
+            | _ :: _ :: _ ->
+                raise (SqlCompilationException(
+                    "SQL Server OFFSET pagination ORDER BY alias '" + reference + "' is ambiguous."))
+            | [] ->
+                projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
+        | _ ->
+            projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
+
+    let private proveSqlServerSelectPaging (query: Query) =
+        let context = "SQL Server OFFSET pagination"
+        stableProjectionNames context query |> ignore
+        let projection = query.Head.Projection
+        for order in query.OrderBy do
+            match projectionOrderIndex projection order with
+            | Some _ -> ()
+            | None when query.Head.Distinct ->
+                raise (SqlCompilationException(
+                    "SQL Server DISTINCT OFFSET pagination requires every ORDER BY expression to resolve to a projected output."))
+            | None -> ()
+
+    let private proveSqlServerSetPaging (query: Query) =
+        let context = "SQL Server set-operation OFFSET pagination"
+        let names = stableProjectionNames context query
+        ensureUniqueOutputNames context names
+        for order in query.OrderBy do
+            match order.Expression with
+            | OrderOrdinal ordinal ->
+                let index = PositiveRowCount.value ordinal - 1
+                if index < 0 || index >= names.Length then
+                    raise (SqlCompilationException(
+                        "SQL Server set-operation OFFSET pagination ORDER BY position is outside the projected output width."))
+            | Column identifier
+            | BoundColumn(identifier, _)
+                when Identifier.parts identifier |> List.length = 1 ->
+                let reference = Identifier.parts identifier |> List.head |> fun part -> part.Value
+                let matches =
+                    names
+                    |> List.filter (fun name -> StringComparer.OrdinalIgnoreCase.Equals(name.Value, reference))
+                if matches.Length <> 1 then
+                    raise (SqlCompilationException(
+                        "SQL Server set-operation OFFSET pagination ORDER BY reference '"
+                        + reference
+                        + "' is not a unique combined output name."))
+            | _ ->
+                raise (SqlCompilationException(
+                    "SQL Server set-operation OFFSET pagination supports ORDER BY output names or ordinals only."))
+
+    let rec private proveSqlServerPagingQuery query =
+        query.Head.Ctes |> List.iter (fun cte -> proveSqlServerPagingQuery cte.Query)
+        query.Head.From |> Option.iter (function DerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
+        query.Head.Joins |> List.iter (fun join ->
+            match join.Source with DerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
+        query.SetOperations |> List.iter (fun branch -> proveSqlServerPagingQuery branch.Query)
+        match query.Offset with
+        | Some offset when NonNegativeRowCount.value offset > 0 ->
+            if query.SetOperations.IsEmpty then proveSqlServerSelectPaging query
+            else proveSqlServerSetPaging query
+        | _ -> ()
+
+    let private proveOrderingAndPaging targetRuntime targetOrdering document =
+        match document.Statement with
+        | QueryStatement query ->
+            proveOrderingQuery targetRuntime targetOrdering query
+            match targetRuntime with
+            | SqlServerRuntime _ -> proveSqlServerPagingQuery query
+            | _ -> ()
+        | InsertStatement insert ->
+            match insert.Input with
+            | QuerySource query ->
+                proveOrderingQuery targetRuntime targetOrdering query
+                match targetRuntime with
+                | SqlServerRuntime _ -> proveSqlServerPagingQuery query
+                | _ -> ()
+            | Values _ | DefaultValues -> ()
+            insert.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveOrderingExpr targetRuntime targetOrdering assignment.Value)
+            update.From |> List.iter (proveOrderingSource targetRuntime targetOrdering)
+            update.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+            update.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (proveOrderingSource targetRuntime targetOrdering)
+            delete.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+            delete.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
 
     let private exactColumnSetMatch (left: string list) (right: string list) =
         let leftSet = HashSet<string>(left, StringComparer.OrdinalIgnoreCase)
@@ -621,11 +860,12 @@ module internal RewriteStages =
                     validateFirebirdConflict proofs insert conflict
         | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
 
-    let validate allowedTables targetRuntime targetExpressions targetJoins targetDml conflictProofs canonical =
+    let validate allowedTables targetRuntime targetExpressions targetJoins targetOrdering targetDml conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
             let validated = validateDocument allowedTables document
             proveTargetDocument targetRuntime targetExpressions validated |> ignore
             proveTargetJoins targetJoins validated
+            proveOrderingAndPaging targetRuntime targetOrdering validated
             proveTargetDml targetDml validated
             proveConflicts targetRuntime conflictProofs validated
             validated) canonical

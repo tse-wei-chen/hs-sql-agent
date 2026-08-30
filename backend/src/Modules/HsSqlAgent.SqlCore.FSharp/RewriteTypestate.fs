@@ -13,6 +13,14 @@ module internal Typestate =
         { RightJoin: CapabilityProof
           FullJoin: CapabilityProof }
 
+    type SourceOrderingProofs =
+        { NullsFirst: CapabilityProof
+          NullsLast: CapabilityProof }
+
+    type TargetNullOrdering =
+        | NativeNullOrdering
+        | RewriteNullOrdering
+
     type ExpressionProofs =
         { ILike: CapabilityProof
           IntervalLiteral: CapabilityProof }

@@ -24,6 +24,7 @@ module internal RewriteParser =
           Expressions: ExpressionProofs
           Dml: DmlProofs
           OnConflict: CapabilityProof
+          Ordering: SourceOrderingProofs
           Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
@@ -41,12 +42,17 @@ module internal RewriteParser =
               UpdateFrom = ProvenCapability
               DeleteUsing = ProvenCapability }
 
+        let private permissiveOrdering =
+            { NullsFirst = ProvenCapability
+              NullsLast = ProvenCapability }
+
         let defaultValue =
             { MySqlPipes = RejectAmbiguousPipes
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
               OnConflict = ProvenCapability
+              Ordering = permissiveOrdering
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
@@ -55,6 +61,7 @@ module internal RewriteParser =
               Expressions = permissiveExpressions
               Dml = permissiveDml
               OnConflict = ProvenCapability
+              Ordering = permissiveOrdering
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
@@ -73,6 +80,7 @@ module internal RewriteParser =
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
         member _.SourceOnConflict = semantics.OnConflict
+        member _.SourceOrdering = semantics.Ordering
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
@@ -641,8 +649,12 @@ module internal RewriteParser =
         let descending = if acceptKeyword "DESC" cursor then true else acceptKeyword "ASC" cursor |> ignore; false
         let nullOrdering =
             if acceptKeyword "NULLS" cursor then
-                if acceptKeyword "FIRST" cursor then NullOrdering.NullsFirst
-                elif acceptKeyword "LAST" cursor then NullOrdering.NullsLast
+                if acceptKeyword "FIRST" cursor then
+                    requireSourceCapability cursor.SourceOrdering.NullsFirst
+                    NullOrdering.NullsFirst
+                elif acceptKeyword "LAST" cursor then
+                    requireSourceCapability cursor.SourceOrdering.NullsLast
+                    NullOrdering.NullsLast
                 else fail cursor.Current "Expected FIRST or LAST after NULLS"
             else NullOrdering.Default
         { Expression = expression; Descending = descending; NullOrdering = nullOrdering }

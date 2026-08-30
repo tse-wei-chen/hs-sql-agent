@@ -2312,6 +2312,226 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    [Fact]
+    public void Facade_TextQuery_MySqlSourceNullOrdering_RemainsFailClosedLikeLegacy()
+    {
+        const string sql = "SELECT amount FROM orders ORDER BY amount NULLS FIRST";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-source-null-ordering-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Theory]
+    [InlineData(
+        "SELECT amount AS total FROM orders ORDER BY total NULLS LAST",
+        "fsharp-null-ordering-alias-v1")]
+    [InlineData(
+        "SELECT DISTINCT amount FROM orders ORDER BY amount NULLS LAST",
+        "fsharp-null-ordering-distinct-v1")]
+    public void Facade_FunctionalNullOrderingRewrite_MatchesLegacyUnsafeShapeFailure(
+        string sql,
+        string policyVersion)
+    {
+        var validation = new SqlPlanValidationContext(
+            policyVersion,
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_SqlServerOffsetWithHiddenOrderProjection_MatchesLegacy()
+    {
+        const string sql =
+            "SELECT id FROM users ORDER BY LOWER(name) LIMIT 10 OFFSET 5";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-hidden-page-order-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("_core_page_order_0", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ROW_NUMBER()", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_SqlServerDistinctComputedOffset_MatchesLegacy()
+    {
+        const string sql =
+            "SELECT DISTINCT LOWER(name) AS label FROM users " +
+            "ORDER BY LOWER(name) LIMIT 10 OFFSET 5";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-distinct-page-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.DoesNotContain("_core_page_order_", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_SqlServerSetOffsetPagination_MatchesLegacy()
+    {
+        const string sql =
+            "SELECT id FROM users UNION ALL SELECT id FROM archived_users " +
+            "ORDER BY id LIMIT 10 OFFSET 5";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-set-page-v1",
+            new HashSet<string>(
+                new[] { "users", "archived_users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("UNION ALL", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ROW_NUMBER()", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_SqlServerSetLimitWithoutOffset_MatchesLegacy()
+    {
+        const string sql =
+            "SELECT id FROM users UNION ALL SELECT id FROM archived_users " +
+            "ORDER BY id LIMIT 10";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-set-limit-v1",
+            new HashSet<string>(
+                new[] { "users", "archived_users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("TOP", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_SqlServerSetOffsetUnnamedOutput_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT LOWER(name) FROM users UNION ALL " +
+            "SELECT LOWER(name) FROM archived_users ORDER BY 1 LIMIT 10 OFFSET 5";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-set-unnamed-page-v1",
+            new HashSet<string>(
+                new[] { "users", "archived_users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy(QueryMaxRows: 20);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MsSqlServer,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MsSqlServer,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> QueryValidatorFailureParityCases()
     {
         yield return new object[]
