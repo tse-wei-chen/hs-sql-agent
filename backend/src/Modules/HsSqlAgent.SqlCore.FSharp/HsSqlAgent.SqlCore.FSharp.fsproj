@@ -15,6 +15,7 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);3261;3262</NoWarn>
+    <NoWarn>$(NoWarn);3261;3262</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>

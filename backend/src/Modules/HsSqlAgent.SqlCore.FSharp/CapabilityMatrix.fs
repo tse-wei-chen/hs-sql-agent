@@ -95,6 +95,7 @@ type SqlCapabilityMatrix private () =
                 else rejected, "Oracle ordered LISTAGG remains fail-closed unless the target capability profile explicitly declares ServerVersion 11.2 or newer."
             | SqlAgentToolType.Firebird -> rejected, "Firebird aggregate.string.ordering remains fail-closed."
             | _ -> rejected, "Aggregate-local ordering is not declared for this provider."
+            | _ -> rejected, "Aggregate-local ordering is not declared for this provider."
 
         let regexStatus, regexDetail =
             if SqlRegexCapabilityRules.SupportsTarget(provider, profile) then
