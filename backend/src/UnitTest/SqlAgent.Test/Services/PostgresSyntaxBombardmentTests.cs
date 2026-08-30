@@ -197,6 +197,31 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT",
             "Order");
         yield return Case(
+            "nonreserved-zone-column",
+            "SELECT zone FROM events",
+            "zone",
+            "events");
+        yield return Case(
+            "nonreserved-conflict-column",
+            "SELECT conflict FROM events",
+            "conflict",
+            "events");
+        yield return Case(
+            "legacy-key-column",
+            "SELECT key FROM events",
+            "key",
+            "events");
+        yield return Case(
+            "legacy-excluded-column",
+            "SELECT excluded FROM events",
+            "excluded",
+            "events");
+        yield return Case(
+            "legacy-percent-column",
+            "SELECT percent FROM events",
+            "percent",
+            "events");
+        yield return Case(
             "cte-wildcard",
             "WITH recent AS (SELECT * FROM orders) SELECT * FROM recent",
             "WITH",
