@@ -1287,9 +1287,17 @@ module internal RewriteRenderer =
         delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         sql + renderReturning ctx delete.Returning
 
-    let render provider (executable: RewritePolicy.ExecutableSql) : RenderedCommand =
+    let private providerForRuntime = function
+        | TargetRuntime.PostgreSqlRuntime -> Provider.PostgreSql
+        | TargetRuntime.MySqlRuntime -> Provider.MySql
+        | TargetRuntime.SqlServerRuntime _ -> Provider.SqlServer
+        | TargetRuntime.SQLiteRuntime -> Provider.SQLite
+        | TargetRuntime.OracleRuntime -> Provider.Oracle
+        | TargetRuntime.FirebirdRuntime -> Provider.Firebird
+
+    let render (executable: RewritePolicy.ExecutableSql) : RenderedCommand =
         let targetRuntime = RewritePolicy.Executable.targetRuntime executable
-        let ctx = RenderContext(provider, targetRuntime)
+        let ctx = RenderContext(providerForRuntime targetRuntime, targetRuntime)
         let document = RewritePolicy.Executable.value executable
         let sql, returnsRows =
             match document.Statement with

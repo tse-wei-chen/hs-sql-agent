@@ -174,6 +174,15 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void CompiledCommand_ReturnsRows_IsReadOnly()
+    {
+        var property = typeof(CompiledSqlCommand).GetProperty(nameof(CompiledSqlCommand.ReturnsRows));
+
+        Assert.NotNull(property);
+        Assert.False(property!.CanWrite);
+    }
+
+    [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {
         var assembly = typeof(SqlCoreFacade).Assembly;

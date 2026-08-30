@@ -13,20 +13,10 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
-open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 /// CLR boundary adapter. SQL text crosses into the closed F# DU exactly once here.
 module internal RewriteFacadeAdapter =
-
-    let private provider = function
-        | SqlAgentToolType.Postgres -> Provider.PostgreSql
-        | SqlAgentToolType.MySQL -> Provider.MySql
-        | SqlAgentToolType.MsSqlServer -> Provider.SqlServer
-        | SqlAgentToolType.Sqlite -> Provider.SQLite
-        | SqlAgentToolType.Oracle -> Provider.Oracle
-        | SqlAgentToolType.Firebird -> Provider.Firebird
-        | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
 
     let private sourceDialect = function
         | SqlAgentToolType.Postgres -> RewriteParser.SourceDialect.PostgreSql
@@ -391,7 +381,6 @@ module internal RewriteFacadeAdapter =
             run
                 { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
                   SourceSemantics = sourceSemantics source sourceProfile
-                  Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
                   SourceProfile = sourceProfile
                   TargetProfile = targetProfile
@@ -405,9 +394,9 @@ module internal RewriteFacadeAdapter =
                 sql
         let parameterValues = parameters target rendered.Parameters
         let kind = RewriteCompatibilityAstAdapter.kind parsed
-        let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, target, ReturnsRows = rendered.ReturnsRows)
+        let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
         let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-        CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
+        CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows)
 
     let compileQueryValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(validationContext)
@@ -461,7 +450,6 @@ module internal RewriteFacadeAdapter =
             runParsed
                 { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
                   SourceSemantics = parsedSourceSemantics parsed
-                  Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
                   SourceProfile = parsed.SourceProfile
                   TargetProfile = targetProfile
@@ -475,9 +463,9 @@ module internal RewriteFacadeAdapter =
                 (RewriteLegacyAstAdapter.toParsed parsed.Statement)
         let kind = legacyKind parsed.Statement
         let parameterValues = parameters target rendered.Parameters
-        let command = CompiledSqlCommand(rendered.Sql, parameterValues, kind, String.Empty, target, ReturnsRows = rendered.ReturnsRows)
+        let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
         let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-        CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
+        CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows)
 
     let compileQueryParsedValidated (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(parsed)

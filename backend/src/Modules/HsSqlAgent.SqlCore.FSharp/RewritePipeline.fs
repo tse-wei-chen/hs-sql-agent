@@ -12,7 +12,6 @@ module internal RewritePipeline =
     type CompileOptions =
         { SourceDialect: SourceDialect
           SourceSemantics: SourceSemantics
-          Provider: Provider
           TargetRuntime: TargetRuntime
           SourceProfile: HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile | null
           TargetProfile: HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile | null
@@ -46,7 +45,7 @@ module internal RewritePipeline =
             options.TargetProfile
         |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.SourceSemantics.Expressions options.TargetExpressions options.SourceSemantics.Joins options.TargetJoins options.TargetOrdering options.SourceSemantics.Dml options.TargetDml options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
-        |> RewriteRenderer.render options.Provider
+        |> RewriteRenderer.render
 
     let compileParsed options parsed =
         finish options parsed

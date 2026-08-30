@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.SqlCore.Models;
 using Moq;
 using Xunit;
 
@@ -62,6 +63,27 @@ public class TypedQueryRuntimeTests
             provider.Object, sql, SqlAgentToolType.Postgres, CreatePolicy(maxRows: 20),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
         Assert.NotEqual(first.PlanFingerprint, second.PlanFingerprint);
+    }
+
+    [Fact]
+    public void Compile_WithVerifiedTargetProfile_DoesNotTreatItAsSourceProfile()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = CreateProvider(SqlAgentToolType.MsSqlServer);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer,
+            new Version(16, 0));
+
+        var command = runtime.Compile(
+            provider.Object,
+            "SELECT id FROM public.users",
+            SqlAgentToolType.Postgres,
+            CreatePolicy(),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" },
+            targetProfile);
+
+        Assert.Equal(SqlAgentToolType.MsSqlServer, command.TargetProvider);
+        Assert.Equal(SqlStatementKind.Select, command.Kind);
     }
 
     [Fact]

@@ -84,18 +84,49 @@ type SqlParameterValue(name: string, value: obj) =
     member _.Value = value
 
 [<Sealed; AllowNullLiteral>]
-type CompiledSqlCommand(
+type CompiledSqlCommand private (
     sql: string,
     parameters: ImmutableArray<SqlParameterValue>,
     kind: SqlStatementKind,
     planFingerprint: string,
-    targetProvider: SqlAgentToolType) =
+    targetProvider: SqlAgentToolType,
+    returnsRows: bool) =
+
+    new(
+        sql: string,
+        parameters: ImmutableArray<SqlParameterValue>,
+        kind: SqlStatementKind,
+        planFingerprint: string,
+        targetProvider: SqlAgentToolType) =
+        CompiledSqlCommand(
+            sql,
+            parameters,
+            kind,
+            planFingerprint,
+            targetProvider,
+            false)
+
     member _.Sql = sql
     member _.Parameters = parameters
     member _.Kind = kind
     member _.PlanFingerprint = planFingerprint
     member _.TargetProvider = targetProvider
-    member val ReturnsRows = false with get, set
+    member _.ReturnsRows = returnsRows
+
+    static member internal Create(
+        sql: string,
+        parameters: ImmutableArray<SqlParameterValue>,
+        kind: SqlStatementKind,
+        planFingerprint: string,
+        targetProvider: SqlAgentToolType,
+        returnsRows: bool) =
+        CompiledSqlCommand(
+            sql,
+            parameters,
+            kind,
+            planFingerprint,
+            targetProvider,
+            returnsRows)
 
 type SqlCompilationException =
     inherit InvalidOperationException

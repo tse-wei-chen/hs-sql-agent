@@ -194,6 +194,27 @@ type SqlCoreFacade private () =
         targetProvider: SqlAgentToolType,
         validationContext: SqlPlanValidationContext,
         executionPolicy: SqlExecutionPlanPolicy,
+        targetProfile: SqlProviderCapabilityProfile | null) : CompiledSqlCommand =
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        match targetProfile with
+        | null -> ()
+        | profile -> FacadeCompile.validateProfile targetProvider "targetProfile" profile
+        FacadeCompile.queryText
+            sql
+            sourceDialect
+            targetProvider
+            null
+            targetProfile
+            validationContext
+            executionPolicy
+
+    static member CompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
         sourceProfile: SqlProviderCapabilityProfile,
         targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)

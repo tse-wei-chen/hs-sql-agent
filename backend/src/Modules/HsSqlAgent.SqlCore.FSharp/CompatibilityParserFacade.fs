@@ -10,8 +10,9 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite
 
 /// Temporary CLR-compatible parser surface backed entirely by the F# lexer/parser.
-/// The returned AST is a projection for callers that still inspect shape; parser-native compilation
-/// uses ParsedStatement.RawSql and re-enters the closed typestate pipeline from SQL text.
+/// The returned AST is a projection for callers that still inspect shape. Compatibility compilation
+/// consumes the current ParsedStatement.Statement; RawSql is retained only to revalidate declared
+/// source-dialect syntax when EnforceSourceDialectSyntax is enabled.
 [<AbstractClass; Sealed>]
 type CoreSqlTextParser private () =
 
