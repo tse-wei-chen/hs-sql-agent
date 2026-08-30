@@ -125,7 +125,8 @@ module internal RewriteStages =
 
     let rec private validateExpr allowedTables expression =
         match expression with
-        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ -> ()
+        | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
         | Unary(_, operand) -> validateExpr allowedTables operand
         | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
         | Like(value, pattern, _, _, _) ->
@@ -419,6 +420,30 @@ module internal RewriteStages =
         | DeleteStatement delete ->
             delete.Using |> List.iter (proveTargetJoinSource proofs)
 
+    let private isRichReturningItem (item: SelectItem) =
+        match item.Expression with
+        | Column identifier when Identifier.parts identifier |> List.length = 1 -> false
+        | Wildcard None -> false
+        | _ -> true
+
+    let private proveReturning (proofs: DmlProofs) items =
+        if not (List.isEmpty items) then
+            requireCapability proofs.Returning
+            if items |> List.exists isRichReturningItem then
+                requireCapability proofs.ReturningExpression
+
+    let private proveTargetDml (proofs: DmlProofs) document =
+        match document.Statement with
+        | QueryStatement _ -> ()
+        | InsertStatement insert ->
+            proveReturning proofs insert.Returning
+        | UpdateStatement update ->
+            if not update.From.IsEmpty then requireCapability proofs.UpdateFrom
+            proveReturning proofs update.Returning
+        | DeleteStatement delete ->
+            if not delete.Using.IsEmpty then requireCapability proofs.DeleteUsing
+            proveReturning proofs delete.Returning
+
     let private exactColumnSetMatch (left: string list) (right: string list) =
         let leftSet = HashSet<string>(left, StringComparer.OrdinalIgnoreCase)
         let rightSet = HashSet<string>(right, StringComparer.OrdinalIgnoreCase)
@@ -557,10 +582,11 @@ module internal RewriteStages =
                 | _ -> ()
         | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
 
-    let validate allowedTables targetRuntime targetExpressions targetJoins conflictProofs canonical =
+    let validate allowedTables targetRuntime targetExpressions targetJoins targetDml conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
             let validated = validateDocument allowedTables document
             proveTargetDocument targetRuntime targetExpressions validated |> ignore
             proveTargetJoins targetJoins validated
+            proveTargetDml targetDml validated
             proveConflicts targetRuntime conflictProofs validated
             validated) canonical

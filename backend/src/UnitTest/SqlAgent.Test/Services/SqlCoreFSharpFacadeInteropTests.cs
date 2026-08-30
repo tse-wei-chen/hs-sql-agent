@@ -1466,6 +1466,215 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextQuery_MySqlSourceInterval_RemainsFailClosedLikeLegacy()
+    {
+        const string sql = "SELECT INTERVAL '1 day'";
+        var validation = new SqlPlanValidationContext("fsharp-interval-source-v1");
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_IntervalToMySql_RemainsFailClosedLikeLegacy()
+    {
+        const string sql = "SELECT INTERVAL '1 day'";
+        var validation = new SqlPlanValidationContext("fsharp-interval-target-v1");
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_SqliteReturningWithoutProfile_RemainsFailClosedLikeLegacy()
+    {
+        const string sql = "UPDATE users SET name = 'b' WHERE id = 1 RETURNING id";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-returning-sqlite-proof-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Sqlite,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_SqliteReturning35_MatchesLegacy()
+    {
+        const string sql = "UPDATE users SET name = 'b' WHERE id = 1 RETURNING id";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 35));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-returning-sqlite35-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromPrimaryKey(new[] { "id" });
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            targetProfile);
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile,
+            assurance);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.True(migrated.ReturnsRows);
+    }
+
+    [Fact]
+    public void Facade_TextDml_RichReturningToSqlite_RemainsFailClosedLikeLegacy()
+    {
+        const string sql = "UPDATE users SET name = 'b' WHERE id = 1 RETURNING id + 1";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 35));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-returning-expression-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromPrimaryKey(new[] { "id" });
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy,
+                targetProfile));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile,
+                assurance));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_UpdateFromToMySql_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "UPDATE inventory SET quantity = quantity + 1 FROM warehouse " +
+            "WHERE inventory.id = warehouse.inventory_id";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-update-from-target-v1",
+            new HashSet<string>(
+                new[] { "inventory", "warehouse" },
+                StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_DeleteUsingToMySql_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "DELETE FROM inventory USING warehouse " +
+            "WHERE inventory.id = warehouse.inventory_id";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-delete-using-target-v1",
+            new HashSet<string>(
+                new[] { "inventory", "warehouse" },
+                StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
     public void Facade_FunctionalProviderProfileRewrite_MatchesLegacySqlServerConcat()
     {
         const string sql =

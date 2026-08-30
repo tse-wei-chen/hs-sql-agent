@@ -58,6 +58,9 @@ module internal RewriteFacadeAdapter =
     let private sourceExpressionProofs source : ExpressionProofs =
         { ILike =
             SqlIlikeCapabilityRules.SourceValidationError(source)
+            |> capabilityProof
+          IntervalLiteral =
+            SqlIntervalLiteralCapabilityRules.SourceValidationError(source)
             |> capabilityProof }
 
     let private providerName = function
@@ -77,7 +80,43 @@ module internal RewriteFacadeAdapter =
                 CapabilityProof.RejectedCapability(
                     "SQL capability 'operator.ilike' is not supported by provider "
                     + providerName target
+                    + " for this Core plan.")
+          IntervalLiteral =
+            if SqlIntervalLiteralCapabilityRules.IsTargetSupported(target) then
+                CapabilityProof.ProvenCapability
+            else
+                CapabilityProof.RejectedCapability(
+                    "SQL capability 'expression.interval' is not supported by provider "
+                    + providerName target
                     + " for this Core plan.") }
+
+    let private sourceDmlProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : DmlProofs =
+        let sourceVersion : Version | null =
+            match sourceProfile with
+            | null -> null
+            | value -> value.ServerVersion
+        { Returning =
+            SqlDmlReturningCapabilityRules.SourceValidationError(source, sourceVersion)
+            |> capabilityProof
+          ReturningExpression =
+            SqlDmlReturningExpressionCapabilityRules.SourceValidationError(source)
+            |> capabilityProof
+          UpdateFrom = CapabilityProof.ProvenCapability
+          DeleteUsing = CapabilityProof.ProvenCapability }
+
+    let private targetDmlProofs target (targetProfile: SqlProviderCapabilityProfile | null) : DmlProofs =
+        { Returning =
+            SqlDmlReturningCapabilityRules.TargetValidationError(target, targetProfile)
+            |> capabilityProof
+          ReturningExpression =
+            SqlDmlReturningExpressionCapabilityRules.TargetValidationError(target)
+            |> capabilityProof
+          UpdateFrom =
+            SqlDmlUpdateFromCapabilityRules.TargetValidationError(target)
+            |> capabilityProof
+          DeleteUsing =
+            SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target)
+            |> capabilityProof }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { MySqlPipes =
@@ -86,7 +125,8 @@ module internal RewriteFacadeAdapter =
             else
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
           Joins = sourceJoinProofs source sourceProfile
-          Expressions = sourceExpressionProofs source }
+          Expressions = sourceExpressionProofs source
+          Dml = sourceDmlProofs source sourceProfile }
 
     let private targetRuntime target (targetProfile: SqlProviderCapabilityProfile | null) =
         match target with
@@ -186,6 +226,7 @@ module internal RewriteFacadeAdapter =
                   TargetRuntime = targetRuntime target targetProfile
                   TargetExpressions = targetExpressionProofs target
                   TargetJoins = targetJoinProofs target targetProfile
+                  TargetDml = targetDmlProofs target targetProfile
                   ConflictProofs = conflictProofs conflictTargetAssurance
                   Policy = policy
                   AllowedTables = allowed }

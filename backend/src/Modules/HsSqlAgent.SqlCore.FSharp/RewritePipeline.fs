@@ -15,6 +15,7 @@ module internal RewritePipeline =
           TargetRuntime: TargetRuntime
           TargetExpressions: ExpressionProofs
           TargetJoins: JoinProofs
+          TargetDml: DmlProofs
           ConflictProofs: ConflictProofs
           Policy: ExecutionPolicy
           AllowedTables: string list option }
@@ -24,6 +25,6 @@ module internal RewritePipeline =
         |> RewriteParser.parseForWith options.SourceSemantics options.SourceDialect
         |> RewriteBinder.bind
         |> RewriteStages.normalize
-        |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.TargetExpressions options.TargetJoins options.ConflictProofs
+        |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.TargetExpressions options.TargetJoins options.TargetDml options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider

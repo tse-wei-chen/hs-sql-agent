@@ -14,7 +14,14 @@ module internal Typestate =
           FullJoin: CapabilityProof }
 
     type ExpressionProofs =
-        { ILike: CapabilityProof }
+        { ILike: CapabilityProof
+          IntervalLiteral: CapabilityProof }
+
+    type DmlProofs =
+        { Returning: CapabilityProof
+          ReturningExpression: CapabilityProof
+          UpdateFrom: CapabilityProof
+          DeleteUsing: CapabilityProof }
 
     type ColumnSetAssurance =
         | MissingAssurance

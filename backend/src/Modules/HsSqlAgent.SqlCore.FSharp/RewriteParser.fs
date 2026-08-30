@@ -20,7 +20,8 @@ module internal RewriteParser =
     type SourceSemantics =
         { MySqlPipes: MySqlPipesSemantics
           Joins: JoinProofs
-          Expressions: ExpressionProofs }
+          Expressions: ExpressionProofs
+          Dml: DmlProofs }
 
     module SourceSemantics =
         let private permissiveJoins =
@@ -28,17 +29,26 @@ module internal RewriteParser =
               FullJoin = ProvenCapability }
 
         let private permissiveExpressions =
-            { ILike = ProvenCapability }
+            { ILike = ProvenCapability
+              IntervalLiteral = ProvenCapability }
+
+        let private permissiveDml =
+            { Returning = ProvenCapability
+              ReturningExpression = ProvenCapability
+              UpdateFrom = ProvenCapability
+              DeleteUsing = ProvenCapability }
 
         let defaultValue =
             { MySqlPipes = RejectAmbiguousPipes
               Joins = permissiveJoins
-              Expressions = permissiveExpressions }
+              Expressions = permissiveExpressions
+              Dml = permissiveDml }
 
         let mysqlPipesAsConcat =
             { MySqlPipes = PipesAsConcat
               Joins = permissiveJoins
-              Expressions = permissiveExpressions }
+              Expressions = permissiveExpressions
+              Dml = permissiveDml }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
@@ -54,6 +64,7 @@ module internal RewriteParser =
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
+        member _.SourceDml = semantics.Dml
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
@@ -455,6 +466,7 @@ module internal RewriteParser =
         | Keyword "TIME" -> cursor.Advance(); Literal(parseTimeLiteral cursor)
         | Keyword "TIMESTAMP" -> cursor.Advance(); Literal(parseTimestampLiteral cursor)
         | Keyword "INTERVAL" ->
+            requireSourceCapability cursor.SourceExpressions.IntervalLiteral
             cursor.Advance()
             match cursor.Take().Kind with
             | StringLiteral text -> Interval(IntervalLiteral.create text)
@@ -480,12 +492,22 @@ module internal RewriteParser =
     and private parseReturning cursor =
         if not (acceptKeyword "RETURNING" cursor) then []
         else
+            requireSourceCapability cursor.SourceDml.Returning
             let items = ResizeArray<SelectItem>()
             items.Add(parseSelectItem cursor)
             while acceptSymbol ',' cursor do items.Add(parseSelectItem cursor)
             let values = items |> Seq.toList
             if values.Length > 1 && values |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then
                 fail cursor.Current "RETURNING wildcard cannot be combined with other expressions"
+            let hasExpressionItem =
+                values
+                |> List.exists (fun item ->
+                    match item.Expression with
+                    | Column identifier when Identifier.parts identifier |> List.length = 1 -> false
+                    | Wildcard None -> false
+                    | _ -> true)
+            if hasExpressionItem then
+                requireSourceCapability cursor.SourceDml.ReturningExpression
             values
 
     and private parseTableSource cursor =
