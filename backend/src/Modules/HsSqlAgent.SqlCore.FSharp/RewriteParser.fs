@@ -775,6 +775,73 @@ module internal RewriteParser =
         expectSymbol ')' cursor
         Extract(field, value)
 
+    and private parseFunctionExpression (name: Identifier) cursor =
+        let nameParts = Identifier.parts name
+        if nameParts.Length <> 1 || nameParts.Head.WasQuoted then
+            fail cursor.Current "Quoted or qualified function identifiers are not supported by the portable Core grammar"
+        expectSymbol '(' cursor
+        let distinct = acceptKeyword "DISTINCT" cursor
+        if not distinct then
+            acceptKeyword "ALL" cursor |> ignore
+        let arguments = ResizeArray<Expr>()
+        let mutable aggregateOrderBy : OrderBy list = []
+        let mutable aggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+        let mutable aggregateSeparator : string option = None
+
+        if not (acceptSymbol ')' cursor) then
+            if acceptOperator "*" cursor then
+                arguments.Add(Wildcard None)
+            else
+                arguments.Add(parseExpression cursor)
+
+            let mutable readingArguments = true
+            while readingArguments && acceptSymbol ',' cursor do
+                arguments.Add(parseExpression cursor)
+                readingArguments <- not (isKeyword "ORDER" cursor.Current || isKeyword "SEPARATOR" cursor.Current)
+
+            if isKeyword "ORDER" cursor.Current then
+                aggregateOrderBy <- parseOrderBy false cursor
+                aggregateOrderSyntax <- AggregateOrderSyntax.InlineAggregateOrder
+
+            if acceptKeyword "SEPARATOR" cursor then
+                let token = cursor.Take()
+                match token.Kind with
+                | StringLiteral value -> aggregateSeparator <- Some value
+                | _ -> fail token "SEPARATOR requires a string literal"
+
+            expectSymbol ')' cursor
+
+        let values = arguments |> Seq.toList
+        let isRawRegex =
+            Identifier.parts name
+            |> function
+                | [ part ] -> part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
+                | _ -> false
+        if isRawRegex then
+            if not aggregateOrderBy.IsEmpty || aggregateSeparator.IsSome then
+                fail cursor.Current "REGEXP_LIKE cannot carry aggregate modifiers"
+            RawRegexCall(values, distinct)
+        else
+            FunctionCall
+                { Name = functionName name
+                  Arguments = values
+                  IsDistinct = distinct
+                  AggregateOrderBy = aggregateOrderBy
+                  AggregateOrderSyntax = aggregateOrderSyntax
+                  AggregateSeparator = aggregateSeparator }
+
+    and private parseKeywordFunctionExpression cursor =
+        let token = cursor.Take()
+        let part =
+            match token.Kind with
+            | Keyword value ->
+                { Value = value
+                  WasQuoted = false
+                  PreserveSpelling = false
+                  Span = { Start = token.Start; Length = token.Length } }
+            | _ -> fail token "Expected keyword function"
+        parseFunctionExpression (Identifier.create [ part ]) cursor
+
     and private parseIdentifierExpression cursor =
         let parts = ResizeArray<IdentifierPart>()
         parts.Add(identifierPart cursor)
@@ -785,60 +852,7 @@ module internal RewriteParser =
             else parts.Add(identifierPart cursor)
         let name = Identifier.create (parts |> Seq.toList)
         if wildcard then Wildcard(Some name)
-        elif isSymbol '(' cursor.Current then
-            let nameParts = Identifier.parts name
-            if nameParts.Length <> 1 || nameParts.Head.WasQuoted then
-                fail cursor.Current "Quoted or qualified function identifiers are not supported by the portable Core grammar"
-            cursor.Advance()
-            let distinct = acceptKeyword "DISTINCT" cursor
-            if not distinct then
-                acceptKeyword "ALL" cursor |> ignore
-            let arguments = ResizeArray<Expr>()
-            let mutable aggregateOrderBy : OrderBy list = []
-            let mutable aggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
-            let mutable aggregateSeparator : string option = None
-
-            if not (acceptSymbol ')' cursor) then
-                if acceptOperator "*" cursor then
-                    arguments.Add(Wildcard None)
-                else
-                    arguments.Add(parseExpression cursor)
-
-                let mutable readingArguments = true
-                while readingArguments && acceptSymbol ',' cursor do
-                    arguments.Add(parseExpression cursor)
-                    readingArguments <- not (isKeyword "ORDER" cursor.Current || isKeyword "SEPARATOR" cursor.Current)
-
-                if isKeyword "ORDER" cursor.Current then
-                    aggregateOrderBy <- parseOrderBy false cursor
-                    aggregateOrderSyntax <- AggregateOrderSyntax.InlineAggregateOrder
-
-                if acceptKeyword "SEPARATOR" cursor then
-                    let token = cursor.Take()
-                    match token.Kind with
-                    | StringLiteral value -> aggregateSeparator <- Some value
-                    | _ -> fail token "SEPARATOR requires a string literal"
-
-                expectSymbol ')' cursor
-
-            let values = arguments |> Seq.toList
-            let isRawRegex =
-                Identifier.parts name
-                |> function
-                    | [ part ] -> part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
-                    | _ -> false
-            if isRawRegex then
-                if not aggregateOrderBy.IsEmpty || aggregateSeparator.IsSome then
-                    fail cursor.Current "REGEXP_LIKE cannot carry aggregate modifiers"
-                RawRegexCall(values, distinct)
-            else
-                FunctionCall
-                    { Name = functionName name
-                      Arguments = values
-                      IsDistinct = distinct
-                      AggregateOrderBy = aggregateOrderBy
-                      AggregateOrderSyntax = aggregateOrderSyntax
-                      AggregateSeparator = aggregateSeparator }
+        elif isSymbol '(' cursor.Current then parseFunctionExpression name cursor
         else Column name
 
     and private parsePrimary cursor =
@@ -969,6 +983,8 @@ module internal RewriteParser =
         | Keyword "CASE" -> parseCase cursor
         | Keyword "CAST" -> parseCast cursor
         | Keyword "EXTRACT" -> parseExtract cursor
+        | Keyword "LEFT" when isSymbol '(' (cursor.Peek 1) -> parseKeywordFunctionExpression cursor
+        | Keyword "RIGHT" when isSymbol '(' (cursor.Peek 1) -> parseKeywordFunctionExpression cursor
         | Keyword "EXISTS" ->
             cursor.Advance(); expectSymbol '(' cursor
             let query = parseQuery cursor
