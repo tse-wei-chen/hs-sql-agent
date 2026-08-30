@@ -34,9 +34,10 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> RewriteParser.SourceDialect.Firebird
         | value -> invalidArg "sourceDialect" ("Unsupported source dialect '" + string value + "'.")
 
-    let private capabilityProof = function
+    let private capabilityProof (message: string | null) =
+        match message with
         | null -> CapabilityProof.ProvenCapability
-        | message -> CapabilityProof.RejectedCapability message
+        | value -> CapabilityProof.RejectedCapability value
 
     let private sourceJoinProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : JoinProofs =
         { RightJoin =
