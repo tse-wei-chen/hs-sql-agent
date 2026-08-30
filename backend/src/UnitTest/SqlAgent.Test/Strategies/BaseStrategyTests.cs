@@ -267,7 +267,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_PortableDateFormat_ShouldPreserveMinutes()
     {
-        const string formatSqlPrefix = "SELECT FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') AS formatted FROM ";
+        const string formatSqlPrefix = "SELECT FORMAT(CAST('2026-08-22 13:45:09' AS DATETIME2), 'yyyy-MM-dd HH:mm:ss') AS formatted FROM ";
         var sql = formatSqlPrefix + TestTableName;
         if (!SupportsPortableDateFormatting)
         {

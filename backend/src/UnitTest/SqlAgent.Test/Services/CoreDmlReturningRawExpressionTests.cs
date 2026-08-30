@@ -59,7 +59,7 @@ public sealed class CoreDmlReturningRawExpressionTests
             SqlAgentToolType.Sqlite,
             ServerVersion: new Version(3, 35));
 
-        Assert.Throws<SqlParseException>(() =>
+        Assert.Throws<SqlCompilationException>(() =>
             CoreSqlTextParser.ParseDml(
                 "DELETE FROM users WHERE id = 1 RETURNING id + id",
                 SqlAgentToolType.Sqlite,

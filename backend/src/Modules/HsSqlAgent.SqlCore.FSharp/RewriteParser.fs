@@ -107,10 +107,13 @@ module internal RewriteParser =
 
     let private typedTemporalSourceError (cursor: Cursor) spelling : 'T =
         let token = cursor.Current
-        invalidArg "sql" (
+        let finish = token.Start + max token.Length 1
+        raise (SqlParseException(
             "Typed temporal literal " + spelling
             + " is not valid for source dialect " + sourceDialectName cursor.Dialect
-            + " in the Core source profile at offset " + string token.Start + ".")
+            + " in the Core source profile. Position "
+            + string token.Start + ", span ["
+            + string token.Start + ".." + string finish + ")."))
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
@@ -157,6 +160,8 @@ module internal RewriteParser =
         match token.Kind with
         | Identifier(value, quoted) ->
             { Value = value; WasQuoted = quoted; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
+        | Keyword value when value = "FETCH" || value = "KEY" ->
+            { Value = value; WasQuoted = false; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
         | _ -> fail token "Expected identifier"
 
     let private identifierPart (cursor: Cursor) = cursor.Take() |> partFromToken
@@ -192,7 +197,7 @@ module internal RewriteParser =
         let token = cursor.Take()
         match token.Kind with
         | IntegerLiteral value when value > 0L && value <= int64 Int32.MaxValue -> PositiveRowCount.create (int value)
-        | _ -> fail token (context + " requires a positive integer")
+        | _ -> fail token (context + " requires an integer greater than zero")
 
     let private parseCastType (cursor: Cursor) =
         let parts = ResizeArray<string>()
@@ -342,6 +347,14 @@ module internal RewriteParser =
             | true, value -> ScalarValue.OffsetDateTime value
             | _ -> fail token "Invalid TIMESTAMP WITH TIME ZONE literal"
         | _ -> fail token "TIMESTAMP WITH TIME ZONE requires a string literal"
+
+    let private applyTypedCast (cursor: Cursor) expression target =
+        match expression, CastType.value target with
+        | Literal(ScalarValue.Text text), typeName when typeName.Equals("DATE", StringComparison.OrdinalIgnoreCase) ->
+            match DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None) with
+            | true, value -> Literal(ScalarValue.Date value)
+            | _ -> fail cursor.Current "Invalid DATE literal in CAST"
+        | _ -> Cast(expression, target)
 
     let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor
 
@@ -493,16 +506,17 @@ module internal RewriteParser =
                     let finish = token.Start + max token.Length 1
                     raise (SqlParseException(
                         "PostgreSQL '::' CAST shorthand is not valid for source dialect "
-                        + string cursor.Dialect
+                        + sourceDialectName cursor.Dialect
                         + "; use CAST(... AS ...). Position "
                         + string token.Start + ", span ["
                         + string token.Start + ".." + string finish + ")."))
                 cursor.Advance()
-                expression <- Cast(expression, parsePostfixCastType cursor)
+                let target = parsePostfixCastType cursor
+                expression <- applyTypedCast cursor expression target
             elif acceptKeyword "WITHIN" cursor then
                 expectKeyword "GROUP" cursor
                 expectSymbol '(' cursor
-                let ordering : OrderBy list = parseOrderBy cursor
+                let ordering : OrderBy list = parseOrderBy false cursor
                 if ordering.IsEmpty then fail cursor.Current "WITHIN GROUP requires ORDER BY"
                 expectSymbol ')' cursor
                 match expression with
@@ -534,7 +548,7 @@ module internal RewriteParser =
             expectKeyword "BY" cursor
             partitions.Add(parseExpression cursor)
             while acceptSymbol ',' cursor do partitions.Add(parseExpression cursor)
-        let orderBy = parseOrderBy cursor
+        let orderBy = parseOrderBy false cursor
         let frame =
             if isKeyword "ROWS" cursor.Current || isKeyword "RANGE" cursor.Current then
                 let unit = if acceptKeyword "ROWS" cursor then WindowFrameUnit.Rows else expectKeyword "RANGE" cursor; WindowFrameUnit.Range
@@ -601,12 +615,7 @@ module internal RewriteParser =
         expectKeyword "AS" cursor
         let target = parseCastType cursor
         expectSymbol ')' cursor
-        match value, CastType.value target with
-        | Literal(ScalarValue.Text text), typeName when typeName.Equals("DATE", StringComparison.OrdinalIgnoreCase) ->
-            match DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None) with
-            | true, _ -> Cast(value, target)
-            | _ -> fail cursor.Current "Invalid DATE literal in CAST"
-        | _ -> Cast(value, target)
+        applyTypedCast cursor value target
 
     and private parseExtract cursor =
         expectKeyword "EXTRACT" cursor
@@ -651,7 +660,7 @@ module internal RewriteParser =
                     readingArguments <- not (isKeyword "ORDER" cursor.Current || isKeyword "SEPARATOR" cursor.Current)
 
                 if isKeyword "ORDER" cursor.Current then
-                    aggregateOrderBy <- parseOrderBy cursor
+                    aggregateOrderBy <- parseOrderBy false cursor
                     aggregateOrderSyntax <- AggregateOrderSyntax.InlineAggregateOrder
 
                 if acceptKeyword "SEPARATOR" cursor then
@@ -691,10 +700,10 @@ module internal RewriteParser =
         | Operator "*" -> cursor.Advance(); Wildcard None
         | Keyword "NULL" -> cursor.Advance(); Literal ScalarValue.Null
         | Keyword "TRUE" ->
-            if cursor.Dialect = SourceDialect.SqlServer then fail token "TRUE is not valid in the SQL Server source dialect"
+            if cursor.Dialect = SourceDialect.SqlServer then fail token "TRUE is not valid in T-SQL (SQL Server source dialect)"
             cursor.Advance(); Literal(ScalarValue.Boolean true)
         | Keyword "FALSE" ->
-            if cursor.Dialect = SourceDialect.SqlServer then fail token "FALSE is not valid in the SQL Server source dialect"
+            if cursor.Dialect = SourceDialect.SqlServer then fail token "FALSE is not valid in T-SQL (SQL Server source dialect)"
             cursor.Advance(); Literal(ScalarValue.Boolean false)
         | Keyword "DATE" ->
             match cursor.Dialect with
@@ -740,6 +749,7 @@ module internal RewriteParser =
                     typedTemporalSourceError cursor "TIMESTAMP"
         | Keyword "CURRENT_DATE" ->
             cursor.Advance()
+            if acceptSymbol '(' cursor then expectSymbol ')' cursor
             FunctionCall
                 { Name = FunctionName.create "CURRENT_DATE"
                   Arguments = []
@@ -749,6 +759,7 @@ module internal RewriteParser =
                   AggregateSeparator = None }
         | Keyword "CURRENT_TIME" ->
             cursor.Advance()
+            if acceptSymbol '(' cursor then expectSymbol ')' cursor
             FunctionCall
                 { Name = FunctionName.create "CURRENT_TIME"
                   Arguments = []
@@ -758,6 +769,7 @@ module internal RewriteParser =
                   AggregateSeparator = None }
         | Keyword "CURRENT_TIMESTAMP" ->
             cursor.Advance()
+            if acceptSymbol '(' cursor then expectSymbol ')' cursor
             FunctionCall
                 { Name = FunctionName.create "CURRENT_TIMESTAMP"
                   Arguments = []
@@ -782,12 +794,32 @@ module internal RewriteParser =
         | Symbol '(' when isKeyword "SELECT" (cursor.Peek 1) || isKeyword "WITH" (cursor.Peek 1) ->
             cursor.Advance(); let query = parseQuery cursor in expectSymbol ')' cursor; ScalarSubquery query
         | Symbol '(' -> cursor.Advance(); let expression = parseExpression cursor in expectSymbol ')' cursor; expression
+        | Identifier(value, false) when cursor.Dialect = SourceDialect.Oracle && value.Equals("SYSDATE", StringComparison.OrdinalIgnoreCase) ->
+            cursor.Advance()
+            if acceptSymbol '(' cursor then
+                if not (acceptSymbol ')' cursor) then fail cursor.Current "SYSDATE() does not accept arguments"
+                raise (SqlCompilationException("Function 'SYSDATE' is not registered as a portable Core source function."))
+            else
+                let finish = token.Start + max token.Length 1
+                raise (SqlParseException(
+                    "Oracle bare SYSDATE is not represented as a portable Core temporal expression. Position "
+                    + string token.Start + ", span [" + string token.Start + ".." + string finish + ")."))
+        | Keyword "FETCH"
+        | Keyword "KEY"
         | Identifier _ -> parseIdentifierExpression cursor
         | _ -> fail token "Expected expression"
 
     and private parseSelectItem cursor =
         let expression = parseExpression cursor
-        { Expression = expression; Alias = if acceptKeyword "AS" cursor then Some(identifierPart cursor) else None }
+        let alias =
+            if acceptKeyword "AS" cursor then Some(identifierPart cursor)
+            else
+                match cursor.Current.Kind with
+                | Identifier _
+                | Keyword "KEY"
+                | Keyword "FETCH" -> Some(identifierPart cursor)
+                | _ -> None
+        { Expression = expression; Alias = alias }
 
     and private parseReturning cursor =
         if not (acceptKeyword "RETURNING" cursor) then []
@@ -825,7 +857,13 @@ module internal RewriteParser =
             let name = identifier cursor
             let alias =
                 if acceptKeyword "AS" cursor then Some(identifierPart cursor)
-                else match cursor.Current.Kind with Identifier _ -> Some(identifierPart cursor) | _ -> None
+                else
+                    match cursor.Current.Kind with
+                    | Identifier _ -> Some(identifierPart cursor)
+                    | Keyword "KEY" -> Some(identifierPart cursor)
+                    | Keyword "FETCH" when not (isKeyword "FIRST" (cursor.Peek 1) || isKeyword "NEXT" (cursor.Peek 1)) ->
+                        Some(identifierPart cursor)
+                    | _ -> None
             NamedTable(name, alias)
 
     and private parseJoin cursor =
@@ -913,11 +951,24 @@ module internal RewriteParser =
           GroupBy = groupBy |> Seq.toList
           Having = having }, top
 
-    and private parseOrderItem (cursor: Cursor) =
+    and private parseOrderItem allowOrdinal (cursor: Cursor) =
+        let ordinalBoundary next =
+            isSymbol ',' next
+            || isKeyword "ASC" next
+            || isKeyword "DESC" next
+            || isKeyword "NULLS" next
+            || isKeyword "LIMIT" next
+            || isKeyword "OFFSET" next
+            || isKeyword "FETCH" next
+            || match next.Kind with End | Symbol ')' -> true | _ -> false
+
         let expression =
             match cursor.Current.Kind, cursor.Peek 1 with
-            | IntegerLiteral value, next when value > 0L && value <= int64 Int32.MaxValue && (isSymbol ',' next || isKeyword "ASC" next || isKeyword "DESC" next || isKeyword "NULLS" next || isKeyword "LIMIT" next || isKeyword "OFFSET" next || isKeyword "FETCH" next || match next.Kind with End | Symbol ')' -> true | _ -> false) ->
-                cursor.Advance(); OrderOrdinal(PositiveRowCount.create (int value))
+            | IntegerLiteral 0L, next when allowOrdinal && ordinalBoundary next ->
+                raise (SqlCompilationException("ORDER BY ordinal must be positive (greater than zero)."))
+            | IntegerLiteral value, next when allowOrdinal && value > 0L && value <= int64 Int32.MaxValue && ordinalBoundary next ->
+                cursor.Advance()
+                OrderOrdinal(PositiveRowCount.create (int value))
             | _ -> parseExpression cursor
         let descending = if acceptKeyword "DESC" cursor then true else acceptKeyword "ASC" cursor |> ignore; false
         let nullOrdering =
@@ -932,13 +983,13 @@ module internal RewriteParser =
             else NullOrdering.Default
         { Expression = expression; Descending = descending; NullOrdering = nullOrdering }
 
-    and private parseOrderBy cursor =
+    and private parseOrderBy allowOrdinal cursor =
         if not (acceptKeyword "ORDER" cursor) then []
         else
             expectKeyword "BY" cursor
             let items = ResizeArray<OrderBy>()
-            items.Add(parseOrderItem cursor)
-            while acceptSymbol ',' cursor do items.Add(parseOrderItem cursor)
+            items.Add(parseOrderItem allowOrdinal cursor)
+            while acceptSymbol ',' cursor do items.Add(parseOrderItem allowOrdinal cursor)
             items |> Seq.toList
 
     and private parseSetOperator cursor =
@@ -953,18 +1004,22 @@ module internal RewriteParser =
         else None
 
     and private parseQueryTail cursor =
-        let orderBy = parseOrderBy cursor
+        let orderBy = parseOrderBy true cursor
         let mutable limit = None
         let mutable offset = None
 
         let parseFetch () =
             if cursor.Dialect = SourceDialect.MySql || cursor.Dialect = SourceDialect.SQLite then
-                fail cursor.Current ("FETCH is not valid for source dialect " + sourceDialectName cursor.Dialect)
+                fail cursor.Current ("FETCH FIRST/NEXT is not valid for source dialect " + sourceDialectName cursor.Dialect)
             if cursor.Dialect = SourceDialect.SqlServer && offset.IsNone then
                 fail cursor.Current "SQL Server FETCH requires a preceding OFFSET"
             if not (acceptKeyword "FIRST" cursor || acceptKeyword "NEXT" cursor) then
                 fail cursor.Current "Expected FIRST or NEXT after FETCH"
-            let count = parsePositiveRowCount "FETCH row count" cursor |> PositiveRowCount.value
+            let count =
+                if isKeyword "ROW" cursor.Current || isKeyword "ROWS" cursor.Current then 1
+                else parsePositiveRowCount "FETCH row count" cursor |> PositiveRowCount.value
+            if acceptKeyword "PERCENT" cursor then
+                fail cursor.Current "FETCH ... PERCENT is not represented by the portable compiler"
             if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then
                 fail cursor.Current "Expected ROW or ROWS after FETCH count"
             if acceptKeyword "WITH" cursor then
@@ -1010,7 +1065,7 @@ module internal RewriteParser =
             acceptKeyword "ROWS" cursor |> ignore
             if acceptKeyword "FETCH" cursor then parseFetch ()
             elif cursor.Dialect = SourceDialect.SqlServer && orderBy.IsEmpty then
-                fail cursor.Current "SQL Server OFFSET requires ORDER BY"
+                fail cursor.Current "SQL Server OFFSET/FETCH requires ORDER BY"
         elif acceptKeyword "FETCH" cursor then
             parseFetch ()
 
@@ -1028,7 +1083,7 @@ module internal RewriteParser =
                 branches.Add { Operator = operator; Query = { Head = branchHead; SetOperations = []; OrderBy = []; Limit = branchTop; Offset = None } }
             | None -> scanning <- false
         let orderBy, tailLimit, offset = parseQueryTail cursor
-        let limit = match top, tailLimit with Some value, None -> Some value | None, value -> value | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with a second row limit"
+        let limit = match top, tailLimit with Some value, None -> Some value | None, value -> value | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
         { Head = head; SetOperations = branches |> Seq.toList; OrderBy = orderBy; Limit = limit; Offset = offset }
 
     and private ensureUniqueInsertColumns (cursor: Cursor) (columns: IdentifierPart list) =
@@ -1116,7 +1171,8 @@ module internal RewriteParser =
         values.Add(parseExpression cursor)
         while acceptSymbol ',' cursor do values.Add(parseExpression cursor)
         expectSymbol ')' cursor
-        expectKeyword "MATCHING" cursor
+        if not (acceptKeyword "MATCHING" cursor) then
+            fail cursor.Current "Firebird UPDATE OR INSERT requires explicit MATCHING"
         expectSymbol '(' cursor
         let targets = ResizeArray<Identifier>()
         targets.Add(singlePartIdentifier (identifierPart cursor))

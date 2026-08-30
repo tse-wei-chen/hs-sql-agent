@@ -436,7 +436,10 @@ module internal SqlCurrentTemporalCapabilityRules =
         if supported then null
         else
             let fn = match kind with SqlCurrentTemporalKind.Date -> "CURRENT_DATE" | SqlCurrentTemporalKind.Time -> "CURRENT_TIME" | _ -> "CURRENT_TIMESTAMP"
-            "Function '" + fn + "' is not valid for declared source dialect " + string sourceDialect + " in the Core source capability profile."
+            let dialect =
+                if sourceDialect = SqlAgentToolType.MsSqlServer then "MsSqlServer (Transact-SQL / T-SQL)"
+                else string sourceDialect
+            "Function '" + fn + "' is not valid for declared source dialect " + dialect + " in the Core source capability profile."
 
     let TargetValidationError(kind: SqlCurrentTemporalKind, provider: SqlAgentToolType) =
         if kind <> SqlCurrentTemporalKind.Time || provider <> SqlAgentToolType.Oracle then null
