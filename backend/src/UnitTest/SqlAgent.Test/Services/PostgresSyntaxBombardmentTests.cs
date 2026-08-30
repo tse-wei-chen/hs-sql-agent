@@ -373,6 +373,36 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT 'unterminated FROM users");
     }
 
+    [Fact]
+    public void PrefixNot_PreservesLegacyPredicatePrecedence()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM users WHERE NOT id = 1",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var unary = Assert.IsType<UnaryExpr>(select.Where);
+        Assert.Equal("NOT", unary.Operator, ignoreCase: true);
+
+        var comparison = Assert.IsType<BinaryExpr>(unary.Operand);
+        Assert.Equal("=", comparison.Operator);
+    }
+
+    [Fact]
+    public void ConcatAndAddition_PreserveLegacyLeftAssociativePrecedence()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT first_name || suffix + 1 FROM users",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var root = Assert.IsType<BinaryExpr>(Assert.Single(select.Select).Expression);
+        Assert.Equal("+", root.Operator);
+
+        var concat = Assert.IsType<BinaryExpr>(root.Left);
+        Assert.Equal("||", concat.Operator);
+    }
+
     [Theory]
     [MemberData(nameof(SupportedPostgresSyntax))]
     public void SupportedPostgresSyntax_ParsesBindsCompilesAndRenders(
