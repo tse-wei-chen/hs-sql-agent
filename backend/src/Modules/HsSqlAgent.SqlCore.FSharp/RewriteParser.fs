@@ -401,7 +401,7 @@ module internal RewriteParser =
             elif acceptKeyword "WITHIN" cursor then
                 expectKeyword "GROUP" cursor
                 expectSymbol '(' cursor
-                let ordering = parseOrderBy cursor
+                let ordering : OrderBy list = parseOrderBy cursor
                 if ordering.IsEmpty then fail cursor.Current "WITHIN GROUP requires ORDER BY"
                 expectSymbol ')' cursor
                 match expression with
