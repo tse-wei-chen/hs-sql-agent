@@ -41,6 +41,38 @@ public sealed class PostgresSyntaxBoundaryTests
     }
 
     [Fact]
+    public void TypedQueryRuntime_LateralSourceFailsWithExplicitGrammarDiagnostic()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+
+        var policy = new SecurityPolicyModel
+        {
+            QueryMaxRows = 100,
+            QueryTimeoutSeconds = 30,
+            RequireWhereForUpdate = true,
+            RequireWhereForDelete = true,
+            AllowFullTableUpdate = false,
+            AllowFullTableDelete = false,
+            DmlMaxAffectedRows = 100
+        };
+
+        const string sql =
+            "SELECT q.id FROM LATERAL (SELECT id FROM public.users) q";
+
+        var error = Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
+            runtime.Compile(
+                provider.Object,
+                sql,
+                SqlAgentToolType.Postgres,
+                policy,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }));
+
+        Assert.Contains("LATERAL", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TypedQueryRuntime_CompilesPostgresLeftOuterJoin()
     {
         var runtime = new TypedQueryRuntime();

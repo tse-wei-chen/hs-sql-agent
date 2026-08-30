@@ -299,6 +299,30 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT TIMESTAMP(created_at) FROM events");
     }
 
+    public static IEnumerable<object[]> ExplicitFailClosedPostgresSyntax()
+    {
+        yield return RejectWithMessage(
+            "recursive-cte",
+            "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+            "WITH RECURSIVE");
+        yield return RejectWithMessage(
+            "join-using",
+            "SELECT a.id FROM a JOIN b USING (id)",
+            "USING");
+        yield return RejectWithMessage(
+            "cross-join-using",
+            "SELECT a.id FROM a CROSS JOIN b USING (id)",
+            "ON/USING");
+        yield return RejectWithMessage(
+            "lateral-source",
+            "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
+            "LATERAL");
+        yield return RejectWithMessage(
+            "natural-join",
+            "SELECT a.id FROM a NATURAL JOIN b",
+            "NATURAL JOIN");
+    }
+
     public static IEnumerable<object[]> UnsupportedPostgresSyntax()
     {
         // These were explicit fail-closed boundaries before the F# rewrite and must stay rejected.
@@ -400,6 +424,19 @@ public sealed class PostgresSyntaxBombardmentTests
     }
 
     [Theory]
+    [MemberData(nameof(ExplicitFailClosedPostgresSyntax))]
+    public void ExplicitFailClosedPostgresSyntax_ReportsTheIntendedGrammarBoundary(
+        string name,
+        string sql,
+        string expectedDiagnostic)
+    {
+        var error = Assert.Throws<SqlParseException>(
+            () => CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres));
+
+        Assert.Contains(expectedDiagnostic, error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [MemberData(nameof(UnsupportedPostgresSyntax))]
     public void UnsupportedPostgresSyntax_RemainsFailClosed(string name, string sql)
     {
@@ -417,6 +454,12 @@ public sealed class PostgresSyntaxBombardmentTests
         [name, sql, expectedRenderedFragment, expectedTablesCsv];
 
     private static object[] ParserCase(string name, string sql) => [name, sql];
+
+    private static object[] RejectWithMessage(
+        string name,
+        string sql,
+        string expectedDiagnostic) =>
+        [name, sql, expectedDiagnostic];
 
     private static object[] Reject(string name, string sql) => [name, sql];
 }
