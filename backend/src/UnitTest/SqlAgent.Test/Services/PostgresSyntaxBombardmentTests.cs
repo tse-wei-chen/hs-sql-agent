@@ -438,6 +438,42 @@ public sealed class PostgresSyntaxBombardmentTests
     }
 
     [Fact]
+    public void LargeIntegerLiteral_PreservesLegacyDecimalClrType()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT 2147483648 FROM users",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var literal = Assert.IsType<LiteralExpr>(Assert.Single(select.Select).Expression);
+        Assert.IsType<decimal>(literal.Value);
+        Assert.Equal(2147483648m, literal.Value);
+    }
+
+    [Fact]
+    public void IntegerLiteral_CompileParametersPreserveLegacyClrTypes()
+    {
+        var small = SqlCoreFacade.CompileQuery(
+            "SELECT -1 FROM users",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("postgres-integer-type-parity-v1"),
+            new SqlExecutionPlanPolicy());
+
+        var large = SqlCoreFacade.CompileQuery(
+            "SELECT 2147483648 FROM users",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("postgres-integer-type-parity-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains(small.Parameters, parameter =>
+            parameter.Value is int value && value == -1);
+        Assert.Contains(large.Parameters, parameter =>
+            parameter.Value is decimal value && value == 2147483648m);
+    }
+
+    [Fact]
     public void PrefixNot_PreservesLegacyPredicatePrecedence()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
