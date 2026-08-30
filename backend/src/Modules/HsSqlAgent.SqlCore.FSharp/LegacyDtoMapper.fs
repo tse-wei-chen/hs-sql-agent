@@ -331,7 +331,7 @@ type QueryDefinitionCoreMapper private () =
         let op = QueryDefinitionCoreMapper.NormalizeComparisonOperator(opText)
         let leftExpr = QueryDefinitionCoreMapper.MapExpr(left)
         if isNull right then
-            if op = "IS" || op = "IS NOT" then IsNullExpr(leftExpr, op = "IS NOT", unknown) :> SqlExpr
+            if op = "IS" || op = "IS NOT" then IsNullExpr(leftExpr, (op = "IS NOT"), unknown) :> SqlExpr
             else raise (InvalidOperationException("Predicate operator '" + op + "' requires a right-hand expression."))
         else
             BinaryExpr(leftExpr, op, QueryDefinitionCoreMapper.MapExpr(right), unknown) :> SqlExpr
@@ -346,7 +346,7 @@ type QueryDefinitionCoreMapper private () =
             InExpr(
                 field,
                 basic.Values |> Seq.map (fun value -> LiteralExpr(value, unknown) :> SqlExpr) |> QueryDefinitionCoreMapper.Immutable,
-                op = "NOT IN",
+                (op = "NOT IN"),
                 unknown) :> SqlExpr
         elif op = "BETWEEN" || op = "NOT BETWEEN" then
             let values =
@@ -354,9 +354,9 @@ type QueryDefinitionCoreMapper private () =
                 | :? IEnumerable<obj> as values -> values |> Seq.truncate 3 |> Seq.toArray
                 | _ -> [||]
             if values.Length <> 2 then raise (InvalidOperationException(op + " requires exactly two values."))
-            BetweenExpr(field, LiteralExpr(values[0], unknown), LiteralExpr(values[1], unknown), op = "NOT BETWEEN", unknown) :> SqlExpr
+            BetweenExpr(field, LiteralExpr(values[0], unknown), LiteralExpr(values[1], unknown), (op = "NOT BETWEEN"), unknown) :> SqlExpr
         elif (op = "IS" || op = "IS NOT") && isNull basic.Value then
-            IsNullExpr(field, op = "IS NOT", unknown) :> SqlExpr
+            IsNullExpr(field, (op = "IS NOT"), unknown) :> SqlExpr
         elif op = "IS" || op = "IS NOT" then
             raise (InvalidOperationException(op + " currently supports NULL only in the Core AST."))
         else
@@ -366,7 +366,7 @@ type QueryDefinitionCoreMapper private () =
         let op = QueryDefinitionCoreMapper.NormalizeComparisonOperator(subquery.Operator)
         let mapped = QueryDefinitionCoreMapper.Map(subquery.SubQuery)
         if op = "EXISTS" || op = "NOT EXISTS" then
-            ExistsExpr(mapped, op = "NOT EXISTS", unknown) :> SqlExpr
+            ExistsExpr(mapped, (op = "NOT EXISTS"), unknown) :> SqlExpr
         elif op <> "IN" && op <> "NOT IN" then
             raise (InvalidOperationException("Unsupported subquery predicate operator '" + subquery.Operator + "'."))
         elif String.IsNullOrWhiteSpace(subquery.FieldName) then
@@ -404,7 +404,7 @@ type QueryDefinitionCoreMapper private () =
             | :? BasicHavingCondition as basic ->
                 let left = ColumnExpr(QueryDefinitionCoreMapper.Identifier(basic.FieldName), unknown) :> SqlExpr
                 let op = QueryDefinitionCoreMapper.NormalizeComparisonOperator(basic.Operator)
-                if (op = "IS" || op = "IS NOT") && isNull basic.Value then IsNullExpr(left, op = "IS NOT", unknown) :> SqlExpr
+                if (op = "IS" || op = "IS NOT") && isNull basic.Value then IsNullExpr(left, (op = "IS NOT"), unknown) :> SqlExpr
                 elif op = "IS" || op = "IS NOT" then raise (InvalidOperationException(op + " currently supports NULL only in the Core AST."))
                 else BinaryExpr(left, op, LiteralExpr(basic.Value, unknown), unknown) :> SqlExpr
             | :? FunctionHavingCondition as fn ->
@@ -415,7 +415,7 @@ type QueryDefinitionCoreMapper private () =
                     fn.LeftFunction.FilterWhereConditions,
                     fn.LeftFunction.Window)
                 let op = QueryDefinitionCoreMapper.NormalizeComparisonOperator(fn.Operator)
-                if (op = "IS" || op = "IS NOT") && isNull fn.Value then IsNullExpr(left, op = "IS NOT", unknown) :> SqlExpr
+                if (op = "IS" || op = "IS NOT") && isNull fn.Value then IsNullExpr(left, (op = "IS NOT"), unknown) :> SqlExpr
                 elif op = "IS" || op = "IS NOT" then raise (InvalidOperationException(op + " currently supports NULL only in the Core AST."))
                 else BinaryExpr(left, op, LiteralExpr(fn.Value, unknown), unknown) :> SqlExpr
             | :? ExpressionHavingCondition as expression ->
@@ -448,7 +448,7 @@ type QueryDefinitionCoreMapper private () =
                     | HsSqlAgent.SqlCore.Enums.NullOrdering.First -> NullOrderingKind.First
                     | HsSqlAgent.SqlCore.Enums.NullOrdering.Last -> NullOrderingKind.Last
                     | value -> raise (ArgumentOutOfRangeException("condition.NullOrdering", value, "Unknown null ordering."))
-                OrderByItem(expression, condition.Direction = SortDirection.Desc, nullOrdering, unknown))
+                OrderByItem(expression, (condition.Direction = SortDirection.Desc), nullOrdering, unknown))
             |> QueryDefinitionCoreMapper.Immutable
 
     static member private ToDefinition(source: SubQuerySelectCondition) =

@@ -20,7 +20,7 @@ type SqlNode(span: SourceSpan) =
 type SqlStatement(span: SourceSpan) =
     inherit SqlNode(span)
 
-[<AbstractClass>]
+[<AbstractClass; AllowNullLiteral>]
 type SqlExpr(span: SourceSpan) =
     inherit SqlNode(span)
 
