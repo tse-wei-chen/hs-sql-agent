@@ -1,5 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
+open System
+open System.Runtime.CompilerServices
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 
 /// Unforgeable compiler-stage wrappers. Construction is intentionally centralized here.
@@ -79,6 +81,20 @@ module internal Typestate =
     type CanonicalSql = private CanonicalSql of Document
 
     module Parsed =
+        let private sourceSpans = ConditionalWeakTable<obj, StrongBox<Span>>()
+
+        let internal rememberSpan (node: obj) span =
+            if not (isNull node) then
+                sourceSpans.Remove(node) |> ignore
+                sourceSpans.Add(node, StrongBox<Span>(span))
+
+        let internal trySpan (node: obj) =
+            if isNull node then None
+            else
+                match sourceSpans.TryGetValue(node) with
+                | true, value -> Some value.Value
+                | _ -> None
+
         let internal create document = ParsedSql document
         let internal value (ParsedSql document) = document
 

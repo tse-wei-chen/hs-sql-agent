@@ -21,6 +21,9 @@ module internal RewriteCompatibilityAstAdapter =
         { Start = span.Start
           End = if span.Start < 0 then -1 else span.Start + max 0 span.Length }
 
+    let private nodeSpan (node: obj) =
+        Parsed.trySpan node |> Option.map spanOf |> Option.defaultValue unknown
+
     let private partOf (part: IdentifierPart) =
         HsSqlAgent.SqlCore.Core.Ast.IdentifierPart(
             part.Value,
@@ -110,10 +113,11 @@ module internal RewriteCompatibilityAstAdapter =
                 unknown)
 
     let rec private exprOf expression : HsSqlAgent.SqlCore.Core.Ast.SqlExpr =
+        let expressionSpan = nodeSpan (box expression)
         match expression with
         | Expr.Column identifier
         | Expr.BoundColumn(identifier, _) ->
-            HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, expressionSpan)
 
         | Expr.Wildcard qualifier ->
             let parts =
@@ -121,22 +125,22 @@ module internal RewriteCompatibilityAstAdapter =
                 | None -> []
                 | Some value -> value |> Identifier.parts |> List.map partOf
             let parts =
-                parts @ [ HsSqlAgent.SqlCore.Core.Ast.IdentifierPart("*", false, unknown) ]
+                parts @ [ HsSqlAgent.SqlCore.Core.Ast.IdentifierPart("*", false, expressionSpan) ]
                 |> ImmutableArray.CreateRange
             HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(
-                HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(parts, unknown),
-                unknown)
+                HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(parts, expressionSpan),
+                expressionSpan)
 
         | Expr.OrderOrdinal ordinal ->
             HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
                 HsSqlAgent.SqlCore.Core.Ast.OrderByOrdinalValue(PositiveRowCount.value ordinal),
-                unknown)
+                expressionSpan)
 
         | Expr.Literal value ->
-            HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(scalarValue value, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(scalarValue value, expressionSpan)
 
         | Expr.Interval literal ->
-            HsSqlAgent.SqlCore.Core.Ast.IntervalExpr(IntervalLiteral.value literal, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.IntervalExpr(IntervalLiteral.value literal, expressionSpan)
 
         | Expr.Unary(operator, operand) ->
             let text =
@@ -144,14 +148,14 @@ module internal RewriteCompatibilityAstAdapter =
                 | UnaryOperator.Not -> "NOT"
                 | UnaryOperator.Negate -> "-"
                 | UnaryOperator.Positive -> "+"
-            HsSqlAgent.SqlCore.Core.Ast.UnaryExpr(text, exprOf operand, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.UnaryExpr(text, exprOf operand, expressionSpan)
 
         | Expr.Binary(operator, left, right) ->
             HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
                 exprOf left,
                 binaryOperator operator,
                 exprOf right,
-                unknown)
+                expressionSpan)
 
         | Expr.Like(value, pattern, escape, negated, insensitive) ->
             let op =
@@ -168,7 +172,7 @@ module internal RewriteCompatibilityAstAdapter =
                 exprOf value,
                 op,
                 exprOf pattern,
-                unknown,
+                expressionSpan,
                 escapeText)
 
         | Expr.RawRegexCall(arguments, distinct) ->
@@ -176,14 +180,14 @@ module internal RewriteCompatibilityAstAdapter =
                 identifierFromText "REGEXP_LIKE",
                 arguments |> List.map exprOf |> ImmutableArray.CreateRange,
                 distinct,
-                unknown)
+                expressionSpan)
 
         | Expr.RegexMatch(value, pattern) ->
             HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
                 identifierFromText "CORE_REGEX_MATCH",
                 [ exprOf value; exprOf pattern ] |> ImmutableArray.CreateRange,
                 false,
-                unknown)
+                expressionSpan)
 
         | Expr.FunctionCall call ->
             let result =
@@ -191,23 +195,23 @@ module internal RewriteCompatibilityAstAdapter =
                     identifierFromText (FunctionName.value call.Name),
                     call.Arguments |> List.map exprOf |> ImmutableArray.CreateRange,
                     call.IsDistinct,
-                    unknown)
+                    expressionSpan)
             result.AggregateOrderBy <- call.AggregateOrderBy |> List.map orderByOf |> ImmutableArray.CreateRange
             result.AggregateOrderSyntax <- aggregateOrderSyntax call.AggregateOrderSyntax
             result.AggregateSeparatorClause <- call.AggregateSeparator |> Option.defaultValue null
             result
 
         | Expr.FilteredAggregate(value, predicate) ->
-            HsSqlAgent.SqlCore.Core.Ast.FilterExpr(exprOf value, exprOf predicate, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.FilterExpr(exprOf value, exprOf predicate, expressionSpan)
 
         | Expr.Windowed(value, window) ->
-            HsSqlAgent.SqlCore.Core.Ast.WindowedExpr(exprOf value, windowOf window, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.WindowedExpr(exprOf value, windowOf window, expressionSpan)
 
         | Expr.Cast(value, typeName) ->
-            HsSqlAgent.SqlCore.Core.Ast.CastExpr(exprOf value, CastType.value typeName, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.CastExpr(exprOf value, CastType.value typeName, expressionSpan)
 
         | Expr.Extract(field, value) ->
-            HsSqlAgent.SqlCore.Core.Ast.ExtractExpr(ExtractField.value field, exprOf value, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.ExtractExpr(ExtractField.value field, exprOf value, expressionSpan)
 
         | Expr.SimpleCase(input, branches, fallback) ->
             let inputExpr = exprOf input
@@ -220,13 +224,13 @@ module internal RewriteCompatibilityAstAdapter =
                             inputExpr,
                             "=",
                             exprOf branch.Match,
-                            unknown)
+                            expressionSpan)
                     HsSqlAgent.SqlCore.Core.Ast.CaseBranch(condition, exprOf branch.Result))
                 |> ImmutableArray.CreateRange
             HsSqlAgent.SqlCore.Core.Ast.SimpleCaseExpr(
                 mapped,
                 fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                unknown)
+                expressionSpan)
 
         | Expr.SearchedCase(branches, fallback) ->
             HsSqlAgent.SqlCore.Core.Ast.CaseExpr(
@@ -238,21 +242,21 @@ module internal RewriteCompatibilityAstAdapter =
                         exprOf branch.Result))
                 |> ImmutableArray.CreateRange,
                 fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                unknown)
+                expressionSpan)
 
         | Expr.InList(value, items, negated) ->
             HsSqlAgent.SqlCore.Core.Ast.InExpr(
                 exprOf value,
                 items |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
                 negated,
-                unknown)
+                expressionSpan)
 
         | Expr.InSubquery(value, query, negated) ->
             HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
                 exprOf value,
                 (if negated then "NOT IN" else "IN"),
-                HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, unknown),
-                unknown)
+                HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, expressionSpan),
+                expressionSpan)
 
         | Expr.Between(value, lower, upper, negated) ->
             HsSqlAgent.SqlCore.Core.Ast.BetweenExpr(
@@ -260,16 +264,16 @@ module internal RewriteCompatibilityAstAdapter =
                 exprOf lower,
                 exprOf upper,
                 negated,
-                unknown)
+                expressionSpan)
 
         | Expr.IsNull(value, negated) ->
-            HsSqlAgent.SqlCore.Core.Ast.IsNullExpr(exprOf value, negated, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.IsNullExpr(exprOf value, negated, expressionSpan)
 
         | Expr.ScalarSubquery query ->
-            HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, expressionSpan)
 
         | Expr.Exists(query, negated) ->
-            HsSqlAgent.SqlCore.Core.Ast.ExistsExpr(queryOf query, negated, unknown)
+            HsSqlAgent.SqlCore.Core.Ast.ExistsExpr(queryOf query, negated, expressionSpan)
 
     and private orderByOf (order: OrderBy) =
         HsSqlAgent.SqlCore.Core.Ast.OrderByItem(
@@ -349,9 +353,9 @@ module internal RewriteCompatibilityAstAdapter =
                     unknown))
             |> ImmutableArray.CreateRange,
             queryOf cte.Query,
-            unknown)
+            nodeSpan (box cte))
 
-    and private selectOf (select: Select) orderBy limit offset =
+    and private selectOf (select: Select) orderBy limit offset selectSpan =
         HsSqlAgent.SqlCore.Core.Ast.SelectStatement(
             select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
             select.Distinct,
@@ -364,7 +368,7 @@ module internal RewriteCompatibilityAstAdapter =
             orderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
             limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
             offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-            unknown)
+            selectSpan)
 
     and private setOperator = function
         | SetOperator.Union -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Union
@@ -375,9 +379,9 @@ module internal RewriteCompatibilityAstAdapter =
     and private queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
         match query.SetOperations with
         | [] ->
-            selectOf query.Head query.OrderBy query.Limit query.Offset
+            selectOf query.Head query.OrderBy query.Limit query.Offset (nodeSpan (box query))
         | operations ->
-            let head = selectOf query.Head [] None None
+            let head = selectOf query.Head [] None None (nodeSpan (box query.Head))
             HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
                 head,
                 operations
@@ -390,7 +394,7 @@ module internal RewriteCompatibilityAstAdapter =
                 query.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
                 query.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
                 query.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                unknown)
+                nodeSpan (box query))
 
     let private returningOf item : HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem =
         match item with
@@ -441,7 +445,7 @@ module internal RewriteCompatibilityAstAdapter =
             assignments,
             unknown)
 
-    let private statementOf = function
+    let private statementOf statementSpan = function
         | Statement.QueryStatement query ->
             queryOf query
 
@@ -477,7 +481,7 @@ module internal RewriteCompatibilityAstAdapter =
                             unknown))
                     |> ImmutableArray.CreateRange,
                     source,
-                    unknown)
+                    statementSpan)
             result.Conflict <- insert.Conflict |> Option.map conflictOf |> Option.defaultValue (Unchecked.defaultof<_>)
             result.Returning <- insert.Returning |> List.map returningOf |> ImmutableArray.CreateRange
             result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
@@ -494,7 +498,7 @@ module internal RewriteCompatibilityAstAdapter =
                             unknown))
                     |> ImmutableArray.CreateRange,
                     update.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                    unknown)
+                    statementSpan)
             result.From <- update.From |> List.map (namedDmlSource "UPDATE FROM") |> ImmutableArray.CreateRange
             result.Returning <- update.Returning |> List.map returningOf |> ImmutableArray.CreateRange
             result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
@@ -504,14 +508,14 @@ module internal RewriteCompatibilityAstAdapter =
                 HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
                     HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(identifierOf delete.Target, null, unknown),
                     delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                    unknown)
+                    statementSpan)
             result.Using <- delete.Using |> List.map (namedDmlSource "DELETE USING") |> ImmutableArray.CreateRange
             result.Returning <- delete.Returning |> List.map returningOf |> ImmutableArray.CreateRange
             result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
     let toStatement (parsed: ParsedSql) =
         let document = Parsed.value parsed
-        let statement = statementOf document.Statement
+        let statement = statementOf (spanOf document.Span) document.Statement
         // Preserve the full statement source span at the public boundary.
         match statement with
         | :? HsSqlAgent.SqlCore.Core.Ast.SelectStatement as select ->

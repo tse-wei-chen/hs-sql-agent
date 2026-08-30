@@ -100,6 +100,27 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Parser_CompatibilityProjection_PreservesNestedSourceSpans()
+    {
+        const string sql =
+            "WITH recent AS (SELECT id FROM users WHERE id = 7) SELECT recent.id FROM recent";
+
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(parsed.Statement);
+        var cte = Assert.Single(select.Ctes);
+        var cteSelect = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(cte.Query);
+        var predicate = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.BinaryExpr>(cteSelect.Where);
+
+        Assert.Equal(0, select.Span.Start);
+        Assert.Equal(sql.Length, select.Span.End);
+        Assert.NotEqual(HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown, cte.Span);
+        Assert.NotEqual(HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown, cteSelect.Span);
+        Assert.NotEqual(HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown, predicate.Span);
+        Assert.NotEqual(HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown, predicate.Left.Span);
+        Assert.NotEqual(HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown, predicate.Right.Span);
+    }
+
+    [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {
         var assembly = typeof(SqlCoreFacade).Assembly;

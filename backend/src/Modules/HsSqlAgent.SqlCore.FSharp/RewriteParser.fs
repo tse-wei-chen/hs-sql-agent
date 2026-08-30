@@ -97,6 +97,15 @@ module internal RewriteParser =
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
 
+    let private rememberNodeSpan start (cursor: Cursor) (node: obj) =
+        Parsed.rememberSpan node
+            { Start = start
+              Length = max 0 (cursor.Current.Start - start) }
+
+    let private markExpr start cursor expression =
+        rememberNodeSpan start cursor (box expression)
+        expression
+
     let private sourceDialectName = function
         | SourceDialect.PostgreSql -> "Postgres"
         | SourceDialect.MySql -> "MySQL"
@@ -366,16 +375,19 @@ module internal RewriteParser =
     let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor
 
     and private parseOr (cursor: Cursor) =
+        let start = cursor.Current.Start
         let mutable left = parseAnd cursor
         while acceptKeyword "OR" cursor do left <- Binary(BinaryOperator.Or, left, parseAnd cursor)
-        left
+        markExpr start cursor left
 
     and private parseAnd (cursor: Cursor) =
+        let start = cursor.Current.Start
         let mutable left = parseComparison cursor
         while acceptKeyword "AND" cursor do left <- Binary(BinaryOperator.And, left, parseComparison cursor)
-        left
+        markExpr start cursor left
 
     and private parseComparison (cursor: Cursor) =
+        let start = cursor.Current.Start
         let mutable left = parseConcat cursor
         let mutable keepGoing = true
         while keepGoing do
@@ -407,7 +419,7 @@ module internal RewriteParser =
                 cursor.Advance()
                 left <- parseLikeTail cursor left true true
             | _ -> keepGoing <- false
-        left
+        markExpr start cursor left
 
     and private parseLikeTail cursor value negated caseInsensitive =
         let pattern = parseConcat cursor
@@ -446,6 +458,7 @@ module internal RewriteParser =
         Between(value, lower, upper, negated)
 
     and private parseConcat cursor =
+        let start = cursor.Current.Start
         let mutable left = parseAdd cursor
         while isOperator "||" cursor.Current do
             if cursor.Dialect = SourceDialect.MySql then
@@ -456,9 +469,10 @@ module internal RewriteParser =
                 raise (SqlCompilationException(message))
             cursor.Advance()
             left <- Binary(BinaryOperator.Concat, left, parseAdd cursor)
-        left
+        markExpr start cursor left
 
     and private parseAdd cursor =
+        let start = cursor.Current.Start
         let mutable left = parseMultiply cursor
         let mutable keepGoing = true
         while keepGoing do
@@ -466,9 +480,10 @@ module internal RewriteParser =
             | Operator "+" -> cursor.Advance(); left <- Binary(BinaryOperator.Add, left, parseMultiply cursor)
             | Operator "-" -> cursor.Advance(); left <- Binary(BinaryOperator.Subtract, left, parseMultiply cursor)
             | _ -> keepGoing <- false
-        left
+        markExpr start cursor left
 
     and private parseMultiply cursor =
+        let start = cursor.Current.Start
         let mutable left = parseProfiledConcat cursor
         let mutable keepGoing = true
         while keepGoing do
@@ -477,14 +492,15 @@ module internal RewriteParser =
             | Operator "/" -> cursor.Advance(); left <- Binary(BinaryOperator.Divide, left, parseProfiledConcat cursor)
             | Operator "%" -> cursor.Advance(); left <- Binary(BinaryOperator.Modulo, left, parseProfiledConcat cursor)
             | _ -> keepGoing <- false
-        left
+        markExpr start cursor left
 
     and private parseProfiledConcat cursor =
+        let start = cursor.Current.Start
         let mutable left = parseUnary cursor
         if cursor.Dialect = SourceDialect.MySql && cursor.MySqlPipesAsConcat then
             while acceptOperator "||" cursor do
                 left <- Binary(BinaryOperator.Concat, left, parseUnary cursor)
-        left
+        markExpr start cursor left
 
     and private parseUnary cursor =
         match cursor.Current.Kind with
@@ -912,6 +928,7 @@ module internal RewriteParser =
             if acceptKeyword "RECURSIVE" cursor then fail cursor.Current "WITH RECURSIVE is not supported by the portable compiler"
             let ctes = ResizeArray<Cte>()
             let parseOne () =
+                let start = cursor.Current.Start
                 let name = identifierPart cursor
                 let aliases = ResizeArray<IdentifierPart>()
                 if acceptSymbol '(' cursor then
@@ -922,12 +939,15 @@ module internal RewriteParser =
                 expectSymbol '(' cursor
                 let query = parseQuery cursor
                 expectSymbol ')' cursor
-                { Name = name; ColumnAliases = aliases |> Seq.toList; Query = query }
+                let cte = { Name = name; ColumnAliases = aliases |> Seq.toList; Query = query }
+                rememberNodeSpan start cursor (box cte)
+                cte
             ctes.Add(parseOne())
             while acceptSymbol ',' cursor do ctes.Add(parseOne())
             ctes |> Seq.toList
 
     and private parseSelectWithCtes (cursor: Cursor) (ctes: Cte list) =
+        let start = cursor.Current.Start
         expectKeyword "SELECT" cursor
         let distinct = acceptKeyword "DISTINCT" cursor
         let mutable top = None
@@ -949,14 +969,17 @@ module internal RewriteParser =
             groupBy.Add(parseExpression cursor)
             while acceptSymbol ',' cursor do groupBy.Add(parseExpression cursor)
         let having = if acceptKeyword "HAVING" cursor then Some(parseExpression cursor) else None
-        { Ctes = ctes
-          Distinct = distinct
-          ProjectionItems = projection |> Seq.toList |> NonEmpty.ofList "projection"
-          From = from
-          Joins = joins |> Seq.toList
-          Where = where
-          GroupBy = groupBy |> Seq.toList
-          Having = having }, top
+        let select =
+            { Ctes = ctes
+              Distinct = distinct
+              ProjectionItems = projection |> Seq.toList |> NonEmpty.ofList "projection"
+              From = from
+              Joins = joins |> Seq.toList
+              Where = where
+              GroupBy = groupBy |> Seq.toList
+              Having = having }
+        rememberNodeSpan start cursor (box select)
+        select, top
 
     and private parseOrderItem allowOrdinal (cursor: Cursor) =
         let ordinalBoundary next =
@@ -1079,6 +1102,7 @@ module internal RewriteParser =
         orderBy, limit, offset
 
     and private parseQuery cursor =
+        let start = cursor.Current.Start
         let ctes = parseCtes cursor
         let head, top = parseSelectWithCtes cursor ctes
         let branches = ResizeArray<SetBranch>()
@@ -1091,7 +1115,9 @@ module internal RewriteParser =
             | None -> scanning <- false
         let orderBy, tailLimit, offset = parseQueryTail cursor
         let limit = match top, tailLimit with Some value, None -> Some value | None, value -> value | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
-        { Head = head; SetOperations = branches |> Seq.toList; OrderBy = orderBy; Limit = limit; Offset = offset }
+        let query = { Head = head; SetOperations = branches |> Seq.toList; OrderBy = orderBy; Limit = limit; Offset = offset }
+        rememberNodeSpan start cursor (box query)
+        query
 
     and private ensureUniqueInsertColumns (cursor: Cursor) (columns: IdentifierPart list) =
         let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
