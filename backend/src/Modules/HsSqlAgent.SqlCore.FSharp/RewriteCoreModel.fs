@@ -30,9 +30,9 @@ module internal CoreModel =
         let text identifier = identifier |> parts |> List.map (fun part -> part.Value) |> String.concat "."
 
         let equivalent left right =
-            let leftParts = parts left
-            let rightParts = parts right
-            leftParts.Length = rightParts.Length
+            let leftParts: IdentifierPart list = parts left
+            let rightParts: IdentifierPart list = parts right
+            List.length leftParts = List.length rightParts
             && List.forall2
                 (fun leftPart rightPart ->
                     leftPart.Value = rightPart.Value
@@ -314,14 +314,14 @@ module internal CoreModel =
     type Document = { Statement: Statement; Span: Span }
 
     module Expr =
-        let private optionEquivalent comparer left right =
+        let private optionEquivalent (comparer: 'a -> 'b -> bool) (left: 'a option) (right: 'b option) =
             match left, right with
             | None, None -> true
             | Some leftValue, Some rightValue -> comparer leftValue rightValue
             | _ -> false
 
-        let private listEquivalent comparer left right =
-            left.Length = right.Length && List.forall2 comparer left right
+        let private listEquivalent (comparer: 'a -> 'b -> bool) (left: 'a list) (right: 'b list) =
+            List.length left = List.length right && List.forall2 comparer left right
 
         let rec equivalent left right =
             match left, right with
@@ -370,7 +370,7 @@ module internal CoreModel =
               SimpleCase(rightInput, rightBranches, rightFallback) ->
                 equivalent leftInput rightInput
                 && listEquivalent
-                    (fun leftBranch rightBranch ->
+                    (fun (leftBranch: SimpleCaseBranch) (rightBranch: SimpleCaseBranch) ->
                         equivalent leftBranch.Match rightBranch.Match
                         && equivalent leftBranch.Result rightBranch.Result)
                     (NonEmpty.toList leftBranches)
@@ -379,7 +379,7 @@ module internal CoreModel =
             | SearchedCase(leftBranches, leftFallback),
               SearchedCase(rightBranches, rightFallback) ->
                 listEquivalent
-                    (fun leftBranch rightBranch ->
+                    (fun (leftBranch: SearchedCaseBranch) (rightBranch: SearchedCaseBranch) ->
                         equivalent leftBranch.Condition rightBranch.Condition
                         && equivalent leftBranch.Result rightBranch.Result)
                     (NonEmpty.toList leftBranches)
@@ -404,7 +404,7 @@ module internal CoreModel =
             | _ ->
                 false
 
-        and private orderEquivalent left right =
+        and private orderEquivalent (left: OrderBy) (right: OrderBy) =
             left.Descending = right.Descending
             && left.NullOrdering = right.NullOrdering
             && equivalent left.Expression right.Expression
