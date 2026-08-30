@@ -297,6 +297,76 @@ public sealed class PostgresSyntaxBombardmentTests
             "percent",
             "events");
         yield return Case(
+            "nonreserved-delete-column",
+            "SELECT delete FROM events",
+            "delete",
+            "events");
+        yield return Case(
+            "nonreserved-update-column",
+            "SELECT update FROM events",
+            "update",
+            "events");
+        yield return Case(
+            "nonreserved-insert-column",
+            "SELECT insert FROM events",
+            "insert",
+            "events");
+        yield return Case(
+            "nonreserved-values-column",
+            "SELECT values FROM events",
+            "values",
+            "events");
+        yield return Case(
+            "nonreserved-escape-column",
+            "SELECT escape FROM events",
+            "escape",
+            "events");
+        yield return Case(
+            "nonreserved-nothing-column",
+            "SELECT nothing FROM events",
+            "nothing",
+            "events");
+        yield return Case(
+            "nonreserved-next-column",
+            "SELECT next FROM events",
+            "next",
+            "events");
+        yield return Case(
+            "nonreserved-ties-column",
+            "SELECT ties FROM events",
+            "ties",
+            "events");
+        yield return Case(
+            "nonreserved-within-column",
+            "SELECT within FROM events",
+            "within",
+            "events");
+        yield return Case(
+            "nonreserved-without-column",
+            "SELECT without FROM events",
+            "without",
+            "events");
+        yield return Case(
+            "ordinary-top-column",
+            "SELECT top FROM events",
+            "top",
+            "events");
+        yield return Case(
+            "ordinary-duplicate-column",
+            "SELECT duplicate FROM events",
+            "duplicate",
+            "events");
+        yield return Case(
+            "ordinary-matching-column",
+            "SELECT matching FROM events",
+            "matching",
+            "events");
+        yield return Case(
+            "ordinary-separator-column",
+            "SELECT separator FROM events",
+            "separator",
+            "events");
+        yield return Case(
             "contextual-projection-alias-zone",
             "SELECT id zone FROM events",
             "zone",
