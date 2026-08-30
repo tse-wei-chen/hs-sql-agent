@@ -112,9 +112,19 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT",
             "events");
         yield return Case(
+            "bare-time-column",
+            "SELECT time FROM events",
+            "time",
+            "events");
+        yield return Case(
             "typed-time",
             "SELECT TIME '09:30:15' AS report_time FROM events",
             "SELECT",
+            "events");
+        yield return Case(
+            "bare-timestamp-column",
+            "SELECT timestamp FROM events",
+            "timestamp",
             "events");
         yield return Case(
             "typed-timestamp",
@@ -359,6 +369,9 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Reject(
             "missing-cte-as",
             "WITH x (SELECT id FROM users) SELECT id FROM x");
+        yield return Reject(
+            "chained-comparison",
+            "SELECT id FROM users WHERE id = 1 = 1");
         yield return Reject(
             "multiple-statements",
             "SELECT id FROM users; SELECT id FROM orders");
