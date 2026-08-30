@@ -988,9 +988,14 @@ module internal RewriteParser =
         else
             requireSourceParseCapability cursor.Current cursor.SourceDml.Returning
 
+            let seenColumns = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
             let classify (item: SelectItem) =
                 match item.Expression with
                 | Column identifier when Identifier.parts identifier |> List.length = 1 ->
+                    let name = (Identifier.parts identifier).Head.Value
+                    if item.Alias.IsNone && not (seenColumns.Add name) then
+                        fail cursor.Current ("RETURNING column '" + name + "' is declared more than once")
                     ReturningColumn(identifier, item.Alias)
                 | Column _ ->
                     fail cursor.Current "RETURNING column references must be unqualified in the portable Core grammar"
