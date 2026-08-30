@@ -5,6 +5,14 @@ open HsSqlAgent.SqlCore.Rewrite.CoreModel
 /// Unforgeable compiler-stage wrappers. Construction is intentionally centralized here.
 module internal Typestate =
 
+    type CapabilityProof =
+        | ProvenCapability
+        | RejectedCapability of string
+
+    type JoinProofs =
+        { RightJoin: CapabilityProof
+          FullJoin: CapabilityProof }
+
     type SqlServerConcatLowering =
         | NativePipes
         | PlusOperator

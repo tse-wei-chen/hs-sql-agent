@@ -959,6 +959,199 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextQuery_FullJoinToMySql_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT u.id FROM users AS u FULL JOIN archived AS a ON a.id = u.id";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-join-mysql-target-v1",
+            new HashSet<string>(
+                new[] { "users", "archived" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_RightJoinToSqliteWithoutProfile_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT u.id FROM users AS u RIGHT JOIN archived AS a ON a.id = u.id";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-join-sqlite-target-v1",
+            new HashSet<string>(
+                new[] { "users", "archived" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_RightJoinToSqlite39_UsesNativeJoinLikeLegacy()
+    {
+        const string sql =
+            "SELECT u.id FROM users AS u RIGHT JOIN archived AS a ON a.id = u.id";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 39));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-join-sqlite39-target-v1",
+            new HashSet<string>(
+                new[] { "users", "archived" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            sourceProfile);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            targetProfile);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("RIGHT JOIN", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_MySqlFullJoinSource_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT u.id FROM users AS u FULL JOIN archived AS a ON a.id = u.id";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-join-mysql-source-v1",
+            new HashSet<string>(
+                new[] { "users", "archived" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_NestedRightJoinToSqliteWithoutProfile_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT x.id FROM (SELECT a.id FROM alpha AS a RIGHT JOIN beta AS b ON a.id = b.id) AS x";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-join-nested-target-v1",
+            new HashSet<string>(
+                new[] { "alpha", "beta" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Sqlite,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_InsertSelectRightJoinToSqliteWithoutProfile_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO archive (id) SELECT a.id FROM alpha AS a RIGHT JOIN beta AS b ON a.id = b.id";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-join-dml-target-v1",
+            new HashSet<string>(
+                new[] { "archive", "alpha", "beta" },
+                StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Sqlite,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
     public void Facade_FunctionalProviderProfileRewrite_MatchesLegacySqlServerConcat()
     {
         const string sql =

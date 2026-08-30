@@ -34,11 +34,33 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> RewriteParser.SourceDialect.Firebird
         | value -> invalidArg "sourceDialect" ("Unsupported source dialect '" + string value + "'.")
 
-    let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) =
-        if SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(source, sourceProfile) then
-            RewriteParser.SourceSemantics.mysqlPipesAsConcat
-        else
-            RewriteParser.SourceSemantics.defaultValue
+    let private capabilityProof = function
+        | null -> CapabilityProof.ProvenCapability
+        | message -> CapabilityProof.RejectedCapability message
+
+    let private sourceJoinProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : JoinProofs =
+        { RightJoin =
+            SqlJoinCapabilityRules.SourceValidationError("RIGHT", source, sourceProfile)
+            |> capabilityProof
+          FullJoin =
+            SqlJoinCapabilityRules.SourceValidationError("FULL", source, sourceProfile)
+            |> capabilityProof }
+
+    let private targetJoinProofs target (targetProfile: SqlProviderCapabilityProfile | null) : JoinProofs =
+        { RightJoin =
+            SqlJoinCapabilityRules.TargetValidationError("RIGHT", target, targetProfile)
+            |> capabilityProof
+          FullJoin =
+            SqlJoinCapabilityRules.TargetValidationError("FULL", target, targetProfile)
+            |> capabilityProof }
+
+    let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
+        { MySqlPipes =
+            if SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(source, sourceProfile) then
+                RewriteParser.MySqlPipesSemantics.PipesAsConcat
+            else
+                RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
+          Joins = sourceJoinProofs source sourceProfile }
 
     let private targetRuntime target (targetProfile: SqlProviderCapabilityProfile | null) =
         match target with
@@ -121,6 +143,7 @@ module internal RewriteFacadeAdapter =
                   SourceSemantics = sourceSemantics source sourceProfile
                   Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
+                  TargetJoins = targetJoinProofs target targetProfile
                   Policy = policy
                   AllowedTables = allowed }
                 sql

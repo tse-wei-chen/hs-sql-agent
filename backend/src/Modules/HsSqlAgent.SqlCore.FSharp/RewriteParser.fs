@@ -18,11 +18,21 @@ module internal RewriteParser =
         | PipesAsConcat
 
     type SourceSemantics =
-        { MySqlPipes: MySqlPipesSemantics }
+        { MySqlPipes: MySqlPipesSemantics
+          Joins: JoinProofs }
 
     module SourceSemantics =
-        let defaultValue = { MySqlPipes = RejectAmbiguousPipes }
-        let mysqlPipesAsConcat = { MySqlPipes = PipesAsConcat }
+        let private permissiveJoins =
+            { RightJoin = ProvenCapability
+              FullJoin = ProvenCapability }
+
+        let defaultValue =
+            { MySqlPipes = RejectAmbiguousPipes
+              Joins = permissiveJoins }
+
+        let mysqlPipesAsConcat =
+            { MySqlPipes = PipesAsConcat
+              Joins = permissiveJoins }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
@@ -36,6 +46,7 @@ module internal RewriteParser =
             token
         member _.Dialect = dialect
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
+        member _.SourceJoins = semantics.Joins
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
@@ -475,6 +486,11 @@ module internal RewriteParser =
             NamedTable(name, alias)
 
     and private parseJoin cursor =
+        let requireJoinProof proof =
+            match proof with
+            | ProvenCapability -> ()
+            | RejectedCapability message -> raise (SqlCompilationException(message))
+
         if acceptKeyword "CROSS" cursor then
             expectKeyword "JOIN" cursor
             let source = parseTableSource cursor
@@ -488,6 +504,12 @@ module internal RewriteParser =
                 elif acceptKeyword "FULL" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Full
                 elif acceptKeyword "JOIN" cursor then OnJoinKind.Inner
                 else fail cursor.Current "Expected JOIN"
+
+            match kind with
+            | OnJoinKind.Right -> requireJoinProof cursor.SourceJoins.RightJoin
+            | OnJoinKind.Full -> requireJoinProof cursor.SourceJoins.FullJoin
+            | OnJoinKind.Inner | OnJoinKind.Left -> ()
+
             let source = parseTableSource cursor
             if acceptKeyword "USING" cursor then fail cursor.Current "JOIN ... USING is not represented by the portable DU"
             expectKeyword "ON" cursor

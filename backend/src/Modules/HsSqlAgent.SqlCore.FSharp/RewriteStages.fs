@@ -375,7 +375,47 @@ module internal RewriteStages =
             delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
         document
 
-    let validate allowedTables targetRuntime canonical =
+    let private requireCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> invalidOp message
+
+    let private proveJoinKind (proofs: JoinProofs) = function
+        | JoinKind.Right -> requireCapability proofs.RightJoin
+        | JoinKind.Full -> requireCapability proofs.FullJoin
+        | JoinKind.Inner | JoinKind.Left | JoinKind.Cross -> ()
+
+    let rec private proveTargetJoinSource proofs source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) -> proveTargetJoinQuery proofs query
+
+    and private proveTargetJoinSelect proofs select =
+        select.Ctes |> List.iter (fun cte -> proveTargetJoinQuery proofs cte.Query)
+        select.From |> Option.iter (proveTargetJoinSource proofs)
+        select.Joins
+        |> List.iter (fun join ->
+            proveJoinKind proofs join.Kind
+            proveTargetJoinSource proofs join.Source)
+
+    and private proveTargetJoinQuery proofs query =
+        proveTargetJoinSelect proofs query.Head
+        query.SetOperations |> List.iter (fun branch -> proveTargetJoinQuery proofs branch.Query)
+
+    let private proveTargetJoins proofs document =
+        match document.Statement with
+        | QueryStatement query -> proveTargetJoinQuery proofs query
+        | InsertStatement insert ->
+            match insert.Input with
+            | QuerySource query -> proveTargetJoinQuery proofs query
+            | Values _ | DefaultValues -> ()
+        | UpdateStatement update ->
+            update.From |> List.iter (proveTargetJoinSource proofs)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (proveTargetJoinSource proofs)
+
+    let validate allowedTables targetRuntime targetJoins canonical =
         Transition.validate targetRuntime (fun document ->
             let validated = validateDocument allowedTables document
-            proveTargetDocument targetRuntime validated) canonical
+            proveTargetDocument targetRuntime validated |> ignore
+            proveTargetJoins targetJoins validated
+            validated) canonical

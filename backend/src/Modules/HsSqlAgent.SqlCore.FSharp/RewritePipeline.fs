@@ -13,6 +13,7 @@ module internal RewritePipeline =
           SourceSemantics: SourceSemantics
           Provider: Provider
           TargetRuntime: TargetRuntime
+          TargetJoins: JoinProofs
           Policy: ExecutionPolicy
           AllowedTables: string list option }
 
@@ -21,6 +22,6 @@ module internal RewritePipeline =
         |> RewriteParser.parseForWith options.SourceSemantics options.SourceDialect
         |> RewriteBinder.bind
         |> RewriteStages.normalize
-        |> RewriteStages.validate options.AllowedTables options.TargetRuntime
+        |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.TargetJoins
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider
