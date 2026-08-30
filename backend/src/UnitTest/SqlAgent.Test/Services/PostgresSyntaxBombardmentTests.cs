@@ -89,7 +89,7 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Case(
             "not-ilike",
             "SELECT id FROM users WHERE name NOT ILIKE 'a%'",
-            "NOT ILIKE",
+            "ILIKE",
             "users");
         yield return Case(
             "typed-date",
@@ -172,10 +172,116 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT",
             "Order");
         yield return Case(
+            "cte-wildcard",
+            "WITH recent AS (SELECT * FROM orders) SELECT * FROM recent",
+            "WITH",
+            "orders");
+        yield return Case(
+            "cte-order-limit",
+            "WITH recent AS (SELECT id FROM orders ORDER BY id DESC LIMIT 5) SELECT id FROM recent ORDER BY id",
+            "LIMIT",
+            "orders");
+        yield return Case(
+            "cte-aggregate",
+            "WITH totals AS (SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id) SELECT total FROM totals WHERE total > 10",
+            "SUM",
+            "orders");
+        yield return Case(
+            "count-star",
+            "SELECT COUNT(*) FROM users",
+            "COUNT",
+            "users");
+        yield return Case(
+            "count-distinct",
+            "SELECT COUNT(DISTINCT id) FROM users",
+            "DISTINCT",
+            "users");
+        yield return Case(
+            "count-all",
+            "SELECT COUNT(ALL id) FROM users",
+            "COUNT",
+            "users");
+        yield return Case(
+            "string-agg-inline-order",
+            "SELECT STRING_AGG(name, ',' ORDER BY name DESC) FROM users",
+            "ORDER BY",
+            "users");
+        yield return Case(
+            "searched-case",
+            "SELECT CASE WHEN status = 'open' THEN 1 ELSE 0 END FROM orders",
+            "CASE",
+            "orders");
+        yield return Case(
+            "simple-case",
+            "SELECT CASE status WHEN 'open' THEN 1 WHEN 'closed' THEN 2 ELSE 0 END FROM orders",
+            "CASE",
+            "orders");
+        yield return Case(
+            "is-not-null",
+            "SELECT id FROM users WHERE deleted_at IS NOT NULL",
+            "IS NOT NULL",
+            "users");
+        yield return Case(
+            "not-in",
+            "SELECT id FROM users WHERE id NOT IN (1, 2, 3)",
+            "NOT IN",
+            "users");
+        yield return Case(
+            "concat",
+            "SELECT first_name || last_name FROM users",
+            "||",
+            "users");
+        yield return Case(
+            "postfix-cast",
+            "SELECT created_at::date FROM events",
+            "CAST",
+            "events");
+        yield return Case(
+            "fetch-first",
+            "SELECT id FROM users ORDER BY id FETCH FIRST 5 ROWS ONLY",
+            "FETCH",
+            "users");
+        yield return Case(
+            "offset-fetch",
+            "SELECT id FROM users ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+            "OFFSET",
+            "users");
+        yield return Case(
+            "limit-all-offset",
+            "SELECT id FROM users ORDER BY id LIMIT ALL OFFSET 5",
+            "OFFSET",
+            "users");
+        yield return Case(
             "expression-valued-in-list",
             "SELECT id FROM users WHERE id IN (other_id, ABS(1))",
             " IN ",
             "users");
+    }
+
+    public static IEnumerable<object[]> SupportedPostgresParserSyntax()
+    {
+        // The pre-rewrite Core parser accepted these shapes even when a later stage could still reject semantics.
+        yield return ParserCase(
+            "aggregate-all-count",
+            "SELECT COUNT(ALL id) FROM users");
+        yield return ParserCase(
+            "aggregate-all-sum",
+            "SELECT SUM(ALL amount) FROM orders");
+        yield return ParserCase(
+            "aggregate-all-string-agg",
+            "SELECT STRING_AGG(ALL name, ',') FROM users");
+        yield return ParserCase(
+            "schema-qualified-standard-cast-type",
+            "SELECT CAST(amount AS pg_catalog.numeric) FROM orders");
+        yield return ParserCase(
+            "schema-qualified-postfix-cast-type",
+            "SELECT amount::pg_catalog.numeric FROM orders");
+        yield return ParserCase(
+            "time-keyword-function-form",
+            "SELECT TIME(created_at) FROM events");
+        yield return ParserCase(
+            "timestamp-keyword-function-form",
+            "SELECT TIMESTAMP(created_at) FROM events");
     }
 
     public static IEnumerable<object[]> UnsupportedPostgresSyntax()
@@ -261,6 +367,19 @@ public sealed class PostgresSyntaxBombardmentTests
         Assert.True(
             command.Sql.Contains(expectedRenderedFragment, StringComparison.OrdinalIgnoreCase),
             $"{name} compiled but lost expected syntax/semantics fragment '{expectedRenderedFragment}'. Rendered SQL: {command.Sql}");
+
+        if (name == "not-ilike")
+            Assert.Contains("NOT", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedPostgresParserSyntax))]
+    public void SupportedPostgresParserSyntax_RemainsAccepted(string name, string sql)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+
+        Assert.NotNull(parsed.Statement);
+        Assert.False(string.IsNullOrWhiteSpace(parsed.RawSql), name);
     }
 
     [Theory]
@@ -279,6 +398,8 @@ public sealed class PostgresSyntaxBombardmentTests
         string expectedRenderedFragment,
         string expectedTablesCsv) =>
         [name, sql, expectedRenderedFragment, expectedTablesCsv];
+
+    private static object[] ParserCase(string name, string sql) => [name, sql];
 
     private static object[] Reject(string name, string sql) => [name, sql];
 }
