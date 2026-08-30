@@ -652,6 +652,30 @@ public sealed class PostgresSyntaxBombardmentTests
             "natural-join",
             "SELECT a.id FROM a NATURAL JOIN b",
             "NATURAL JOIN");
+        yield return RejectWithMessage(
+            "unbound-question-parameter",
+            "SELECT ? FROM users",
+            "Unbound SQL parameter");
+        yield return RejectWithMessage(
+            "unbound-colon-parameter-diagnostic",
+            "SELECT :name FROM users",
+            "Unbound SQL parameter");
+        yield return RejectWithMessage(
+            "unbound-at-parameter",
+            "SELECT @name FROM users",
+            "Unbound SQL parameter");
+        yield return RejectWithMessage(
+            "unbound-dollar-parameter-diagnostic",
+            "SELECT $1 FROM users",
+            "Unbound SQL parameter");
+        yield return RejectWithMessage(
+            "unbound-template-parameter",
+            "SELECT {{name}} FROM users",
+            "Unbound SQL parameter");
+        yield return RejectWithMessage(
+            "unterminated-template-parameter",
+            "SELECT {{bad FROM users",
+            "Unterminated template parameter");
     }
 
     public static IEnumerable<object[]> UnsupportedPostgresSyntax()
