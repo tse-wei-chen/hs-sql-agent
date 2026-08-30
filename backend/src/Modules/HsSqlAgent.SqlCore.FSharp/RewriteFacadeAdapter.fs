@@ -134,7 +134,7 @@ module internal RewriteFacadeAdapter =
                 CapabilityProof.ProvenCapability
             else
                 CapabilityProof.RejectedCapability(
-                    "SQL capability 'operator.ilike' is not supported by provider "
+                    "PostgreSQL-specific ILIKE cannot be lowered here: SQL capability 'operator.ilike' is not supported by provider "
                     + providerName target
                     + " for this Core plan.")
           IntervalLiteral =
@@ -362,6 +362,8 @@ module internal RewriteFacadeAdapter =
                   SourceSemantics = sourceSemantics source sourceProfile
                   Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
+                  SourceProfile = sourceProfile
+                  TargetProfile = targetProfile
                   TargetExpressions = targetExpressionProofs target targetProfile
                   TargetJoins = targetJoinProofs target targetProfile
                   TargetOrdering = targetNullOrdering target
@@ -430,6 +432,8 @@ module internal RewriteFacadeAdapter =
                   SourceSemantics = parsedSourceSemantics parsed
                   Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
+                  SourceProfile = parsed.SourceProfile
+                  TargetProfile = targetProfile
                   TargetExpressions = targetExpressionProofs target targetProfile
                   TargetJoins = targetJoinProofs target targetProfile
                   TargetOrdering = targetNullOrdering target

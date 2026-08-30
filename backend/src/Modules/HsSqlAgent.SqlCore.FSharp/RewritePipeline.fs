@@ -13,6 +13,8 @@ module internal RewritePipeline =
           SourceSemantics: SourceSemantics
           Provider: Provider
           TargetRuntime: TargetRuntime
+          SourceProfile: HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile | null
+          TargetProfile: HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile | null
           TargetExpressions: ExpressionProofs
           TargetJoins: JoinProofs
           TargetOrdering: TargetNullOrdering
@@ -31,6 +33,8 @@ module internal RewritePipeline =
             options.SourceSemantics.Expressions.RegexMatch
             options.SourceSemantics.Ordering
             options.SourceSemantics.MySqlPipes
+            options.SourceProfile
+            options.TargetProfile
         |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.SourceSemantics.Expressions options.TargetExpressions options.SourceSemantics.Joins options.TargetJoins options.TargetOrdering options.SourceSemantics.Dml options.TargetDml options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider

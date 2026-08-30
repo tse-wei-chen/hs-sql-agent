@@ -291,6 +291,243 @@ module internal RewriteStages =
             delete.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
             delete.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
 
+    let private profileVersion (profile: SqlProviderCapabilityProfile | null) =
+        match profile with
+        | null -> None
+        | value -> Option.ofObj value.ServerVersion
+
+    let private profileCompatibility (profile: SqlProviderCapabilityProfile | null) =
+        match profile with
+        | null -> None
+        | value when value.CompatibilityLevel.HasValue -> Some value.CompatibilityLevel.Value
+        | _ -> None
+
+    let private versionCapabilityError profile minimum providerName side =
+        match profileVersion profile with
+        | None ->
+            Some(
+                "SQL capability 'aggregate.string.ordering' requires a declared "
+                + providerName + " " + side
+                + " capability profile with ServerVersion " + string minimum + "+.")
+        | Some declared when declared.CompareTo(minimum) < 0 ->
+            Some(
+                "SQL capability 'aggregate.string.ordering' requires "
+                + providerName + " " + side + " ServerVersion " + string minimum
+                + "+; declared version is " + string declared + ".")
+        | Some _ -> None
+
+    let private sqlServerOrderingProfileError profile side =
+        match versionCapabilityError profile (Version(14, 0)) "SQL Server" side with
+        | Some message -> Some message
+        | None ->
+            match profileCompatibility profile with
+            | None ->
+                Some(
+                    "SQL capability 'aggregate.string.ordering' requires a declared SQL Server "
+                    + side + " capability profile with CompatibilityLevel 110+.")
+            | Some level when level < 110 ->
+                Some(
+                    "SQL capability 'aggregate.string.ordering' requires SQL Server "
+                    + side + " CompatibilityLevel 110+; declared level is " + string level + ".")
+            | Some _ -> None
+
+    let private orderingTargetError target targetProfile =
+        match target with
+        | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL -> None
+        | SqlAgentToolType.Sqlite ->
+            versionCapabilityError targetProfile (Version(3, 44)) "SQLite" "target"
+        | SqlAgentToolType.MsSqlServer ->
+            sqlServerOrderingProfileError targetProfile "target"
+        | SqlAgentToolType.Oracle ->
+            versionCapabilityError targetProfile (Version(11, 2)) "Oracle" "target"
+        | provider ->
+            Some(
+                "SQL capability 'aggregate.string.ordering' is not supported by provider "
+                + string provider + " for this Core plan; aggregate-local ORDER BY remains fail-closed.")
+
+    let private orderingSourceError source sourceProfile functionName syntax =
+        let syntaxError expected =
+            Some(
+                string source + " raw " + functionName
+                + " aggregate ordering must use " + expected + ".")
+        match source, functionName, syntax with
+        | SqlAgentToolType.Postgres, "STRING_AGG", InlineAggregateOrder -> None
+        | SqlAgentToolType.Postgres, "STRING_AGG", _ ->
+            syntaxError "inline ORDER BY inside the function call"
+        | SqlAgentToolType.Sqlite, "GROUP_CONCAT", InlineAggregateOrder ->
+            versionCapabilityError sourceProfile (Version(3, 44)) "SQLite" "source"
+        | SqlAgentToolType.Sqlite, "GROUP_CONCAT", _ ->
+            syntaxError "inline ORDER BY inside the function call"
+        | SqlAgentToolType.MsSqlServer, "STRING_AGG", WithinGroupAggregateOrder ->
+            sqlServerOrderingProfileError sourceProfile "source"
+        | SqlAgentToolType.MsSqlServer, "STRING_AGG", _ ->
+            syntaxError "WITHIN GROUP (ORDER BY ...)"
+        | SqlAgentToolType.Oracle, "LISTAGG", WithinGroupAggregateOrder ->
+            versionCapabilityError sourceProfile (Version(11, 2)) "Oracle" "source"
+        | SqlAgentToolType.Oracle, "LISTAGG", _ ->
+            syntaxError "WITHIN GROUP (ORDER BY ...)"
+        | SqlAgentToolType.MySQL, "GROUP_CONCAT", InlineAggregateOrder -> None
+        | SqlAgentToolType.MySQL, "GROUP_CONCAT", _ ->
+            syntaxError "inline ORDER BY inside the function call"
+        | _ ->
+            Some(
+                "SQL capability 'aggregate.string.ordering' rejects this raw aggregate-local ORDER BY source shape; "
+                + "provider-specific aggregate ordering remains fail-closed.")
+
+    let rec private expressionReferencesColumn expression =
+        match expression with
+        | Column _ | BoundColumn _ -> true
+        | Unary(_, value) | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
+            expressionReferencesColumn value
+        | Binary(_, left, right) | RegexMatch(left, right) ->
+            expressionReferencesColumn left || expressionReferencesColumn right
+        | Like(value, pattern, _, _, _) ->
+            expressionReferencesColumn value || expressionReferencesColumn pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.exists expressionReferencesColumn
+        | FunctionCall call ->
+            call.Arguments |> List.exists expressionReferencesColumn
+        | FilteredAggregate(value, predicate) ->
+            expressionReferencesColumn value || expressionReferencesColumn predicate
+        | Windowed(value, window) ->
+            expressionReferencesColumn value
+            || (window.PartitionBy |> List.exists expressionReferencesColumn)
+            || (window.OrderBy |> List.exists (fun order -> expressionReferencesColumn order.Expression))
+        | SimpleCase(input, branches, fallback) ->
+            expressionReferencesColumn input
+            || (branches |> NonEmpty.toList |> List.exists (fun branch ->
+                expressionReferencesColumn branch.Match || expressionReferencesColumn branch.Result))
+            || (fallback |> Option.exists expressionReferencesColumn)
+        | SearchedCase(branches, fallback) ->
+            (branches |> NonEmpty.toList |> List.exists (fun branch ->
+                expressionReferencesColumn branch.Condition || expressionReferencesColumn branch.Result))
+            || (fallback |> Option.exists expressionReferencesColumn)
+        | InList(value, items, _) ->
+            expressionReferencesColumn value || (items |> NonEmpty.toList |> List.exists expressionReferencesColumn)
+        | InSubquery(value, _, _) | Between(value, _, _, _) ->
+            expressionReferencesColumn value
+        | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ | ScalarSubquery _ | Exists _ -> false
+
+    let private validateAggregateCall enforceSource source sourceProfile target targetProfile (call: FunctionCall) =
+        let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        match call.AggregateSeparator with
+        | Some _ when enforceSource && not (source = SqlAgentToolType.MySQL && name = "GROUP_CONCAT") ->
+            raise (SqlCompilationException(
+                "SEPARATOR clause is source syntax owned by MySQL GROUP_CONCAT; this source dialect remains fail-closed."))
+        | _ -> ()
+
+        if not call.AggregateOrderBy.IsEmpty then
+            match orderingTargetError target targetProfile with
+            | Some message -> raise (SqlCompilationException(message))
+            | None -> ()
+
+            if enforceSource then
+                match orderingSourceError source sourceProfile name call.AggregateOrderSyntax with
+                | Some message -> raise (SqlCompilationException(message))
+                | None -> ()
+
+            if call.IsDistinct then
+                raise (SqlCompilationException(
+                    "String aggregation DISTINCT with aggregate-local ORDER BY remains fail-closed until provider-specific restrictions are modeled explicitly."))
+
+            if target = SqlAgentToolType.MsSqlServer
+               && call.AggregateOrderBy
+                  |> List.exists (fun order -> not (expressionReferencesColumn order.Expression)) then
+                raise (SqlCompilationException(
+                    "SQL Server STRING_AGG WITHIN GROUP ordering requires non-constant expressions; Core requires each ordering expression to reference a column."))
+
+    let rec private validateAggregateExpr enforceSource source sourceProfile target targetProfile expression =
+        match expression with
+        | FunctionCall call ->
+            validateAggregateCall enforceSource source sourceProfile target targetProfile call
+            call.Arguments |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+            call.AggregateOrderBy
+            |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
+        | Unary(_, value) | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
+        | Binary(_, left, right) | RegexMatch(left, right) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile left
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile right
+        | Like(value, pattern, _, _, _) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+        | FilteredAggregate(value, predicate) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile predicate
+        | Windowed(value, window) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
+            window.PartitionBy |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+            window.OrderBy |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
+        | SimpleCase(input, branches, fallback) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile input
+            branches |> NonEmpty.iter (fun branch ->
+                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Match
+                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Result)
+            fallback |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Condition
+                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Result)
+            fallback |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+        | InList(value, items, _) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
+            items |> NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+        | InSubquery(value, query, _) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
+            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+        | Between(value, lower, upper, _) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile lower
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile upper
+        | ScalarSubquery query | Exists(query, _) ->
+            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+
+    and private validateAggregateSource enforceSource source sourceProfile target targetProfile table =
+        match table with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) -> validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+
+    and private validateAggregateSelect enforceSource source sourceProfile target targetProfile select =
+        select.Ctes |> List.iter (fun cte -> validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
+        select.Projection |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
+        select.From |> Option.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
+        select.Joins |> List.iter (fun join ->
+            validateAggregateSource enforceSource source sourceProfile target targetProfile join.Source
+            join.Predicate |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
+        select.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+        select.GroupBy |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+        select.Having |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+
+    and private validateAggregateQuery enforceSource source sourceProfile target targetProfile query =
+        validateAggregateSelect enforceSource source sourceProfile target targetProfile query.Head
+        query.SetOperations |> List.iter (fun branch -> validateAggregateQuery enforceSource source sourceProfile target targetProfile branch.Query)
+        query.OrderBy |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
+
+    let private validateAggregateDocument enforceSource source sourceProfile target targetProfile document =
+        match document.Statement with
+        | QueryStatement query ->
+            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+        | InsertStatement insert ->
+            match insert.Input with
+            | Values rows ->
+                rows |> NonEmpty.iter (NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
+            | QuerySource query ->
+                validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+            | DefaultValues -> ()
+            insert.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems |> NonEmpty.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Value)
+            update.From |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
+            update.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+            update.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
+            delete.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+            delete.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
+
     let private emptyFunction name arguments =
         { FunctionCall.Name = FunctionName.create name
           Arguments = arguments
@@ -577,7 +814,7 @@ module internal RewriteStages =
                 | None ->
                     compilationError (
                         "Function '" + sourceName + "' is not registered for source dialect "
-                        + string sourceTool + "; normalization was rejected.")
+                        + string sourceTool + "; normalization remains fail-closed.")
             if not sourceDefinition.Semantic.HasValue then
                 compilationError ("Function '" + sourceName + "' has no portable semantic mapping from " + string sourceTool + ".")
 
@@ -718,12 +955,15 @@ module internal RewriteStages =
                         Returning = normalizeReturning source target delete.Returning }
         { document with Statement = statement }
 
-    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes bound =
+    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile bound =
         Transition.normalize
             (fun document ->
                 verifySourceRegexDocument sourceRegexProof document
+                let source = sourceProvider sourceDialect
+                let target = targetProvider targetRuntime
+                validateAggregateDocument enforceDialectSyntax source sourceProfile target targetProfile document
                 if enforceDialectSyntax then
-                    validateRawSourceDocument (sourceProvider sourceDialect) sourceOrdering mySqlPipes document
+                    validateRawSourceDocument source sourceOrdering mySqlPipes document
                 normalizeDocument sourceDialect targetRuntime document)
             bound
 
@@ -1866,7 +2106,7 @@ module internal RewriteStages =
         | OrderByClause -> "ORDER BY"
         | WindowSpecificationClause -> "window specification"
         | AssignmentClause -> "UPDATE SET"
-        | InsertValueClause -> "INSERT VALUES"
+        | InsertValueClause -> "UPDATE SET/INSERT VALUES"
 
     let rec private isDefinitelyBoolean targetRuntime expression =
         match expression with
@@ -2392,10 +2632,17 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "ORDER BY output position " + string (PositiveRowCount.value ordinal)
                     + " exceeds projection width " + string query.Head.Projection.Length + "."))
+            | BoundColumn(identifier, ColumnBinding.ProjectionAlias)
+                when not query.SetOperations.IsEmpty ->
+                validateSetOrderReference targetRuntime outputNames identifier
             | BoundColumn(identifier, ColumnBinding.ProjectionAlias) ->
                 let aliases = query.Head.Projection |> List.choose (fun item -> item.Alias)
                 match Identifier.parts identifier |> List.tryHead with
                 | Some reference when aliases |> List.exists (identifierPartEquivalent targetRuntime reference) -> ()
+                | Some reference when query.Head.From.IsNone ->
+                    raise (SqlCompilationException(
+                        "Column reference '" + reference.Value
+                        + "' requires a FROM source in the portable Core query model."))
                 | Some reference ->
                     raise (SqlCompilationException(
                         "ORDER BY projection alias '" + reference.Value
@@ -2683,7 +2930,7 @@ module internal RewriteStages =
     let private rejectVolatileMutationPredicate expression =
         if containsVolatileRandom expression then
             raise (SqlCompilationException(
-                "Non-deterministic random functions are not allowed in UPDATE/DELETE predicates before mutation."))
+                "Nondeterministic function in UPDATE/DELETE predicate is not allowed before mutation."))
 
     let private validateSemanticDocument targetRuntime document =
         match document.Statement with

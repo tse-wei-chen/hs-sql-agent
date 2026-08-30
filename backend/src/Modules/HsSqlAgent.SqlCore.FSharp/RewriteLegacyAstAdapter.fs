@@ -113,7 +113,7 @@ module internal RewriteLegacyAstAdapter =
         match escape with
         | null -> None
         | value when value.Length = 1 -> Some(LikeEscape.create value[0])
-        | _ -> raise (SqlCompilationException("LIKE ESCAPE requires exactly one character."))
+        | _ -> raise (SqlCompilationException("LIKE ESCAPE requires exactly one non-control character."))
 
     let private binaryOperator (value: string) =
         match value.ToUpperInvariant() with

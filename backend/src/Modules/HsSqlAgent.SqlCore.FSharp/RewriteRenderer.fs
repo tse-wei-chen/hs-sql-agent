@@ -219,7 +219,7 @@ module internal RewriteRenderer =
         | Literal ScalarValue.Null -> "NULL"
         | _ ->
             raise (SqlCompilationException(
-                "Boolean CASE predicate lowering requires literal TRUE, FALSE, or NULL results."))
+                "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
     let rec private renderExpr (ctx: RenderContext) expression =
         match expression with
