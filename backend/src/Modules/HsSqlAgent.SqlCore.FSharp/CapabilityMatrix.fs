@@ -153,7 +153,7 @@ type SqlCapabilityMatrix private () =
                 cap("provider.target_profile","provider",supported,
                     "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings.")
                 cap("provider.source_profile","provider",supported,
-                    "Raw SQL compilation accepts a separate optional source runtime profile. MySQL PIPES_AS_CONCAT (or ANSI) enables source || concatenation, ANSI_QUOTES enables double-quoted identifiers, and NO_BACKSLASH_ESCAPES changes string-literal semantics; ANSI does not imply NO_BACKSLASH_ESCAPES. LIKE under NO_BACKSLASH_ESCAPES requires an explicit single-character ESCAPE. Omitting a required source-profile capability remains fail-closed.")
+                    "Raw SQL compilation accepts a separate optional source runtime profile. MySQL PIPES_AS_CONCAT (or ANSI) enables source || concatenation, ANSI_QUOTES enables double-quoted identifiers, and NO_BACKSLASH_ESCAPES changes string-literal semantics; ANSI does not imply NO_BACKSLASH_ESCAPES. LIKE under NO_BACKSLASH_ESCAPES requires an explicit single-character ESCAPE. Raw SQLite RETURNING requires source ServerVersion 3.35 or newer, and portable multi-row Firebird RETURNING requires source ServerVersion 5.0 or newer. Omitting a required source-profile capability remains fail-closed.")
                 cap("provider.unique_key_metadata","provider",supported,"Provider metadata inventories enforced unique-key sources.")
                 cap("select.basic","query",translated,"SELECT/WHERE/GROUP BY/HAVING/ORDER BY and JOIN are represented structurally.")
                 cap("join.right","query",rightJoinStatus,
@@ -232,7 +232,28 @@ type SqlCapabilityMatrix private () =
                 cap("dml.advanced","dml",rejected,
                     "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract.")
                 cap("dml.returning_output","dml",returningStatus,
-                    if returningStatus=translated then "Portable DML RETURNING result rows are enabled by the provider/runtime contract." else "DML RETURNING result rows remain fail-closed.")
+                    if returningStatus=translated then
+                        match provider with
+                        | SqlAgentToolType.Postgres ->
+                            "INSERT/UPDATE/DELETE may return unqualified target columns or a lone wildcard through native RETURNING. Result-producing mutations are marked structurally, materialized through the DML execution boundary, and the returned-row count must still match the approved affected-row count before commit."
+                        | SqlAgentToolType.Sqlite ->
+                            "SQLite ServerVersion 3.35+ target profiles may return unqualified target columns or a lone wildcard through native RETURNING. The explicit target version is required; returned-row count remains part of approval revalidation before commit."
+                        | SqlAgentToolType.Firebird ->
+                            "Firebird ServerVersion 5.0+ target profiles may use the portable multi-row DSQL RETURNING contract for unqualified target columns or a lone wildcard. The explicit target version is required; returned-row count remains part of approval revalidation before commit."
+                        | _ -> "DML RETURNING result rows are enabled by the provider/runtime contract."
+                    else
+                        match provider with
+                        | SqlAgentToolType.Sqlite ->
+                            "SQLite DML RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.35 or newer."
+                        | SqlAgentToolType.Firebird ->
+                            "Portable multi-row Firebird DSQL RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 5.0 or newer."
+                        | SqlAgentToolType.MsSqlServer ->
+                            "SQL Server OUTPUT without INTO is trigger-sensitive. Core does not yet carry target-table trigger capability metadata, so result rows remain fail-closed instead of assuming OUTPUT can be returned directly to the client."
+                        | SqlAgentToolType.Oracle ->
+                            "Oracle DML RETURNING requires RETURNING INTO host or bind variables, which are outside the Core result-row execution contract."
+                        | SqlAgentToolType.MySQL ->
+                            "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."
+                        | _ -> "DML RETURNING result rows remain fail-closed.")
                 cap("dml.upsert_merge","dml",upsertStatus,
                     if upsertStatus=translated then "Deterministic explicit-target upsert is enabled by the provider/runtime contract." else "Portable upsert remains fail-closed.")
             ]
