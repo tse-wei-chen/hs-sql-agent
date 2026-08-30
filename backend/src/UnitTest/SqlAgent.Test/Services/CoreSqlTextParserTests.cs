@@ -299,7 +299,7 @@ public class CoreSqlTextParserTests
         var parsed = CoreSqlTextParser.ParseQuery(
             "WITH x AS (SELECT id FROM audit.events) SELECT x.id FROM x JOIN crm.users u ON x.id = u.id",
             SqlAgentToolType.Postgres);
-        var facts = SqlCoreInspection.GetQueryFacts(parsed);
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
         Assert.Contains("audit.events", facts.ReferencedTables);
         Assert.Contains("crm.users", facts.ReferencedTables);
         Assert.DoesNotContain("x", facts.ReferencedTables);
