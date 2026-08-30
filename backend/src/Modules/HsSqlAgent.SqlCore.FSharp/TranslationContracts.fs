@@ -195,7 +195,7 @@ type FunctionRegistry(definitions: IEnumerable<FunctionDefinition>) =
                 && d.Semantic.HasValue
                 && d.Semantic.Value = semantic
                 && d.AcceptsArgumentCount(argumentCount))
-            |> Option.defaultValue null
+            |> Option.toObj
 
 [<AbstractClass; Sealed>]
 type FunctionDefinitionLoader private () =
