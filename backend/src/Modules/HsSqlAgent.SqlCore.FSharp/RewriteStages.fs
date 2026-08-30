@@ -118,7 +118,7 @@ module internal RewriteStages =
             | [ value; pattern ] -> RegexMatch(value, pattern)
             | _ ->
                 raise (SqlCompilationException(
-                    "Canonical function 'CORE_REGEX_MATCH' requires 2 argument(s)."))
+                    "Function 'CORE_REGEX_MATCH' requires 2 argument(s)."))
         | RegexMatch(value, pattern) ->
             RegexMatch(normalizeExpr value, normalizeExpr pattern)
         | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map normalizeExpr }
