@@ -94,6 +94,7 @@ type SqlCapabilityMatrix private () =
                 if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(11,2)) then supported, "Oracle 11.2+ supports LISTAGG WITHIN GROUP ordering."
                 else rejected, "Oracle ordered LISTAGG remains fail-closed unless the target capability profile explicitly declares ServerVersion 11.2 or newer."
             | SqlAgentToolType.Firebird -> rejected, "Firebird aggregate.string.ordering remains fail-closed."
+            | _ -> rejected, "Aggregate-local ordering is not declared for this provider."
 
         let regexStatus, regexDetail =
             if SqlRegexCapabilityRules.SupportsTarget(provider, profile) then
@@ -176,7 +177,7 @@ type SqlCapabilityMatrix private () =
                 cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
                 cap("expression.boolean_literal_source","expression",translated,"Raw boolean literal source syntax is dialect-profiled.")
                 cap("expression.cast","expression",translated,"CAST is normalized through a source-aware type model.")
-                cap("expression.interval_literal","expression", if provider=SqlAgentToolType.Postgres then supported else rejected,"Portable interval-literal support is provider-gated.")
+                cap("expression.interval_literal","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),"Portable interval-literal support is provider-gated.")
                 cap("expression.filter","expression",filterStatus,"Aggregate FILTER is gated by provider/runtime profile.")
                 cap("aggregate.string","aggregate",translated,"String aggregation lowers to provider-native syntax.")
                 cap("aggregate.string.ordering","aggregate",aggregateOrderingStatus,aggregateOrderingDetail)
@@ -187,8 +188,8 @@ type SqlCapabilityMatrix private () =
                 cap("temporal.current_keywords","temporal",currentTemporal,"CURRENT_DATE/TIME/TIMESTAMP use provider translation where required.")
                 cap("temporal.date_part.quarter","temporal",quarter,"QUARTER is in the declared portable subset only for PostgreSQL targets.")
                 cap("temporal.date_arithmetic","temporal",translated,"DATEADD/DATEDIFF forms are normalized and target-unit restrictions are validated before lowering.")
-                cap("temporal.date_format","temporal",if provider=SqlAgentToolType.Firebird then rejected else translated,"Date formatting uses declared provider lowering.")
-                cap("temporal.formatted_parse","temporal",if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected,"Formatted parse uses declared provider lowering.")
+                cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")
+                cap("temporal.formatted_parse","temporal",(if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected),"Formatted parse uses declared provider lowering.")
                 cap("json.extract","json",jsonExtract,"Portable JSON extraction is provider-gated.")
                 cap("json.path.simple","json",translated,"Portable JSON paths are limited to constant property chains beginning at $.")
                 cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated.")
@@ -200,9 +201,9 @@ type SqlCapabilityMatrix private () =
                 cap("parameter.unbound","parameter",rejected,"Unbound SQL parameters are rejected.")
                 cap("dml.basic","dml",translated,"INSERT VALUES, UPDATE, and DELETE use the structured DML path.")
                 cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
-                cap("dml.update.from","dml",if provider=SqlAgentToolType.Postgres then translated else rejected,"UPDATE FROM is currently PostgreSQL-only.")
+                cap("dml.update.from","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"UPDATE FROM is currently PostgreSQL-only.")
                 cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
-                cap("dml.delete.using","dml",if provider=SqlAgentToolType.Postgres then translated else rejected,"DELETE USING is currently PostgreSQL-only.")
+                cap("dml.delete.using","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"DELETE USING is currently PostgreSQL-only.")
                 cap("dml.insert_select","dml",translated,"INSERT SELECT is supported for statically-known source width.")
                 cap("dml.insert_select.cte_scope","dml",translated,"Statement-root CTE INSERT SELECT placement is provider-aware.")
                 cap("dml.nested_cte_scope","dml",nestedStatus,

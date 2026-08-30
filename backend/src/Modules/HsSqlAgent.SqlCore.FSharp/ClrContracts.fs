@@ -83,7 +83,7 @@ type SqlParameterValue(name: string, value: obj) =
     member _.Name = name
     member _.Value = value
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type CompiledSqlCommand(
     sql: string,
     parameters: ImmutableArray<SqlParameterValue>,

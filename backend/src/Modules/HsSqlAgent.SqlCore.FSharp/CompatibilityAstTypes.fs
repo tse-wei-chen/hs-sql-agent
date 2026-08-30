@@ -341,7 +341,7 @@ type InsertConflictAssignment(column: SqlIdentifier, proposedColumn: SqlIdentifi
     member _.Column = column
     member _.ProposedColumn = proposedColumn
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type InsertConflictClause(
     targetColumns: ImmutableArray<SqlIdentifier>,
     action: InsertConflictActionKind,
@@ -358,7 +358,7 @@ type InsertStatement(target: NamedTableSource, columns: ImmutableArray<SqlIdenti
     member val Target = target with get, set
     member _.Columns = columns
     member _.Source = source
-    member val Conflict: InsertConflictClause = null with get, set
+    member val Conflict: InsertConflictClause | null = null with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 type SetOperationKind =
