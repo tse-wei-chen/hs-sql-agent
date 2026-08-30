@@ -170,7 +170,11 @@ module internal RewriteParser =
         if not (acceptOperator operator cursor) then fail cursor.Current ("Expected operator '" + operator + "'")
 
     let private contextualIdentifierKeywords =
-        set [ "FETCH"; "KEY"; "DATE"; "TIME"; "TIMESTAMP"; "ZONE"; "CONFLICT"; "EXCLUDED"; "PERCENT" ]
+        set [
+            "FETCH"; "KEY"; "DATE"; "TIME"; "TIMESTAMP"; "ZONE"; "CONFLICT"; "EXCLUDED"; "PERCENT"
+            "DELETE"; "UPDATE"; "INSERT"; "VALUES"; "ESCAPE"; "NOTHING"; "NEXT"; "TIES"
+            "WITHIN"; "WITHOUT"; "TOP"; "DUPLICATE"; "MATCHING"; "SEPARATOR"
+        ]
 
     let private isContextualIdentifierKeyword value =
         Set.contains value contextualIdentifierKeywords
@@ -1121,8 +1125,7 @@ module internal RewriteParser =
                 acceptKeyword "ALL" cursor |> ignore
                 false
         let mutable top = None
-        if acceptKeyword "TOP" cursor then
-            if cursor.Dialect <> SourceDialect.SqlServer then fail cursor.Current "TOP is only valid in the SQL Server source dialect"
+        if cursor.Dialect = SourceDialect.SqlServer && acceptKeyword "TOP" cursor then
             let value = if acceptSymbol '(' cursor then let v = parseNonNegativeRowCount "TOP" cursor in expectSymbol ')' cursor; v else parseNonNegativeRowCount "TOP" cursor
             top <- Some value
         let projection = ResizeArray<SelectItem>()
