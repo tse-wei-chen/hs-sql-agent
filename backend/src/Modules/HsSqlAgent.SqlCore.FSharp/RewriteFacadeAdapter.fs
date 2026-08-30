@@ -84,6 +84,21 @@ module internal RewriteFacadeAdapter =
                 invalidOp ("Unsupported SQL Server concat target mode '" + string value + "'.")
         | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
 
+    let private columnSetAssurance (columns: ImmutableArray<string>) =
+        if columns.IsDefaultOrEmpty then
+            ColumnSetAssurance.MissingAssurance
+        else
+            ColumnSetAssurance.AssuredColumns(columns |> Seq.toList)
+
+    let private conflictProofs (assurance: DmlConflictTargetAssurance | null) : ConflictProofs =
+        match assurance with
+        | null ->
+            { FirebirdPrimaryKey = ColumnSetAssurance.MissingAssurance
+              SourceRowsUniqueByInsertColumns = ColumnSetAssurance.MissingAssurance }
+        | value ->
+            { FirebirdPrimaryKey = columnSetAssurance value.PrimaryKeyColumns
+              SourceRowsUniqueByInsertColumns = columnSetAssurance value.SourceRowsUniqueByInsertColumns }
+
     let private parameters targetProvider (values: (obj | null) list) =
         let prefix = if targetProvider = SqlAgentToolType.Oracle then ":p" else "@p"
         values
@@ -136,7 +151,7 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (SqlCompilationException(ex.Message, ex))
 
-    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) policyVersion policy allowed sql =
+    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let rendered =
             run
@@ -145,6 +160,7 @@ module internal RewriteFacadeAdapter =
                   Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
                   TargetJoins = targetJoinProofs target targetProfile
+                  ConflictProofs = conflictProofs conflictTargetAssurance
                   Policy = policy
                   AllowedTables = allowed }
                 sql
@@ -164,13 +180,13 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile targetProfile null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
-    let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) =
+    let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command

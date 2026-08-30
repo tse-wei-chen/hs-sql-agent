@@ -1152,6 +1152,248 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextDml_FirebirdConflictWithoutPrimaryKeyAssurance_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET id = excluded.id, name = excluded.name";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-firebird-conflict-proof-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Firebird,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Firebird,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_FirebirdConflictWithPrimaryKeyAssurance_MatchesLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET id = excluded.id, name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Firebird,
+            ServerVersion: new Version(5, 0));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-firebird-conflict-assured-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromPrimaryKey(new[] { "id" });
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Firebird,
+            validation,
+            policy,
+            targetProfile,
+            assurance);
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Firebird,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile,
+            assurance);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.StartsWith("UPDATE OR INSERT INTO", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MATCHING ("id")", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_TextDml_FirebirdConflictTargetMustMatchCompletePrimaryKeyLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET id = excluded.id, name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Firebird);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-firebird-conflict-mismatch-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromPrimaryKey(new[] { "tenant_id", "id" });
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Firebird,
+                validation,
+                policy,
+                targetProfile,
+                assurance));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Firebird,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile,
+                assurance));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_FirebirdPartialConflictUpdate_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Firebird);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-firebird-conflict-partial-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromPrimaryKey(new[] { "id" });
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Firebird,
+                validation,
+                policy,
+                targetProfile,
+                assurance));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Firebird,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile,
+                assurance));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_FirebirdNativeSource_CanonicalizesFullProposedRowUpdateLikeLegacy()
+    {
+        const string sql =
+            "UPDATE OR INSERT INTO users (id, name) VALUES (1, 'Alice') MATCHING (id)";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-firebird-source-upsert-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Firebird);
+
+        var legacy = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            validation);
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Postgres,
+            validation);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains(""id" = EXCLUDED."id"", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(""name" = EXCLUDED."name"", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_TextDml_InsertSelectConflictUpdateWithoutSourceRowProof_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) SELECT id, name FROM staged_users " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-insert-select-conflict-proof-v1",
+            new HashSet<string>(
+                new[] { "users", "staged_users" },
+                StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_InsertSelectConflictUpdateWithSourceRowProof_MatchesLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) SELECT id, name FROM staged_users " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-insert-select-conflict-assured-v1",
+            new HashSet<string>(
+                new[] { "users", "staged_users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance
+            .FromPrimaryKey(new[] { "id" })
+            .WithSourceRowsUniqueByInsertColumns(new[] { "id" });
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            targetProfile,
+            assurance);
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile,
+            assurance);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("ON CONFLICT", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Facade_FunctionalProviderProfileRewrite_MatchesLegacySqlServerConcat()
     {
         const string sql =

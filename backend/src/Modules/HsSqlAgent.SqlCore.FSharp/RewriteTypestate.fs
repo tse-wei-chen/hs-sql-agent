@@ -13,6 +13,14 @@ module internal Typestate =
         { RightJoin: CapabilityProof
           FullJoin: CapabilityProof }
 
+    type ColumnSetAssurance =
+        | MissingAssurance
+        | AssuredColumns of string list
+
+    type ConflictProofs =
+        { FirebirdPrimaryKey: ColumnSetAssurance
+          SourceRowsUniqueByInsertColumns: ColumnSetAssurance }
+
     type SqlServerConcatLowering =
         | NativePipes
         | PlusOperator

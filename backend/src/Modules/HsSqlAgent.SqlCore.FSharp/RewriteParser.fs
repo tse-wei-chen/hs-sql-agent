@@ -738,16 +738,12 @@ module internal RewriteParser =
         targets.Add(singlePartIdentifier (identifierPart cursor))
         while acceptSymbol ',' cursor do targets.Add(singlePartIdentifier (identifierPart cursor))
         expectSymbol ')' cursor
-        let targetNames = targets |> Seq.map Identifier.text |> Set.ofSeq
         let assignments =
             columns
-            |> Seq.filter (fun column -> not (targetNames.Contains column.Value))
             |> Seq.map (fun column -> { Target = singlePartIdentifier column; Proposed = singlePartIdentifier column })
             |> Seq.toList
         let action =
-            match assignments with
-            | [] -> DoNothing
-            | values -> UpdateProposedValues(NonEmpty.ofList "conflict assignments" values)
+            UpdateProposedValues(NonEmpty.ofList "conflict assignments" assignments)
         { Target = target
           Columns = columns |> Seq.toList
           Input = Values(NonEmpty.create (values |> Seq.toList |> NonEmpty.ofList "values") [])

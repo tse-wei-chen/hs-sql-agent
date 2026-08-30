@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Collections.Generic
+open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
@@ -413,9 +414,148 @@ module internal RewriteStages =
         | DeleteStatement delete ->
             delete.Using |> List.iter (proveTargetJoinSource proofs)
 
-    let validate allowedTables targetRuntime targetJoins canonical =
+    let private exactColumnSetMatch left right =
+        let leftSet = HashSet<string>(left, StringComparer.OrdinalIgnoreCase)
+        let rightSet = HashSet<string>(right, StringComparer.OrdinalIgnoreCase)
+        leftSet.Count = List.length left
+        && rightSet.Count = List.length right
+        && leftSet.SetEquals(rightSet)
+
+    let private assuredColumns label = function
+        | AssuredColumns columns -> columns
+        | MissingAssurance -> raise (SqlCompilationException(label))
+
+    let private validateConflictTargetColumns (insert: Insert) (conflict: InsertConflict) =
+        let insertColumns =
+            HashSet<string>(
+                insert.Columns |> List.map (fun column -> column.Value),
+                StringComparer.OrdinalIgnoreCase)
+        let seen = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        for target in conflict.TargetColumns |> NonEmpty.toList do
+            let name = Identifier.text target
+            if not (seen.Add name) then
+                raise (SqlCompilationException(
+                    "INSERT conflict target column '" + name + "' is declared more than once."))
+            if not (insertColumns.Contains name) then
+                raise (SqlCompilationException(
+                    "INSERT conflict target column '" + name + "' must be explicitly present in the INSERT column list so Core does not depend on provider-default conflict-key values."))
+
+    let private validateInsertSelectConflictAssurance (conflict: InsertConflict) proofs =
+        let proven =
+            assuredColumns
+                "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target."
+                proofs.SourceRowsUniqueByInsertColumns
+        let target =
+            conflict.TargetColumns
+            |> NonEmpty.toList
+            |> List.map Identifier.text
+        if not (exactColumnSetMatch target proven) then
+            raise (SqlCompilationException(
+                "INSERT ... SELECT conflict DO UPDATE requires source-row uniqueness assurance to match the complete explicit conflict target exactly."))
+
+    let private validateConflictAssignments (insert: Insert) assignments =
+        let insertColumns =
+            HashSet<string>(
+                insert.Columns |> List.map (fun column -> column.Value),
+                StringComparer.OrdinalIgnoreCase)
+        let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        assignments
+        |> NonEmpty.iter (fun assignment ->
+            let target = Identifier.text assignment.Target
+            let proposed = Identifier.text assignment.Proposed
+            if not (assigned.Add target) then
+                raise (SqlCompilationException(
+                    "INSERT conflict DO UPDATE assigns column '" + target + "' more than once."))
+            if not (insertColumns.Contains proposed) then
+                raise (SqlCompilationException(
+                    "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values.")))
+
+    let private validatePortableConflict targetRuntime proofs (insert: Insert) (conflict: InsertConflict) =
+        match insert.Input with
+        | DefaultValues ->
+            raise (SqlCompilationException("Unsupported INSERT source for conflict handling."))
+        | QuerySource _ ->
+            match targetRuntime with
+            | PostgreSqlRuntime -> ()
+            | _ ->
+                raise (SqlCompilationException(
+                    "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL targets; other targets remain fail-closed."))
+        | Values _ -> ()
+
+        validateConflictTargetColumns insert conflict
+
+        match conflict.Action with
+        | DoNothing -> ()
+        | UpdateProposedValues assignments ->
+            match insert.Input with
+            | QuerySource _ -> validateInsertSelectConflictAssurance conflict proofs
+            | Values rows when NonEmpty.length rows <> 1 ->
+                raise (SqlCompilationException(
+                    "Portable INSERT conflict DO UPDATE currently requires exactly one proposed VALUES row. Multi-row proposed values require explicit source-row uniqueness/cardinality assurance."))
+            | Values _ -> ()
+            | DefaultValues -> ()
+            validateConflictAssignments insert assignments
+
+    let private validateFirebirdFullProposedRowUpdate (insert: Insert) assignments =
+        let assignmentList = NonEmpty.toList assignments
+        if assignmentList.Length <> insert.Columns.Length then
+            raise (SqlCompilationException(
+                "Firebird UPDATE OR INSERT updates every supplied INSERT column on a match. Core therefore requires one same-column proposed-row assignment for every INSERT column so partial-update semantics cannot drift."))
+
+        let insertColumns =
+            HashSet<string>(
+                insert.Columns |> List.map (fun column -> column.Value),
+                StringComparer.OrdinalIgnoreCase)
+        let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        for assignment in assignmentList do
+            let target = Identifier.text assignment.Target
+            let proposed = Identifier.text assignment.Proposed
+            if not (StringComparer.OrdinalIgnoreCase.Equals(target, proposed)) then
+                raise (SqlCompilationException(
+                    "Firebird UPDATE OR INSERT can mirror the portable conflict contract only when each assignment is target = proposed-row target for the same column."))
+            if not (assigned.Add target) || not (insertColumns.Contains target) then
+                raise (SqlCompilationException(
+                    "Firebird UPDATE OR INSERT assignment column '" + target + "' must occur exactly once in the INSERT column list."))
+
+        if not (assigned.SetEquals insertColumns) then
+            raise (SqlCompilationException(
+                "Firebird UPDATE OR INSERT requires conflict assignments to cover the complete INSERT column set."))
+
+    let private validateFirebirdConflict proofs (insert: Insert) (conflict: InsertConflict) =
+        match conflict.Action with
+        | DoNothing ->
+            raise (SqlCompilationException(
+                "Firebird UPDATE OR INSERT has update-or-insert semantics and cannot represent portable ON CONFLICT DO NOTHING; a separate MERGE no-match contract is required."))
+        | UpdateProposedValues assignments ->
+            let primaryKey =
+                assuredColumns
+                    "Firebird UPDATE OR INSERT requires metadata-backed conflict-target assurance proving MATCHING equals the resolved primary key; absent assurance remains fail-closed because non-unique MATCHING can update multiple rows."
+                    proofs.FirebirdPrimaryKey
+            let target =
+                conflict.TargetColumns
+                |> NonEmpty.toList
+                |> List.map Identifier.text
+            if not (exactColumnSetMatch target primaryKey) then
+                raise (SqlCompilationException(
+                    "Firebird UPDATE OR INSERT requires the canonical conflict target to match the complete resolved primary key exactly; general UNIQUE-key and non-unique MATCHING metadata are not represented yet."))
+            validateFirebirdFullProposedRowUpdate insert assignments
+
+    let private proveConflicts targetRuntime proofs document =
+        match document.Statement with
+        | InsertStatement insert ->
+            match insert.Conflict with
+            | None -> ()
+            | Some conflict ->
+                validatePortableConflict targetRuntime proofs insert conflict
+                match targetRuntime with
+                | FirebirdRuntime -> validateFirebirdConflict proofs insert conflict
+                | _ -> ()
+        | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
+
+    let validate allowedTables targetRuntime targetJoins conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
             let validated = validateDocument allowedTables document
             proveTargetDocument targetRuntime validated |> ignore
             proveTargetJoins targetJoins validated
+            proveConflicts targetRuntime conflictProofs validated
             validated) canonical
