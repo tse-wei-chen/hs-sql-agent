@@ -100,6 +100,14 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name || '!'",
             "conflict clause");
         yield return Reject(
+            "duplicate-conflict-target",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id, id) DO NOTHING",
+            "more than once");
+        yield return Reject(
+            "duplicate-conflict-assignment",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name, name = excluded.name",
+            "more than once");
+        yield return Reject(
             "postgres-on-duplicate-key",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON DUPLICATE KEY UPDATE name = name",
             "conflict target");
