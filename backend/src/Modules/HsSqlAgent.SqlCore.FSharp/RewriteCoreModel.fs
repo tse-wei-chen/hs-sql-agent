@@ -138,10 +138,15 @@ module internal CoreModel =
     type CastType = private CastType of string
 
     module CastType =
-        let private safeCastType = Regex("^[A-Za-z][A-Za-z0-9_ ]*(\\([0-9]+(,[0-9]+)?\\))?$", RegexOptions.CultureInvariant)
+        let private safeCastType =
+            Regex(
+                "^[A-Za-z_][A-Za-z0-9_.]*(?:\\s+[A-Za-z_]+)*(?:\\s*\\(\\s*(?:MAX|[0-9]+)(?:\\s*,\\s*[0-9]+)?\\s*\\))?(?:\\s+[A-Za-z_]+)*$",
+                RegexOptions.CultureInvariant ||| RegexOptions.IgnoreCase)
         let create value =
-            if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then invalidArg (nameof value) ("Unsafe CAST type '" + string value + "'.")
-            CastType(value.ToUpperInvariant())
+            if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then
+                raise (HsSqlAgent.SqlCore.Core.Compilation.SqlCompilationException(
+                    "CAST type '" + string value + "' is not a safe modeled type shape."))
+            CastType(Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant())
         let value (CastType value) = value
 
     type FunctionName = private FunctionName of string

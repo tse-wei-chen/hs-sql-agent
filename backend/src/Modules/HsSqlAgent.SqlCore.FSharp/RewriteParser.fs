@@ -43,6 +43,10 @@ module internal RewriteParser =
               IntervalLiteral = ProvenCapability
               RegexMatch = ProvenCapability
               AggregateFilter = ProvenCapability
+              OffsetTimestamp = ProvenCapability
+              FirebirdTimeZoneType = ProvenCapability
+              FirebirdExtendedDecimal = ProvenCapability
+              StandaloneTime = ProvenCapability
               FilterPredicate = permissiveFilterPredicate }
 
         let private permissiveDml =
@@ -176,21 +180,40 @@ module internal RewriteParser =
         | _ -> fail token (context + " requires a positive integer")
 
     let private parseCastType (cursor: Cursor) =
-        let baseName = keywordOrIdentifierText cursor
-        let suffix =
-            if acceptSymbol '(' cursor then
-                let first = cursor.Take()
-                let firstText =
-                    match first.Kind with IntegerLiteral value when value >= 0L -> string value | _ -> fail first "CAST type size must be an integer"
-                let second =
-                    if acceptSymbol ',' cursor then
-                        let token = cursor.Take()
-                        match token.Kind with IntegerLiteral value when value >= 0L -> "," + string value | _ -> fail token "CAST type scale must be an integer"
-                    else ""
-                expectSymbol ')' cursor
-                "(" + firstText + second + ")"
-            else ""
-        CastType.create (baseName + suffix)
+        let parts = ResizeArray<string>()
+        let mutable depth = 0
+        let mutable scanning = true
+        while scanning do
+            match cursor.Current.Kind with
+            | End -> fail cursor.Current "Unterminated CAST target type"
+            | Symbol ')' when depth = 0 -> scanning <- false
+            | Identifier(value, _) | Keyword value ->
+                parts.Add(value)
+                cursor.Advance()
+            | IntegerLiteral value when value >= 0L ->
+                parts.Add(string value)
+                cursor.Advance()
+            | Symbol '(' ->
+                parts.Add("(")
+                depth <- depth + 1
+                cursor.Advance()
+            | Symbol ')' ->
+                parts.Add(")")
+                depth <- depth - 1
+                cursor.Advance()
+            | Symbol ',' ->
+                parts.Add(",")
+                cursor.Advance()
+            | _ -> fail cursor.Current "CAST target type contains an unsupported token"
+        if parts.Count = 0 then fail cursor.Current "CAST target type cannot be empty"
+        parts
+        |> Seq.toList
+        |> String.concat " "
+        |> fun value ->
+            value.Replace("( ", "(", StringComparison.Ordinal)
+                 .Replace(" )", ")", StringComparison.Ordinal)
+                 .Replace(" , ", ",", StringComparison.Ordinal)
+        |> CastType.create
 
     let private parseDateLiteral (cursor: Cursor) =
         let token = cursor.Take()
@@ -363,7 +386,17 @@ module internal RewriteParser =
         let mutable expression = parsePrimary cursor
         let mutable scanning = true
         while scanning do
-            if acceptOperator "::" cursor then
+            if isOperator "::" cursor.Current then
+                let token = cursor.Current
+                if cursor.Dialect <> SourceDialect.PostgreSql then
+                    let finish = token.Start + max token.Length 1
+                    raise (SqlParseException(
+                        "PostgreSQL '::' CAST shorthand is not valid for source dialect "
+                        + string cursor.Dialect
+                        + "; use CAST(... AS ...). Position "
+                        + string token.Start + ", span ["
+                        + string token.Start + ".." + string finish + ")."))
+                cursor.Advance()
                 expression <- Cast(expression, parseCastType cursor)
             elif acceptKeyword "FILTER" cursor then
                 expectSymbol '(' cursor

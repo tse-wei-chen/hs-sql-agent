@@ -113,6 +113,10 @@ module internal RewriteFacadeAdapter =
             |> capabilityProof
           RegexMatch = sourceRegexProof source
           AggregateFilter = filterError |> capabilityProof
+          OffsetTimestamp = CapabilityProof.ProvenCapability
+          FirebirdTimeZoneType = CapabilityProof.ProvenCapability
+          FirebirdExtendedDecimal = CapabilityProof.ProvenCapability
+          StandaloneTime = CapabilityProof.ProvenCapability
           FilterPredicate = filterPredicateProofs source "source" }
 
     let private providerName = function
@@ -146,6 +150,25 @@ module internal RewriteFacadeAdapter =
             |> capabilityProof
           AggregateFilter =
             SqlAggregateFilterCapabilityRules.ValidationError(target, targetProfile, "target")
+            |> capabilityProof
+          OffsetTimestamp =
+            SqlOffsetTimestampCapabilityRules.TargetValidationError(target, targetProfile)
+            |> capabilityProof
+          FirebirdTimeZoneType =
+            SqlFirebirdTimeZoneTypeCapabilityRules.CastTargetValidationError(
+                target,
+                targetProfile,
+                "TIMESTAMP WITH TIME ZONE")
+            |> capabilityProof
+          FirebirdExtendedDecimal =
+            if target <> SqlAgentToolType.Firebird
+               || SqlFirebirdTimeZoneTypeCapabilityRules.SupportsTargetProfile(targetProfile) then
+                CapabilityProof.ProvenCapability
+            else
+                CapabilityProof.RejectedCapability(
+                    "SQL capability 'numeric.decimal_extended' requires an explicit Firebird target capability profile with ServerVersion 4.0 or newer.")
+          StandaloneTime =
+            SqlStandaloneTimeCapabilityRules.TargetValidationError(target)
             |> capabilityProof
           FilterPredicate = filterPredicateProofs target "target" }
 

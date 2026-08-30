@@ -75,21 +75,33 @@ module internal RewriteRenderer =
         | ScalarValue.Bytes value -> box value
 
     let private renderLiteral (ctx: RenderContext) value =
-        let placeholder = ctx.Bind(scalarObject value)
+        let bind scalar = ctx.Bind(scalarObject scalar)
         match ctx.Provider, value with
+        | PostgreSql, ScalarValue.OffsetDateTime offset ->
+            ctx.Bind(box (offset.ToUniversalTime()))
         | Firebird, ScalarValue.Text text ->
             if text.Length > 8191 then invalidOp "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."
+            let placeholder = bind value
             "CAST(" + placeholder + " AS VARCHAR(" + string (max 1 text.Length) + "))"
-        | Firebird, ScalarValue.Boolean _ -> "CAST(" + placeholder + " AS BOOLEAN)"
-        | Firebird, ScalarValue.Integer value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue -> "CAST(" + placeholder + " AS INTEGER)"
-        | Firebird, ScalarValue.Integer _ -> "CAST(" + placeholder + " AS BIGINT)"
-        | Firebird, ScalarValue.Decimal _ -> "CAST(" + placeholder + " AS DECIMAL(38,18))"
-        | Firebird, ScalarValue.Floating _ -> "CAST(" + placeholder + " AS DOUBLE PRECISION)"
-        | Firebird, ScalarValue.Date _ -> "CAST(" + placeholder + " AS DATE)"
-        | Firebird, ScalarValue.Time _ -> "CAST(" + placeholder + " AS TIME)"
-        | Firebird, ScalarValue.LocalDateTime _ -> "CAST(" + placeholder + " AS TIMESTAMP)"
-        | Firebird, ScalarValue.OffsetDateTime _ -> "CAST(" + placeholder + " AS TIMESTAMP WITH TIME ZONE)"
-        | _ -> placeholder
+        | Firebird, ScalarValue.Boolean _ ->
+            "CAST(" + bind value + " AS BOOLEAN)"
+        | Firebird, ScalarValue.Integer integer when integer >= int64 Int32.MinValue && integer <= int64 Int32.MaxValue ->
+            "CAST(" + bind value + " AS INTEGER)"
+        | Firebird, ScalarValue.Integer _ ->
+            "CAST(" + bind value + " AS BIGINT)"
+        | Firebird, ScalarValue.Decimal decimalValue ->
+            "CAST(" + bind value + " AS " + SqlFirebirdDecimalCapabilityRules.FirebirdCastType(decimalValue) + ")"
+        | Firebird, ScalarValue.Floating _ ->
+            "CAST(" + bind value + " AS DOUBLE PRECISION)"
+        | Firebird, ScalarValue.Date _ ->
+            "CAST(" + bind value + " AS DATE)"
+        | Firebird, ScalarValue.Time _ ->
+            "CAST(" + bind value + " AS TIME)"
+        | Firebird, ScalarValue.LocalDateTime _ ->
+            "CAST(" + bind value + " AS TIMESTAMP)"
+        | Firebird, ScalarValue.OffsetDateTime _ ->
+            "CAST(" + bind value + " AS TIMESTAMP WITH TIME ZONE)"
+        | _ -> bind value
 
     let private renderLikeEscape provider escape =
         let value = LikeEscape.value escape

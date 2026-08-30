@@ -31,6 +31,10 @@ module internal Typestate =
           IntervalLiteral: CapabilityProof
           RegexMatch: CapabilityProof
           AggregateFilter: CapabilityProof
+          OffsetTimestamp: CapabilityProof
+          FirebirdTimeZoneType: CapabilityProof
+          FirebirdExtendedDecimal: CapabilityProof
+          StandaloneTime: CapabilityProof
           FilterPredicate: FilterPredicateProofs }
 
     type DmlProofs =

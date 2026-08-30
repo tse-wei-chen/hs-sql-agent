@@ -319,7 +319,10 @@ module internal RewriteStages =
             FilteredAggregate(normalizeExpr source target value, normalizeExpr source target predicate)
         | Windowed(value, window) ->
             Windowed(normalizeExpr source target value, normalizeWindow source target window)
-        | Cast(value, targetType) -> Cast(normalizeExpr source target value, targetType)
+        | Cast(value, targetType) ->
+            Cast(
+                normalizeExpr source target value,
+                RewriteCastTypes.normalize (sourceProvider source) (targetProvider target) targetType)
         | Extract(field, value) -> Extract(field, normalizeExpr source target value)
         | SimpleCase(input, branches, fallback) ->
             SimpleCase(
@@ -863,11 +866,31 @@ module internal RewriteStages =
             validateReturning allowedTables delete.Returning
         document
 
-    let private proveTargetLiteral targetRuntime value =
+    let private proveTargetLiteral targetRuntime (proofs: ExpressionProofs) value =
+        let requireProof proof =
+            match proof with
+            | ProvenCapability -> ()
+            | RejectedCapability message -> raise (SqlCompilationException(message))
         match targetRuntime, value with
         | FirebirdRuntime, ScalarValue.Text text when text.Length > 8191 ->
             raise (SqlCompilationException(
                 "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."))
+        | _, ScalarValue.OffsetDateTime _ ->
+            requireProof proofs.OffsetTimestamp
+        | _, ScalarValue.Time _ ->
+            requireProof proofs.StandaloneTime
+        | FirebirdRuntime, ScalarValue.Decimal value ->
+            let shape = SqlFirebirdDecimalCapabilityRules.Shape(value)
+            if shape.Precision > SqlFirebirdDecimalCapabilityRules.LegacyMaximumPrecision then
+                match proofs.FirebirdExtendedDecimal with
+                | ProvenCapability -> ()
+                | RejectedCapability _ ->
+                    raise (SqlCompilationException(
+                        "SQL capability 'numeric.decimal_extended' requires an explicit Firebird target "
+                        + "capability profile with ServerVersion 4.0 or newer for exact decimal precision "
+                        + "above 18; this value requires "
+                        + SqlFirebirdDecimalCapabilityRules.FirebirdCastType(value)
+                        + "."))
         | _ -> ()
 
     let private proveSqlServerConcat targetRuntime =
@@ -1060,7 +1083,7 @@ module internal RewriteStages =
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ -> ()
-        | Literal value -> proveTargetLiteral targetRuntime value
+        | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
         | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
         | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
         | Binary(BinaryOperator.Concat, left, right) ->
@@ -1090,7 +1113,13 @@ module internal RewriteStages =
             proveTargetExpr targetRuntime expressionProofs value
             window.PartitionBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
             window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
+        | Cast(value, targetType) ->
+            match targetRuntime with
+            | FirebirdRuntime when CastType.value targetType |> fun value -> value.Contains(" WITH TIME ZONE", StringComparison.OrdinalIgnoreCase) ->
+                requireExpressionCapability expressionProofs.FirebirdTimeZoneType
+            | _ -> ()
+            proveTargetExpr targetRuntime expressionProofs value
+        | Extract(_, value) ->
             proveTargetExpr targetRuntime expressionProofs value
         | SimpleCase(input, branches, fallback) ->
             proveTargetExpr targetRuntime expressionProofs input
