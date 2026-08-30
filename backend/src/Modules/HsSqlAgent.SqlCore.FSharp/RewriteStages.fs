@@ -276,6 +276,13 @@ module internal RewriteStages =
             validateReturning allowedTables delete.Returning
         document
 
+    let private proveTargetLiteral targetRuntime value =
+        match targetRuntime, value with
+        | FirebirdRuntime, ScalarValue.Text text when text.Length > 8191 ->
+            raise (SqlCompilationException(
+                "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."))
+        | _ -> ()
+
     let private proveSqlServerConcat targetRuntime =
         match targetRuntime with
         | SqlServerRuntime(Proven _) -> ()
@@ -451,7 +458,8 @@ module internal RewriteStages =
 
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ -> ()
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ -> ()
+        | Literal value -> proveTargetLiteral targetRuntime value
         | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
         | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
         | Binary(BinaryOperator.Concat, left, right) ->
