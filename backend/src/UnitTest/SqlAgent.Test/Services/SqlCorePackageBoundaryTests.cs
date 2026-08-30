@@ -15,9 +15,9 @@ public sealed class SqlCorePackageBoundaryTests
         Assert.Same(coreAssembly, typeof(CoreSqlCompiler).Assembly);
         Assert.Same(coreAssembly, typeof(CoreDmlCompiler).Assembly);
 
-        Assert.Equal("HsSqlAgent.SqlCore.Contracts", contractsAssembly.GetName().Name);
-        Assert.Same(contractsAssembly, typeof(SqlCapabilityMatrix).Assembly);
-        Assert.Same(contractsAssembly, typeof(SqlTemporalLiteralParser).Assembly);
+        Assert.Same(coreAssembly, contractsAssembly);
+        Assert.Same(coreAssembly, typeof(SqlCapabilityMatrix).Assembly);
+        Assert.Same(coreAssembly, typeof(SqlTemporalLiteralParser).Assembly);
 
         Assert.NotSame(coreAssembly, typeof(MySqlProvider).Assembly);
         Assert.Equal("HsSqlAgent.Provider.MySql", typeof(MySqlProvider).Assembly.GetName().Name);

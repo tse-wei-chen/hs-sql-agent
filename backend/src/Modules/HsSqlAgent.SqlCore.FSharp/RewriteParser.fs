@@ -97,6 +97,20 @@ module internal RewriteParser =
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
 
+    let private sourceDialectName = function
+        | SourceDialect.PostgreSql -> "Postgres"
+        | SourceDialect.MySql -> "MySQL"
+        | SourceDialect.SqlServer -> "MsSqlServer"
+        | SourceDialect.SQLite -> "Sqlite"
+        | SourceDialect.Oracle -> "Oracle"
+        | SourceDialect.Firebird -> "Firebird"
+
+    let private typedTemporalSourceError (cursor: Cursor) spelling =
+        fail cursor.Current (
+            "Typed temporal literal " + spelling
+            + " is not valid for source dialect " + sourceDialectName cursor.Dialect
+            + " in the Core source profile")
+
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
 
@@ -211,6 +225,7 @@ module internal RewriteParser =
         |> String.concat " "
         |> fun value ->
             value.Replace("( ", "(", StringComparison.Ordinal)
+                 .Replace(" (", "(", StringComparison.Ordinal)
                  .Replace(" )", ")", StringComparison.Ordinal)
                  .Replace(" , ", ",", StringComparison.Ordinal)
         |> CastType.create
@@ -286,6 +301,7 @@ module internal RewriteParser =
         |> String.concat " "
         |> fun value ->
             value.Replace("( ", "(", StringComparison.Ordinal)
+                 .Replace(" (", "(", StringComparison.Ordinal)
                  .Replace(" )", ")", StringComparison.Ordinal)
                  .Replace(" , ", ",", StringComparison.Ordinal)
         |> CastType.create
@@ -316,6 +332,15 @@ module internal RewriteParser =
             | true, value -> ScalarValue.LocalDateTime value
             | _ -> fail token "Invalid TIMESTAMP literal"
         | _ -> fail token "TIMESTAMP requires a string literal"
+
+    let private parseOffsetTimestampLiteral (cursor: Cursor) =
+        let token = cursor.Take()
+        match token.Kind with
+        | StringLiteral text ->
+            match DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
+            | true, value -> ScalarValue.OffsetDateTime value
+            | _ -> fail token "Invalid TIMESTAMP WITH TIME ZONE literal"
+        | _ -> fail token "TIMESTAMP WITH TIME ZONE requires a string literal"
 
     let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor
 
@@ -585,7 +610,12 @@ module internal RewriteParser =
     and private parseExtract cursor =
         expectKeyword "EXTRACT" cursor
         expectSymbol '(' cursor
-        let field = keywordOrIdentifierText cursor |> ExtractField.create
+        let fieldText = keywordOrIdentifierText cursor |> fun value -> value.Trim().ToUpperInvariant()
+        if not (SqlDatePartCapabilityRules.IsRepresentedPart(fieldText)) then
+            fail cursor.Current (
+                "EXTRACT date part '" + fieldText
+                + "' is not yet represented by the canonical date-part family")
+        let field = ExtractField.create fieldText
         expectKeyword "FROM" cursor
         let value = parseExpression cursor
         expectSymbol ')' cursor
@@ -666,10 +696,47 @@ module internal RewriteParser =
             if cursor.Dialect = SourceDialect.SqlServer then fail token "FALSE is not valid in the SQL Server source dialect"
             cursor.Advance(); Literal(ScalarValue.Boolean false)
         | Keyword "DATE" ->
-            if cursor.Dialect = SourceDialect.SqlServer then fail token "DATE literals are not valid in the SQL Server source dialect"
-            cursor.Advance(); Literal(parseDateLiteral cursor)
-        | Keyword "TIME" -> cursor.Advance(); Literal(parseTimeLiteral cursor)
-        | Keyword "TIMESTAMP" -> cursor.Advance(); Literal(parseTimestampLiteral cursor)
+            match cursor.Dialect with
+            | SourceDialect.PostgreSql
+            | SourceDialect.MySql
+            | SourceDialect.Oracle
+            | SourceDialect.Firebird ->
+                cursor.Advance()
+                Literal(parseDateLiteral cursor)
+            | SourceDialect.SqlServer
+            | SourceDialect.SQLite ->
+                typedTemporalSourceError cursor "DATE"
+        | Keyword "TIME" ->
+            match cursor.Dialect with
+            | SourceDialect.PostgreSql
+            | SourceDialect.MySql
+            | SourceDialect.Firebird ->
+                cursor.Advance()
+                if acceptKeyword "WITH" cursor then
+                    typedTemporalSourceError cursor "TIME WITH TIME ZONE"
+                Literal(parseTimeLiteral cursor)
+            | SourceDialect.SqlServer
+            | SourceDialect.SQLite
+            | SourceDialect.Oracle ->
+                typedTemporalSourceError cursor "TIME"
+        | Keyword "TIMESTAMP" ->
+            cursor.Advance()
+            if acceptKeyword "WITH" cursor then
+                if not (acceptKeyword "TIME" cursor && acceptKeyword "ZONE" cursor) then
+                    fail cursor.Current "Expected TIME ZONE after TIMESTAMP WITH"
+                if cursor.Dialect <> SourceDialect.PostgreSql then
+                    typedTemporalSourceError cursor "TIMESTAMP WITH TIME ZONE"
+                Literal(parseOffsetTimestampLiteral cursor)
+            else
+                match cursor.Dialect with
+                | SourceDialect.PostgreSql
+                | SourceDialect.MySql
+                | SourceDialect.Oracle
+                | SourceDialect.Firebird ->
+                    Literal(parseTimestampLiteral cursor)
+                | SourceDialect.SqlServer
+                | SourceDialect.SQLite ->
+                    typedTemporalSourceError cursor "TIMESTAMP"
         | Keyword "CURRENT_DATE" ->
             cursor.Advance()
             FunctionCall
@@ -888,36 +955,64 @@ module internal RewriteParser =
         let orderBy = parseOrderBy cursor
         let mutable limit = None
         let mutable offset = None
+
+        let parseFetch () =
+            if cursor.Dialect = SourceDialect.MySql || cursor.Dialect = SourceDialect.SQLite then
+                fail cursor.Current ("FETCH is not valid for source dialect " + sourceDialectName cursor.Dialect)
+            if cursor.Dialect = SourceDialect.SqlServer && offset.IsNone then
+                fail cursor.Current "SQL Server FETCH requires a preceding OFFSET"
+            if not (acceptKeyword "FIRST" cursor || acceptKeyword "NEXT" cursor) then
+                fail cursor.Current "Expected FIRST or NEXT after FETCH"
+            let count = parsePositiveRowCount "FETCH row count" cursor |> PositiveRowCount.value
+            if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then
+                fail cursor.Current "Expected ROW or ROWS after FETCH count"
+            if acceptKeyword "WITH" cursor then
+                expectKeyword "TIES" cursor
+                fail cursor.Current "FETCH ... WITH TIES is not represented by the portable compiler"
+            expectKeyword "ONLY" cursor
+            limit <- Some(NonNegativeRowCount.create count)
+
         if acceptKeyword "LIMIT" cursor then
             if cursor.Dialect = SourceDialect.SqlServer || cursor.Dialect = SourceDialect.Oracle || cursor.Dialect = SourceDialect.Firebird then
-                fail cursor.Current "LIMIT is not valid in this source dialect"
+                fail cursor.Current (
+                    "LIMIT is not valid in source dialect " + sourceDialectName cursor.Dialect
+                    + "; use the dialect's native row-limiting syntax")
             if acceptKeyword "ALL" cursor then
                 if cursor.Dialect <> SourceDialect.PostgreSql then
-                    fail cursor.Current "LIMIT ALL is only valid in the PostgreSQL source dialect"
+                    fail cursor.Current (
+                        "LIMIT ALL is valid only for PostgreSQL; source dialect "
+                        + sourceDialectName cursor.Dialect + " remains fail-closed")
                 if acceptKeyword "OFFSET" cursor then
                     offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
+                    acceptKeyword "ROW" cursor |> ignore
+                    acceptKeyword "ROWS" cursor |> ignore
                 if isKeyword "FETCH" cursor.Current then
-                    fail cursor.Current "LIMIT ALL cannot be combined with FETCH"
+                    fail cursor.Current "LIMIT and FETCH cannot be combined"
             else
                 let first = parseNonNegativeRowCount "LIMIT" cursor
                 if acceptSymbol ',' cursor then
-                    if cursor.Dialect <> SourceDialect.MySql then fail cursor.Current "LIMIT offset,count is only valid in MySQL"
+                    if cursor.Dialect <> SourceDialect.MySql && cursor.Dialect <> SourceDialect.SQLite then
+                        fail cursor.Current "LIMIT offset,row_count is only valid in MySQL and SQLite"
                     offset <- Some first
                     limit <- Some(parseNonNegativeRowCount "LIMIT count" cursor)
                 else
                     limit <- Some first
-                    if acceptKeyword "OFFSET" cursor then offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
+                    if acceptKeyword "OFFSET" cursor then
+                        offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
         elif acceptKeyword "OFFSET" cursor then
+            if cursor.Dialect = SourceDialect.MySql || cursor.Dialect = SourceDialect.SQLite then
+                fail cursor.Current (
+                    "OFFSET requires a preceding LIMIT for source dialect "
+                    + sourceDialectName cursor.Dialect)
             offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
             acceptKeyword "ROW" cursor |> ignore
             acceptKeyword "ROWS" cursor |> ignore
-            if acceptKeyword "FETCH" cursor then
-                if not (acceptKeyword "FIRST" cursor || acceptKeyword "NEXT" cursor) then fail cursor.Current "Expected FIRST or NEXT after FETCH"
-                limit <- Some(parseNonNegativeRowCount "FETCH" cursor)
-                if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then fail cursor.Current "Expected ROW or ROWS after FETCH count"
-                expectKeyword "ONLY" cursor
+            if acceptKeyword "FETCH" cursor then parseFetch ()
             elif cursor.Dialect = SourceDialect.SqlServer && orderBy.IsEmpty then
                 fail cursor.Current "SQL Server OFFSET requires ORDER BY"
+        elif acceptKeyword "FETCH" cursor then
+            parseFetch ()
+
         orderBy, limit, offset
 
     and private parseQuery cursor =
