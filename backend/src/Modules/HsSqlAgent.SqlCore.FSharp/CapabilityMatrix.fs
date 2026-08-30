@@ -19,10 +19,13 @@ type SqlCapabilityMatrix private () =
         SqlCapability(id, category, status, detail)
 
     static member private VersionAtLeast(profile: SqlProviderCapabilityProfile | null, provider, minimum: Version) =
-        not (isNull profile)
-        && profile.Provider = provider
-        && not (isNull profile.ServerVersion)
-        && profile.ServerVersion.CompareTo(minimum) >= 0
+        match profile with
+        | null -> false
+        | nonNullProfile when nonNullProfile.Provider <> provider -> false
+        | nonNullProfile ->
+            match nonNullProfile.ServerVersion with
+            | null -> false
+            | version -> version.CompareTo(minimum) >= 0
 
     static member ForProvider(provider: SqlAgentToolType) =
         SqlCapabilityMatrix.ForProvider(provider, null)
@@ -31,15 +34,21 @@ type SqlCapabilityMatrix private () =
         let profile = targetProfile
         match SqlProviderCapabilityProfileRules.ValidationIssue(profile, provider) with
         | SqlProviderCapabilityProfileValidationIssue.ProviderMismatch ->
-            raise (ArgumentException(
-                "Target capability profile declares provider " + string profile.Provider
-                + ", but matrix provider is " + string provider + ".",
-                "targetProfile"))
+            match profile with
+            | null -> invalidOp "Provider mismatch cannot be reported for an absent target profile."
+            | nonNullProfile ->
+                raise (ArgumentException(
+                    "Target capability profile declares provider " + string nonNullProfile.Provider
+                    + ", but matrix provider is " + string provider + ".",
+                    "targetProfile"))
         | SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel ->
-            raise (ArgumentOutOfRangeException(
-                "targetProfile",
-                profile.CompatibilityLevel.Value,
-                "Provider compatibility level must be non-negative."))
+            match profile with
+            | null -> invalidOp "Negative compatibility level cannot be reported for an absent target profile."
+            | nonNullProfile ->
+                raise (ArgumentOutOfRangeException(
+                    "targetProfile",
+                    nonNullProfile.CompatibilityLevel.Value,
+                    "Provider compatibility level must be non-negative."))
         | _ -> ()
 
         let cap = SqlCapabilityMatrix.Capability
@@ -68,7 +77,13 @@ type SqlCapabilityMatrix private () =
         let filterStatus =
             match provider with
             | SqlAgentToolType.Postgres ->
-                if not (isNull profile) && not (isNull profile.ServerVersion) && profile.ServerVersion.CompareTo(Version(9,4)) < 0 then rejected else supported
+                match profile with
+                | null -> supported
+                | nonNullProfile ->
+                    match nonNullProfile.ServerVersion with
+                    | null -> supported
+                    | version when version.CompareTo(Version(9,4)) < 0 -> rejected
+                    | _ -> supported
             | SqlAgentToolType.Sqlite -> if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(3,30)) then supported else rejected
             | SqlAgentToolType.Firebird -> if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(4,0)) then supported else rejected
             | SqlAgentToolType.Oracle -> if SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(26,0)) then supported else rejected
@@ -83,9 +98,12 @@ type SqlCapabilityMatrix private () =
                 else rejected, "SQLite aggregate-local ORDER BY remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.44 or newer."
             | SqlAgentToolType.MsSqlServer ->
                 let ok =
-                    SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(14,0))
-                    && profile.CompatibilityLevel.HasValue
-                    && profile.CompatibilityLevel.Value >= 110
+                    match profile with
+                    | null -> false
+                    | nonNullProfile ->
+                        SqlCapabilityMatrix.VersionAtLeast(nonNullProfile, provider, Version(14,0))
+                        && nonNullProfile.CompatibilityLevel.HasValue
+                        && nonNullProfile.CompatibilityLevel.Value >= 110
                 if ok then supported, "SQL Server 14.0+ with CompatibilityLevel 110+ supports ordered STRING_AGG."
                 else rejected, "SQL Server ordered STRING_AGG remains fail-closed unless the target capability profile explicitly declares ServerVersion 14.0+ and CompatibilityLevel 110+."
             | SqlAgentToolType.Oracle ->
