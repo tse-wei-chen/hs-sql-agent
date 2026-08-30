@@ -105,11 +105,12 @@ module internal RewriteParser =
         | SourceDialect.Oracle -> "Oracle"
         | SourceDialect.Firebird -> "Firebird"
 
-    let private typedTemporalSourceError (cursor: Cursor) spelling =
-        fail cursor.Current (
+    let private typedTemporalSourceError (cursor: Cursor) spelling : 'T =
+        let token = cursor.Current
+        invalidArg "sql" (
             "Typed temporal literal " + spelling
             + " is not valid for source dialect " + sourceDialectName cursor.Dialect
-            + " in the Core source profile")
+            + " in the Core source profile at offset " + string token.Start + ".")
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
