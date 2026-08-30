@@ -18,16 +18,17 @@ type DmlFingerprintService private () =
         hash.AppendData(length)
         hash.AppendData(bytes)
 
-    static member private CanonicalValue(value: obj) =
-        if isNull value then "null"
-        else
-            match value with
+    static member private CanonicalValue(value: obj | null) =
+        match value with
+        | null -> "null"
+        | nonNullValue ->
+            match nonNullValue with
             | :? string as text -> "string:" + text
             | :? bool as boolean -> if boolean then "bool:true" else "bool:false"
             | :? byte | :? sbyte | :? int16 | :? uint16 | :? int | :? uint32 | :? int64 | :? uint64 ->
-                "integer:" + Convert.ToString(value, CultureInfo.InvariantCulture)
+                "integer:" + Convert.ToString(nonNullValue, CultureInfo.InvariantCulture)
             | :? single | :? double | :? decimal ->
-                "number:" + Convert.ToString(value, CultureInfo.InvariantCulture)
+                "number:" + Convert.ToString(nonNullValue, CultureInfo.InvariantCulture)
             | :? DateTime as dateTime ->
                 "datetime:" + dateTime.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)
             | :? DateTimeOffset as offset ->
@@ -36,7 +37,13 @@ type DmlFingerprintService private () =
             | :? TimeOnly as time -> "time:" + time.ToString("HH:mm:ss.fffffff", CultureInfo.InvariantCulture)
             | :? Guid as guid -> "guid:" + guid.ToString("D")
             | :? (byte array) as bytes -> "bytes:" + Convert.ToHexString(bytes)
-            | _ -> value.GetType().FullName + ":" + JsonSerializer.Serialize(value, value.GetType())
+            | _ ->
+                let valueType = nonNullValue.GetType()
+                let typeName =
+                    match valueType.FullName with
+                    | null -> valueType.Name
+                    | fullName -> fullName
+                typeName + ":" + JsonSerializer.Serialize(nonNullValue, valueType)
 
     static member ComputePlanFingerprint(mutationCommand: CompiledSqlCommand, policyVersion: string) =
         if isNull mutationCommand then nullArg "mutationCommand"
@@ -52,31 +59,45 @@ type DmlFingerprintService private () =
             DmlFingerprintService.Append(hash, DmlFingerprintService.CanonicalValue(parameter.Value))
         Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
 
-    static member ComputeRowSetFingerprint(orderedKeys: IEnumerable<IReadOnlyList<obj>>) =
-        if isNull orderedKeys then nullArg "orderedKeys"
-        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
-        let mutable count = 0
-        for key in orderedKeys do
+    static member ComputeRowSetFingerprint(
+        orderedKeys: IEnumerable<IReadOnlyList<obj | null> | null> | null) =
+        match orderedKeys with
+        | null -> nullArg "orderedKeys"
+        | nonNullKeys ->
+            use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+            let mutable count = 0
+            for key in nonNullKeys do
+                match key with
+                | null -> invalidArg "orderedKeys" "Row identity key cannot be null."
+                | nonNullKey ->
+                    DmlFingerprintService.Append(hash, "row")
+                    for value in nonNullKey do
+                        DmlFingerprintService.Append(hash, DmlFingerprintService.CanonicalValue(value))
+                    count <- count + 1
+            DmlFingerprintService.Append(hash, "count:" + count.ToString(CultureInfo.InvariantCulture))
+            Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
+
+    static member private ComputeRowDigest(key: IReadOnlyList<obj | null> | null) =
+        match key with
+        | null -> invalidArg "key" "Row identity key cannot be null."
+        | nonNullKey ->
+            use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
             DmlFingerprintService.Append(hash, "row")
-            for value in key do DmlFingerprintService.Append(hash, DmlFingerprintService.CanonicalValue(value))
-            count <- count + 1
-        DmlFingerprintService.Append(hash, "count:" + count.ToString(CultureInfo.InvariantCulture))
-        Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
+            for value in nonNullKey do
+                DmlFingerprintService.Append(hash, DmlFingerprintService.CanonicalValue(value))
+            Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
 
-    static member private ComputeRowDigest(key: IReadOnlyList<obj>) =
-        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
-        DmlFingerprintService.Append(hash, "row")
-        for value in key do DmlFingerprintService.Append(hash, DmlFingerprintService.CanonicalValue(value))
-        Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
-
-    static member ComputeUnorderedRowSetFingerprint(keys: IEnumerable<IReadOnlyList<obj>>) =
-        if isNull keys then nullArg "keys"
-        let rows =
-            keys
-            |> Seq.map DmlFingerprintService.ComputeRowDigest
-            |> Seq.sort
-            |> Seq.toArray
-        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
-        for row in rows do DmlFingerprintService.Append(hash,row)
-        DmlFingerprintService.Append(hash,"count:" + rows.Length.ToString(CultureInfo.InvariantCulture))
-        Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
+    static member ComputeUnorderedRowSetFingerprint(
+        keys: IEnumerable<IReadOnlyList<obj | null> | null> | null) =
+        match keys with
+        | null -> nullArg "keys"
+        | nonNullKeys ->
+            let rows =
+                nonNullKeys
+                |> Seq.map DmlFingerprintService.ComputeRowDigest
+                |> Seq.sort
+                |> Seq.toArray
+            use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+            for row in rows do DmlFingerprintService.Append(hash,row)
+            DmlFingerprintService.Append(hash,"count:" + rows.Length.ToString(CultureInfo.InvariantCulture))
+            Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
