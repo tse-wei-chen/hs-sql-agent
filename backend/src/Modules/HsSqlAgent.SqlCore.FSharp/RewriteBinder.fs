@@ -75,7 +75,7 @@ module internal RewriteBinder =
         | Unary(op, operand) -> Unary(op, bindExpr scope operand)
         | Binary(op, left, right) -> Binary(op, bindExpr scope left, bindExpr scope right)
         | Like(value, pattern, escape, negated, caseInsensitive) ->
-            Like(bindExpr scope value, bindExpr scope pattern, escape |> Option.map (bindExpr scope), negated, caseInsensitive)
+            Like(bindExpr scope value, bindExpr scope pattern, escape, negated, caseInsensitive)
         | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map (bindExpr scope) }
         | FilteredAggregate(value, predicate) -> FilteredAggregate(bindExpr scope value, bindExpr scope predicate)
         | Windowed(value, window) -> Windowed(bindExpr scope value, bindWindow scope window)

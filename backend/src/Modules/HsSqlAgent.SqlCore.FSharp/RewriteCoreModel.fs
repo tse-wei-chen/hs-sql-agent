@@ -152,6 +152,15 @@ module internal CoreModel =
             ExtractField upper
         let value (ExtractField value) = value
 
+    type LikeEscape = private LikeEscape of char
+
+    module LikeEscape =
+        let create value =
+            if Char.IsControl(value) then invalidArg (nameof value) "LIKE ESCAPE requires exactly one non-control character."
+            LikeEscape value
+
+        let value (LikeEscape value) = value
+
     type Expr =
         | Column of Identifier
         | Wildcard of Identifier option
@@ -160,7 +169,7 @@ module internal CoreModel =
         | Interval of IntervalLiteral
         | Unary of UnaryOperator * Expr
         | Binary of BinaryOperator * Expr * Expr
-        | Like of value: Expr * pattern: Expr * escape: Expr option * negated: bool * caseInsensitive: bool
+        | Like of value: Expr * pattern: Expr * escape: LikeEscape option * negated: bool * caseInsensitive: bool
         | FunctionCall of FunctionCall
         | FilteredAggregate of Expr * Expr
         | Windowed of Expr * WindowSpec

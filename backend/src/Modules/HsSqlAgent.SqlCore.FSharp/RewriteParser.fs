@@ -171,11 +171,18 @@ module internal RewriteParser =
 
     and private parseLikeTail cursor value negated caseInsensitive =
         let pattern = parseConcat cursor
-        let escape = if acceptKeyword "ESCAPE" cursor then Some(parseConcat cursor) else None
-        match escape with
-        | Some(Literal(ScalarValue.Text text)) when text.Length = 1 && not (Char.IsControl text[0]) -> ()
-        | Some _ -> fail cursor.Current "LIKE ESCAPE requires exactly one non-control character."
-        | None -> ()
+        let escape =
+            if not (acceptKeyword "ESCAPE" cursor) then
+                None
+            else
+                let token = cursor.Take()
+                match token.Kind with
+                | StringLiteral text when text.Length = 1 && not (Char.IsControl(text[0])) ->
+                    Some(LikeEscape.create text[0])
+                | StringLiteral _ ->
+                    fail token "LIKE ESCAPE requires exactly one non-control character"
+                | _ ->
+                    fail token "LIKE ESCAPE requires a single-character string literal in the portable Core grammar"
         Like(value, pattern, escape, negated, caseInsensitive)
 
     and private parseInTail cursor value negated =
@@ -230,7 +237,7 @@ module internal RewriteParser =
         | Operator "-" ->
             let sign = cursor.Take()
             match cursor.Current.Kind with
-            | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal(decimal -value))
+            | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal(decimal (-value)))
             | DecimalLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal(-value))
             | _ -> fail sign "Unary '-' is only supported for numeric literals"
         | Operator "+" ->

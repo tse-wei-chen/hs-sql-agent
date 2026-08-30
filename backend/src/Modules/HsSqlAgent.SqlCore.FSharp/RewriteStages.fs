@@ -13,7 +13,7 @@ module internal RewriteStages =
         | Unary(Positive, operand) -> normalizeExpr operand
         | Unary(op, operand) -> Unary(op, normalizeExpr operand)
         | Binary(op, left, right) -> Binary(op, normalizeExpr left, normalizeExpr right)
-        | Like(value, pattern, escape, negated, insensitive) -> Like(normalizeExpr value, normalizeExpr pattern, escape |> Option.map normalizeExpr, negated, insensitive)
+        | Like(value, pattern, escape, negated, insensitive) -> Like(normalizeExpr value, normalizeExpr pattern, escape, negated, insensitive)
         | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map normalizeExpr }
         | FilteredAggregate(value, predicate) -> FilteredAggregate(normalizeExpr value, normalizeExpr predicate)
         | Windowed(value, window) -> Windowed(normalizeExpr value, normalizeWindow window)
@@ -127,10 +127,9 @@ module internal RewriteStages =
         | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) -> validateExpr allowedTables operand
         | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
-        | Like(value, pattern, escape, _, _) ->
+        | Like(value, pattern, _, _, _) ->
             validateExpr allowedTables value
             validateExpr allowedTables pattern
-            escape |> Option.iter (validateExpr allowedTables)
         | FunctionCall call ->
             ensureNoDistinctWildcard call
             call.Arguments |> List.iter (validateExpr allowedTables)
@@ -206,7 +205,7 @@ module internal RewriteStages =
         | Wildcard _ | OrderOrdinal _ -> invalidOp "INSERT VALUES scalar expression cannot contain a wildcard or ORDER BY ordinal."
         | Unary(_, operand) -> validateInsertValueScope operand
         | Binary(_, left, right) -> validateInsertValueScope left; validateInsertValueScope right
-        | Like(value, pattern, escape, _, _) -> validateInsertValueScope value; validateInsertValueScope pattern; escape |> Option.iter validateInsertValueScope
+        | Like(value, pattern, _, _, _) -> validateInsertValueScope value; validateInsertValueScope pattern
         | FunctionCall call -> call.Arguments |> List.iter validateInsertValueScope
         | FilteredAggregate(value, predicate) -> validateInsertValueScope value; validateInsertValueScope predicate
         | Windowed(value, window) ->
