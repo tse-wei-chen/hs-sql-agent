@@ -38,6 +38,7 @@ cat > "$consumer_dir/Program.cs" <<'EOF'
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Linq;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
@@ -77,9 +78,13 @@ var command = SqlCoreFacade.CompileQuery(
 if (!command.Sql.Contains("SELECT", StringComparison.OrdinalIgnoreCase))
     throw new InvalidOperationException("Packed SqlCore facade did not produce SQL.");
 
-if (command.Parameters.Length != 1
-    || Convert.ToInt64(command.Parameters[0].Value) != 1L)
-    throw new InvalidOperationException("Packed SqlCore facade did not preserve parameterization.");
+if (!command.Parameters.Any(parameter =>
+        parameter.Value is IConvertible
+        && Convert.ToInt64(parameter.Value) == 1L))
+    throw new InvalidOperationException("Packed SqlCore facade did not preserve the predicate literal as a parameter.");
+
+if (command.Sql.Contains("= 1", StringComparison.Ordinal))
+    throw new InvalidOperationException("Packed SqlCore facade inlined a predicate literal that must remain parameterized.");
 
 Console.WriteLine($"Compiled public SqlCore query via packed Server dependency: {command.Sql}");
 EOF
