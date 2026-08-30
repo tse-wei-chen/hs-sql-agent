@@ -20,7 +20,7 @@ type SqlCapabilityMatrix private () =
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
 
-    static member private VersionAtLeast(profile: SqlProviderCapabilityProfile, provider, minimum: Version) =
+    static member private VersionAtLeast(profile: SqlProviderCapabilityProfile | null, provider, minimum: Version) =
         not (isNull profile)
         && profile.Provider = provider
         && not (isNull profile.ServerVersion)
@@ -29,7 +29,7 @@ type SqlCapabilityMatrix private () =
     static member ForProvider(provider: SqlAgentToolType) =
         SqlCapabilityMatrix.ForProvider(provider, null)
 
-    static member ForProvider(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+    static member ForProvider(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) =
         let profile = targetProfile
         match SqlProviderCapabilityProfileRules.ValidationIssue(profile, provider) with
         | SqlProviderCapabilityProfileValidationIssue.ProviderMismatch ->

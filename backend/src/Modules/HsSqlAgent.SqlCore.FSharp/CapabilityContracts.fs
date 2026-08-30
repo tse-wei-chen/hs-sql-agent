@@ -732,4 +732,4 @@ module internal SqlSourceFunctionRegistry =
           contract "LIST" SqlSourceFunctionCanonicalizationKind.StringAggregate "LIST is modeled for Firebird source syntax with one or two arguments." [range SqlAgentToolType.Firebird 1 2] ]
     let Find(name: string) : SqlSourceFunctionContract | null =
         if String.IsNullOrWhiteSpace(name) then null
-        else data |> List.tryFind (fun c -> String.Equals(c.Name,name.Trim(),StringComparison.OrdinalIgnoreCase)) |> Option.defaultValue null
+        else data |> List.tryFind (fun c -> String.Equals(c.Name,name.Trim(),StringComparison.OrdinalIgnoreCase)) |> Option.toObj

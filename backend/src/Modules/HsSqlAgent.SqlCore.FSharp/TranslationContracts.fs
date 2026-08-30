@@ -187,7 +187,7 @@ type FunctionRegistry(definitions: IEnumerable<FunctionDefinition>) =
                 && d.AcceptsArgumentCount(argumentCount)
                 && (String.Equals(d.Name,functionName,StringComparison.OrdinalIgnoreCase)
                     || d.Aliases |> Seq.exists (fun alias -> String.Equals(alias,functionName,StringComparison.OrdinalIgnoreCase))))
-            |> Option.defaultValue null
+            |> Option.toObj
         member _.Find(dialect, semantic, argumentCount) =
             values
             |> Array.tryFind (fun d ->

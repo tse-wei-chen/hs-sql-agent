@@ -454,7 +454,7 @@ open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 
 [<Sealed>]
-type ParsedStatement(statement: SqlStatement, sourceDialect: SqlAgentToolType, enforceSourceDialectSyntax: bool, sourceProfile: SqlProviderCapabilityProfile) =
+type ParsedStatement(statement: SqlStatement, sourceDialect: SqlAgentToolType, enforceSourceDialectSyntax: bool, sourceProfile: SqlProviderCapabilityProfile | null) =
     new(statement: SqlStatement, sourceDialect: SqlAgentToolType) =
         ParsedStatement(statement, sourceDialect, false, null)
     new(statement: SqlStatement, sourceDialect: SqlAgentToolType, enforceSourceDialectSyntax: bool) =

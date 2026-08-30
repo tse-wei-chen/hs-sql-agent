@@ -63,7 +63,7 @@ module private FacadeCompile =
                     profile.CompatibilityLevel.Value,
                     "Provider compatibility level must be non-negative."))
 
-    let queryText sql sourceDialect targetProvider sourceProfile targetProfile validationContext executionPolicy =
+    let queryText sql sourceDialect targetProvider (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) validationContext executionPolicy =
         RewriteFacadeAdapter.compileQueryValidated
             sql
             sourceDialect
@@ -73,7 +73,7 @@ module private FacadeCompile =
             validationContext
             executionPolicy
 
-    let dmlText sql sourceDialect targetProvider sourceProfile targetProfile validationContext policy conflictTargetAssurance =
+    let dmlText sql sourceDialect targetProvider (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) validationContext policy conflictTargetAssurance =
         RewriteFacadeAdapter.compileDmlValidated
             sql
             sourceDialect
@@ -84,7 +84,7 @@ module private FacadeCompile =
             policy
             conflictTargetAssurance
 
-    let queryParsed parsed targetProvider targetProfile validationContext executionPolicy =
+    let queryParsed parsed targetProvider (targetProfile: SqlProviderCapabilityProfile | null) validationContext executionPolicy =
         RewriteFacadeAdapter.compileQueryParsedValidated
             parsed
             targetProvider
@@ -92,7 +92,7 @@ module private FacadeCompile =
             validationContext
             executionPolicy
 
-    let dmlParsed parsed targetProvider targetProfile validationContext policy conflictTargetAssurance =
+    let dmlParsed parsed targetProvider (targetProfile: SqlProviderCapabilityProfile | null) validationContext policy conflictTargetAssurance =
         RewriteFacadeAdapter.compileDmlParsedValidated
             parsed
             targetProvider
