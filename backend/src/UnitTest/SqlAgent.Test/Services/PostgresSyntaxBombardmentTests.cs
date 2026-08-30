@@ -122,6 +122,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "FILTER (WHERE",
             "orders");
         yield return Case(
+            "aggregate-filter-exists",
+            "SELECT SUM(amount) FILTER (WHERE EXISTS (SELECT id FROM customers)) FROM orders",
+            "EXISTS",
+            "orders,customers");
+        yield return Case(
             "lag-window-frame",
             "SELECT LAG(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders",
             "LAG",
@@ -482,6 +487,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "ORDER BY",
             "users");
         yield return Case(
+            "string-agg-multi-order-nulls",
+            "SELECT STRING_AGG(name, ',' ORDER BY created_at DESC, name ASC NULLS LAST) FROM users",
+            "NULLS LAST",
+            "users");
+        yield return Case(
+            "string-agg-nested-order-parameter",
+            "SELECT STRING_AGG(name, ',' ORDER BY COALESCE(sort_key, 'fallback') DESC) FROM users",
+            "COALESCE",
+            "users");
+        yield return Case(
             "searched-case",
             "SELECT CASE WHEN status = 'open' THEN 1 ELSE 0 END FROM orders",
             "CASE",
@@ -490,6 +505,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "simple-case",
             "SELECT CASE status WHEN 'open' THEN 1 WHEN 'closed' THEN 2 ELSE 0 END FROM orders",
             "CASE",
+            "orders");
+        yield return Case(
+            "simple-case-function-operand",
+            "SELECT CASE RANDOM() WHEN 0 THEN 1 WHEN 1 THEN 2 ELSE 0 END FROM orders",
+            "RANDOM",
             "orders");
         yield return Case(
             "is-not-null",
