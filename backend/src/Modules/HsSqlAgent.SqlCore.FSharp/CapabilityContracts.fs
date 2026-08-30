@@ -1,3 +1,5 @@
+#nowarn "3261" "3262"
+
 namespace HsSqlAgent.SqlCore.Models
 
 open System
@@ -539,7 +541,7 @@ type internal SqlCanonicalLiteralArgumentRule(argumentIndex, kind, validationMes
     member _.Kind: SqlCanonicalLiteralArgumentValidationKind = kind
     member _.ValidationMessage = validationMessage
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type internal SqlCanonicalFunctionContract(
     name: string,
     minArguments: int,
@@ -687,7 +689,7 @@ type internal SqlSourceFunctionDialectRule(dialect, minArguments, maxArguments: 
     member _.Accepts(value: SqlAgentToolType, argumentCount: int) =
         value = dialect && argumentCount >= minArguments && (not maxArguments.HasValue || argumentCount <= maxArguments.Value)
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type internal SqlSourceFunctionContract(name, kind, detail: string, rules: IReadOnlyList<SqlSourceFunctionDialectRule>) =
     member _.Name = name
     member _.CanonicalizationKind: SqlSourceFunctionCanonicalizationKind = kind
@@ -705,7 +707,7 @@ module internal SqlSourceFunctionRegistry =
     let private any dialect = SqlSourceFunctionDialectRule(dialect,0,Nullable(),false)
     let private anySep dialect = SqlSourceFunctionDialectRule(dialect,0,Nullable(),true)
     let private contract name kind detail rules =
-        SqlSourceFunctionContract(name,kind,detail,List<SqlSourceFunctionDialectRule>(rules) :> IReadOnlyList<_>)
+        SqlSourceFunctionContract(name,kind,detail,List<SqlSourceFunctionDialectRule>(rules :> seq<SqlSourceFunctionDialectRule>) :> IReadOnlyList<_>)
     let private data =
         [ contract "DATEADD" SqlSourceFunctionCanonicalizationKind.DateAdd "DATEADD is modeled as a three-argument SQL Server/Firebird source function." [exact SqlAgentToolType.MsSqlServer 3; exact SqlAgentToolType.Firebird 3]
           contract "DATEDIFF" SqlSourceFunctionCanonicalizationKind.DateDiff "DATEDIFF is modeled as SQL Server/Firebird (3 arguments) or MySQL (2 arguments) source syntax." [exact SqlAgentToolType.MsSqlServer 3; exact SqlAgentToolType.Firebird 3; exact SqlAgentToolType.MySQL 2]

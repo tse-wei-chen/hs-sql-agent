@@ -1,3 +1,5 @@
+#nowarn "3261" "3262"
+
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System

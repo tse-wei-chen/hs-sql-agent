@@ -1,3 +1,5 @@
+#nowarn "3261" "3262"
+
 namespace HsSqlAgent.SqlCore.SqlTranslation.Diagnostics
 
 open System.Collections.Generic
@@ -67,7 +69,7 @@ type FunctionTranslationKind =
     | Template = 3
     | Specialized = 4
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type FunctionDefinition(
     dialect: SqlAgentToolType,
     name: string,

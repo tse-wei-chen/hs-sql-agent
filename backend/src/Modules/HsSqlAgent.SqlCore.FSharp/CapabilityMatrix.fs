@@ -1,3 +1,5 @@
+#nowarn "3261" "3262"
+
 namespace HsSqlAgent.SqlCore.Models
 
 open System
@@ -24,8 +26,11 @@ type SqlCapabilityMatrix private () =
         && not (isNull profile.ServerVersion)
         && profile.ServerVersion.CompareTo(minimum) >= 0
 
-    static member ForProvider(provider: SqlAgentToolType, ?targetProfile: SqlProviderCapabilityProfile) =
-        let profile = defaultArg targetProfile null
+    static member ForProvider(provider: SqlAgentToolType) =
+        SqlCapabilityMatrix.ForProvider(provider, null)
+
+    static member ForProvider(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile) =
+        let profile = targetProfile
         match SqlProviderCapabilityProfileRules.ValidationIssue(profile, provider) with
         | SqlProviderCapabilityProfileValidationIssue.ProviderMismatch ->
             raise (ArgumentException(

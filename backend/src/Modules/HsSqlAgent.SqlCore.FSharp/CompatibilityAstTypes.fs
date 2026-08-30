@@ -1,3 +1,5 @@
+#nowarn "3261" "3262"
+
 namespace HsSqlAgent.SqlCore.Core.Ast
 
 open System
@@ -22,7 +24,7 @@ type SqlStatement(span: SourceSpan) =
 type SqlExpr(span: SourceSpan) =
     inherit SqlNode(span)
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type IdentifierPart(value: string, wasQuoted: bool, span: SourceSpan, preserveSpelling: bool) =
     new(value: string, wasQuoted: bool, span: SourceSpan) = IdentifierPart(value, wasQuoted, span, false)
     member _.Value = value
@@ -339,7 +341,7 @@ type InsertConflictAssignment(column: SqlIdentifier, proposedColumn: SqlIdentifi
     member _.Column = column
     member _.ProposedColumn = proposedColumn
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type InsertConflictClause(
     targetColumns: ImmutableArray<SqlIdentifier>,
     action: InsertConflictActionKind,

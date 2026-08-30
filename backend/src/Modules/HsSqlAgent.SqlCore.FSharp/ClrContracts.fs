@@ -1,3 +1,5 @@
+#nowarn "3261" "3262"
+
 namespace HsSqlAgent.SqlCore.Enums
 
 type SqlAgentToolType =
@@ -115,7 +117,7 @@ open System
 open System.Collections.Generic
 open HsSqlAgent.SqlCore.Enums
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type SqlProviderCapabilityProfile(
     provider: SqlAgentToolType,
     serverVersion: Version,
@@ -126,17 +128,20 @@ type SqlProviderCapabilityProfile(
     new(provider: SqlAgentToolType) =
         SqlProviderCapabilityProfile(provider, null, Nullable(), null, null)
 
-    new(provider: SqlAgentToolType, serverVersion: Version) =
-        SqlProviderCapabilityProfile(provider, serverVersion, Nullable(), null, null)
+    new(provider: SqlAgentToolType, ``ServerVersion``: Version) =
+        SqlProviderCapabilityProfile(provider, ``ServerVersion``, Nullable(), null, null)
 
-    new(provider: SqlAgentToolType, compatibilityLevel: Nullable<int>) =
-        SqlProviderCapabilityProfile(provider, null, compatibilityLevel, null, null)
+    new(provider: SqlAgentToolType, ``CompatibilityLevel``: Nullable<int>) =
+        SqlProviderCapabilityProfile(provider, null, ``CompatibilityLevel``, null, null)
 
-    new(provider: SqlAgentToolType, serverVersion: Version, compatibilityLevel: Nullable<int>) =
-        SqlProviderCapabilityProfile(provider, serverVersion, compatibilityLevel, null, null)
+    new(provider: SqlAgentToolType, ``ServerVersion``: Version, ``CompatibilityLevel``: Nullable<int>) =
+        SqlProviderCapabilityProfile(provider, ``ServerVersion``, ``CompatibilityLevel``, null, null)
 
-    new(provider: SqlAgentToolType, serverVersion: Version, sessionModes: IReadOnlySet<string>, sessionSettings: IReadOnlyDictionary<string, string>) =
-        SqlProviderCapabilityProfile(provider, serverVersion, Nullable(), sessionModes, sessionSettings)
+    new(provider: SqlAgentToolType, ``ServerVersion``: Version, ``SessionModes``: IReadOnlySet<string>) =
+        SqlProviderCapabilityProfile(provider, ``ServerVersion``, Nullable(), ``SessionModes``, null)
+
+    new(provider: SqlAgentToolType, ``ServerVersion``: Version, ``SessionModes``: IReadOnlySet<string>, ``SessionSettings``: IReadOnlyDictionary<string, string>) =
+        SqlProviderCapabilityProfile(provider, ``ServerVersion``, Nullable(), ``SessionModes``, ``SessionSettings``)
 
     member _.Provider = provider
     member _.ServerVersion = serverVersion
