@@ -29,6 +29,17 @@ module internal CoreModel =
         let parts (Identifier parts) = parts
         let text identifier = identifier |> parts |> List.map (fun part -> part.Value) |> String.concat "."
 
+        let equivalent left right =
+            let leftParts = parts left
+            let rightParts = parts right
+            leftParts.Length = rightParts.Length
+            && List.forall2
+                (fun leftPart rightPart ->
+                    leftPart.Value = rightPart.Value
+                    && leftPart.WasQuoted = rightPart.WasQuoted)
+                leftParts
+                rightParts
+
     type NonEmpty<'T> = private NonEmpty of head: 'T * tail: 'T list
 
     module NonEmpty =
@@ -301,3 +312,99 @@ module internal CoreModel =
         | DeleteStatement of Delete
 
     type Document = { Statement: Statement; Span: Span }
+
+    module Expr =
+        let private optionEquivalent comparer left right =
+            match left, right with
+            | None, None -> true
+            | Some leftValue, Some rightValue -> comparer leftValue rightValue
+            | _ -> false
+
+        let private listEquivalent comparer left right =
+            left.Length = right.Length && List.forall2 comparer left right
+
+        let rec equivalent left right =
+            match left, right with
+            | Column leftId, Column rightId
+            | Column leftId, BoundColumn(rightId, _)
+            | BoundColumn(leftId, _), Column rightId
+            | BoundColumn(leftId, _), BoundColumn(rightId, _) ->
+                Identifier.equivalent leftId rightId
+            | Wildcard leftId, Wildcard rightId ->
+                optionEquivalent Identifier.equivalent leftId rightId
+            | OrderOrdinal leftOrdinal, OrderOrdinal rightOrdinal ->
+                PositiveRowCount.value leftOrdinal = PositiveRowCount.value rightOrdinal
+            | Literal leftValue, Literal rightValue ->
+                leftValue = rightValue
+            | Interval leftValue, Interval rightValue ->
+                IntervalLiteral.value leftValue = IntervalLiteral.value rightValue
+            | Unary(leftOperator, leftValue), Unary(rightOperator, rightValue) ->
+                leftOperator = rightOperator && equivalent leftValue rightValue
+            | Binary(leftOperator, leftLeft, leftRight), Binary(rightOperator, rightLeft, rightRight) ->
+                leftOperator = rightOperator
+                && equivalent leftLeft rightLeft
+                && equivalent leftRight rightRight
+            | Like(leftValue, leftPattern, leftEscape, leftNegated, leftInsensitive),
+              Like(rightValue, rightPattern, rightEscape, rightNegated, rightInsensitive) ->
+                leftNegated = rightNegated
+                && leftInsensitive = rightInsensitive
+                && leftEscape = rightEscape
+                && equivalent leftValue rightValue
+                && equivalent leftPattern rightPattern
+            | FunctionCall leftCall, FunctionCall rightCall ->
+                leftCall.Name = rightCall.Name
+                && leftCall.IsDistinct = rightCall.IsDistinct
+                && listEquivalent equivalent leftCall.Arguments rightCall.Arguments
+            | FilteredAggregate(leftValue, leftPredicate), FilteredAggregate(rightValue, rightPredicate) ->
+                equivalent leftValue rightValue && equivalent leftPredicate rightPredicate
+            | Windowed(leftValue, leftWindow), Windowed(rightValue, rightWindow) ->
+                equivalent leftValue rightValue
+                && listEquivalent equivalent leftWindow.PartitionBy rightWindow.PartitionBy
+                && listEquivalent orderEquivalent leftWindow.OrderBy rightWindow.OrderBy
+                && leftWindow.Frame = rightWindow.Frame
+            | Cast(leftValue, leftType), Cast(rightValue, rightType) ->
+                leftType = rightType && equivalent leftValue rightValue
+            | Extract(leftField, leftValue), Extract(rightField, rightValue) ->
+                leftField = rightField && equivalent leftValue rightValue
+            | SimpleCase(leftInput, leftBranches, leftFallback),
+              SimpleCase(rightInput, rightBranches, rightFallback) ->
+                equivalent leftInput rightInput
+                && listEquivalent
+                    (fun leftBranch rightBranch ->
+                        equivalent leftBranch.Match rightBranch.Match
+                        && equivalent leftBranch.Result rightBranch.Result)
+                    (NonEmpty.toList leftBranches)
+                    (NonEmpty.toList rightBranches)
+                && optionEquivalent equivalent leftFallback rightFallback
+            | SearchedCase(leftBranches, leftFallback),
+              SearchedCase(rightBranches, rightFallback) ->
+                listEquivalent
+                    (fun leftBranch rightBranch ->
+                        equivalent leftBranch.Condition rightBranch.Condition
+                        && equivalent leftBranch.Result rightBranch.Result)
+                    (NonEmpty.toList leftBranches)
+                    (NonEmpty.toList rightBranches)
+                && optionEquivalent equivalent leftFallback rightFallback
+            | InList(leftValue, leftItems, leftNegated), InList(rightValue, rightItems, rightNegated) ->
+                leftNegated = rightNegated
+                && equivalent leftValue rightValue
+                && listEquivalent equivalent (NonEmpty.toList leftItems) (NonEmpty.toList rightItems)
+            | Between(leftValue, leftLower, leftUpper, leftNegated),
+              Between(rightValue, rightLower, rightUpper, rightNegated) ->
+                leftNegated = rightNegated
+                && equivalent leftValue rightValue
+                && equivalent leftLower rightLower
+                && equivalent leftUpper rightUpper
+            | IsNull(leftValue, leftNegated), IsNull(rightValue, rightNegated) ->
+                leftNegated = rightNegated && equivalent leftValue rightValue
+            | InSubquery _, InSubquery _
+            | ScalarSubquery _, ScalarSubquery _
+            | Exists _, Exists _ ->
+                false
+            | _ ->
+                false
+
+        and private orderEquivalent left right =
+            left.Descending = right.Descending
+            && left.NullOrdering = right.NullOrdering
+            && equivalent left.Expression right.Expression

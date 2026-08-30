@@ -606,9 +606,9 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "SQL Server OFFSET pagination ORDER BY alias '" + reference + "' is ambiguous."))
             | [] ->
-                projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
+                projection |> List.tryFindIndex (fun item -> Expr.equivalent item.Expression order.Expression)
         | _ ->
-            projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
+            projection |> List.tryFindIndex (fun item -> Expr.equivalent item.Expression order.Expression)
 
     let private proveSqlServerSelectPaging (query: Query) =
         let context = "SQL Server OFFSET pagination"

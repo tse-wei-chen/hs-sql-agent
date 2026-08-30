@@ -312,8 +312,8 @@ module internal RewriteRenderer =
                 match aliasMatches with
                 | [ index ] -> Some index
                 | _ :: _ :: _ -> invalidOp ("SQL Server OFFSET pagination ORDER BY alias '" + name + "' is ambiguous.")
-                | [] -> projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
-            | _ -> projection |> List.tryFindIndex (fun item -> item.Expression = order.Expression)
+                | [] -> projection |> List.tryFindIndex (fun item -> Expr.equivalent item.Expression order.Expression)
+            | _ -> projection |> List.tryFindIndex (fun item -> Expr.equivalent item.Expression order.Expression)
 
         let windowOrders =
             query.OrderBy
