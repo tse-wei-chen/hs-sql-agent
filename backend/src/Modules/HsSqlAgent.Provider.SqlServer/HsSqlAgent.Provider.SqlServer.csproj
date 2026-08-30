@@ -10,6 +10,6 @@
     <PackageReadmeFile>README.md</PackageReadmeFile><IncludeSymbols>true</IncludeSymbols><SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
   <ItemGroup><PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" /><PackageReference Include="dapper" /><PackageReference Include="Microsoft.Data.SqlClient" /></ItemGroup>
-  <ItemGroup><ProjectReference Include="../HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" PrivateAssets="All" /><ProjectReference Include="../HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj" /></ItemGroup>
   <ItemGroup><None Include="README.md" Pack="true" PackagePath="\" /></ItemGroup>
 </Project>
