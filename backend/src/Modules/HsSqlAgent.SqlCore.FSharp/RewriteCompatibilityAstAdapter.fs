@@ -21,7 +21,7 @@ module internal RewriteCompatibilityAstAdapter =
         { Start = span.Start
           End = if span.Start < 0 then -1 else span.Start + max 0 span.Length }
 
-    let private nodeSpan (node: obj) =
+    let private nodeSpan (node: obj | null) =
         Parsed.trySpan node |> Option.map spanOf |> Option.defaultValue unknown
 
     let private partOf (part: IdentifierPart) =

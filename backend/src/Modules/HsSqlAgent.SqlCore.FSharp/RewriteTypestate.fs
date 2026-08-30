@@ -83,16 +83,19 @@ module internal Typestate =
     module Parsed =
         let private sourceSpans = ConditionalWeakTable<obj, StrongBox<Span>>()
 
-        let internal rememberSpan (node: obj) span =
-            if not (isNull node) then
-                sourceSpans.Remove(node) |> ignore
-                sourceSpans.Add(node, StrongBox<Span>(span))
+        let internal rememberSpan (node: obj | null) span =
+            match node with
+            | null -> ()
+            | value ->
+                sourceSpans.Remove(value) |> ignore
+                sourceSpans.Add(value, StrongBox<Span>(span))
 
-        let internal trySpan (node: obj) =
-            if isNull node then None
-            else
-                match sourceSpans.TryGetValue(node) with
-                | true, value -> Some value.Value
+        let internal trySpan (node: obj | null) =
+            match node with
+            | null -> None
+            | value ->
+                match sourceSpans.TryGetValue(value) with
+                | true, span -> Some span.Value
                 | _ -> None
 
         let internal create document = ParsedSql document
