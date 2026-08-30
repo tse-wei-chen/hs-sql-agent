@@ -137,6 +137,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "COALESCE",
             "orders");
         yield return Case(
+            "left-function",
+            "SELECT LEFT(name, 2) FROM users",
+            "LEFT",
+            "users");
+        yield return Case(
+            "right-function",
+            "SELECT RIGHT(name, 2) FROM users",
+            "RIGHT",
+            "users");
+        yield return Case(
             "ilike",
             "SELECT id FROM users WHERE name ILIKE 'a%'",
             "ILIKE",
