@@ -398,6 +398,23 @@ module internal RewriteParser =
                         + string token.Start + ".." + string finish + ")."))
                 cursor.Advance()
                 expression <- Cast(expression, parseCastType cursor)
+            elif acceptKeyword "WITHIN" cursor then
+                expectKeyword "GROUP" cursor
+                expectSymbol '(' cursor
+                let ordering = parseOrderBy cursor
+                if ordering.IsEmpty then fail cursor.Current "WITHIN GROUP requires ORDER BY"
+                expectSymbol ')' cursor
+                match expression with
+                | FunctionCall call when call.AggregateOrderBy.IsEmpty ->
+                    expression <-
+                        FunctionCall
+                            { call with
+                                AggregateOrderBy = ordering
+                                AggregateOrderSyntax = AggregateOrderSyntax.WithinGroupAggregateOrder }
+                | FunctionCall _ ->
+                    fail cursor.Current "Aggregate ordering cannot be specified more than once"
+                | _ ->
+                    fail cursor.Current "WITHIN GROUP must modify a function call"
             elif acceptKeyword "FILTER" cursor then
                 expectSymbol '(' cursor
                 expectKeyword "WHERE" cursor
@@ -512,26 +529,51 @@ module internal RewriteParser =
         elif acceptSymbol '(' cursor then
             let distinct = acceptKeyword "DISTINCT" cursor
             let arguments = ResizeArray<Expr>()
+            let mutable aggregateOrderBy : OrderBy list = []
+            let mutable aggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+            let mutable aggregateSeparator : string option = None
+
             if not (acceptSymbol ')' cursor) then
-                if acceptOperator "*" cursor then arguments.Add(Wildcard None)
-                else arguments.Add(parseExpression cursor)
-                while acceptSymbol ',' cursor do arguments.Add(parseExpression cursor)
+                if acceptOperator "*" cursor then
+                    arguments.Add(Wildcard None)
+                else
+                    arguments.Add(parseExpression cursor)
+
+                let mutable readingArguments = true
+                while readingArguments && acceptSymbol ',' cursor do
+                    arguments.Add(parseExpression cursor)
+                    readingArguments <- not (isKeyword "ORDER" cursor.Current || isKeyword "SEPARATOR" cursor.Current)
+
+                if isKeyword "ORDER" cursor.Current then
+                    aggregateOrderBy <- parseOrderBy cursor
+                    aggregateOrderSyntax <- AggregateOrderSyntax.InlineAggregateOrder
+
+                if acceptKeyword "SEPARATOR" cursor then
+                    let token = cursor.Take()
+                    match token.Kind with
+                    | StringLiteral value -> aggregateSeparator <- Some value
+                    | _ -> fail token "SEPARATOR requires a string literal"
+
                 expectSymbol ')' cursor
+
             let values = arguments |> Seq.toList
             let isRawRegex =
                 Identifier.parts name
                 |> function
                     | [ part ] -> part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
                     | _ -> false
-            if isRawRegex then RawRegexCall(values, distinct)
+            if isRawRegex then
+                if not aggregateOrderBy.IsEmpty || aggregateSeparator.IsSome then
+                    fail cursor.Current "REGEXP_LIKE cannot carry aggregate modifiers"
+                RawRegexCall(values, distinct)
             else
                 FunctionCall
                     { Name = functionName name
                       Arguments = values
                       IsDistinct = distinct
-                      AggregateOrderBy = []
-                      AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
-                      AggregateSeparator = None }
+                      AggregateOrderBy = aggregateOrderBy
+                      AggregateOrderSyntax = aggregateOrderSyntax
+                      AggregateSeparator = aggregateSeparator }
         else Column name
 
     and private parsePrimary cursor =
