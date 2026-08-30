@@ -126,9 +126,14 @@ module internal RewriteBinder =
         let expression =
             match orderBy.Expression with
             | Column identifier when identifierParts identifier |> List.length = 1 ->
-                let name = identifierParts identifier |> List.head |> fun part -> part.Value
-                let matches = projectionAliases |> List.filter (equalsName name)
+                let reference = identifierParts identifier |> List.head
+                let name = reference.Value
+                let matches =
+                    projectionAliases
+                    |> List.filter (fun (candidate: IdentifierPart) -> equalsName candidate.Value name)
                 match matches with
+                | [ candidate ] when candidate.PreserveSpelling ->
+                    BoundColumn(Identifier.create [ candidate ], ColumnBinding.ProjectionAlias)
                 | [ _ ] -> BoundColumn(identifier, ColumnBinding.ProjectionAlias)
                 | _ :: _ :: _ ->
                     if scope.Sources.IsEmpty then
@@ -195,15 +200,15 @@ module internal RewriteBinder =
         let setOperations = query.SetOperations |> List.map (fun (branch: SetBranch) -> { branch with Query = bindQuery parentScope visibleCtes branch.Query })
         let explicitAliases =
             head.Projection
-            |> List.choose (fun item -> item.Alias |> Option.map (fun alias -> alias.Value))
+            |> List.choose (fun item -> item.Alias)
         let setOutputNames =
             head.Projection
             |> List.choose (fun item ->
                 match item.Alias, item.Expression with
-                | Some alias, _ -> Some alias.Value
+                | Some alias, _ -> Some alias
                 | None, Column identifier
                 | None, BoundColumn(identifier, _) ->
-                    Identifier.parts identifier |> List.tryLast |> Option.map (fun part -> part.Value)
+                    Identifier.parts identifier |> List.tryLast
                 | _ -> None)
         let orderAliases = if setOperations.IsEmpty then explicitAliases else setOutputNames
         { query with

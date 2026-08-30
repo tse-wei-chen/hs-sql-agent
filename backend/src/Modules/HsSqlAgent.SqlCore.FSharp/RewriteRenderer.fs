@@ -185,6 +185,42 @@ module internal RewriteRenderer =
     let private isSetQuery (query: Query) = not query.SetOperations.IsEmpty
     let private hasTail (query: Query) = not query.OrderBy.IsEmpty || query.Limit.IsSome || query.Offset.IsSome
 
+    let rec private isBooleanExpression expression =
+        match expression with
+        | Literal(ScalarValue.Boolean _) -> true
+        | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ | RegexMatch _ -> true
+        | Unary(UnaryOperator.Not, _) -> true
+        | Binary((BinaryOperator.Equal
+                 | BinaryOperator.NotEqual
+                 | BinaryOperator.GreaterThan
+                 | BinaryOperator.LessThan
+                 | BinaryOperator.GreaterThanOrEqual
+                 | BinaryOperator.LessThanOrEqual
+                 | BinaryOperator.And
+                 | BinaryOperator.Or), _, _) -> true
+        | SimpleCase(_, branches, fallback) ->
+            let values =
+                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
+                @ (fallback |> Option.toList)
+            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
+        | SearchedCase(branches, fallback) ->
+            let values =
+                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
+                @ (fallback |> Option.toList)
+            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
+        | _ -> false
+
+    let private renderBooleanTruthValue expression =
+        match expression with
+        | Literal(ScalarValue.Boolean true) -> "1"
+        | Literal(ScalarValue.Boolean false) -> "0"
+        | Literal ScalarValue.Null -> "NULL"
+        | _ ->
+            raise (SqlCompilationException(
+                "Boolean CASE predicate lowering requires literal TRUE, FALSE, or NULL results."))
+
     let rec private renderExpr (ctx: RenderContext) expression =
         match expression with
         | Expr.Column identifier
@@ -204,7 +240,7 @@ module internal RewriteRenderer =
             let leftSql = renderExpr ctx left
             let rightSql = renderExpr ctx right
             match operator, ctx.Provider, ctx.TargetRuntime with
-            | BinaryOperator.Modulo, Oracle, _ -> "MOD(" + leftSql + ", " + rightSql + ")"
+            | BinaryOperator.Modulo, (Oracle | Firebird), _ -> "MOD(" + leftSql + ", " + rightSql + ")"
             | BinaryOperator.Concat, MySql, _ -> "CONCAT(" + leftSql + ", " + rightSql + ")"
             | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven NativePipes) ->
                 "(" + leftSql + " || " + rightSql + ")"
@@ -232,7 +268,8 @@ module internal RewriteRenderer =
             renderFunction ctx call
         | Expr.FilteredAggregate(value, predicate) ->
             match ctx.Provider with
-            | PostgreSql | SQLite | Oracle | Firebird -> renderExpr ctx value + " FILTER (WHERE " + renderExpr ctx predicate + ")"
+            | PostgreSql | SQLite | Oracle | Firebird ->
+                renderExpr ctx value + " FILTER (WHERE " + renderPredicate ctx predicate + ")"
             | _ -> invalidOp "Aggregate FILTER requires provider-specific lowering before rendering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
         | Expr.Cast(value, targetType) -> "CAST(" + renderExpr ctx value + " AS " + CastType.value targetType + ")"
@@ -241,15 +278,66 @@ module internal RewriteRenderer =
             let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> String.concat ""
             "CASE " + renderExpr ctx input + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
         | Expr.SearchedCase(branches, fallback) ->
-            let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Condition + " THEN " + renderExpr ctx branch.Result) |> String.concat ""
+            let cases =
+                branches
+                |> NonEmpty.toList
+                |> List.map (fun branch ->
+                    " WHEN " + renderPredicate ctx branch.Condition + " THEN " + renderExpr ctx branch.Result)
+                |> String.concat ""
             "CASE" + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
         | Expr.InList(value, items, negated) ->
             "(" + renderExpr ctx value + (if negated then " NOT IN " else " IN ") + "(" + (items |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + "))"
-        | Expr.InSubquery(value, query, negated) -> "(" + renderExpr ctx value + (if negated then " NOT IN (" else " IN (") + renderQuery ctx query + "))"
+        | Expr.InSubquery(value, query, negated) ->
+            "(" + renderExpr ctx value
+            + (if negated then " NOT IN (" else " IN (")
+            + renderSubquery ctx query + "))"
         | Expr.Between(value, lower, upper, negated) -> "(" + renderExpr ctx value + (if negated then " NOT BETWEEN " else " BETWEEN ") + renderExpr ctx lower + " AND " + renderExpr ctx upper + ")"
         | Expr.IsNull(value, negated) -> "(" + renderExpr ctx value + (if negated then " IS NOT NULL)" else " IS NULL)")
-        | Expr.ScalarSubquery query -> "(" + renderQuery ctx query + ")"
-        | Expr.Exists(query, negated) -> (if negated then "NOT EXISTS (" else "EXISTS (") + renderQuery ctx query + ")"
+        | Expr.ScalarSubquery query -> "(" + renderSubquery ctx query + ")"
+        | Expr.Exists(query, negated) ->
+            (if negated then "NOT EXISTS (" else "EXISTS (") + renderSubquery ctx query + ")"
+
+    and private renderPredicate (ctx: RenderContext) expression =
+        match ctx.Provider with
+        | Oracle | SqlServer ->
+            match expression with
+            | Literal(ScalarValue.Boolean true) -> "(1 = 1)"
+            | Literal(ScalarValue.Boolean false) -> "(1 = 0)"
+            | Unary(UnaryOperator.Not, operand) ->
+                "NOT (" + renderPredicate ctx operand + ")"
+            | Binary(BinaryOperator.And, left, right) ->
+                "(" + renderPredicate ctx left + " AND " + renderPredicate ctx right + ")"
+            | Binary(BinaryOperator.Or, left, right) ->
+                "(" + renderPredicate ctx left + " OR " + renderPredicate ctx right + ")"
+            | SimpleCase(input, branches, fallback) when isBooleanExpression expression ->
+                let cases =
+                    branches
+                    |> NonEmpty.toList
+                    |> List.map (fun branch ->
+                        " WHEN " + renderExpr ctx branch.Match
+                        + " THEN " + renderBooleanTruthValue branch.Result)
+                    |> String.concat ""
+                let otherwise =
+                    fallback
+                    |> Option.map (fun value -> " ELSE " + renderBooleanTruthValue value)
+                    |> Option.defaultValue ""
+                "(CASE " + renderExpr ctx input + cases + otherwise + " END = 1)"
+            | SearchedCase(branches, fallback) when isBooleanExpression expression ->
+                let cases =
+                    branches
+                    |> NonEmpty.toList
+                    |> List.map (fun branch ->
+                        " WHEN " + renderPredicate ctx branch.Condition
+                        + " THEN " + renderBooleanTruthValue branch.Result)
+                    |> String.concat ""
+                let otherwise =
+                    fallback
+                    |> Option.map (fun value -> " ELSE " + renderBooleanTruthValue value)
+                    |> Option.defaultValue ""
+                "(CASE" + cases + otherwise + " END = 1)"
+            | _ -> renderExpr ctx expression
+        | PostgreSql | MySql | SQLite | Firebird ->
+            renderExpr ctx expression
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
@@ -523,7 +611,7 @@ module internal RewriteRenderer =
         else
             "WITH " +
             (ctes
-             |> List.map (fun cte -> renderAlias ctx.Provider cte.Name + " AS (" + renderQuery ctx cte.Query + ")")
+             |> List.map (fun cte -> renderAlias ctx.Provider cte.Name + " AS (" + renderCteQuery ctx cte.Query + ")")
              |> String.concat ", ") + " "
 
     and private renderSource (ctx: RenderContext) source =
@@ -560,8 +648,8 @@ module internal RewriteRenderer =
             match ctx.Provider with Oracle -> sql <- sql + " FROM DUAL" | Firebird -> sql <- sql + " FROM RDB$DATABASE" | _ -> ()
         for join in select.Joins do
             sql <- sql + " " + joinText join.Kind + " " + renderSource ctx join.Source
-            join.Predicate |> Option.iter (fun predicate -> sql <- sql + " ON " + renderExpr ctx predicate)
-        select.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
+            join.Predicate |> Option.iter (fun predicate -> sql <- sql + " ON " + renderPredicate ctx predicate)
+        select.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         if not select.GroupBy.IsEmpty then
             let grouped =
                 select.GroupBy
@@ -572,7 +660,7 @@ module internal RewriteRenderer =
                         renderExpr ctx expression)
                 |> String.concat ", "
             sql <- sql + " GROUP BY " + grouped
-        select.Having |> Option.iter (fun predicate -> sql <- sql + " HAVING " + renderExpr ctx predicate)
+        select.Having |> Option.iter (fun predicate -> sql <- sql + " HAVING " + renderPredicate ctx predicate)
         sql
 
     and private renderSetBody (ctx: RenderContext) (query: Query) =
@@ -692,11 +780,11 @@ module internal RewriteRenderer =
         query.Head.From |> Option.iter (fun source -> baseSql <- baseSql + " FROM " + renderSource ctx source)
         for join in query.Head.Joins do
             baseSql <- baseSql + " " + joinText join.Kind + " " + renderSource ctx join.Source
-            join.Predicate |> Option.iter (fun predicate -> baseSql <- baseSql + " ON " + renderExpr ctx predicate)
-        query.Head.Where |> Option.iter (fun predicate -> baseSql <- baseSql + " WHERE " + renderExpr ctx predicate)
+            join.Predicate |> Option.iter (fun predicate -> baseSql <- baseSql + " ON " + renderPredicate ctx predicate)
+        query.Head.Where |> Option.iter (fun predicate -> baseSql <- baseSql + " WHERE " + renderPredicate ctx predicate)
         if not query.Head.GroupBy.IsEmpty then
             baseSql <- baseSql + " GROUP BY " + (query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
-        query.Head.Having |> Option.iter (fun predicate -> baseSql <- baseSql + " HAVING " + renderExpr ctx predicate)
+        query.Head.Having |> Option.iter (fun predicate -> baseSql <- baseSql + " HAVING " + renderPredicate ctx predicate)
 
         let windowOrder =
             if windowOrders.IsEmpty then "ORDER BY (SELECT 0)"
@@ -871,6 +959,21 @@ module internal RewriteRenderer =
             + tableAliasPrefix ctx.Provider
             + alias
             + renderOrderClause ctx true query.OrderBy
+        | Firebird, offset, Some limit when NonNegativeRowCount.value limit = 0 ->
+            let first = ctx.Bind(box 0)
+            let skip =
+                match offset with
+                | Some value when NonNegativeRowCount.value value > 0 ->
+                    " SKIP " + ctx.Bind(box (NonNegativeRowCount.value value))
+                | _ -> ""
+            let prefix = renderCtes ctx query.Head.Ctes
+            let body = renderSetBody ctx query
+            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            prefix
+            + "SELECT FIRST " + first + skip
+            + " * FROM (" + body + ")"
+            + tableAliasPrefix ctx.Provider + alias
+            + renderOrderClause ctx true query.OrderBy
         | _ ->
             let prefix = renderCtes ctx query.Head.Ctes
             let body = renderSetBody ctx query
@@ -881,9 +984,20 @@ module internal RewriteRenderer =
 
     and private renderQueryCore (ctx: RenderContext) (query: Query) =
         if isSetQuery query && hasTail query then renderSetTailWrapper ctx query
-        elif ctx.Provider = SqlServer && query.Offset |> Option.exists (fun value -> NonNegativeRowCount.value value > 0) && not (isSetQuery query) then renderSqlServerOffset ctx query
+        elif ctx.Provider = SqlServer
+             && query.Offset |> Option.exists (fun value -> NonNegativeRowCount.value value > 0)
+             && (query.Limit |> Option.map NonNegativeRowCount.value <> Some 0)
+             && not (isSetQuery query) then
+            renderSqlServerOffset ctx query
         else
             match ctx.Provider, query.Offset, query.Limit, isSetQuery query with
+            | SqlServer, _, Some limit, false when NonNegativeRowCount.value limit = 0 ->
+                let top = ctx.Bind(box 0)
+                let ctes = renderCtes ctx query.Head.Ctes
+                let body = renderSelectBody ctx { query.Head with Ctes = [] }
+                let withOrder = body + renderOrderClause ctx false query.OrderBy
+                let head = if query.Head.Distinct then "SELECT DISTINCT " else "SELECT "
+                ctes + head + "TOP (" + top + ") " + withOrder.Substring(head.Length)
             | SqlServer, None, Some limit, false ->
                 let top = ctx.Bind(box (NonNegativeRowCount.value limit))
                 let ctes = renderCtes ctx query.Head.Ctes
@@ -898,6 +1012,20 @@ module internal RewriteRenderer =
                 let withOrder = body + renderOrderClause ctx false query.OrderBy
                 let head = if query.Head.Distinct then "SELECT DISTINCT " else "SELECT "
                 let replacement = if query.Head.Distinct then "SELECT FIRST " + first + " DISTINCT " else "SELECT FIRST " + first + " "
+                ctes + replacement + withOrder.Substring(head.Length)
+            | Firebird, Some offset, Some limit, false when NonNegativeRowCount.value limit = 0 ->
+                let first = ctx.Bind(box 0)
+                let skip =
+                    if NonNegativeRowCount.value offset > 0 then
+                        " SKIP " + ctx.Bind(box (NonNegativeRowCount.value offset))
+                    else ""
+                let ctes = renderCtes ctx query.Head.Ctes
+                let body = renderSelectBody ctx { query.Head with Ctes = [] }
+                let withOrder = body + renderOrderClause ctx false query.OrderBy
+                let head = if query.Head.Distinct then "SELECT DISTINCT " else "SELECT "
+                let replacement =
+                    if query.Head.Distinct then "SELECT FIRST " + first + skip + " DISTINCT "
+                    else "SELECT FIRST " + first + skip + " "
                 ctes + replacement + withOrder.Substring(head.Length)
             | Firebird, Some offset, None, false when NonNegativeRowCount.value offset > 0 ->
                 let skip = ctx.Bind(box (NonNegativeRowCount.value offset))
@@ -914,6 +1042,35 @@ module internal RewriteRenderer =
                 ctes + renderPaging ctx query withOrder
 
     and private renderQuery (ctx: RenderContext) query = renderQueryCore ctx query
+
+    and private renderSubquery (ctx: RenderContext) query =
+        if isSetQuery query
+           && hasTail query
+           && (ctx.Provider = PostgreSql || ctx.Provider = MySql || ctx.Provider = SQLite) then
+            let prefix = renderCtes ctx query.Head.Ctes
+            let body = renderSetBody ctx query
+            let ordered = body + renderOrderClause ctx true query.OrderBy
+            prefix + renderPaging ctx query ordered
+        else
+            renderQueryCore ctx query
+
+    and private renderCteQuery (ctx: RenderContext) query =
+        if isSetQuery query
+           && hasTail query
+           && not query.Head.Ctes.IsEmpty
+           && (ctx.Provider = PostgreSql || ctx.Provider = MySql || ctx.Provider = SQLite) then
+            let inner = renderCtes ctx query.Head.Ctes + renderSetBody ctx query
+            let alias =
+                renderAlias ctx.Provider
+                    { Value = "_set"
+                      WasQuoted = false
+                      PreserveSpelling = false
+                      Span = { Start = 0; Length = 0 } }
+            let wrapper = "SELECT * FROM (" + inner + ")" + tableAliasPrefix ctx.Provider + alias
+            let ordered = wrapper + renderOrderClause ctx true query.OrderBy
+            renderPaging ctx query ordered
+        else
+            renderQueryCore ctx query
 
     let private renderReturning (ctx: RenderContext) items =
         if List.isEmpty items then ""
@@ -1000,13 +1157,84 @@ module internal RewriteRenderer =
             + alias
             + " ON DUPLICATE KEY UPDATE "
             + assignments
+        | Oracle, None ->
+            let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
+            match insert.Input with
+            | Values rows when NonEmpty.length rows > 1 ->
+                let table = renderIdentifier ctx.Provider insert.Target
+                let parts =
+                    rows
+                    |> NonEmpty.toList
+                    |> List.map (fun row ->
+                        " INTO " + table + columns + " VALUES ("
+                        + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
+                        + ")")
+                    |> String.concat ""
+                "INSERT ALL" + parts + " SELECT 1 FROM DUAL" + renderReturning ctx insert.Returning
+            | QuerySource query when not query.Head.Ctes.IsEmpty ->
+                let withClause = renderCtes ctx query.Head.Ctes
+                let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
+                prefix + " " + withClause + source + renderReturning ctx insert.Returning
+            | QuerySource query -> prefix + " " + renderQuery ctx query + renderReturning ctx insert.Returning
+            | Values rows ->
+                prefix + " VALUES "
+                + (rows |> NonEmpty.toList |> List.map (fun row ->
+                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
+                   |> String.concat ", ")
+                + renderReturning ctx insert.Returning
+            | DefaultValues -> prefix + " DEFAULT VALUES" + renderReturning ctx insert.Returning
+        | Firebird, None ->
+            let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
+            match insert.Input with
+            | Values rows when NonEmpty.length rows > 1 ->
+                prefix + " "
+                + (rows
+                   |> NonEmpty.toList
+                   |> List.map (fun row ->
+                       "SELECT "
+                       + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
+                       + " FROM RDB$DATABASE")
+                   |> String.concat " UNION ALL ")
+                + renderReturning ctx insert.Returning
+            | QuerySource query when not query.Head.Ctes.IsEmpty ->
+                let withClause = renderCtes ctx query.Head.Ctes
+                let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
+                prefix + " " + withClause + source + renderReturning ctx insert.Returning
+            | QuerySource query -> prefix + " " + renderQuery ctx query + renderReturning ctx insert.Returning
+            | Values rows ->
+                prefix + " VALUES "
+                + (rows |> NonEmpty.toList |> List.map (fun row ->
+                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
+                   |> String.concat ", ")
+                + renderReturning ctx insert.Returning
+            | DefaultValues -> prefix + " DEFAULT VALUES" + renderReturning ctx insert.Returning
         | _ ->
-            let sourceSql =
-                match insert.Input with
-                | QuerySource query -> " " + renderQuery ctx query
-                | Values rows -> " VALUES " + (rows |> NonEmpty.toList |> List.map (fun row -> "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")") |> String.concat ", ")
-                | DefaultValues -> " DEFAULT VALUES"
-            "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + sourceSql + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+            let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
+            match insert.Input with
+            | QuerySource query when not query.Head.Ctes.IsEmpty ->
+                let withClause = renderCtes ctx query.Head.Ctes
+                let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
+                match ctx.Provider with
+                | PostgreSql | SqlServer | SQLite ->
+                    withClause + prefix + " " + source
+                    + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+                | MySql ->
+                    prefix + " " + withClause + source
+                    + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+                | Oracle | Firebird ->
+                    invalidOp "Provider-specific INSERT ... SELECT path was not selected."
+            | QuerySource query ->
+                prefix + " " + renderQuery ctx query
+                + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+            | Values rows ->
+                prefix + " VALUES "
+                + (rows |> NonEmpty.toList |> List.map (fun row ->
+                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
+                   |> String.concat ", ")
+                + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+            | DefaultValues ->
+                prefix + " DEFAULT VALUES"
+                + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
 
     let private renderUpdate (ctx: RenderContext) (update: Update) =
         let assignments = update.Assignments |> List.map (fun (assignment: Assignment) -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value) |> String.concat ", "
@@ -1014,7 +1242,7 @@ module internal RewriteRenderer =
         if not update.From.IsEmpty then
             if ctx.Provider <> PostgreSql then invalidOp "UPDATE ... FROM is not supported by the target provider."
             sql <- sql + " FROM " + (update.From |> List.map (renderSource ctx) |> String.concat ", ")
-        update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
+        update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         sql + renderReturning ctx update.Returning
 
     let private renderDelete (ctx: RenderContext) (delete: Delete) =
@@ -1022,7 +1250,7 @@ module internal RewriteRenderer =
         if not delete.Using.IsEmpty then
             if ctx.Provider <> PostgreSql then invalidOp "DELETE ... USING is not supported by the target provider."
             sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
-        delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
+        delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         sql + renderReturning ctx delete.Returning
 
     let render provider executable : RenderedCommand =

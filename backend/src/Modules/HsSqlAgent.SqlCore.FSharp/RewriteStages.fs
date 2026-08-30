@@ -187,6 +187,12 @@ module internal RewriteStages =
             validateRawConcat source mySqlPipes
             validateRawSourceExpr source orderingProofs mySqlPipes left
             validateRawSourceExpr source orderingProofs mySqlPipes right
+        | Binary(BinaryOperator.Modulo, left, right) ->
+            match SqlModuloCapabilityRules.SourceValidationError(source) with
+            | null -> ()
+            | message -> compilationError message
+            validateRawSourceExpr source orderingProofs mySqlPipes left
+            validateRawSourceExpr source orderingProofs mySqlPipes right
         | Binary(_, left, right) ->
             validateRawSourceExpr source orderingProofs mySqlPipes left
             validateRawSourceExpr source orderingProofs mySqlPipes right
@@ -1230,7 +1236,7 @@ module internal RewriteStages =
 
     let private requireCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> invalidOp message
+        | RejectedCapability message -> raise (SqlCompilationException(message))
 
     let private proveJoinKind (proofs: JoinProofs) = function
         | JoinKind.Right -> requireCapability proofs.RightJoin
@@ -2301,6 +2307,54 @@ module internal RewriteStages =
         select.Having
         |> Option.iter (validateSemanticExpr targetRuntime HavingClause false false)
 
+    and private identifierPartEquivalent targetRuntime (left: IdentifierPart) (right: IdentifierPart) =
+        let normalize (part: IdentifierPart) =
+            if part.WasQuoted || part.PreserveSpelling then
+                part.Value
+            else
+                match targetProvider targetRuntime with
+                | SqlAgentToolType.Postgres -> part.Value.ToLowerInvariant()
+                | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird -> part.Value.ToUpperInvariant()
+                | _ -> part.Value
+        let comparer =
+            match targetProvider targetRuntime with
+            | SqlAgentToolType.Postgres | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird ->
+                StringComparer.Ordinal
+            | _ -> StringComparer.OrdinalIgnoreCase
+        comparer.Equals(normalize left, normalize right)
+
+    and private projectionOutputNames (select: Select) =
+        let names =
+            select.Projection
+            |> List.map (fun item ->
+                match item.Alias, item.Expression with
+                | Some alias, _ -> Some alias
+                | None, Column identifier
+                | None, BoundColumn(identifier, _) -> Identifier.parts identifier |> List.tryLast
+                | None, _ -> None)
+        if names |> List.exists Option.isNone then None
+        else Some(names |> List.choose id)
+
+    and private validateSetOrderReference targetRuntime outputNames identifier =
+        let parts = Identifier.parts identifier
+        if parts.Length <> 1 then
+            raise (SqlCompilationException(
+                "Set-operation ORDER BY can reference combined output columns only; branch-qualified reference '"
+                + Identifier.text identifier + "' is not valid after combination."))
+        match outputNames with
+        | None -> ()
+        | Some names ->
+            let reference = parts.Head
+            let matches = names |> List.filter (identifierPartEquivalent targetRuntime reference)
+            if matches.IsEmpty then
+                raise (SqlCompilationException(
+                    "Set-operation ORDER BY reference '" + reference.Value
+                    + "' is not present in the combined output projection."))
+            if matches.Length > 1 then
+                raise (SqlCompilationException(
+                    "Set-operation ORDER BY reference '" + reference.Value
+                    + "' is ambiguous in the combined output projection; use an output position."))
+
     and private validateSemanticQuery targetRuntime query =
         validateSemanticSelect targetRuntime query.Head
         let expectedWidth =
@@ -2328,6 +2382,7 @@ module internal RewriteStages =
                 match item.Expression with
                 | Wildcard _ -> true
                 | _ -> false)
+        let outputNames = projectionOutputNames query.Head
         query.OrderBy
         |> List.iter (fun order ->
             match order.Expression with
@@ -2337,6 +2392,19 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "ORDER BY output position " + string (PositiveRowCount.value ordinal)
                     + " exceeds projection width " + string query.Head.Projection.Length + "."))
+            | BoundColumn(identifier, ColumnBinding.ProjectionAlias) ->
+                let aliases = query.Head.Projection |> List.choose (fun item -> item.Alias)
+                match Identifier.parts identifier |> List.tryHead with
+                | Some reference when aliases |> List.exists (identifierPartEquivalent targetRuntime reference) -> ()
+                | Some reference ->
+                    raise (SqlCompilationException(
+                        "ORDER BY projection alias '" + reference.Value
+                        + "' does not resolve under target identifier semantics."))
+                | None -> ()
+            | Column identifier
+            | BoundColumn(identifier, _)
+                when not query.SetOperations.IsEmpty ->
+                validateSetOrderReference targetRuntime outputNames identifier
             | _ -> ()
             validateSemanticExpr targetRuntime OrderByClause false false order.Expression)
 
@@ -2568,6 +2636,55 @@ module internal RewriteStages =
             |> List.iter (fun item ->
                 visitNestedNoFromExpression item.Expression)
 
+    let rec private containsVolatileRandom expression =
+        match expression with
+        | FunctionCall call ->
+            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            name = "RAND" || name = "RANDOM"
+            || (call.Arguments |> List.exists containsVolatileRandom)
+            || (call.AggregateOrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
+        | Unary(_, operand) -> containsVolatileRandom operand
+        | Binary(_, left, right) -> containsVolatileRandom left || containsVolatileRandom right
+        | Like(value, pattern, _, _, _) | RegexMatch(value, pattern) ->
+            containsVolatileRandom value || containsVolatileRandom pattern
+        | RawRegexCall(arguments, _) -> arguments |> List.exists containsVolatileRandom
+        | FilteredAggregate(value, predicate) ->
+            containsVolatileRandom value || containsVolatileRandom predicate
+        | Windowed(value, window) ->
+            containsVolatileRandom value
+            || (window.PartitionBy |> List.exists containsVolatileRandom)
+            || (window.OrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
+        | Cast(value, _) | Extract(_, value) -> containsVolatileRandom value
+        | SimpleCase(input, branches, fallback) ->
+            containsVolatileRandom input
+            || (branches
+                |> NonEmpty.toList
+                |> List.exists (fun branch ->
+                    containsVolatileRandom branch.Match || containsVolatileRandom branch.Result))
+            || (fallback |> Option.exists containsVolatileRandom)
+        | SearchedCase(branches, fallback) ->
+            (branches
+             |> NonEmpty.toList
+             |> List.exists (fun branch ->
+                 containsVolatileRandom branch.Condition || containsVolatileRandom branch.Result))
+            || (fallback |> Option.exists containsVolatileRandom)
+        | InList(value, items, _) ->
+            containsVolatileRandom value
+            || (items |> NonEmpty.toList |> List.exists containsVolatileRandom)
+        | InSubquery(value, _, _) -> containsVolatileRandom value
+        | Between(value, lower, upper, _) ->
+            containsVolatileRandom value
+            || containsVolatileRandom lower
+            || containsVolatileRandom upper
+        | IsNull(value, _) -> containsVolatileRandom value
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _
+        | ScalarSubquery _ | Exists _ -> false
+
+    let private rejectVolatileMutationPredicate expression =
+        if containsVolatileRandom expression then
+            raise (SqlCompilationException(
+                "Non-deterministic random functions are not allowed in UPDATE/DELETE predicates before mutation."))
+
     let private validateSemanticDocument targetRuntime document =
         match document.Statement with
         | QueryStatement query -> validateSemanticQuery targetRuntime query
@@ -2588,14 +2705,18 @@ module internal RewriteStages =
                 validateSemanticExpr targetRuntime AssignmentClause false false item.Value)
             update.From |> List.iter (validateSemanticTable targetRuntime)
             update.Where
-            |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false)
+            |> Option.iter (fun predicate ->
+                rejectVolatileMutationPredicate predicate
+                validateSemanticExpr targetRuntime PredicateClause false false predicate)
             update.Returning
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
         | DeleteStatement delete ->
             delete.Using |> List.iter (validateSemanticTable targetRuntime)
             delete.Where
-            |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false)
+            |> Option.iter (fun predicate ->
+                rejectVolatileMutationPredicate predicate
+                validateSemanticExpr targetRuntime PredicateClause false false predicate)
             delete.Returning
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)

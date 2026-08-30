@@ -395,7 +395,7 @@ module internal RewriteFacadeAdapter =
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command = compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
         if command.Kind = SqlStatementKind.Query then
-            raise (SqlCompilationException("CompileDml requires INSERT, UPDATE, or DELETE."))
+            raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
         command
 
 
@@ -476,5 +476,5 @@ module internal RewriteFacadeAdapter =
                 (dmlPolicy policy)
                 (allowedTables validationContext.AllowedTables)
         if command.Kind = SqlStatementKind.Query then
-            raise (SqlCompilationException("CompileDml requires INSERT, UPDATE, or DELETE."))
+            raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
         command
