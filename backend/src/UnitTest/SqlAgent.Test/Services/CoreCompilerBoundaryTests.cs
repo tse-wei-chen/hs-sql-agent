@@ -53,7 +53,7 @@ public class CoreCompilerBoundaryTests
             new SqlPlanValidationContext(
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }),
-            new SqlExecutionPlanPolicy(QueryMaxRows: 10));
+            new SqlExecutionPlanPolicy(10));
 
         Assert.Contains("users", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));

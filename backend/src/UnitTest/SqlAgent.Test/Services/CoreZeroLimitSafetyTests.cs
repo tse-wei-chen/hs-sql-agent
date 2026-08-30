@@ -96,7 +96,7 @@ public class CoreZeroLimitSafetyTests
             parsed,
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext("policy-v1"),
-            new SqlExecutionPlanPolicy(QueryMaxRows: 100));
+            new SqlExecutionPlanPolicy(100));
 
         Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(command.Parameters, IsZeroParameter);
