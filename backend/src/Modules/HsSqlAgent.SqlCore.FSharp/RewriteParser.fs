@@ -5,6 +5,7 @@ open System.Globalization
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
+open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -21,7 +22,8 @@ module internal RewriteParser =
         { MySqlPipes: MySqlPipesSemantics
           Joins: JoinProofs
           Expressions: ExpressionProofs
-          Dml: DmlProofs }
+          Dml: DmlProofs
+          OnConflict: CapabilityProof }
 
     module SourceSemantics =
         let private permissiveJoins =
@@ -42,13 +44,15 @@ module internal RewriteParser =
             { MySqlPipes = RejectAmbiguousPipes
               Joins = permissiveJoins
               Expressions = permissiveExpressions
-              Dml = permissiveDml }
+              Dml = permissiveDml
+              OnConflict = ProvenCapability }
 
         let mysqlPipesAsConcat =
             { MySqlPipes = PipesAsConcat
               Joins = permissiveJoins
               Expressions = permissiveExpressions
-              Dml = permissiveDml }
+              Dml = permissiveDml
+              OnConflict = ProvenCapability }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
@@ -65,6 +69,7 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
+        member _.SourceOnConflict = semantics.OnConflict
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
@@ -72,6 +77,20 @@ module internal RewriteParser =
     let private requireSourceCapability = function
         | ProvenCapability -> ()
         | RejectedCapability message -> raise (SqlCompilationException(message))
+
+    let private requireSourceParseCapability (token: Token) = function
+        | ProvenCapability -> ()
+        | RejectedCapability message ->
+            let finish = token.Start + max token.Length 1
+            raise (SqlParseException(
+                message
+                + " Position "
+                + string token.Start
+                + ", span ["
+                + string token.Start
+                + ".."
+                + string finish
+                + ")."))
 
     let private isKeyword keyword (token: Token) =
         match token.Kind with Keyword value -> value = keyword | _ -> false
@@ -750,6 +769,7 @@ module internal RewriteParser =
         let conflict =
             if isKeyword "ON" cursor.Current then
                 if cursor.Dialect <> SourceDialect.PostgreSql && cursor.Dialect <> SourceDialect.SQLite then fail cursor.Current "ON CONFLICT is not valid in this source dialect"
+                requireSourceParseCapability cursor.Current cursor.SourceOnConflict
                 parseConflict cursor
             else None
         { Target = target; Columns = columns |> Seq.toList; Input = input; Conflict = conflict; Returning = parseReturning cursor }

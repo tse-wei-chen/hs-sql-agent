@@ -118,6 +118,14 @@ module internal RewriteFacadeAdapter =
             SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target)
             |> capabilityProof }
 
+    let private sourceOnConflictProof source (sourceProfile: SqlProviderCapabilityProfile | null) =
+        let sourceVersion : Version | null =
+            match sourceProfile with
+            | null -> null
+            | value -> value.ServerVersion
+        SqlDmlUpsertCapabilityRules.OnConflictSourceValidationError(source, sourceVersion)
+        |> capabilityProof
+
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { MySqlPipes =
             if SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(source, sourceProfile) then
@@ -126,7 +134,8 @@ module internal RewriteFacadeAdapter =
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source
-          Dml = sourceDmlProofs source sourceProfile }
+          Dml = sourceDmlProofs source sourceProfile
+          OnConflict = sourceOnConflictProof source sourceProfile }
 
     let private targetRuntime target (targetProfile: SqlProviderCapabilityProfile | null) =
         match target with
@@ -155,14 +164,34 @@ module internal RewriteFacadeAdapter =
         else
             ColumnSetAssurance.AssuredColumns(columns |> Seq.toList)
 
-    let private conflictProofs (assurance: DmlConflictTargetAssurance | null) : ConflictProofs =
+    let private mySqlUniqueKeyAssurance (assurance: DmlConflictTargetAssurance | null) =
         match assurance with
-        | null ->
-            { FirebirdPrimaryKey = ColumnSetAssurance.MissingAssurance
-              SourceRowsUniqueByInsertColumns = ColumnSetAssurance.MissingAssurance }
+        | null -> MySqlUniqueKeyAssurance.MissingMySqlUniqueKeyAssurance
+        | value when value.MatchedUniqueKeyColumns.IsDefaultOrEmpty ->
+            MySqlUniqueKeyAssurance.MissingMySqlUniqueKeyAssurance
         | value ->
-            { FirebirdPrimaryKey = columnSetAssurance value.PrimaryKeyColumns
-              SourceRowsUniqueByInsertColumns = columnSetAssurance value.SourceRowsUniqueByInsertColumns }
+            MySqlUniqueKeyAssurance.AssuredMySqlUniqueKey(
+                value.MatchedUniqueKeyColumns |> Seq.toList,
+                value.IsSoleEnforcedUniqueKey)
+
+    let private conflictProofs target (targetProfile: SqlProviderCapabilityProfile | null) (assurance: DmlConflictTargetAssurance | null) : ConflictProofs =
+        let firebirdPrimaryKey, sourceRows =
+            match assurance with
+            | null ->
+                ColumnSetAssurance.MissingAssurance,
+                ColumnSetAssurance.MissingAssurance
+            | value ->
+                columnSetAssurance value.PrimaryKeyColumns,
+                columnSetAssurance value.SourceRowsUniqueByInsertColumns
+        { DirectTarget =
+            SqlDmlUpsertCapabilityRules.DirectTargetValidationError(target, targetProfile)
+            |> capabilityProof
+          MySqlConditionalTarget =
+            SqlDmlUpsertCapabilityRules.MySqlConditionalTargetValidationError(targetProfile)
+            |> capabilityProof
+          FirebirdPrimaryKey = firebirdPrimaryKey
+          MySqlUniqueKey = mySqlUniqueKeyAssurance assurance
+          SourceRowsUniqueByInsertColumns = sourceRows }
 
     let private parameters targetProvider (values: (obj | null) list) =
         let prefix = if targetProvider = SqlAgentToolType.Oracle then ":p" else "@p"
@@ -227,7 +256,7 @@ module internal RewriteFacadeAdapter =
                   TargetExpressions = targetExpressionProofs target
                   TargetJoins = targetJoinProofs target targetProfile
                   TargetDml = targetDmlProofs target targetProfile
-                  ConflictProofs = conflictProofs conflictTargetAssurance
+                  ConflictProofs = conflictProofs target targetProfile conflictTargetAssurance
                   Policy = policy
                   AllowedTables = allowed }
                 sql

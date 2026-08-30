@@ -27,8 +27,15 @@ module internal Typestate =
         | MissingAssurance
         | AssuredColumns of string list
 
+    type MySqlUniqueKeyAssurance =
+        | MissingMySqlUniqueKeyAssurance
+        | AssuredMySqlUniqueKey of columns: string list * isSoleEnforcedUniqueKey: bool
+
     type ConflictProofs =
-        { FirebirdPrimaryKey: ColumnSetAssurance
+        { DirectTarget: CapabilityProof
+          MySqlConditionalTarget: CapabilityProof
+          FirebirdPrimaryKey: ColumnSetAssurance
+          MySqlUniqueKey: MySqlUniqueKeyAssurance
           SourceRowsUniqueByInsertColumns: ColumnSetAssurance }
 
     type SqlServerConcatLowering =

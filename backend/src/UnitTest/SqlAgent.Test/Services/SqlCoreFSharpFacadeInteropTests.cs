@@ -1675,6 +1675,304 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextDml_SqliteUpsertWithoutSourceProfile_RemainsParseFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlite-upsert-source-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+
+        var legacy = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Sqlite));
+        var migrated = Assert.Throws<SqlParseException>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Sqlite,
+                SqlAgentToolType.Postgres,
+                validation));
+
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_SqliteUpsert324_MatchesLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 24));
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 24));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlite-upsert324-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromPrimaryKey(new[] { "id" });
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Sqlite, sourceProfile);
+
+        var legacy = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            targetProfile,
+            assurance);
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Sqlite,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile,
+            assurance);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("ON CONFLICT", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_TextDml_SqliteUpsertWithoutTargetProfile_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlite-upsert-target-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Sqlite,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_MySqlAssuredUpsert819_MatchesLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 0, 19));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-upsert819-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromUniqueKey(
+            new[] { "id" },
+            "PRIMARY",
+            isPrimaryKey: true,
+            enforcedUniqueKeyCount: 1,
+            hasUnsupportedEnforcedUniqueKeys: false);
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MySQL,
+            validation,
+            policy,
+            targetProfile,
+            assurance);
+        var migrated = SqlCoreFacade.CompileDml(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile,
+            assurance);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("ON DUPLICATE KEY UPDATE", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS `__core_proposed`", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_TextDml_MySqlUpsertWithoutAssurance_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-upsert-no-assurance-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_MySqlDoNothing_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO NOTHING";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 0, 19));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-upsert-do-nothing-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromUniqueKey(
+            new[] { "id" },
+            "PRIMARY",
+            isPrimaryKey: true,
+            enforcedUniqueKeyCount: 1,
+            hasUnsupportedEnforcedUniqueKeys: false);
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy,
+                targetProfile,
+                assurance));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile,
+                assurance));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_MySqlUpsertPre819_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 0, 18));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-upsert-pre819-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromUniqueKey(
+            new[] { "id" },
+            "PRIMARY",
+            isPrimaryKey: true,
+            enforcedUniqueKeyCount: 1,
+            hasUnsupportedEnforcedUniqueKeys: false);
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy,
+                targetProfile,
+                assurance));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile,
+                assurance));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextDml_MySqlUpsertWithSecondUniqueSource_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+            "ON CONFLICT (id) DO UPDATE SET name = excluded.name";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 0, 19));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-upsert-multi-unique-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new DmlCompilationPolicy();
+        var assurance = DmlConflictTargetAssurance.FromUniqueKey(
+            new[] { "id" },
+            "PRIMARY",
+            isPrimaryKey: true,
+            enforcedUniqueKeyCount: 2,
+            hasUnsupportedEnforcedUniqueKeys: false);
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy,
+                targetProfile,
+                assurance));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile,
+                assurance));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
     public void Facade_FunctionalProviderProfileRewrite_MatchesLegacySqlServerConcat()
     {
         const string sql =

@@ -555,6 +555,37 @@ module internal RewriteStages =
             raise (SqlCompilationException(
                 "Firebird UPDATE OR INSERT requires conflict assignments to cover the complete INSERT column set."))
 
+    let private requireConflictCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> raise (SqlCompilationException(message))
+
+    let private validateMySqlConflict (proofs: ConflictProofs) (conflict: InsertConflict) =
+        match conflict.Action with
+        | DoNothing ->
+            raise (SqlCompilationException(
+                "MySQL INSERT IGNORE is not a portable ON CONFLICT DO NOTHING equivalent because it can suppress errors beyond the explicit conflict target; MySQL DO NOTHING therefore remains fail-closed."))
+        | UpdateProposedValues _ ->
+            let matchedColumns =
+                match proofs.MySqlUniqueKey with
+                | MissingMySqlUniqueKeyAssurance ->
+                    raise (SqlCompilationException(
+                        "MySQL ON DUPLICATE KEY UPDATE requires metadata-backed statement assurance proving the explicit conflict target matches a complete enforced unique key and is the sole enforced native conflict source."))
+                | AssuredMySqlUniqueKey(_, false) ->
+                    raise (SqlCompilationException(
+                        "MySQL ON DUPLICATE KEY UPDATE can react to any UNIQUE or PRIMARY KEY conflict. Core requires the matched conflict target to be the sole enforced native unique-conflict source, including no additional richer expression, prefix, partial, or otherwise unsupported enforced unique keys."))
+                | AssuredMySqlUniqueKey(columns, true) -> columns
+            let target =
+                conflict.TargetColumns
+                |> NonEmpty.toList
+                |> List.map Identifier.text
+            if not (exactColumnSetMatch target matchedColumns) then
+                raise (SqlCompilationException(
+                    "MySQL conflict lowering requires the canonical explicit conflict target to match the complete metadata-resolved unique key exactly."))
+            requireConflictCapability proofs.MySqlConditionalTarget
+
+    let private validateDirectConflict (proofs: ConflictProofs) =
+        requireConflictCapability proofs.DirectTarget
+
     let private validateFirebirdConflict (proofs: ConflictProofs) (insert: Insert) (conflict: InsertConflict) =
         match conflict.Action with
         | DoNothing ->
@@ -582,8 +613,12 @@ module internal RewriteStages =
             | Some conflict ->
                 validatePortableConflict targetRuntime proofs insert conflict
                 match targetRuntime with
-                | FirebirdRuntime -> validateFirebirdConflict proofs insert conflict
-                | _ -> ()
+                | PostgreSqlRuntime | SQLiteRuntime | SqlServerRuntime _ | OracleRuntime ->
+                    validateDirectConflict proofs
+                | MySqlRuntime ->
+                    validateMySqlConflict proofs conflict
+                | FirebirdRuntime ->
+                    validateFirebirdConflict proofs insert conflict
         | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
 
     let validate allowedTables targetRuntime targetExpressions targetJoins targetDml conflictProofs canonical =

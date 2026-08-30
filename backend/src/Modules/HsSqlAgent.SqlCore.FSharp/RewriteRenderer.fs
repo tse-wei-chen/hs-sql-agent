@@ -394,6 +394,58 @@ module internal RewriteRenderer =
                 | _ -> invalidOp "Firebird UPDATE OR INSERT requires exactly one VALUES row."
             let targets = conflict.TargetColumns |> NonEmpty.toList |> List.map (renderIdentifier ctx.Provider) |> String.concat ", "
             "UPDATE OR INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + " VALUES (" + values + ") MATCHING (" + targets + ")" + renderReturning ctx insert.Returning
+        | MySql, Some conflict ->
+            let values =
+                match insert.Input with
+                | Values rows when NonEmpty.length rows = 1 ->
+                    rows
+                    |> NonEmpty.toList
+                    |> List.head
+                    |> NonEmpty.toList
+                    |> List.map (renderExpr ctx)
+                    |> String.concat ", "
+                | _ ->
+                    invalidOp "Validated MySQL conflict lowering requires exactly one VALUES row."
+            let preferredAlias = "__core_proposed"
+            let targetName =
+                insert.Target
+                |> Identifier.parts
+                |> List.last
+                |> fun part -> part.Value
+            let aliasName =
+                if StringComparer.OrdinalIgnoreCase.Equals(targetName, preferredAlias) then
+                    preferredAlias + "_row"
+                else
+                    preferredAlias
+            let alias =
+                renderAlias
+                    MySql
+                    { Value = aliasName
+                      WasQuoted = false
+                      Span = { Start = 0; Length = 0 } }
+            let assignments =
+                match conflict.Action with
+                | DoNothing ->
+                    invalidOp "Validated MySQL conflict lowering cannot contain DO NOTHING."
+                | UpdateProposedValues assignments ->
+                    assignments
+                    |> NonEmpty.toList
+                    |> List.map (fun assignment ->
+                        renderIdentifier MySql assignment.Target
+                        + " = "
+                        + alias
+                        + "."
+                        + renderIdentifier MySql assignment.Proposed)
+                    |> String.concat ", "
+            "INSERT INTO "
+            + renderIdentifier MySql insert.Target
+            + columns
+            + " VALUES ("
+            + values
+            + ") AS "
+            + alias
+            + " ON DUPLICATE KEY UPDATE "
+            + assignments
         | _ ->
             let sourceSql =
                 match insert.Input with
