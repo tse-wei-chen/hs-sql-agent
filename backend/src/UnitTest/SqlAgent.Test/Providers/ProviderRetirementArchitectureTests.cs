@@ -81,7 +81,7 @@ public class ProviderRetirementArchitectureTests
         Assert.Equal(SqlAgentToolType.Postgres, runtime.Type);
         Assert.Same(provider, runtime.Connections);
         Assert.Same(provider, runtime.Metadata);
-        Assert.Equal(SqlAgentToolType.Postgres, runtime.Lowerer.Provider);
+        Assert.Null(typeof(ISqlProvider).GetProperty("Lowerer"));
         Assert.IsType<ProviderExecutionErrorMapper>(runtime.Errors);
     }
 
