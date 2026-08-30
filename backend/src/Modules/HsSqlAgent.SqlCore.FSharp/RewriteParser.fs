@@ -861,16 +861,18 @@ module internal RewriteParser =
     and private parseReturning cursor =
         if not (acceptKeyword "RETURNING" cursor) then []
         else
-            requireSourceCapability cursor.SourceDml.Returning
+            requireSourceParseCapability cursor.Current cursor.SourceDml.Returning
 
             let classify (item: SelectItem) =
                 match item.Expression with
                 | Column identifier when Identifier.parts identifier |> List.length = 1 ->
                     ReturningColumn(identifier, item.Alias)
+                | Column _ ->
+                    fail cursor.Current "RETURNING column references must be unqualified in the portable Core grammar"
                 | Wildcard None ->
                     ReturningWildcard item.Alias
                 | expression ->
-                    requireSourceCapability cursor.SourceDml.ReturningExpression
+                    requireSourceParseCapability cursor.Current cursor.SourceDml.ReturningExpression
                     ReturningExpression(expression, item.Alias)
 
             let items = ResizeArray<ReturningItem>()
@@ -879,7 +881,7 @@ module internal RewriteParser =
             let values = items |> Seq.toList
             if values.Length > 1
                && values |> List.exists (function ReturningWildcard _ -> true | _ -> false) then
-                fail cursor.Current "RETURNING wildcard cannot be combined with other expressions"
+                fail cursor.Current "RETURNING wildcard cannot be mixed with columns or expressions"
             values
 
     and private parseTableSource cursor =
@@ -1175,6 +1177,13 @@ module internal RewriteParser =
                         { Target = target; Proposed = proposed }
                     assignments.Add(parseAssignment())
                     while acceptSymbol ',' cursor do assignments.Add(parseAssignment())
+                    match cursor.Current.Kind with
+                    | End
+                    | Symbol ';'
+                    | Keyword "RETURNING" -> ()
+                    | _ ->
+                        fail cursor.Current
+                            "ON CONFLICT DO UPDATE conflict clause supports only target = EXCLUDED.source assignments; arbitrary expressions remain fail-closed"
                     UpdateProposedValues(assignments |> Seq.toList |> NonEmpty.ofList "conflict assignments")
                 else fail cursor.Current "Expected NOTHING or UPDATE after ON CONFLICT DO"
             Some { TargetColumns = targets |> Seq.toList |> NonEmpty.ofList "conflict target"; Action = action }
@@ -1206,8 +1215,14 @@ module internal RewriteParser =
             elif acceptKeyword "DEFAULT" cursor then expectKeyword "VALUES" cursor; DefaultValues
             else fail cursor.Current "Expected VALUES, SELECT, or DEFAULT VALUES"
         let conflict =
-            if isKeyword "ON" cursor.Current then
-                if cursor.Dialect <> SourceDialect.PostgreSql && cursor.Dialect <> SourceDialect.SQLite then fail cursor.Current "ON CONFLICT is not valid in this source dialect"
+            if isKeyword "ON" cursor.Current
+               && isKeyword "DUPLICATE" (cursor.Peek 1)
+               && isKeyword "KEY" (cursor.Peek 2) then
+                fail cursor.Current
+                    "MySQL ON DUPLICATE KEY UPDATE has no explicit conflict target and is not represented by the deterministic portable conflict clause"
+            elif isKeyword "ON" cursor.Current then
+                if cursor.Dialect <> SourceDialect.PostgreSql && cursor.Dialect <> SourceDialect.SQLite then
+                    fail cursor.Current "ON CONFLICT is not valid in this source dialect"
                 requireSourceParseCapability cursor.Current cursor.SourceOnConflict
                 parseConflict cursor
             else None
