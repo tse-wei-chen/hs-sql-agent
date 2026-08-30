@@ -1973,6 +1973,176 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextQuery_MySqlDoubleQuotesWithoutAnsiProfile_RemainsParseFailClosedLikeLegacy()
+    {
+        const string sql = "SELECT \"display_name\" FROM users";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-ansi-quotes-source-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+
+        var legacy = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL));
+        var migrated = Assert.Throws<SqlParseException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_MySqlAnsiQuotesProfile_MatchesLegacy()
+    {
+        const string sql = "SELECT \"display\"\"name\" FROM users";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 4),
+            SessionModes: new HashSet<string>(
+                new[] { "ANSI_QUOTES" },
+                StringComparer.OrdinalIgnoreCase));
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-ansi-quotes-profile-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL, sourceProfile);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            targetProfile);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("\"display\"\"name\"", migrated.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_MySqlBacktickIdentifier_MatchesLegacy()
+    {
+        const string sql = "SELECT `display_name` FROM `users`";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-backtick-source-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_SqlServerBracketIdentifier_MatchesLegacy()
+    {
+        const string sql = "SELECT [display_name] FROM [users]";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-bracket-source-v1",
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MsSqlServer);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_MySqlBackslashWithoutNoBackslashEscapes_RemainsParseFailClosedLikeLegacy()
+    {
+        const string sql = "SELECT 'a\\b' AS value";
+        var validation = new SqlPlanValidationContext("fsharp-mysql-backslash-source-v1");
+        var policy = new SqlExecutionPlanPolicy();
+
+        var legacy = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL));
+        var migrated = Assert.Throws<SqlParseException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_MySqlNoBackslashEscapesProfile_MatchesLegacy()
+    {
+        const string sql = "SELECT 'a\\b' AS value";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 4),
+            SessionModes: new HashSet<string>(
+                new[] { "NO_BACKSLASH_ESCAPES" },
+                StringComparer.OrdinalIgnoreCase));
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext("fsharp-mysql-no-backslash-v1");
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL, sourceProfile);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            targetProfile);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains(migrated.Parameters, parameter => Equals(parameter.Value, "a\\b"));
+    }
+
+    [Fact]
     public void Facade_FunctionalProviderProfileRewrite_MatchesLegacySqlServerConcat()
     {
         const string sql =

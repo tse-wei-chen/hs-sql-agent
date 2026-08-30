@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Globalization
+open HsSqlAgent.SqlCore.SqlParsing
 
 module internal RewriteLexer =
 
@@ -20,6 +21,49 @@ module internal RewriteLexer =
           Start: int
           Length: int }
 
+    type DoubleQuoteSemantics =
+        | AllowDoubleQuotedIdentifier
+        | RejectMySqlDoubleQuoteAmbiguity
+
+    type IdentifierDelimiterSemantics =
+        | AllowIdentifierDelimiter
+        | RejectIdentifierDelimiter
+
+    type BackslashSemantics =
+        | BackslashIsLiteral
+        | RejectMySqlBackslashAmbiguity
+
+    type LexicalSemantics =
+        { DoubleQuote: DoubleQuoteSemantics
+          Backtick: IdentifierDelimiterSemantics
+          Bracket: IdentifierDelimiterSemantics
+          Backslash: BackslashSemantics }
+
+    module LexicalSemantics =
+        let standard =
+            { DoubleQuote = AllowDoubleQuotedIdentifier
+              Backtick = RejectIdentifierDelimiter
+              Bracket = RejectIdentifierDelimiter
+              Backslash = BackslashIsLiteral }
+
+        let mysql ansiQuotes noBackslashEscapes =
+            { DoubleQuote =
+                if ansiQuotes then AllowDoubleQuotedIdentifier
+                else RejectMySqlDoubleQuoteAmbiguity
+              Backtick = AllowIdentifierDelimiter
+              Bracket = RejectIdentifierDelimiter
+              Backslash =
+                if noBackslashEscapes then BackslashIsLiteral
+                else RejectMySqlBackslashAmbiguity }
+
+        let sqlServer =
+            { standard with Bracket = AllowIdentifierDelimiter }
+
+        let sqlite =
+            { standard with
+                Backtick = AllowIdentifierDelimiter
+                Bracket = AllowIdentifierDelimiter }
+
     let private keywords =
         set [ "SELECT"; "DISTINCT"; "FROM"; "WHERE"; "AS"; "AND"; "OR"; "NOT"; "NULL"; "TRUE"; "FALSE"
               "GROUP"; "BY"; "HAVING"; "ORDER"; "ASC"; "DESC"; "LIMIT"; "OFFSET"; "INNER"; "LEFT"; "RIGHT"
@@ -34,7 +78,7 @@ module internal RewriteLexer =
     let private isIdentifierStart c = Char.IsLetter(c) || c = '_'
     let private isIdentifierPart c = Char.IsLetterOrDigit(c) || c = '_' || c = '$'
 
-    let tokenize (sql: string) =
+    let tokenizeWith semantics (sql: string) =
         if Object.ReferenceEquals(sql, null) then nullArg "sql"
         let length = sql.Length
         let tokens = ResizeArray<Token>()
@@ -42,6 +86,31 @@ module internal RewriteLexer =
 
         let add kind start finish =
             tokens.Add({ Kind = kind; Start = start; Length = finish - start })
+
+        let parseError message start spanLength : 'T =
+            let finish = start + max spanLength 1
+            raise (SqlParseException(
+                message
+                + " Position "
+                + string start
+                + ", span ["
+                + string start
+                + ".."
+                + string finish
+                + ")."))
+
+        let rejectBackslashIfAmbiguous kind start current =
+            match semantics.Backslash with
+            | BackslashIsLiteral -> ()
+            | RejectMySqlBackslashAmbiguity ->
+                let message =
+                    match kind with
+                    | StringLiteral _ ->
+                        "MySQL backslash escape semantics depend on NO_BACKSLASH_ESCAPES sql_mode; Core rejects single-quoted strings containing backslashes unless the source profile explicitly declares NO_BACKSLASH_ESCAPES."
+                    | Identifier _ ->
+                        "MySQL backslash escape semantics inside quoted identifiers depend on NO_BACKSLASH_ESCAPES sql_mode; Core rejects this identifier unless the source profile explicitly declares NO_BACKSLASH_ESCAPES."
+                    | _ -> invalidOp "Backslash ambiguity guard requires quoted text."
+                parseError message start (current - start + 1)
 
         while i < length do
             let c = sql[i]
@@ -74,12 +143,21 @@ module internal RewriteLexer =
                             i <- i + 1
                             closed <- true
                     else
+                        if sql[i] = '\\' then
+                            rejectBackslashIfAmbiguous (StringLiteral String.Empty) start i
                         buffer.Append(sql[i]) |> ignore
                         i <- i + 1
                 if not closed then invalidArg "sql" ("Unterminated string literal at offset " + string start + ".")
                 add (StringLiteral(buffer.ToString())) start i
             elif c = '"' then
                 let start = i
+                match semantics.DoubleQuote with
+                | AllowDoubleQuotedIdentifier -> ()
+                | RejectMySqlDoubleQuoteAmbiguity ->
+                    parseError
+                        "MySQL double-quote semantics depend on ANSI_QUOTES sql_mode; Core rejects this delimiter unless the source profile explicitly declares ANSI_QUOTES or ANSI."
+                        start
+                        1
                 i <- i + 1
                 let buffer = Text.StringBuilder()
                 let mutable closed = false
@@ -87,6 +165,54 @@ module internal RewriteLexer =
                     if sql[i] = '"' then
                         if i + 1 < length && sql[i + 1] = '"' then
                             buffer.Append('"') |> ignore
+                            i <- i + 2
+                        else
+                            i <- i + 1
+                            closed <- true
+                    else
+                        if sql[i] = '\\' then
+                            rejectBackslashIfAmbiguous (Identifier(String.Empty, true)) start i
+                        buffer.Append(sql[i]) |> ignore
+                        i <- i + 1
+                if not closed then invalidArg "sql" ("Unterminated quoted identifier at offset " + string start + ".")
+                add (Identifier(buffer.ToString(), true)) start i
+            elif c = '`' then
+                let start = i
+                match semantics.Backtick with
+                | AllowIdentifierDelimiter -> ()
+                | RejectIdentifierDelimiter ->
+                    parseError "Backtick-quoted identifiers are not valid for the configured provider." start 1
+                i <- i + 1
+                let buffer = Text.StringBuilder()
+                let mutable closed = false
+                while i < length && not closed do
+                    if sql[i] = '`' then
+                        if i + 1 < length && sql[i + 1] = '`' then
+                            buffer.Append('`') |> ignore
+                            i <- i + 2
+                        else
+                            i <- i + 1
+                            closed <- true
+                    else
+                        if sql[i] = '\\' then
+                            rejectBackslashIfAmbiguous (Identifier(String.Empty, true)) start i
+                        buffer.Append(sql[i]) |> ignore
+                        i <- i + 1
+                if not closed then invalidArg "sql" ("Unterminated quoted identifier at offset " + string start + ".")
+                add (Identifier(buffer.ToString(), true)) start i
+            elif c = '[' then
+                let start = i
+                match semantics.Bracket with
+                | AllowIdentifierDelimiter -> ()
+                | RejectIdentifierDelimiter ->
+                    parseError "Bracket-quoted identifiers are not valid for the configured provider." start 1
+                i <- i + 1
+                let buffer = Text.StringBuilder()
+                let mutable closed = false
+                while i < length && not closed do
+                    if sql[i] = ']' then
+                        if i + 1 < length && sql[i + 1] = ']' then
+                            buffer.Append(']') |> ignore
                             i <- i + 2
                         else
                             i <- i + 1
@@ -134,3 +260,6 @@ module internal RewriteLexer =
 
         tokens.Add({ Kind = End; Start = length; Length = 0 })
         tokens |> Seq.toList
+
+
+    let tokenize (sql: string) = tokenizeWith LexicalSemantics.standard sql

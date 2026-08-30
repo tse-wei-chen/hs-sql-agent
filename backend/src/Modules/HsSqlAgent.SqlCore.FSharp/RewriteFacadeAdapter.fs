@@ -126,6 +126,30 @@ module internal RewriteFacadeAdapter =
         SqlDmlUpsertCapabilityRules.OnConflictSourceValidationError(source, sourceVersion)
         |> capabilityProof
 
+    let private sourceLexicalSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteLexer.LexicalSemantics =
+        let grammar = SqlSourceDialectGrammarRules.For(source)
+        let delimiter feature =
+            if grammar.SupportsLexicalFeature(feature) then
+                RewriteLexer.IdentifierDelimiterSemantics.AllowIdentifierDelimiter
+            else
+                RewriteLexer.IdentifierDelimiterSemantics.RejectIdentifierDelimiter
+        let doubleQuote =
+            if grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.DoubleQuotedIdentifierRequiresAnsiMode)
+               && not (SqlSourceDialectGrammarRules.UsesMySqlAnsiQuotedIdentifiers(source, sourceProfile)) then
+                RewriteLexer.DoubleQuoteSemantics.RejectMySqlDoubleQuoteAmbiguity
+            else
+                RewriteLexer.DoubleQuoteSemantics.AllowDoubleQuotedIdentifier
+        let backslash =
+            if grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.BackslashSensitiveQuotedText)
+               && not (SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(source, sourceProfile)) then
+                RewriteLexer.BackslashSemantics.RejectMySqlBackslashAmbiguity
+            else
+                RewriteLexer.BackslashSemantics.BackslashIsLiteral
+        { DoubleQuote = doubleQuote
+          Backtick = delimiter SqlSourceLexicalFeatures.BacktickQuotedIdentifier
+          Bracket = delimiter SqlSourceLexicalFeatures.BracketQuotedIdentifier
+          Backslash = backslash }
+
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { MySqlPipes =
             if SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(source, sourceProfile) then
@@ -135,7 +159,8 @@ module internal RewriteFacadeAdapter =
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source
           Dml = sourceDmlProofs source sourceProfile
-          OnConflict = sourceOnConflictProof source sourceProfile }
+          OnConflict = sourceOnConflictProof source sourceProfile
+          Lexical = sourceLexicalSemantics source sourceProfile }
 
     let private targetRuntime target (targetProfile: SqlProviderCapabilityProfile | null) =
         match target with

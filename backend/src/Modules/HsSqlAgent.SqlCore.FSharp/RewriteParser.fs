@@ -23,7 +23,8 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
-          OnConflict: CapabilityProof }
+          OnConflict: CapabilityProof
+          Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
         let private permissiveJoins =
@@ -45,14 +46,16 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
-              OnConflict = ProvenCapability }
+              OnConflict = ProvenCapability
+              Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
             { MySqlPipes = PipesAsConcat
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
-              OnConflict = ProvenCapability }
+              OnConflict = ProvenCapability
+              Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
@@ -857,7 +860,7 @@ module internal RewriteParser =
 
     let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        let tokens = RewriteLexer.tokenize sql
+        let tokens = RewriteLexer.tokenizeWith semantics.Lexical sql
         let cursor = Cursor(tokens, dialect, semantics)
         let start = cursor.Current.Start
         let statement =
