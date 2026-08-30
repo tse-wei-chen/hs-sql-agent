@@ -179,6 +179,12 @@ module internal RewriteParser =
     let private isContextualIdentifierKeyword value =
         Set.contains value contextualIdentifierKeywords
 
+    let private asRequiredAliasKeywords =
+        set [ "DEFAULT"; "DO"; "INTO"; "ONLY"; "RETURNING" ]
+
+    let private isAliasKeyword value =
+        isContextualIdentifierKeyword value || Set.contains value asRequiredAliasKeywords
+
     let private partFromToken token =
         match token.Kind with
         | Identifier(value, quoted) ->
@@ -188,6 +194,16 @@ module internal RewriteParser =
         | _ -> fail token "Expected identifier"
 
     let private identifierPart (cursor: Cursor) = cursor.Take() |> partFromToken
+
+    let private aliasPartFromToken token =
+        match token.Kind with
+        | Identifier(value, quoted) ->
+            { Value = value; WasQuoted = quoted; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
+        | Keyword value when isAliasKeyword value ->
+            { Value = value; WasQuoted = false; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
+        | _ -> fail token "Expected alias"
+
+    let private aliasIdentifierPart (cursor: Cursor) = cursor.Take() |> aliasPartFromToken
 
     let private keywordOrIdentifierText (cursor: Cursor) =
         let token = cursor.Take()
@@ -978,7 +994,7 @@ module internal RewriteParser =
     and private parseSelectItem cursor =
         let expression = parseExpression cursor
         let alias =
-            if acceptKeyword "AS" cursor then Some(identifierPart cursor)
+            if acceptKeyword "AS" cursor then Some(aliasIdentifierPart cursor)
             else
                 match cursor.Current.Kind with
                 | Identifier _ -> Some(identifierPart cursor)
