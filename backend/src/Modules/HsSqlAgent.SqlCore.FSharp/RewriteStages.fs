@@ -125,8 +125,7 @@ module internal RewriteStages =
 
     let rec private validateExpr allowedTables expression =
         match expression with
-        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ -> ()
-        | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
+        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) -> validateExpr allowedTables operand
         | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
         | Like(value, pattern, _, _, _) ->
@@ -286,7 +285,8 @@ module internal RewriteStages =
 
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
-        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ -> ()
+        | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
         | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
         | Binary(BinaryOperator.Concat, left, right) ->
             proveSqlServerConcat targetRuntime
