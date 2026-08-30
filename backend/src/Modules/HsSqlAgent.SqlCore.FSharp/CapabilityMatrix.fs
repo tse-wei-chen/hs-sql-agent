@@ -65,6 +65,7 @@ type SqlCapabilityMatrix private () =
                 | SqlServerConcatTargetMode.Rejected -> rejected
                 | SqlServerConcatTargetMode.PlusOperator -> translated
                 | SqlServerConcatTargetMode.NativePipes -> supported
+                | _ -> rejected
             | _ -> supported
 
         let rightJoinStatus =
@@ -213,6 +214,8 @@ type SqlCapabilityMatrix private () =
                             "Canonical concatenation is translated to + only because the declared target proves ANSI NULL propagation through SQL Server 14.x+ or explicit CONCAT_NULL_YIELDS_NULL=ON."
                         | SqlServerConcatTargetMode.Rejected ->
                             "SQL Server concatenation is fail-closed without runtime proof: declare ServerVersion 14.0+ or CONCAT_NULL_YIELDS_NULL=ON; ServerVersion 17.0+ with CompatibilityLevel 170+ can emit native ANSI ||."
+                        | _ ->
+                            "Unknown SQL Server concatenation runtime mode remains fail-closed."
                     | _ ->
                         "The provider-native || operator is emitted.")
                 cap("expression.like_escape","expression",translated,
