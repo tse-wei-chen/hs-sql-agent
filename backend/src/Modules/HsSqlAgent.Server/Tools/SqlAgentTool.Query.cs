@@ -34,7 +34,7 @@ public partial class SqlAgentTool
                 return "Error: SQL is missing.";
 
             parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
-            auditFacts = new SqlAstBinder().Bind(parsed).Facts;
+            auditFacts = SqlCoreInspection.GetQueryFacts(parsed);
 
             var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
             var allowedTables = ResolveTableWhitelist();

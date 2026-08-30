@@ -55,6 +55,7 @@
     <Compile Include="RewriteRenderer.fs" />
     <Compile Include="RewritePipeline.fs" />
     <Compile Include="RewriteFacadeAdapter.fs" />
+    <Compile Include="InspectionFacade.fs" />
     <Compile Include="CompatibilityParserFacade.fs" />
     <Compile Include="Facade.fs" />
     <Compile Include="LegacyCompilerFacade.fs" />
