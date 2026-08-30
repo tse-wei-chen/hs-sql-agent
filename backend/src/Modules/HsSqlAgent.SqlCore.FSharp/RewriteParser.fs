@@ -169,16 +169,17 @@ module internal RewriteParser =
     let private expectOperator operator cursor =
         if not (acceptOperator operator cursor) then fail cursor.Current ("Expected operator '" + operator + "'")
 
+    let private contextualIdentifierKeywords =
+        set [ "FETCH"; "KEY"; "DATE"; "TIME"; "TIMESTAMP"; "ZONE"; "CONFLICT"; "EXCLUDED"; "PERCENT" ]
+
+    let private isContextualIdentifierKeyword value =
+        Set.contains value contextualIdentifierKeywords
+
     let private partFromToken token =
         match token.Kind with
         | Identifier(value, quoted) ->
             { Value = value; WasQuoted = quoted; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
-        | Keyword value
-            when value = "FETCH"
-              || value = "KEY"
-              || value = "DATE"
-              || value = "TIME"
-              || value = "TIMESTAMP" ->
+        | Keyword value when isContextualIdentifierKeyword value ->
             { Value = value; WasQuoted = false; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
         | _ -> fail token "Expected identifier"
 
@@ -197,6 +198,7 @@ module internal RewriteParser =
         while scanning && acceptSymbol '.' cursor do
             match cursor.Current.Kind with
             | Identifier _ -> parts.Add(identifierPart cursor)
+            | Keyword value when isContextualIdentifierKeyword value -> parts.Add(identifierPart cursor)
             | _ -> scanning <- false; fail cursor.Current "Expected identifier after '.'"
         Identifier.create (parts |> Seq.toList)
 
@@ -957,8 +959,7 @@ module internal RewriteParser =
                 raise (SqlParseException(
                     "Oracle bare SYSDATE is not represented as a portable Core temporal expression. Position "
                     + string token.Start + ", span [" + string token.Start + ".." + string finish + ")."))
-        | Keyword "FETCH"
-        | Keyword "KEY"
+        | Keyword value when isContextualIdentifierKeyword value -> parseIdentifierExpression cursor
         | Identifier _ -> parseIdentifierExpression cursor
         | _ -> fail token "Expected expression"
 
