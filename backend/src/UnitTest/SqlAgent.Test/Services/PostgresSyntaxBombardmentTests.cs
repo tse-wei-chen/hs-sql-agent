@@ -72,6 +72,21 @@ public sealed class PostgresSyntaxBombardmentTests
             "CROSS JOIN",
             "alpha,beta");
         yield return Case(
+            "left-outer-join",
+            "SELECT a.id FROM alpha a LEFT OUTER JOIN beta b ON a.id = b.id",
+            "LEFT JOIN",
+            "alpha,beta");
+        yield return Case(
+            "right-outer-join",
+            "SELECT a.id FROM alpha a RIGHT OUTER JOIN beta b ON a.id = b.id",
+            "RIGHT JOIN",
+            "alpha,beta");
+        yield return Case(
+            "full-outer-join",
+            "SELECT a.id FROM alpha a FULL OUTER JOIN beta b ON a.id = b.id",
+            "FULL JOIN",
+            "alpha,beta");
+        yield return Case(
             "group-having",
             "SELECT customer_id, SUM(amount) FROM orders GROUP BY customer_id HAVING SUM(amount) > 10",
             "HAVING",
