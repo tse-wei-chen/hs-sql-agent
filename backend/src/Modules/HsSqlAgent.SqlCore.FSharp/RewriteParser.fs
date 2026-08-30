@@ -853,7 +853,8 @@ module internal RewriteParser =
         | Keyword "TIME"
             when (match (cursor.Peek 1).Kind with
                   | StringLiteral _ -> true
-                  | Keyword "WITH" -> true
+                  | Keyword "WITH"
+                  | Keyword "WITHOUT" -> true
                   | _ -> false) ->
             match cursor.Dialect with
             | SourceDialect.PostgreSql
@@ -862,7 +863,14 @@ module internal RewriteParser =
                 cursor.Advance()
                 if acceptKeyword "WITH" cursor then
                     typedTemporalSourceError cursor "TIME WITH TIME ZONE"
-                Literal(parseTimeLiteral cursor)
+                elif acceptKeyword "WITHOUT" cursor then
+                    if not (acceptKeyword "TIME" cursor && acceptKeyword "ZONE" cursor) then
+                        fail cursor.Current "Expected TIME ZONE after TIME WITHOUT"
+                    if cursor.Dialect <> SourceDialect.PostgreSql then
+                        typedTemporalSourceError cursor "TIME WITHOUT TIME ZONE"
+                    Literal(parseTimeLiteral cursor)
+                else
+                    Literal(parseTimeLiteral cursor)
             | SourceDialect.SqlServer
             | SourceDialect.SQLite
             | SourceDialect.Oracle ->
