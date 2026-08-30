@@ -872,7 +872,7 @@ module internal RewriteParser =
                 | Wildcard None ->
                     ReturningWildcard item.Alias
                 | expression ->
-                    requireSourceParseCapability cursor.Current cursor.SourceDml.ReturningExpression
+                    requireSourceCapability cursor.SourceDml.ReturningExpression
                     ReturningExpression(expression, item.Alias)
 
             let items = ResizeArray<ReturningItem>()
