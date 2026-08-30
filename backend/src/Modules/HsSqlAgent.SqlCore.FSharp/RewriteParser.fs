@@ -987,7 +987,7 @@ module internal RewriteParser =
                 fail cursor.Current "RETURNING wildcard cannot be mixed with columns or expressions"
             values
 
-    and private parseTableSource cursor =
+    and private parseTableSource (cursor: Cursor) =
         if isKeyword "LATERAL" cursor.Current then
             fail cursor.Current "LATERAL sources are not represented by the portable Core grammar"
         elif acceptSymbol '(' cursor then
@@ -1010,7 +1010,7 @@ module internal RewriteParser =
                     | _ -> None
             NamedTable(name, alias)
 
-    and private parseJoin cursor =
+    and private parseJoin (cursor: Cursor) =
         let requireJoinProof proof =
             match proof with
             | ProvenCapability -> ()
