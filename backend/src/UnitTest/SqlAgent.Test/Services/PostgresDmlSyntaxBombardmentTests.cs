@@ -72,6 +72,22 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "UPDATE users u SET name = 'Alice' WHERE u.id = 1",
             "aliases");
         yield return Reject(
+            "update-target-as-alias",
+            "UPDATE users AS u SET name = 'Alice' WHERE u.id = 1",
+            "aliases");
+        yield return Reject(
+            "delete-target-as-alias",
+            "DELETE FROM users AS u WHERE u.id = 1",
+            "aliases");
+        yield return Reject(
+            "qualified-update-assignment",
+            "UPDATE users SET users.name = 'Alice' WHERE id = 1",
+            "unqualified");
+        yield return Reject(
+            "duplicate-update-assignment",
+            "UPDATE users SET name = 'Alice', name = 'Bob' WHERE id = 1",
+            "more than once");
+        yield return Reject(
             "update-from-source-alias",
             "UPDATE users SET status = a.status FROM archived AS a WHERE users.id = a.id",
             "aliases");
