@@ -19,20 +19,26 @@ module internal RewriteParser =
 
     type SourceSemantics =
         { MySqlPipes: MySqlPipesSemantics
-          Joins: JoinProofs }
+          Joins: JoinProofs
+          Expressions: ExpressionProofs }
 
     module SourceSemantics =
         let private permissiveJoins =
             { RightJoin = ProvenCapability
               FullJoin = ProvenCapability }
 
+        let private permissiveExpressions =
+            { ILike = ProvenCapability }
+
         let defaultValue =
             { MySqlPipes = RejectAmbiguousPipes
-              Joins = permissiveJoins }
+              Joins = permissiveJoins
+              Expressions = permissiveExpressions }
 
         let mysqlPipesAsConcat =
             { MySqlPipes = PipesAsConcat
-              Joins = permissiveJoins }
+              Joins = permissiveJoins
+              Expressions = permissiveExpressions }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
@@ -47,9 +53,14 @@ module internal RewriteParser =
         member _.Dialect = dialect
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
         member _.SourceJoins = semantics.Joins
+        member _.SourceExpressions = semantics.Expressions
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
+
+    let private requireSourceCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> raise (SqlCompilationException(message))
 
     let private isKeyword keyword (token: Token) =
         match token.Kind with Keyword value -> value = keyword | _ -> false
@@ -180,7 +191,10 @@ module internal RewriteParser =
             | Operator ">=" -> cursor.Advance(); left <- Binary(BinaryOperator.GreaterThanOrEqual, left, parseConcat cursor)
             | Operator "<=" -> cursor.Advance(); left <- Binary(BinaryOperator.LessThanOrEqual, left, parseConcat cursor)
             | Keyword "LIKE" -> cursor.Advance(); left <- parseLikeTail cursor left false false
-            | Keyword "ILIKE" -> cursor.Advance(); left <- parseLikeTail cursor left false true
+            | Keyword "ILIKE" ->
+                requireSourceCapability cursor.SourceExpressions.ILike
+                cursor.Advance()
+                left <- parseLikeTail cursor left false true
             | Keyword "IS" ->
                 cursor.Advance()
                 let negated = acceptKeyword "NOT" cursor
@@ -191,7 +205,11 @@ module internal RewriteParser =
             | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseInTail cursor left true
             | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseBetweenTail cursor left true
             | Keyword "NOT" when isKeyword "LIKE" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseLikeTail cursor left true false
-            | Keyword "NOT" when isKeyword "ILIKE" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); left <- parseLikeTail cursor left true true
+            | Keyword "NOT" when isKeyword "ILIKE" (cursor.Peek 1) ->
+                requireSourceCapability cursor.SourceExpressions.ILike
+                cursor.Advance()
+                cursor.Advance()
+                left <- parseLikeTail cursor left true true
             | _ -> keepGoing <- false
         left
 

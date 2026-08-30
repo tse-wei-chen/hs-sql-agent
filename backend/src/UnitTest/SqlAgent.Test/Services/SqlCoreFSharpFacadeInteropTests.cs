@@ -830,6 +830,78 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextQuery_MySqlSourceIlike_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT name FROM users WHERE name ILIKE 'a%'";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-ilike-source-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.MySQL);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Postgres,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_NestedIlikeTargetProof_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT x.name FROM (SELECT name FROM users WHERE name ILIKE 'a%') AS x";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-ilike-nested-target-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.MySQL,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
     public void Facade_TextQuery_SqlServerConcatWithoutRuntimeProof_RemainsFailClosedLikeLegacy()
     {
         const string sql =

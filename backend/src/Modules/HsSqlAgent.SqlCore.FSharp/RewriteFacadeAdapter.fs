@@ -55,13 +55,38 @@ module internal RewriteFacadeAdapter =
             SqlJoinCapabilityRules.TargetValidationError("FULL", target, targetProfile)
             |> capabilityProof }
 
+    let private sourceExpressionProofs source : ExpressionProofs =
+        { ILike =
+            SqlIlikeCapabilityRules.SourceValidationError(source)
+            |> capabilityProof }
+
+    let private providerName = function
+        | SqlAgentToolType.Postgres -> "Postgres"
+        | SqlAgentToolType.MySQL -> "MySQL"
+        | SqlAgentToolType.MsSqlServer -> "MsSqlServer"
+        | SqlAgentToolType.Sqlite -> "Sqlite"
+        | SqlAgentToolType.Oracle -> "Oracle"
+        | SqlAgentToolType.Firebird -> "Firebird"
+        | value -> string value
+
+    let private targetExpressionProofs target : ExpressionProofs =
+        { ILike =
+            if SqlIlikeCapabilityRules.SupportsTarget(target) then
+                CapabilityProof.ProvenCapability
+            else
+                CapabilityProof.RejectedCapability(
+                    "SQL capability 'operator.ilike' is not supported by provider "
+                    + providerName target
+                    + " for this Core plan.") }
+
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { MySqlPipes =
             if SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(source, sourceProfile) then
                 RewriteParser.MySqlPipesSemantics.PipesAsConcat
             else
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
-          Joins = sourceJoinProofs source sourceProfile }
+          Joins = sourceJoinProofs source sourceProfile
+          Expressions = sourceExpressionProofs source }
 
     let private targetRuntime target (targetProfile: SqlProviderCapabilityProfile | null) =
         match target with
@@ -159,6 +184,7 @@ module internal RewriteFacadeAdapter =
                   SourceSemantics = sourceSemantics source sourceProfile
                   Provider = provider target
                   TargetRuntime = targetRuntime target targetProfile
+                  TargetExpressions = targetExpressionProofs target
                   TargetJoins = targetJoinProofs target targetProfile
                   ConflictProofs = conflictProofs conflictTargetAssurance
                   Policy = policy

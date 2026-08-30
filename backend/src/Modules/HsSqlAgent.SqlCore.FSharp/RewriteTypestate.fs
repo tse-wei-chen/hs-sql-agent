@@ -13,6 +13,9 @@ module internal Typestate =
         { RightJoin: CapabilityProof
           FullJoin: CapabilityProof }
 
+    type ExpressionProofs =
+        { ILike: CapabilityProof }
+
     type ColumnSetAssurance =
         | MissingAssurance
         | AssuredColumns of string list

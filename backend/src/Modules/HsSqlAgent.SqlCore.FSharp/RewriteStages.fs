@@ -279,101 +279,106 @@ module internal RewriteStages =
         | SqlServerRuntime(Unproven message) -> invalidOp message
         | _ -> ()
 
-    let rec private proveTargetExpr targetRuntime expression =
+    let private requireExpressionCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> invalidOp message
+
+    let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
         | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | Unary(_, operand) -> proveTargetExpr targetRuntime operand
+        | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
         | Binary(BinaryOperator.Concat, left, right) ->
             proveSqlServerConcat targetRuntime
-            proveTargetExpr targetRuntime left
-            proveTargetExpr targetRuntime right
+            proveTargetExpr targetRuntime expressionProofs left
+            proveTargetExpr targetRuntime expressionProofs right
         | Binary(_, left, right) ->
-            proveTargetExpr targetRuntime left
-            proveTargetExpr targetRuntime right
-        | Like(value, pattern, _, _, _) ->
-            proveTargetExpr targetRuntime value
-            proveTargetExpr targetRuntime pattern
+            proveTargetExpr targetRuntime expressionProofs left
+            proveTargetExpr targetRuntime expressionProofs right
+        | Like(value, pattern, _, _, caseInsensitive) ->
+            if caseInsensitive then requireExpressionCapability expressionProofs.ILike
+            proveTargetExpr targetRuntime expressionProofs value
+            proveTargetExpr targetRuntime expressionProofs pattern
         | FunctionCall call ->
-            call.Arguments |> List.iter (proveTargetExpr targetRuntime)
+            call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
         | FilteredAggregate(value, predicate) ->
-            proveTargetExpr targetRuntime value
-            proveTargetExpr targetRuntime predicate
+            proveTargetExpr targetRuntime expressionProofs value
+            proveTargetExpr targetRuntime expressionProofs predicate
         | Windowed(value, window) ->
-            proveTargetExpr targetRuntime value
-            window.PartitionBy |> List.iter (proveTargetExpr targetRuntime)
-            window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime order.Expression)
+            proveTargetExpr targetRuntime expressionProofs value
+            window.PartitionBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
+            window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
         | Cast(value, _) | Extract(_, value) ->
-            proveTargetExpr targetRuntime value
+            proveTargetExpr targetRuntime expressionProofs value
         | SimpleCase(input, branches, fallback) ->
-            proveTargetExpr targetRuntime input
+            proveTargetExpr targetRuntime expressionProofs input
             branches |> NonEmpty.iter (fun branch ->
-                proveTargetExpr targetRuntime branch.Match
-                proveTargetExpr targetRuntime branch.Result)
-            fallback |> Option.iter (proveTargetExpr targetRuntime)
+                proveTargetExpr targetRuntime expressionProofs branch.Match
+                proveTargetExpr targetRuntime expressionProofs branch.Result)
+            fallback |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
         | SearchedCase(branches, fallback) ->
             branches |> NonEmpty.iter (fun branch ->
-                proveTargetExpr targetRuntime branch.Condition
-                proveTargetExpr targetRuntime branch.Result)
-            fallback |> Option.iter (proveTargetExpr targetRuntime)
+                proveTargetExpr targetRuntime expressionProofs branch.Condition
+                proveTargetExpr targetRuntime expressionProofs branch.Result)
+            fallback |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
         | InList(value, items, _) ->
-            proveTargetExpr targetRuntime value
-            items |> NonEmpty.iter (proveTargetExpr targetRuntime)
+            proveTargetExpr targetRuntime expressionProofs value
+            items |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
         | InSubquery(value, query, _) ->
-            proveTargetExpr targetRuntime value
-            proveTargetQuery targetRuntime query
+            proveTargetExpr targetRuntime expressionProofs value
+            proveTargetQuery targetRuntime expressionProofs query
         | Between(value, lower, upper, _) ->
-            proveTargetExpr targetRuntime value
-            proveTargetExpr targetRuntime lower
-            proveTargetExpr targetRuntime upper
+            proveTargetExpr targetRuntime expressionProofs value
+            proveTargetExpr targetRuntime expressionProofs lower
+            proveTargetExpr targetRuntime expressionProofs upper
         | IsNull(value, _) ->
-            proveTargetExpr targetRuntime value
+            proveTargetExpr targetRuntime expressionProofs value
         | ScalarSubquery query ->
-            proveTargetQuery targetRuntime query
+            proveTargetQuery targetRuntime expressionProofs query
         | Exists(query, _) ->
-            proveTargetQuery targetRuntime query
+            proveTargetQuery targetRuntime expressionProofs query
 
-    and private proveTargetSource targetRuntime source =
+    and private proveTargetSource targetRuntime expressionProofs source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> proveTargetQuery targetRuntime query
+        | DerivedTable(query, _) -> proveTargetQuery targetRuntime expressionProofs query
 
-    and private proveTargetSelect targetRuntime select =
-        select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime cte.Query)
-        select.ProjectionItems |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
-        select.From |> Option.iter (proveTargetSource targetRuntime)
+    and private proveTargetSelect targetRuntime expressionProofs select =
+        select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
+        select.ProjectionItems |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+        select.From |> Option.iter (proveTargetSource targetRuntime expressionProofs)
         select.Joins
         |> List.iter (function
-            | CrossJoin source -> proveTargetSource targetRuntime source
+            | CrossJoin source -> proveTargetSource targetRuntime expressionProofs source
             | OnJoin(_, source, predicate) ->
-                proveTargetSource targetRuntime source
-                proveTargetExpr targetRuntime predicate)
-        select.Where |> Option.iter (proveTargetExpr targetRuntime)
-        select.GroupBy |> List.iter (proveTargetExpr targetRuntime)
-        select.Having |> Option.iter (proveTargetExpr targetRuntime)
+                proveTargetSource targetRuntime expressionProofs source
+                proveTargetExpr targetRuntime expressionProofs predicate)
+        select.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
+        select.GroupBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
+        select.Having |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
 
-    and private proveTargetQuery targetRuntime query =
-        proveTargetSelect targetRuntime query.Head
-        query.SetOperations |> List.iter (fun branch -> proveTargetQuery targetRuntime branch.Query)
-        query.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime order.Expression)
+    and private proveTargetQuery targetRuntime expressionProofs query =
+        proveTargetSelect targetRuntime expressionProofs query.Head
+        query.SetOperations |> List.iter (fun branch -> proveTargetQuery targetRuntime expressionProofs branch.Query)
+        query.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
 
-    let private proveTargetDocument targetRuntime document =
+    let private proveTargetDocument targetRuntime expressionProofs document =
         match document.Statement with
-        | QueryStatement query -> proveTargetQuery targetRuntime query
+        | QueryStatement query -> proveTargetQuery targetRuntime expressionProofs query
         | InsertStatement insert ->
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime))
-            | QuerySource query -> proveTargetQuery targetRuntime query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
+            | QuerySource query -> proveTargetQuery targetRuntime expressionProofs query
             | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
+            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
         | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime assignment.Value)
-            update.From |> List.iter (proveTargetSource targetRuntime)
-            update.Where |> Option.iter (proveTargetExpr targetRuntime)
-            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime expressionProofs assignment.Value)
+            update.From |> List.iter (proveTargetSource targetRuntime expressionProofs)
+            update.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
+            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
         | DeleteStatement delete ->
-            delete.Using |> List.iter (proveTargetSource targetRuntime)
-            delete.Where |> Option.iter (proveTargetExpr targetRuntime)
-            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
+            delete.Using |> List.iter (proveTargetSource targetRuntime expressionProofs)
+            delete.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
+            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
         document
 
     let private requireCapability = function
@@ -552,10 +557,10 @@ module internal RewriteStages =
                 | _ -> ()
         | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
 
-    let validate allowedTables targetRuntime targetJoins conflictProofs canonical =
+    let validate allowedTables targetRuntime targetExpressions targetJoins conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
             let validated = validateDocument allowedTables document
-            proveTargetDocument targetRuntime validated |> ignore
+            proveTargetDocument targetRuntime targetExpressions validated |> ignore
             proveTargetJoins targetJoins validated
             proveConflicts targetRuntime conflictProofs validated
             validated) canonical
