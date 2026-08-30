@@ -249,7 +249,7 @@ module internal RewriteCompatibilityAstAdapter =
         | Expr.InSubquery(value, query, negated) ->
             HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
                 exprOf value,
-                if negated then "NOT IN" else "IN",
+                (if negated then "NOT IN" else "IN"),
                 HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, unknown),
                 unknown)
 

@@ -67,7 +67,6 @@ public class CustomToolProxy(
 
         CustomSqlTool? tool = null;
         ParsedStatement? auditQuery = null;
-        QueryFacts? auditQueryFacts = null;
         ParsedStatement? auditDml = null;
         string renderedSql = string.Empty;
         try
@@ -117,7 +116,6 @@ public class CustomToolProxy(
             {
                 var parsedQuery = CoreSqlTextParser.ParseQuery(renderedSql, dbType);
                 auditQuery = parsedQuery;
-                auditQueryFacts = new SqlAstBinder().Bind(parsedQuery).Facts;
 
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
@@ -205,7 +203,7 @@ public class CustomToolProxy(
                     AffectedRows = isDml ? dmlAffectedRows : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
                     Definition = isQuery && auditQuery != null
-                        ? DescribeQuery(auditQuery, auditQueryFacts)
+                        ? DescribeQuery(auditQuery)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 $"Type: {tool.Type}",
@@ -247,15 +245,29 @@ public class CustomToolProxy(
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
         Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
-    private static string DescribeQuery(ParsedStatement parsed, QueryFacts? facts) =>
-        JsonSerializer.Serialize(new
+    private static string DescribeQuery(ParsedStatement parsed)
+    {
+        var containsCte = parsed.Statement switch
+        {
+            SelectStatement select => !select.Ctes.IsDefaultOrEmpty,
+            QueryStatement query => !query.Head.Ctes.IsDefaultOrEmpty,
+            _ => false
+        };
+        var containsSubquery = parsed.Statement switch
+        {
+            SelectStatement { From: DerivedTableSource } => true,
+            QueryStatement { Head.From: DerivedTableSource } => true,
+            _ => false
+        };
+        return JsonSerializer.Serialize(new
         {
             SourceDialect = parsed.SourceDialect.ToString(),
             Span = new { parsed.Statement.Span.Start, parsed.Statement.Span.End },
-            ReferencedTables = facts?.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray() ?? [],
-            facts?.ContainsCte,
-            facts?.ContainsSubquery
+            ReferencedTables = Array.Empty<string>(),
+            ContainsCte = containsCte,
+            ContainsSubquery = containsSubquery
         });
+    }
 
     private static string DescribeDml(ParsedStatement parsedDml)
     {
