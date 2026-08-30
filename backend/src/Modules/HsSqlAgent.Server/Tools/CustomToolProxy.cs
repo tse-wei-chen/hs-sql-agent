@@ -229,7 +229,7 @@ public class CustomToolProxy(
                     AffectedRows = dmlAffectedRows,
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQuery != null
-                        ? DescribeQuery(auditQuery, auditQueryFacts)
+                        ? DescribeQuery(auditQuery)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 ex.Message,
