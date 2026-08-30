@@ -137,16 +137,6 @@ public sealed class PostgresSyntaxBombardmentTests
             "COALESCE",
             "orders");
         yield return Case(
-            "left-function",
-            "SELECT LEFT(name, 2) FROM users",
-            "LEFT",
-            "users");
-        yield return Case(
-            "right-function",
-            "SELECT RIGHT(name, 2) FROM users",
-            "RIGHT",
-            "users");
-        yield return Case(
             "ilike",
             "SELECT id FROM users WHERE name ILIKE 'a%'",
             "ILIKE",
@@ -602,6 +592,12 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return ParserCase(
             "timestamp-keyword-function-form",
             "SELECT TIMESTAMP(created_at) FROM events");
+        yield return ParserCase(
+            "left-keyword-function-form",
+            "SELECT LEFT(name, 2) FROM users");
+        yield return ParserCase(
+            "right-keyword-function-form",
+            "SELECT RIGHT(name, 2) FROM users");
         yield return ParserCase(
             "legacy-complex-cte-cast-having",
             @"WITH SystemMax AS (
