@@ -412,6 +412,31 @@ public sealed class PostgresSyntaxBombardmentTests
             "date",
             "events");
         yield return Case(
+            "as-required-alias-returning",
+            "SELECT id AS returning FROM events",
+            "returning",
+            "events");
+        yield return Case(
+            "as-required-alias-into",
+            "SELECT id AS into FROM events",
+            "into",
+            "events");
+        yield return Case(
+            "as-reserved-alias-only",
+            "SELECT id AS only FROM events",
+            "only",
+            "events");
+        yield return Case(
+            "as-reserved-alias-default",
+            "SELECT id AS default FROM events",
+            "default",
+            "events");
+        yield return Case(
+            "as-keyword-alias-do",
+            "SELECT id AS do FROM events",
+            "do",
+            "events");
+        yield return Case(
             "contextual-table-alias-zone",
             "SELECT zone.id FROM events zone",
             "zone",
