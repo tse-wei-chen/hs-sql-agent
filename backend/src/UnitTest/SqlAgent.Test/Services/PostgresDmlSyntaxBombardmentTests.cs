@@ -86,7 +86,7 @@ public sealed class PostgresDmlSyntaxBombardmentTests
         yield return Reject(
             "postgres-on-duplicate-key",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON DUPLICATE KEY UPDATE name = name",
-            "ON CONFLICT");
+            "conflict target");
         yield return Reject(
             "qualified-returning-column",
             "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING users.id",
