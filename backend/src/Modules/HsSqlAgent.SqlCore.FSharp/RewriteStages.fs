@@ -1936,12 +1936,12 @@ module internal RewriteStages =
     let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
         let provider = targetProvider targetRuntime
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-        let contract = SqlCanonicalFunctionRegistry.Find(name)
-        if isNull contract then
+        match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+        | None ->
             if call.IsDistinct then
                 raise (SqlCompilationException(
                     "Function '" + name + "' has no Core DISTINCT capability declaration."))
-        else
+        | Some contract ->
             if not (contract.AcceptsArgumentCount(call.Arguments.Length)) then
                 let expected =
                     if contract.MinArguments = contract.MaxArguments then string contract.MinArguments
@@ -1969,25 +1969,30 @@ module internal RewriteStages =
                         match argument with
                         | Wildcard None ->
                             let message =
-                                if String.IsNullOrWhiteSpace(rule.ValidationMessage) then
+                                rule.ValidationMessage
+                                |> Option.ofObj
+                                |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                                |> Option.defaultValue (
                                     "Canonical function '" + contract.Name
-                                    + "' does not allow DISTINCT wildcard arguments."
-                                else rule.ValidationMessage
+                                    + "' does not allow DISTINCT wildcard arguments.")
                             raise (SqlCompilationException(message))
                         | _ -> ()
                 | SqlCanonicalPlanShapeValidationKind.LiteralStringRequired ->
                     match argument with
                     | Literal(ScalarValue.Text _) -> ()
                     | _ ->
-                        if String.IsNullOrWhiteSpace(rule.CapabilityId) then
+                        match rule.CapabilityId |> Option.ofObj |> Option.filter (String.IsNullOrWhiteSpace >> not) with
+                        | Some capability -> raise (targetCapabilityError provider capability)
+                        | None ->
                             let message =
-                                if String.IsNullOrWhiteSpace(rule.ValidationMessage) then
+                                rule.ValidationMessage
+                                |> Option.ofObj
+                                |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                                |> Option.defaultValue (
                                     "Canonical function '" + contract.Name
                                     + "' requires a literal string argument at position "
-                                    + string (rule.ArgumentIndex + 1) + "."
-                                else rule.ValidationMessage
+                                    + string (rule.ArgumentIndex + 1) + ".")
                             raise (SqlCompilationException(message))
-                        else raise (targetCapabilityError provider rule.CapabilityId)
                 | value ->
                     raise (SqlCompilationException(
                         "Unsupported canonical plan-shape rule '" + string value
@@ -2057,10 +2062,12 @@ module internal RewriteStages =
                     | SqlCanonicalLiteralArgumentValidationKind.PositiveInteger ->
                         if value <= 0L then
                             let message =
-                                if String.IsNullOrWhiteSpace(rule.ValidationMessage) then
+                                rule.ValidationMessage
+                                |> Option.ofObj
+                                |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                                |> Option.defaultValue (
                                     "Canonical function '" + contract.Name
-                                    + "' requires a positive integer argument."
-                                else rule.ValidationMessage
+                                    + "' requires a positive integer argument.")
                             raise (SqlCompilationException(message))
                     | SqlCanonicalLiteralArgumentValidationKind.WindowOffset ->
                         match SqlWindowCapabilityRules.LiteralOffsetValidationError(
@@ -2106,8 +2113,9 @@ module internal RewriteStages =
     let private validateFilterTarget = function
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            let contract = SqlCanonicalFunctionRegistry.Find(name)
-            if isNull contract || not contract.AllowFilter then
+            match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+            | Some contract when contract.AllowFilter -> ()
+            | _ ->
                 raise (SqlCompilationException(
                     "Function '" + name + "' does not support FILTER in the Core pipeline."))
         | _ ->
@@ -2121,10 +2129,12 @@ module internal RewriteStages =
                     "OVER must modify a directly modeled aggregate or window function."))
         | Some call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            let contract = SqlCanonicalFunctionRegistry.Find(name)
-            if isNull contract || not contract.AllowWindow then
-                raise (SqlCompilationException(
-                    "Function '" + name + "' does not support OVER in the Core pipeline."))
+            let contract =
+                match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+                | Some contract when contract.AllowWindow -> contract
+                | _ ->
+                    raise (SqlCompilationException(
+                        "Function '" + name + "' does not support OVER in the Core pipeline."))
             if call.IsDistinct then
                 raise (SqlCompilationException(
                     "DISTINCT window aggregate '" + name

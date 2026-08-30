@@ -50,12 +50,12 @@ module internal RewriteCastTypes =
     let private normalizeSpaces (value: string) =
         Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant()
 
-    let private parseInt value =
+    let private parseInt (value: string) =
         match Int32.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture) with
         | true, parsed -> parsed
         | _ -> fail ("CAST type argument '" + value + "' is outside the supported integer range.")
 
-    let private validateArguments kind precision scale name =
+    let private validateArguments (kind: CastKind) (precision: int option) (scale: int option) (name: string) =
         if scale.IsSome && precision.IsNone then
             fail ("CAST type '" + name + "' scale requires a precision.")
         match kind with
