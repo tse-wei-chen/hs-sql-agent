@@ -64,12 +64,6 @@ public interface ISqlExecutionPolicyRewriter
         SqlExecutionPlanPolicy policy);
 }
 
-public interface IProviderLowerer
-{
-    SqlAgentToolType Provider { get; }
-    CompiledSqlCommand Lower(ExecutableSqlPlan plan);
-}
-
 public interface ISqlCommandExecutor
 {
     Task<QueryExecutionResult> ExecuteQueryAsync(
