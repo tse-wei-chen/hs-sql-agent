@@ -10,9 +10,10 @@ module internal RewriteRenderer =
     type Provider = PostgreSql | MySql | SqlServer | SQLite | Oracle | Firebird
     type RenderedCommand = { Sql: string; Parameters: (obj | null) list; ReturnsRows: bool }
 
-    type private RenderContext(provider: Provider) =
+    type private RenderContext(provider: Provider, targetRuntime: TargetRuntime) =
         let parameters = ResizeArray<obj | null>()
         member _.Provider = provider
+        member _.TargetRuntime = targetRuntime
         member _.Bind(value: obj | null) =
             let index = parameters.Count
             parameters.Add(value)
@@ -130,10 +131,15 @@ module internal RewriteRenderer =
         | Expr.Binary(operator, left, right) ->
             let leftSql = renderExpr ctx left
             let rightSql = renderExpr ctx right
-            match operator, ctx.Provider with
-            | BinaryOperator.Modulo, Oracle -> "MOD(" + leftSql + ", " + rightSql + ")"
-            | BinaryOperator.Concat, MySql -> "CONCAT(" + leftSql + ", " + rightSql + ")"
-            | BinaryOperator.Concat, SqlServer -> "(" + leftSql + " + " + rightSql + ")"
+            match operator, ctx.Provider, ctx.TargetRuntime with
+            | BinaryOperator.Modulo, Oracle, _ -> "MOD(" + leftSql + ", " + rightSql + ")"
+            | BinaryOperator.Concat, MySql, _ -> "CONCAT(" + leftSql + ", " + rightSql + ")"
+            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven NativePipes) ->
+                "(" + leftSql + " || " + rightSql + ")"
+            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven PlusOperator) ->
+                "(" + leftSql + " + " + rightSql + ")"
+            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Unproven message) ->
+                invalidOp ("Validated SQL reached rendering without SQL Server concat proof: " + message)
             | _ -> "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
         | Expr.Like(value, pattern, escape, negated, caseInsensitive) ->
             if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp (capabilityError ctx.Provider "operator.ilike")
@@ -414,7 +420,8 @@ module internal RewriteRenderer =
         sql + renderReturning ctx delete.Returning
 
     let render provider executable : RenderedCommand =
-        let ctx = RenderContext(provider)
+        let targetRuntime = Executable.targetRuntime executable
+        let ctx = RenderContext(provider, targetRuntime)
         let document = Executable.value executable
         let sql, returnsRows =
             match document.Statement with

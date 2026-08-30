@@ -830,6 +830,135 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextQuery_SqlServerConcatWithoutRuntimeProof_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT first_name || last_name AS full_name FROM users";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-concat-proof-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.MsSqlServer,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MsSqlServer,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_SqlServer14ConcatProof_UsesPlusLikeLegacy()
+    {
+        const string sql =
+            "SELECT first_name || last_name AS full_name FROM users";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer,
+            ServerVersion: new Version(14, 0),
+            CompatibilityLevel: 140);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-concat-plus-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            sourceProfile);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.MsSqlServer,
+                validation,
+                policy,
+                targetProfile);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains(" + ", migrated.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain(" || ", migrated.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_SqlServer17ConcatProof_UsesNativePipesLikeLegacy()
+    {
+        const string sql =
+            "SELECT first_name || last_name AS full_name FROM users";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer,
+            ServerVersion: new Version(17, 0),
+            CompatibilityLevel: 170);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-sqlserver-concat-native-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            sourceProfile);
+
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.MsSqlServer,
+                validation,
+                policy,
+                targetProfile);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains(" || ", migrated.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Facade_FunctionalProviderProfileRewrite_MatchesLegacySqlServerConcat()
     {
         const string sql =

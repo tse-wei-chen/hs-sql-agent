@@ -11,6 +11,7 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
+open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 /// CLR boundary adapter. SQL text crosses into the closed F# DU exactly once here.
 module internal RewriteFacadeAdapter =
@@ -38,6 +39,27 @@ module internal RewriteFacadeAdapter =
             RewriteParser.SourceSemantics.mysqlPipesAsConcat
         else
             RewriteParser.SourceSemantics.defaultValue
+
+    let private targetRuntime target (targetProfile: SqlProviderCapabilityProfile | null) =
+        match target with
+        | SqlAgentToolType.Postgres -> TargetRuntime.PostgreSqlRuntime
+        | SqlAgentToolType.MySQL -> TargetRuntime.MySqlRuntime
+        | SqlAgentToolType.Sqlite -> TargetRuntime.SQLiteRuntime
+        | SqlAgentToolType.Oracle -> TargetRuntime.OracleRuntime
+        | SqlAgentToolType.Firebird -> TargetRuntime.FirebirdRuntime
+        | SqlAgentToolType.MsSqlServer ->
+            match SqlConcatCapabilityRules.EvaluateSqlServerTarget(targetProfile) with
+            | SqlServerConcatTargetMode.NativePipes ->
+                TargetRuntime.SqlServerRuntime(SqlServerConcatCapability.Proven SqlServerConcatLowering.NativePipes)
+            | SqlServerConcatTargetMode.PlusOperator ->
+                TargetRuntime.SqlServerRuntime(SqlServerConcatCapability.Proven SqlServerConcatLowering.PlusOperator)
+            | SqlServerConcatTargetMode.Rejected ->
+                TargetRuntime.SqlServerRuntime(
+                    SqlServerConcatCapability.Unproven(
+                        SqlConcatCapabilityRules.SqlServerTargetValidationError(targetProfile)))
+            | value ->
+                invalidOp ("Unsupported SQL Server concat target mode '" + string value + "'.")
+        | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
 
     let private parameters targetProvider (values: (obj | null) list) =
         let prefix = if targetProvider = SqlAgentToolType.Oracle then ":p" else "@p"
@@ -91,13 +113,14 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (SqlCompilationException(ex.Message, ex))
 
-    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) policyVersion policy allowed sql =
+    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let rendered =
             run
                 { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
                   SourceSemantics = sourceSemantics source sourceProfile
                   Provider = provider target
+                  TargetRuntime = targetRuntime target targetProfile
                   Policy = policy
                   AllowedTables = allowed }
                 sql
@@ -113,17 +136,17 @@ module internal RewriteFacadeAdapter =
         let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
         CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
 
-    let compileQueryValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
+    let compileQueryValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile targetProfile validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
-    let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) =
+    let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile targetProfile validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command

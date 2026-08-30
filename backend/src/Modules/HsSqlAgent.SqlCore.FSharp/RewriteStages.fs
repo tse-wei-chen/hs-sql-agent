@@ -272,4 +272,110 @@ module internal RewriteStages =
             validateReturning allowedTables delete.Returning
         document
 
-    let validate allowedTables canonical = Transition.validate (validateDocument allowedTables) canonical
+    let private proveSqlServerConcat targetRuntime =
+        match targetRuntime with
+        | SqlServerRuntime(Proven _) -> ()
+        | SqlServerRuntime(Unproven message) -> invalidOp message
+        | _ -> ()
+
+    let rec private proveTargetExpr targetRuntime expression =
+        match expression with
+        | Column _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | Unary(_, operand) -> proveTargetExpr targetRuntime operand
+        | Binary(BinaryOperator.Concat, left, right) ->
+            proveSqlServerConcat targetRuntime
+            proveTargetExpr targetRuntime left
+            proveTargetExpr targetRuntime right
+        | Binary(_, left, right) ->
+            proveTargetExpr targetRuntime left
+            proveTargetExpr targetRuntime right
+        | Like(value, pattern, _, _, _) ->
+            proveTargetExpr targetRuntime value
+            proveTargetExpr targetRuntime pattern
+        | FunctionCall call ->
+            call.Arguments |> List.iter (proveTargetExpr targetRuntime)
+        | FilteredAggregate(value, predicate) ->
+            proveTargetExpr targetRuntime value
+            proveTargetExpr targetRuntime predicate
+        | Windowed(value, window) ->
+            proveTargetExpr targetRuntime value
+            window.PartitionBy |> List.iter (proveTargetExpr targetRuntime)
+            window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime order.Expression)
+        | Cast(value, _) | Extract(_, value) ->
+            proveTargetExpr targetRuntime value
+        | SimpleCase(input, branches, fallback) ->
+            proveTargetExpr targetRuntime input
+            branches |> NonEmpty.iter (fun branch ->
+                proveTargetExpr targetRuntime branch.Match
+                proveTargetExpr targetRuntime branch.Result)
+            fallback |> Option.iter (proveTargetExpr targetRuntime)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                proveTargetExpr targetRuntime branch.Condition
+                proveTargetExpr targetRuntime branch.Result)
+            fallback |> Option.iter (proveTargetExpr targetRuntime)
+        | InList(value, items, _) ->
+            proveTargetExpr targetRuntime value
+            items |> NonEmpty.iter (proveTargetExpr targetRuntime)
+        | InSubquery(value, query, _) ->
+            proveTargetExpr targetRuntime value
+            proveTargetQuery targetRuntime query
+        | Between(value, lower, upper, _) ->
+            proveTargetExpr targetRuntime value
+            proveTargetExpr targetRuntime lower
+            proveTargetExpr targetRuntime upper
+        | IsNull(value, _) ->
+            proveTargetExpr targetRuntime value
+        | ScalarSubquery query ->
+            proveTargetQuery targetRuntime query
+        | Exists(query, _) ->
+            proveTargetQuery targetRuntime query
+
+    and private proveTargetSource targetRuntime source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) -> proveTargetQuery targetRuntime query
+
+    and private proveTargetSelect targetRuntime select =
+        select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime cte.Query)
+        select.ProjectionItems |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
+        select.From |> Option.iter (proveTargetSource targetRuntime)
+        select.Joins
+        |> List.iter (function
+            | CrossJoin source -> proveTargetSource targetRuntime source
+            | OnJoin(_, source, predicate) ->
+                proveTargetSource targetRuntime source
+                proveTargetExpr targetRuntime predicate)
+        select.Where |> Option.iter (proveTargetExpr targetRuntime)
+        select.GroupBy |> List.iter (proveTargetExpr targetRuntime)
+        select.Having |> Option.iter (proveTargetExpr targetRuntime)
+
+    and private proveTargetQuery targetRuntime query =
+        proveTargetSelect targetRuntime query.Head
+        query.SetOperations |> List.iter (fun branch -> proveTargetQuery targetRuntime branch.Query)
+        query.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime order.Expression)
+
+    let private proveTargetDocument targetRuntime document =
+        match document.Statement with
+        | QueryStatement query -> proveTargetQuery targetRuntime query
+        | InsertStatement insert ->
+            match insert.Input with
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime))
+            | QuerySource query -> proveTargetQuery targetRuntime query
+            | DefaultValues -> ()
+            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime assignment.Value)
+            update.From |> List.iter (proveTargetSource targetRuntime)
+            update.Where |> Option.iter (proveTargetExpr targetRuntime)
+            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (proveTargetSource targetRuntime)
+            delete.Where |> Option.iter (proveTargetExpr targetRuntime)
+            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime item.Expression)
+        document
+
+    let validate allowedTables targetRuntime canonical =
+        Transition.validate targetRuntime (fun document ->
+            let validated = validateDocument allowedTables document
+            proveTargetDocument targetRuntime validated) canonical
