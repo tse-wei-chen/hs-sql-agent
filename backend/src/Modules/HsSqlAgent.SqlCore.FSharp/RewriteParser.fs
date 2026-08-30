@@ -455,10 +455,10 @@ module internal RewriteParser =
             expectKeyword "ON" cursor
             OnJoin(kind, source, parseExpression cursor)
 
-    and private startsJoin cursor =
+    and private startsJoin (cursor: Cursor) =
         [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS" ] |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
 
-    and private parseCtes cursor =
+    and private parseCtes (cursor: Cursor) =
         if not (acceptKeyword "WITH" cursor) then []
         else
             if acceptKeyword "RECURSIVE" cursor then fail cursor.Current "WITH RECURSIVE is not supported by the portable compiler"
@@ -479,7 +479,7 @@ module internal RewriteParser =
             while acceptSymbol ',' cursor do ctes.Add(parseOne())
             ctes |> Seq.toList
 
-    and private parseSelectWithCtes cursor ctes =
+    and private parseSelectWithCtes (cursor: Cursor) (ctes: Cte list) =
         expectKeyword "SELECT" cursor
         let distinct = acceptKeyword "DISTINCT" cursor
         let mutable top = None
@@ -510,7 +510,7 @@ module internal RewriteParser =
           GroupBy = groupBy |> Seq.toList
           Having = having }, top
 
-    and private parseOrderItem cursor =
+    and private parseOrderItem (cursor: Cursor) =
         let expression =
             match cursor.Current.Kind, cursor.Peek 1 with
             | IntegerLiteral value, next when value > 0L && value <= int64 Int32.MaxValue && (isSymbol ',' next || isKeyword "ASC" next || isKeyword "DESC" next || isKeyword "NULLS" next || isKeyword "LIMIT" next || isKeyword "OFFSET" next || isKeyword "FETCH" next || match next.Kind with End | Symbol ')' -> true | _ -> false) ->
@@ -588,12 +588,12 @@ module internal RewriteParser =
         let limit = match top, tailLimit with Some value, None -> Some value | None, value -> value | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with a second row limit"
         { Head = head; SetOperations = branches |> Seq.toList; OrderBy = orderBy; Limit = limit; Offset = offset }
 
-    and private ensureUniqueInsertColumns cursor columns =
+    and private ensureUniqueInsertColumns (cursor: Cursor) (columns: IdentifierPart list) =
         let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
         for column in columns do
             if not (seen.Add column.Value) then fail cursor.Current ("Duplicate INSERT target column '" + column.Value + "'")
 
-    and private parseConflict cursor =
+    and private parseConflict (cursor: Cursor) =
         if not (acceptKeyword "ON" cursor) then None
         else
             expectKeyword "CONFLICT" cursor
@@ -608,7 +608,7 @@ module internal RewriteParser =
                 elif acceptKeyword "UPDATE" cursor then
                     expectKeyword "SET" cursor
                     let assignments = ResizeArray<ConflictAssignment>()
-                    let parseAssignment () =
+                    let parseAssignment () : ConflictAssignment =
                         let target = singlePartIdentifier (identifierPart cursor)
                         expectOperator "=" cursor
                         expectKeyword "EXCLUDED" cursor
@@ -621,7 +621,7 @@ module internal RewriteParser =
                 else fail cursor.Current "Expected NOTHING or UPDATE after ON CONFLICT DO"
             Some { TargetColumns = targets |> Seq.toList |> NonEmpty.ofList "conflict target"; Action = action }
 
-    and private parseInsert cursor =
+    and private parseInsert (cursor: Cursor) =
         expectKeyword "INSERT" cursor
         expectKeyword "INTO" cursor
         let target = identifier cursor
@@ -654,7 +654,7 @@ module internal RewriteParser =
             else None
         { Target = target; Columns = columns |> Seq.toList; Input = input; Conflict = conflict; Returning = parseReturning cursor }
 
-    and private parseFirebirdUpsert cursor =
+    and private parseFirebirdUpsert (cursor: Cursor) =
         expectKeyword "UPDATE" cursor
         expectKeyword "OR" cursor
         expectKeyword "INSERT" cursor

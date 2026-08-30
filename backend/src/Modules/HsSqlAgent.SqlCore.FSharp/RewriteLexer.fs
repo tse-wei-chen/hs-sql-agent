@@ -35,7 +35,7 @@ module internal RewriteLexer =
     let private isIdentifierPart c = Char.IsLetterOrDigit(c) || c = '_' || c = '$'
 
     let tokenize (sql: string) =
-        if isNull sql then nullArg "sql"
+        if Object.ReferenceEquals(sql, null) then nullArg "sql"
         let length = sql.Length
         let tokens = ResizeArray<Token>()
         let mutable i = 0

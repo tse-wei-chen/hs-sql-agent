@@ -266,7 +266,7 @@ module internal RewriteRenderer =
         query.Head.Where |> Option.iter (fun predicate -> baseSql <- baseSql + " WHERE " + renderExpr ctx predicate)
         if not query.Head.GroupBy.IsEmpty then baseSql <- baseSql + " GROUP BY " + (query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
         query.Head.Having |> Option.iter (fun predicate -> baseSql <- baseSql + " HAVING " + renderExpr ctx predicate)
-        let resolveOrder order =
+        let resolveOrder (order: OrderBy) =
             let index =
                 match order.Expression with
                 | OrderOrdinal ordinal -> PositiveRowCount.value ordinal - 1
@@ -366,8 +366,8 @@ module internal RewriteRenderer =
                 | DefaultValues -> " DEFAULT VALUES"
             "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + sourceSql + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
 
-    let private renderUpdate (ctx: RenderContext) update =
-        let assignments = update.Assignments |> List.map (fun assignment -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value) |> String.concat ", "
+    let private renderUpdate (ctx: RenderContext) (update: Update) =
+        let assignments = update.Assignments |> List.map (fun (assignment: Assignment) -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value) |> String.concat ", "
         let mutable sql = "UPDATE " + renderIdentifier ctx.Provider update.Target + " SET " + assignments
         if not update.From.IsEmpty then
             if ctx.Provider <> PostgreSql then invalidOp "UPDATE ... FROM is not supported by the target provider."
@@ -375,7 +375,7 @@ module internal RewriteRenderer =
         update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderExpr ctx predicate)
         sql + renderReturning ctx update.Returning
 
-    let private renderDelete (ctx: RenderContext) delete =
+    let private renderDelete (ctx: RenderContext) (delete: Delete) =
         let mutable sql = "DELETE FROM " + renderIdentifier ctx.Provider delete.Target
         if not delete.Using.IsEmpty then
             if ctx.Provider <> PostgreSql then invalidOp "DELETE ... USING is not supported by the target provider."

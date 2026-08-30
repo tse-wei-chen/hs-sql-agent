@@ -146,7 +146,7 @@ module internal CoreModel =
 
     module ExtractField =
         let private allowed = set [ "YEAR"; "MONTH"; "DAY"; "HOUR"; "MINUTE"; "SECOND"; "DOW"; "DOY"; "WEEK"; "QUARTER" ]
-        let create value =
+        let create (value: string) =
             let upper = value.ToUpperInvariant()
             if not (allowed.Contains upper) then invalidArg (nameof value) ("Unsupported EXTRACT field '" + value + "'.")
             ExtractField upper
