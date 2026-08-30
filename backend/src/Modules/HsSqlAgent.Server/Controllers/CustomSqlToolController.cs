@@ -228,7 +228,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 new SqlExecutionPlanPolicy(policy?.QueryMaxRows ?? 0));
             return null;
         }
-        catch (Exception ex) when (ex is SqlParseException or InvalidOperationException or JsonException or NotSupportedException)
+        catch (Exception ex) when (ex is SqlParseException or ArgumentException or InvalidOperationException or JsonException or NotSupportedException)
         {
             return new { error = "SQL template validation failed.", detail = ex.Message };
         }

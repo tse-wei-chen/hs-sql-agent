@@ -34,7 +34,6 @@ string[] expectedAssemblies =
 [
     "HsSqlAgent.Server",
     "HsSqlAgent.SqlCore",
-    "HsSqlAgent.SqlCore.Contracts",
     "FSharp.Core",
     "HsSqlAgent.Provider.Abstractions",
     "HsSqlAgent.Provider.PostgreSql",
