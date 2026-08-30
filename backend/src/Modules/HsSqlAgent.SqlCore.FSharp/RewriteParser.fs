@@ -1022,9 +1022,18 @@ module internal RewriteParser =
         else
             let kind =
                 if acceptKeyword "INNER" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Inner
-                elif acceptKeyword "LEFT" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Left
-                elif acceptKeyword "RIGHT" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Right
-                elif acceptKeyword "FULL" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Full
+                elif acceptKeyword "LEFT" cursor then
+                    acceptKeyword "OUTER" cursor |> ignore
+                    expectKeyword "JOIN" cursor
+                    OnJoinKind.Left
+                elif acceptKeyword "RIGHT" cursor then
+                    acceptKeyword "OUTER" cursor |> ignore
+                    expectKeyword "JOIN" cursor
+                    OnJoinKind.Right
+                elif acceptKeyword "FULL" cursor then
+                    acceptKeyword "OUTER" cursor |> ignore
+                    expectKeyword "JOIN" cursor
+                    OnJoinKind.Full
                 elif acceptKeyword "JOIN" cursor then OnJoinKind.Inner
                 else fail cursor.Current "Expected JOIN"
 
