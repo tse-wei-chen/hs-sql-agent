@@ -2,6 +2,11 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Collections.Generic
+open System.Text
+open System.Text.RegularExpressions
+open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
@@ -39,6 +44,17 @@ module internal RewriteRenderer =
         | SQLite -> "Sqlite"
         | Oracle -> "Oracle"
         | Firebird -> "Firebird"
+
+    let private providerTool = function
+        | PostgreSql -> SqlAgentToolType.Postgres
+        | MySql -> SqlAgentToolType.MySQL
+        | SqlServer -> SqlAgentToolType.MsSqlServer
+        | SQLite -> SqlAgentToolType.Sqlite
+        | Oracle -> SqlAgentToolType.Oracle
+        | Firebird -> SqlAgentToolType.Firebird
+
+    let private jsonPropertyPath =
+        Regex("^\\$\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.CultureInvariant)
     let private capabilityError provider capability =
         "SQL capability '" + capability + "' is not supported by provider " + providerName provider + " for this Core plan."
 
@@ -159,9 +175,7 @@ module internal RewriteRenderer =
             | MySql | Oracle | SqlServer -> "REGEXP_LIKE(" + valueSql + ", " + patternSql + ")"
             | SQLite | Firebird -> invalidOp (capabilityError ctx.Provider "function.regex_match")
         | Expr.FunctionCall call ->
-            let name = FunctionName.value call.Name
-            let args = call.Arguments |> List.map (renderExpr ctx) |> String.concat ", "
-            name + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
+            renderFunction ctx call
         | Expr.FilteredAggregate(value, predicate) ->
             match ctx.Provider with
             | PostgreSql | SQLite | Oracle | Firebird -> renderExpr ctx value + " FILTER (WHERE " + renderExpr ctx predicate + ")"
@@ -182,6 +196,242 @@ module internal RewriteRenderer =
         | Expr.IsNull(value, negated) -> "(" + renderExpr ctx value + (if negated then " IS NOT NULL)" else " IS NULL)")
         | Expr.ScalarSubquery query -> "(" + renderQuery ctx query + ")"
         | Expr.Exists(query, negated) -> (if negated then "NOT EXISTS (" else "EXISTS (") + renderQuery ctx query + ")"
+
+    and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
+        let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        let tool = providerTool ctx.Provider
+
+        let fail message = raise (SqlCompilationException(message))
+        let requireCount count =
+            if call.Arguments.Length <> count then
+                fail ("Canonical function '" + name + "' requires " + string count + " argument(s).")
+
+        let literalText label expression =
+            match expression with
+            | Literal(ScalarValue.Text value) -> value
+            | _ -> fail (label + " must be a string literal.")
+
+        let literalKeyword label expression =
+            let value = literalText label expression |> fun value -> value.Trim().ToUpperInvariant()
+            if not (Regex.IsMatch(value, "^[A-Z_]+$", RegexOptions.CultureInvariant)) then
+                fail ("Unsafe " + label + " '" + value + "'.")
+            value
+
+        let sqlStringLiteral expression label =
+            let value = literalText label expression
+            if ctx.Provider = MySql
+               && value |> Seq.exists (fun character -> character = '\\' || Char.IsControl(character)) then
+                "0x" + Convert.ToHexString(Encoding.UTF8.GetBytes(value))
+            else
+                "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'"
+
+        let renderOrdinary () =
+            if name.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
+                fail ("Canonical function '" + name + "' has no native lowering implementation; compilation was rejected.")
+            if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
+                fail ("Aggregate-local modifiers are not supported for ordinary function '" + name + "'.")
+            let rendered =
+                call.Arguments
+                |> List.mapi (fun index argument ->
+                    let sql = renderExpr ctx argument
+                    if ctx.Provider = PostgreSql && name = "ROUND" && call.Arguments.Length = 2 && index = 0 then
+                        "CAST(" + sql + " AS numeric)"
+                    else sql)
+            let args = String.concat ", " rendered
+            name + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
+
+        match name with
+        | "CORE_DATE_ADD" ->
+            requireCount 3
+            let unit = literalKeyword "DATEADD unit" call.Arguments[0]
+            match SqlDateMathCapabilityRules.TargetValidationError(unit, tool, "CORE_DATE_ADD") with
+            | null -> ()
+            | message -> fail message
+            let amount = renderExpr ctx call.Arguments[1]
+            let value = renderExpr ctx call.Arguments[2]
+            match ctx.Provider with
+            | SqlServer -> "DATEADD(" + unit + ", " + amount + ", " + value + ")"
+            | MySql -> "TIMESTAMPADD(" + unit + ", " + amount + ", " + value + ")"
+            | PostgreSql -> "(" + value + " + (" + amount + " * INTERVAL '1 day'))"
+            | Oracle -> "(" + value + " + " + amount + ")"
+            | SQLite -> "DATETIME(" + value + ", PRINTF('%+d day', " + amount + "))"
+            | Firebird -> "DATEADD(" + unit + ", " + amount + ", " + value + ")"
+
+        | "CORE_DATE_DIFF" ->
+            requireCount 3
+            let unit = literalKeyword "DATEDIFF unit" call.Arguments[0]
+            match SqlDateMathCapabilityRules.TargetValidationError(unit, tool, "CORE_DATE_DIFF") with
+            | null -> ()
+            | message -> fail message
+            let startValue = renderExpr ctx call.Arguments[1]
+            let finish = renderExpr ctx call.Arguments[2]
+            match ctx.Provider with
+            | SqlServer -> "DATEDIFF(" + unit + ", " + startValue + ", " + finish + ")"
+            | MySql -> "TIMESTAMPDIFF(" + unit + ", " + startValue + ", " + finish + ")"
+            | PostgreSql -> "(CAST(" + finish + " AS date) - CAST(" + startValue + " AS date))"
+            | Oracle -> "(CAST(" + finish + " AS DATE) - CAST(" + startValue + " AS DATE))"
+            | SQLite -> "(JULIANDAY(" + finish + ") - JULIANDAY(" + startValue + "))"
+            | Firebird -> "DATEDIFF(" + unit + " FROM " + startValue + " TO " + finish + ")"
+
+        | "CORE_DATE_PART" ->
+            requireCount 2
+            let part = literalKeyword "date part" call.Arguments[0]
+            match SqlDatePartCapabilityRules.TargetValidationError(part, tool) with
+            | null -> ()
+            | message -> fail message
+            let value = renderExpr ctx call.Arguments[1]
+            match ctx.Provider with
+            | SqlServer
+            | MySql -> part + "(" + value + ")"
+            | PostgreSql
+            | Oracle -> "EXTRACT(" + part + " FROM " + value + ")"
+            | Firebird -> "EXTRACT(" + part + " FROM CAST(" + value + " AS DATE))"
+            | SQLite ->
+                match part with
+                | "YEAR" -> "CAST(STRFTIME('%Y', " + value + ") AS INTEGER)"
+                | "MONTH" -> "CAST(STRFTIME('%m', " + value + ") AS INTEGER)"
+                | "DAY" -> "CAST(STRFTIME('%d', " + value + ") AS INTEGER)"
+                | _ -> fail ("SQLite does not support date part " + part + ".")
+
+        | "CORE_DATE_FORMAT" ->
+            requireCount 2
+            match SqlTemporalFormatCapabilityRules.TargetValidationError("CORE_DATE_FORMAT", tool) with
+            | null -> ()
+            | message -> fail message
+            let value = renderExpr ctx call.Arguments[0]
+            let formatValue = literalText "date format" call.Arguments[1]
+            let format = ctx.Bind(box formatValue)
+            match ctx.Provider with
+            | SqlServer -> "FORMAT(" + value + ", " + format + ")"
+            | PostgreSql
+            | Oracle -> "TO_CHAR(" + value + ", " + format + ")"
+            | MySql -> "DATE_FORMAT(" + value + ", " + format + ")"
+            | SQLite -> "STRFTIME(" + format + ", " + value + ")"
+            | Firebird -> fail "portable date formatting is not supported by Firebird."
+
+        | "CORE_DATE_PARSE" ->
+            requireCount 2
+            match SqlTemporalFormatCapabilityRules.TargetValidationError("CORE_DATE_PARSE", tool) with
+            | null -> ()
+            | message -> fail message
+            let value = renderExpr ctx call.Arguments[0]
+            let formatValue = literalText "date parse format" call.Arguments[1]
+            let format = ctx.Bind(box formatValue)
+            match ctx.Provider with
+            | MySql -> "DATE(STR_TO_DATE(" + value + ", " + format + "))"
+            | PostgreSql
+            | Oracle -> "TO_DATE(" + value + ", " + format + ")"
+            | _ -> fail "formatted date parsing is not supported by this provider."
+
+        | "CORE_POSITION" ->
+            requireCount 2
+            let haystack = renderExpr ctx call.Arguments[0]
+            let needle = renderExpr ctx call.Arguments[1]
+            match ctx.Provider with
+            | SqlServer -> "CHARINDEX(" + needle + ", " + haystack + ")"
+            | PostgreSql -> "STRPOS(" + haystack + ", " + needle + ")"
+            | MySql -> "LOCATE(" + needle + ", " + haystack + ")"
+            | SQLite
+            | Oracle -> "INSTR(" + haystack + ", " + needle + ")"
+            | Firebird -> "POSITION(" + needle + ", " + haystack + ")"
+
+        | "CORE_JSON_EXTRACT"
+        | "CORE_JSON_SET" as canonical ->
+            let expected = if canonical = "CORE_JSON_EXTRACT" then 2 else 3
+            requireCount expected
+            match SqlJsonCapabilityRules.TargetValidationError(canonical, tool) with
+            | null -> ()
+            | message -> fail message
+            let path = literalText canonical call.Arguments[1]
+            if not (jsonPropertyPath.IsMatch(path)) then
+                fail (
+                    "JSON path '" + path + "' is outside the portable Core property-chain subset. "
+                    + "Only paths such as '$.user.name' are supported; root-only paths, array indexes, wildcards, filters, "
+                    + "quoted property names, and recursive descent fail closed. SQL capability 'json.path.property_chain' "
+                    + "is not supported by provider " + string tool + " for this Core plan.")
+            let value = renderExpr ctx call.Arguments[0]
+            let pathExpr () = renderExpr ctx call.Arguments[1]
+            if canonical = "CORE_JSON_EXTRACT" then
+                match ctx.Provider with
+                | MySql
+                | SQLite ->
+                    "JSON_EXTRACT(" + value + ", " + pathExpr () + ")"
+                | PostgreSql ->
+                    let placeholders =
+                        path.Substring(2).Split('.', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)
+                        |> Array.map (fun segment -> ctx.Bind(box segment))
+                        |> String.concat ", "
+                    "JSONB_EXTRACT_PATH(CAST(" + value + " AS jsonb), " + placeholders + ")"
+                | _ -> fail "JSON_EXTRACT is not supported losslessly by this provider."
+            else
+                let newValue =
+                    match ctx.Provider with
+                    | PostgreSql ->
+                        let pgPath =
+                            "{" + String.concat "," (path.Substring(2).Split('.', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)) + "}"
+                        let pgPathPlaceholder = ctx.Bind(box pgPath)
+                        let rendered = renderExpr ctx call.Arguments[2]
+                        "JSONB_SET(CAST(" + value + " AS jsonb), CAST(" + pgPathPlaceholder + " AS text[]), TO_JSONB(" + rendered + "))"
+                    | MySql
+                    | SQLite ->
+                        let pathSql = pathExpr ()
+                        let rendered = renderExpr ctx call.Arguments[2]
+                        "JSON_SET(" + value + ", " + pathSql + ", " + rendered + ")"
+                    | SqlServer ->
+                        let pathSql = pathExpr ()
+                        let rendered = renderExpr ctx call.Arguments[2]
+                        "JSON_MODIFY(" + value + ", " + pathSql + ", " + rendered + ")"
+                    | _ -> fail "JSON_SET is not supported by this provider."
+                newValue
+
+        | "CORE_CURRENT_DATE" ->
+            requireCount 0
+            if call.IsDistinct then fail "Canonical current temporal function 'CORE_CURRENT_DATE' cannot be DISTINCT."
+            if ctx.Provider = SqlServer then "CAST(CURRENT_TIMESTAMP AS date)" else "CURRENT_DATE"
+
+        | "CORE_CURRENT_TIME" ->
+            requireCount 0
+            if call.IsDistinct then fail "Canonical current temporal function 'CORE_CURRENT_TIME' cannot be DISTINCT."
+            if ctx.Provider = Oracle then fail "CURRENT_TIME is not supported by Oracle."
+            elif ctx.Provider = SqlServer then "CAST(CURRENT_TIMESTAMP AS time)"
+            else "CURRENT_TIME"
+
+        | "CORE_CURRENT_TIMESTAMP" ->
+            requireCount 0
+            if call.IsDistinct then fail "Canonical current temporal function 'CORE_CURRENT_TIMESTAMP' cannot be DISTINCT."
+            "CURRENT_TIMESTAMP"
+
+        | "CORE_STRING_AGG" ->
+            requireCount 2
+            if call.IsDistinct then fail "Canonical CORE_STRING_AGG DISTINCT semantics are not enabled."
+            let value = renderExpr ctx call.Arguments[0]
+            let separator =
+                if ctx.Provider = PostgreSql then
+                    ctx.Bind(box (literalText "string aggregate separator" call.Arguments[1]))
+                else
+                    sqlStringLiteral call.Arguments[1] "string aggregate separator"
+            let ordering =
+                if call.AggregateOrderBy.IsEmpty then None
+                else
+                    call.AggregateOrderBy
+                    |> List.collect (renderOrderBy ctx false)
+                    |> String.concat ", "
+                    |> fun sql -> Some("ORDER BY " + sql)
+            match ordering, ctx.Provider with
+            | Some order, PostgreSql -> "STRING_AGG(" + value + ", " + separator + " " + order + ")"
+            | Some order, SQLite -> "GROUP_CONCAT(" + value + ", " + separator + " " + order + ")"
+            | Some order, SqlServer -> "STRING_AGG(" + value + ", " + separator + ") WITHIN GROUP (" + order + ")"
+            | Some order, Oracle -> "LISTAGG(" + value + ", " + separator + ") WITHIN GROUP (" + order + ")"
+            | Some order, MySql -> "GROUP_CONCAT(" + value + " " + order + " SEPARATOR " + separator + ")"
+            | Some _, Firebird -> fail "Aggregate-local ORDER BY lowering is not supported by Firebird."
+            | None, SqlServer
+            | None, PostgreSql -> "STRING_AGG(" + value + ", " + separator + ")"
+            | None, MySql -> "GROUP_CONCAT(" + value + " SEPARATOR " + separator + ")"
+            | None, SQLite -> "GROUP_CONCAT(" + value + ", " + separator + ")"
+            | None, Oracle -> "LISTAGG(" + value + ", " + separator + ")"
+            | None, Firebird -> "LIST(" + value + ", " + separator + ")"
+
+        | _ -> renderOrdinary ()
 
     and private renderWindow (ctx: RenderContext) window =
         let parts = ResizeArray<string>()

@@ -206,7 +206,15 @@ module internal CoreModel =
     and FunctionCall =
         { Name: FunctionName
           Arguments: Expr list
-          IsDistinct: bool }
+          IsDistinct: bool
+          AggregateOrderBy: OrderBy list
+          AggregateOrderSyntax: AggregateOrderSyntax
+          AggregateSeparator: string option }
+
+    and AggregateOrderSyntax =
+        | NoAggregateOrder
+        | InlineAggregateOrder
+        | WithinGroupAggregateOrder
 
     and SimpleCaseBranch = { Match: Expr; Result: Expr }
     and SearchedCaseBranch = { Condition: Expr; Result: Expr }
@@ -362,7 +370,10 @@ module internal CoreModel =
             | FunctionCall leftCall, FunctionCall rightCall ->
                 leftCall.Name = rightCall.Name
                 && leftCall.IsDistinct = rightCall.IsDistinct
+                && leftCall.AggregateOrderSyntax = rightCall.AggregateOrderSyntax
+                && leftCall.AggregateSeparator = rightCall.AggregateSeparator
                 && listEquivalent equivalent leftCall.Arguments rightCall.Arguments
+                && listEquivalent orderEquivalent leftCall.AggregateOrderBy rightCall.AggregateOrderBy
             | FilteredAggregate(leftValue, leftPredicate), FilteredAggregate(rightValue, rightPredicate) ->
                 equivalent leftValue rightValue && equivalent leftPredicate rightPredicate
             | Windowed(leftValue, leftWindow), Windowed(rightValue, rightWindow) ->

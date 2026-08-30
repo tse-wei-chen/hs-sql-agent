@@ -488,7 +488,14 @@ module internal RewriteParser =
                     | [ part ] -> part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
                     | _ -> false
             if isRawRegex then RawRegexCall(values, distinct)
-            else FunctionCall { Name = functionName name; Arguments = values; IsDistinct = distinct }
+            else
+                FunctionCall
+                    { Name = functionName name
+                      Arguments = values
+                      IsDistinct = distinct
+                      AggregateOrderBy = []
+                      AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                      AggregateSeparator = None }
         else Column name
 
     and private parsePrimary cursor =

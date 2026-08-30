@@ -149,6 +149,12 @@ module internal RewriteLegacyAstAdapter =
         | HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind.Last -> NullOrdering.NullsLast
         | value -> raise (SqlCompilationException("Unsupported NULL ordering '" + string value + "'."))
 
+    let private aggregateOrderSyntax = function
+        | HsSqlAgent.SqlCore.Core.Ast.AggregateOrderSyntaxKind.None -> AggregateOrderSyntax.NoAggregateOrder
+        | HsSqlAgent.SqlCore.Core.Ast.AggregateOrderSyntaxKind.Inline -> AggregateOrderSyntax.InlineAggregateOrder
+        | HsSqlAgent.SqlCore.Core.Ast.AggregateOrderSyntaxKind.WithinGroup -> AggregateOrderSyntax.WithinGroupAggregateOrder
+        | value -> raise (SqlCompilationException("Unsupported aggregate ORDER BY syntax '" + string value + "'."))
+
     let private frameBound (bound: HsSqlAgent.SqlCore.Core.Ast.WindowFrameBoundCore) =
         let offset () =
             if not bound.Offset.HasValue then
@@ -209,9 +215,6 @@ module internal RewriteLegacyAstAdapter =
             | _ -> failClosed ("binary operator '" + binary.Operator + "'") binary
 
         | :? HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr as functionCall ->
-            if not functionCall.AggregateOrderBy.IsDefaultOrEmpty
-               || not (isNull functionCall.AggregateSeparatorClause) then
-                failClosed "aggregate-local ordering/separator function" functionCall
             let arguments = functionCall.Arguments |> Seq.map exprOf |> Seq.toList
             let name = identifierText functionCall.Name
             if name.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase) then
@@ -220,7 +223,10 @@ module internal RewriteLegacyAstAdapter =
                 FunctionCall
                     { Name = FunctionName.create name
                       Arguments = arguments
-                      IsDistinct = functionCall.IsDistinct }
+                      IsDistinct = functionCall.IsDistinct
+                      AggregateOrderBy = functionCall.AggregateOrderBy |> Seq.map orderByOf |> Seq.toList
+                      AggregateOrderSyntax = aggregateOrderSyntax functionCall.AggregateOrderSyntax
+                      AggregateSeparator = Option.ofObj functionCall.AggregateSeparatorClause }
 
         | :? HsSqlAgent.SqlCore.Core.Ast.FilterExpr as filter ->
             FilteredAggregate(exprOf filter.Expression, exprOf filter.Predicate)

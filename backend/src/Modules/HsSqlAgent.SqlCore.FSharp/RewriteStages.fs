@@ -3,10 +3,38 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open System.Collections.Generic
 open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
+open HsSqlAgent.SqlCore.SqlTranslation.DateFormats
+open HsSqlAgent.SqlCore.SqlTranslation.Functions
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 module internal RewriteStages =
+
+    let private functionRegistry : IFunctionRegistry =
+        FunctionRegistry(FunctionDefinitionLoader.LoadEmbedded()) :> IFunctionRegistry
+
+    let private dateFormats = DateFormatTranslator()
+
+    let private sourceProvider = function
+        | RewriteParser.SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
+        | RewriteParser.SourceDialect.MySql -> SqlAgentToolType.MySQL
+        | RewriteParser.SourceDialect.SqlServer -> SqlAgentToolType.MsSqlServer
+        | RewriteParser.SourceDialect.SQLite -> SqlAgentToolType.Sqlite
+        | RewriteParser.SourceDialect.Oracle -> SqlAgentToolType.Oracle
+        | RewriteParser.SourceDialect.Firebird -> SqlAgentToolType.Firebird
+
+    let private targetProvider = function
+        | TargetRuntime.PostgreSqlRuntime -> SqlAgentToolType.Postgres
+        | TargetRuntime.MySqlRuntime -> SqlAgentToolType.MySQL
+        | TargetRuntime.SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
+        | TargetRuntime.SQLiteRuntime -> SqlAgentToolType.Sqlite
+        | TargetRuntime.OracleRuntime -> SqlAgentToolType.Oracle
+        | TargetRuntime.FirebirdRuntime -> SqlAgentToolType.Firebird
+
+    let private compilationError message =
+        raise (SqlCompilationException(message))
 
     let private requireSourceRegexCapability = function
         | ProvenCapability -> ()
@@ -105,57 +133,360 @@ module internal RewriteStages =
             delete.Where |> Option.iter (verifySourceRegexExpr regexProof)
             delete.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
 
-    let rec private normalizeExpr expression =
+    let private emptyFunction name arguments =
+        { FunctionCall.Name = FunctionName.create name
+          Arguments = arguments
+          IsDistinct = false
+          AggregateOrderBy = []
+          AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+          AggregateSeparator = None }
+
+    let private textLiteral label = function
+        | Literal(ScalarValue.Text value) -> value
+        | _ -> compilationError (label + " must be a string literal.")
+
+    let private keywordValue label = function
+        | Column identifier
+        | BoundColumn(identifier, _) ->
+            let parts = Identifier.parts identifier
+            if parts.Length <> 1 then compilationError (label + " must be an unquoted SQL keyword.")
+            parts.Head.Value
+        | Literal(ScalarValue.Text value) -> value
+        | _ -> compilationError (label + " must be an unquoted SQL keyword.")
+
+    let private dateOnlyOperand target expression =
+        match target with
+        | SqlAgentToolType.Oracle ->
+            FunctionCall(emptyFunction "TRUNC" [ Cast(expression, CastType.create "DATE") ])
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.Sqlite ->
+            FunctionCall(emptyFunction "DATE" [ expression ])
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MsSqlServer
+        | SqlAgentToolType.Firebird ->
+            Cast(expression, CastType.create "DATE")
+        | value ->
+            compilationError ("Unsupported target provider '" + string value + "' for portable DATEDIFF DAY normalization.")
+
+    let private canonicalCall (call: FunctionCall) name arguments =
+        FunctionCall
+            { call with
+                Name = FunctionName.create name
+                Arguments = arguments
+                AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                AggregateSeparator = None }
+
+    let rec private normalizeExpr source target expression =
         match expression with
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
-        | Unary(Positive, operand) -> normalizeExpr operand
-        | Unary(op, operand) -> Unary(op, normalizeExpr operand)
-        | Binary(op, left, right) -> Binary(op, normalizeExpr left, normalizeExpr right)
-        | Like(value, pattern, escape, negated, insensitive) -> Like(normalizeExpr value, normalizeExpr pattern, escape, negated, insensitive)
+        | Unary(Positive, operand) -> normalizeExpr source target operand
+        | Unary(op, operand) -> Unary(op, normalizeExpr source target operand)
+        | Binary(op, left, right) -> Binary(op, normalizeExpr source target left, normalizeExpr source target right)
+        | Like(value, pattern, escape, negated, insensitive) ->
+            Like(normalizeExpr source target value, normalizeExpr source target pattern, escape, negated, insensitive)
         | RawRegexCall(arguments, _) ->
-            let normalized = arguments |> List.map normalizeExpr
+            let normalized = arguments |> List.map (normalizeExpr source target)
             match normalized with
             | [ value; pattern ] -> RegexMatch(value, pattern)
             | values ->
-                raise (SqlCompilationException(
+                compilationError (
                     "Function 'CORE_REGEX_MATCH' requires 2 argument(s); received "
                     + string values.Length
-                    + "."))
+                    + ".")
         | RegexMatch(value, pattern) ->
-            RegexMatch(normalizeExpr value, normalizeExpr pattern)
-        | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map normalizeExpr }
-        | FilteredAggregate(value, predicate) -> FilteredAggregate(normalizeExpr value, normalizeExpr predicate)
-        | Windowed(value, window) -> Windowed(normalizeExpr value, normalizeWindow window)
-        | Cast(value, targetType) -> Cast(normalizeExpr value, targetType)
-        | Extract(field, value) -> Extract(field, normalizeExpr value)
+            RegexMatch(normalizeExpr source target value, normalizeExpr source target pattern)
+        | FunctionCall call ->
+            normalizeFunction source target call
+        | FilteredAggregate(value, predicate) ->
+            FilteredAggregate(normalizeExpr source target value, normalizeExpr source target predicate)
+        | Windowed(value, window) ->
+            Windowed(normalizeExpr source target value, normalizeWindow source target window)
+        | Cast(value, targetType) -> Cast(normalizeExpr source target value, targetType)
+        | Extract(field, value) -> Extract(field, normalizeExpr source target value)
         | SimpleCase(input, branches, fallback) ->
-            SimpleCase(normalizeExpr input, branches |> NonEmpty.map (fun (branch: SimpleCaseBranch) -> { Match = normalizeExpr branch.Match; Result = normalizeExpr branch.Result }), fallback |> Option.map normalizeExpr)
+            SimpleCase(
+                normalizeExpr source target input,
+                branches
+                |> NonEmpty.map (fun (branch: SimpleCaseBranch) ->
+                    { Match = normalizeExpr source target branch.Match
+                      Result = normalizeExpr source target branch.Result }),
+                fallback |> Option.map (normalizeExpr source target))
         | SearchedCase(branches, fallback) ->
-            SearchedCase(branches |> NonEmpty.map (fun (branch: SearchedCaseBranch) -> { Condition = normalizeExpr branch.Condition; Result = normalizeExpr branch.Result }), fallback |> Option.map normalizeExpr)
-        | InList(value, items, negated) -> InList(normalizeExpr value, items |> NonEmpty.map normalizeExpr, negated)
-        | InSubquery(value, query, negated) -> InSubquery(normalizeExpr value, normalizeQuery query, negated)
-        | Between(value, lower, upper, negated) -> Between(normalizeExpr value, normalizeExpr lower, normalizeExpr upper, negated)
-        | IsNull(value, negated) -> IsNull(normalizeExpr value, negated)
-        | ScalarSubquery query -> ScalarSubquery(normalizeQuery query)
-        | Exists(query, negated) -> Exists(normalizeQuery query, negated)
+            SearchedCase(
+                branches
+                |> NonEmpty.map (fun (branch: SearchedCaseBranch) ->
+                    { Condition = normalizeExpr source target branch.Condition
+                      Result = normalizeExpr source target branch.Result }),
+                fallback |> Option.map (normalizeExpr source target))
+        | InList(value, items, negated) ->
+            InList(
+                normalizeExpr source target value,
+                items |> NonEmpty.map (normalizeExpr source target),
+                negated)
+        | InSubquery(value, query, negated) ->
+            InSubquery(
+                normalizeExpr source target value,
+                normalizeQuery source target query,
+                negated)
+        | Between(value, lower, upper, negated) ->
+            Between(
+                normalizeExpr source target value,
+                normalizeExpr source target lower,
+                normalizeExpr source target upper,
+                negated)
+        | IsNull(value, negated) -> IsNull(normalizeExpr source target value, negated)
+        | ScalarSubquery query -> ScalarSubquery(normalizeQuery source target query)
+        | Exists(query, negated) -> Exists(normalizeQuery source target query, negated)
 
-    and private normalizeWindow (window: WindowSpec) =
-        { window with PartitionBy = window.PartitionBy |> List.map normalizeExpr; OrderBy = window.OrderBy |> List.map normalizeOrderBy }
+    and private normalizeFunction source target (call: FunctionCall) =
+        let sourceTool = sourceProvider source
+        let targetTool = targetProvider target
+        let arguments = call.Arguments |> List.map (normalizeExpr source target)
+        let orderBy = call.AggregateOrderBy |> List.map (normalizeOrderBy source target)
+        let call = { call with Arguments = arguments; AggregateOrderBy = orderBy }
+        let sourceName = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
 
-    and private normalizeOrderBy (orderBy: OrderBy) = { orderBy with Expression = normalizeExpr orderBy.Expression }
+        let sourceContract = SqlSourceFunctionRegistry.Find(sourceName)
+        if not (isNull sourceContract) then
+            match sourceContract.ValidationError(sourceTool, arguments.Length) with
+            | null -> ()
+            | message -> compilationError message
 
-    and private normalizeSource (source: TableSource) =
+        let currentKind =
+            match sourceName with
+            | "CURRENT_DATE" -> Some SqlCurrentTemporalKind.Date
+            | "CURRENT_TIME" -> Some SqlCurrentTemporalKind.Time
+            | "CURRENT_TIMESTAMP" -> Some SqlCurrentTemporalKind.Timestamp
+            | _ -> None
+
+        match currentKind with
+        | Some kind ->
+            match SqlCurrentTemporalCapabilityRules.SourceValidationError(kind, sourceTool) with
+            | null ->
+                let canonical =
+                    match kind with
+                    | SqlCurrentTemporalKind.Date -> "CORE_CURRENT_DATE"
+                    | SqlCurrentTemporalKind.Time -> "CORE_CURRENT_TIME"
+                    | SqlCurrentTemporalKind.Timestamp -> "CORE_CURRENT_TIMESTAMP"
+                    | value -> compilationError ("Unsupported current temporal kind '" + string value + "'.")
+                if not arguments.IsEmpty then
+                    compilationError (sourceName + " does not accept arguments.")
+                canonicalCall call canonical []
+            | message -> compilationError message
+        | None when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) ->
+            if arguments.Length <> 1 then
+                compilationError (sourceName + " requires exactly 1 argument.")
+            canonicalCall call "CORE_DATE_PART" [ Literal(ScalarValue.Text sourceName); arguments.Head ]
+        | None when not (isNull sourceContract) ->
+            match sourceContract.CanonicalizationKind with
+            | SqlSourceFunctionCanonicalizationKind.DateAdd ->
+                if arguments.Length <> 3 then compilationError "DATEADD requires exactly 3 arguments."
+                let unit =
+                    keywordValue "DATEADD date-part unit" arguments[0]
+                    |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEADD")
+                canonicalCall call "CORE_DATE_ADD" [ Literal(ScalarValue.Text unit); arguments[1]; arguments[2] ]
+
+            | SqlSourceFunctionCanonicalizationKind.DateDiff ->
+                let portableDay startValue endValue =
+                    let canonical =
+                        canonicalCall
+                            call
+                            "CORE_DATE_DIFF"
+                            [ Literal(ScalarValue.Text "DAY")
+                              dateOnlyOperand targetTool startValue
+                              dateOnlyOperand targetTool endValue ]
+                    if targetTool = SqlAgentToolType.Sqlite then
+                        Cast(canonical, CastType.create "INTEGER")
+                    else canonical
+                match arguments with
+                | [ finish; startValue ] ->
+                    portableDay startValue finish
+                | [ unitExpr; startValue; finish ] ->
+                    let unit =
+                        keywordValue "DATEDIFF date-part unit" unitExpr
+                        |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEDIFF")
+                    if (sourceTool = SqlAgentToolType.MsSqlServer || sourceTool = SqlAgentToolType.Firebird)
+                       && sourceTool = targetTool then
+                        canonicalCall call "CORE_DATE_DIFF" [ Literal(ScalarValue.Text unit); startValue; finish ]
+                    elif unit <> "DAY" then
+                        compilationError (
+                            "Cross-dialect DATEDIFF unit '" + unit + "' from " + string sourceTool + " to " + string targetTool
+                            + " is not translated: SQL capability 'core_date_diff.unit." + unit.ToLowerInvariant()
+                            + "' is not modeled losslessly. DAY is the currently modeled portable intersection.")
+                    else
+                        portableDay startValue finish
+                | values ->
+                    compilationError (
+                        "DATEDIFF requires either the portable 2-argument (end, start) shape or the "
+                        + "3-argument (unit, start, end) shape; received " + string values.Length + " arguments.")
+
+            | SqlSourceFunctionCanonicalizationKind.DateFormat ->
+                if arguments.Length <> 2 then compilationError "DATE_FORMAT/FORMAT requires exactly 2 arguments."
+                let rawFormat = textLiteral "DATE_FORMAT format" arguments[1]
+                let translated =
+                    try dateFormats.Translate(rawFormat, sourceTool, targetTool)
+                    with
+                    | :? FormatException as ex ->
+                        raise (SqlCompilationException(
+                            "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                            ex))
+                    | :? NotSupportedException as ex ->
+                        raise (SqlCompilationException(
+                            "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                            ex))
+                canonicalCall call "CORE_DATE_FORMAT" [ arguments[0]; Literal(ScalarValue.Text translated) ]
+
+            | SqlSourceFunctionCanonicalizationKind.DateParse ->
+                if arguments.Length <> 2 then compilationError "TO_DATE requires exactly 2 arguments."
+                let rawFormat = textLiteral "TO_DATE format" arguments[1]
+                let translated =
+                    try dateFormats.Translate(rawFormat, sourceTool, targetTool)
+                    with
+                    | :? FormatException as ex ->
+                        raise (SqlCompilationException(
+                            "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                            ex))
+                    | :? NotSupportedException as ex ->
+                        raise (SqlCompilationException(
+                            "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                            ex))
+                canonicalCall call "CORE_DATE_PARSE" [ arguments[0]; Literal(ScalarValue.Text translated) ]
+
+            | SqlSourceFunctionCanonicalizationKind.Position ->
+                if arguments.Length <> 2 then compilationError (sourceName + " requires exactly 2 arguments.")
+                let canonicalArguments =
+                    if sourceName = "STRPOS" || sourceName = "INSTR" then
+                        [ arguments[0]; arguments[1] ]
+                    else
+                        [ arguments[1]; arguments[0] ]
+                canonicalCall call "CORE_POSITION" canonicalArguments
+
+            | SqlSourceFunctionCanonicalizationKind.JsonExtract ->
+                if arguments.Length <> 2 then compilationError "JSON_EXTRACT requires exactly 2 arguments."
+                canonicalCall call "CORE_JSON_EXTRACT" arguments
+
+            | SqlSourceFunctionCanonicalizationKind.JsonSet ->
+                if arguments.Length <> 3 then compilationError "JSON_SET requires exactly 3 arguments."
+                canonicalCall call "CORE_JSON_SET" arguments
+
+            | SqlSourceFunctionCanonicalizationKind.RegexMatch ->
+                if arguments.Length <> 2 then
+                    compilationError ("Function 'CORE_REGEX_MATCH' requires 2 argument(s); received " + string arguments.Length + ".")
+                RegexMatch(arguments[0], arguments[1])
+
+            | SqlSourceFunctionCanonicalizationKind.CurrentTimestamp ->
+                if not arguments.IsEmpty then compilationError (sourceName + " does not accept arguments.")
+                canonicalCall call "CORE_CURRENT_TIMESTAMP" []
+
+            | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
+                if sourceName = "STRING_AGG" && arguments.Length <> 2 then
+                    compilationError "STRING_AGG requires exactly 2 arguments."
+                let normalizedArguments =
+                    if sourceName = "GROUP_CONCAT" && sourceTool = SqlAgentToolType.MySQL then
+                        if arguments.Length <> 1 then
+                            compilationError (
+                                "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. "
+                                + "Core currently supports exactly one value expression; use portable STRING_AGG(value, separator) "
+                                + "or native SEPARATOR 'literal' for an explicit delimiter.")
+                        let separator = call.AggregateSeparator |> Option.defaultValue ","
+                        [ arguments.Head; Literal(ScalarValue.Text separator) ]
+                    elif arguments.Length = 1 then
+                        let separator =
+                            match sourceName with
+                            | "LISTAGG" -> ""
+                            | "GROUP_CONCAT"
+                            | "LIST" -> ","
+                            | _ -> compilationError ("String aggregate '" + sourceName + "' requires an explicit separator.")
+                        [ arguments.Head; Literal(ScalarValue.Text separator) ]
+                    else arguments
+                canonicalCall call "CORE_STRING_AGG" normalizedArguments
+
+            | value ->
+                compilationError (
+                    "Unsupported source function canonicalization kind '" + string value + "' for function '" + sourceName + "'.")
+
+        | None when sourceName = "COALESCE" ->
+            if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
+            FunctionCall { call with Name = FunctionName.create "COALESCE"; Arguments = arguments }
+
+        | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceName) ->
+            FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
+
+        | None ->
+            let sourceDefinition = functionRegistry.Find(sourceTool, sourceName, arguments.Length)
+            if isNull sourceDefinition then
+                compilationError (
+                    "Function '" + sourceName + "' is not registered for source dialect "
+                    + string sourceTool + "; normalization was rejected.")
+            if not sourceDefinition.Semantic.HasValue then
+                compilationError ("Function '" + sourceName + "' has no portable semantic mapping from " + string sourceTool + ".")
+
+            let semantic = sourceDefinition.Semantic.Value
+            if sourceTool <> targetTool then
+                match semantic with
+                | SemanticFunction.Random ->
+                    compilationError (
+                        "Random function '" + sourceName + "' is not translated across dialects because providers differ in value range and evaluation frequency.")
+                | SemanticFunction.StringLength when sourceTool = SqlAgentToolType.MsSqlServer ->
+                    if arguments.Length <> 1 then compilationError "SQL Server LEN requires exactly 1 argument."
+                    let targetLength =
+                        match targetTool with
+                        | SqlAgentToolType.Postgres
+                        | SqlAgentToolType.Oracle
+                        | SqlAgentToolType.Sqlite -> "LENGTH"
+                        | SqlAgentToolType.MySQL
+                        | SqlAgentToolType.Firebird -> "CHAR_LENGTH"
+                        | value -> compilationError ("SQL Server LEN has no Core cross-dialect lowering for target provider " + string value + ".")
+                    let trimmed = FunctionCall(emptyFunction "RTRIM" [ arguments.Head ])
+                    FunctionCall { call with Name = FunctionName.create targetLength; Arguments = [ trimmed ] }
+                | SemanticFunction.StringLength when targetTool = SqlAgentToolType.MsSqlServer ->
+                    compilationError "Portable string length cannot be translated losslessly to SQL Server LEN because LEN excludes trailing spaces."
+                | SemanticFunction.Repeat when sourceTool = SqlAgentToolType.MsSqlServer || targetTool = SqlAgentToolType.MsSqlServer ->
+                    compilationError "REPLICATE/REPEAT is not translated across SQL Server because SQL Server REPLICATE can truncate non-MAX inputs."
+                | SemanticFunction.Coalesce when sourceName <> "COALESCE" ->
+                    compilationError (
+                        "Provider-specific null function '" + sourceName
+                        + "' is not translated across dialects because its type-conversion rules differ from COALESCE.")
+                | _ ->
+                    let targetDefinition = functionRegistry.Find(targetTool, semantic, arguments.Length)
+                    if isNull targetDefinition then
+                        compilationError (
+                            "Semantic function '" + string semantic + "' with " + string arguments.Length
+                            + " argument(s) is not supported by " + string targetTool + ".")
+                    if targetDefinition.TranslationKind = FunctionTranslationKind.Template
+                       || targetDefinition.TranslationKind = FunctionTranslationKind.Specialized then
+                        compilationError (
+                            "Function '" + sourceName + "' requires Core " + string targetDefinition.TranslationKind
+                            + " translation for target provider " + string targetTool
+                            + "; no lossless Core translator is registered yet.")
+                    FunctionCall { call with Name = FunctionName.create (targetDefinition.Name.Trim().ToUpperInvariant()); Arguments = arguments }
+            else
+                FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
+
+    and private normalizeWindow source target (window: WindowSpec) =
+        { window with
+            PartitionBy = window.PartitionBy |> List.map (normalizeExpr source target)
+            OrderBy = window.OrderBy |> List.map (normalizeOrderBy source target) }
+
+    and private normalizeOrderBy source target (orderBy: OrderBy) =
+        { orderBy with Expression = normalizeExpr source target orderBy.Expression }
+
+    and private normalizeSource sourceDialect target (source: TableSource) =
         match source with
         | NamedTable _ | CteTable _ -> source
-        | DerivedTable(query, alias) -> DerivedTable(normalizeQuery query, alias)
+        | DerivedTable(query, alias) -> DerivedTable(normalizeQuery sourceDialect target query, alias)
 
-    and private normalizeJoin (join: Join) =
+    and private normalizeJoin sourceDialect target (join: Join) =
         match join with
-        | CrossJoin source -> CrossJoin(normalizeSource source)
-        | OnJoin(kind, source, predicate) -> OnJoin(kind, normalizeSource source, normalizeExpr predicate)
+        | CrossJoin source -> CrossJoin(normalizeSource sourceDialect target source)
+        | OnJoin(kind, source, predicate) ->
+            OnJoin(
+                kind,
+                normalizeSource sourceDialect target source,
+                normalizeExpr sourceDialect target predicate)
 
-    and private normalizeCte (cte: Cte) =
-        let query = normalizeQuery cte.Query
+    and private normalizeCte sourceDialect target (cte: Cte) =
+        let query = normalizeQuery sourceDialect target cte.Query
         if cte.ColumnAliases.IsEmpty then { cte with Query = query }
         else
             let projection = query.Head.Projection
@@ -169,55 +500,67 @@ module internal RewriteStages =
                 |> NonEmpty.ofList "CTE projection"
             { cte with ColumnAliases = []; Query = { query with Head = { query.Head with ProjectionItems = rewritten } } }
 
-    and private normalizeSelect (select: Select) =
+    and private normalizeSelect sourceDialect target (select: Select) =
         { select with
-            Ctes = select.Ctes |> List.map normalizeCte
-            ProjectionItems = select.ProjectionItems |> NonEmpty.map (fun (item: SelectItem) -> { item with Expression = normalizeExpr item.Expression })
-            From = select.From |> Option.map normalizeSource
-            Joins = select.Joins |> List.map normalizeJoin
-            Where = select.Where |> Option.map normalizeExpr
-            GroupBy = select.GroupBy |> List.map normalizeExpr
-            Having = select.Having |> Option.map normalizeExpr }
+            Ctes = select.Ctes |> List.map (normalizeCte sourceDialect target)
+            ProjectionItems =
+                select.ProjectionItems
+                |> NonEmpty.map (fun (item: SelectItem) ->
+                    { item with Expression = normalizeExpr sourceDialect target item.Expression })
+            From = select.From |> Option.map (normalizeSource sourceDialect target)
+            Joins = select.Joins |> List.map (normalizeJoin sourceDialect target)
+            Where = select.Where |> Option.map (normalizeExpr sourceDialect target)
+            GroupBy = select.GroupBy |> List.map (normalizeExpr sourceDialect target)
+            Having = select.Having |> Option.map (normalizeExpr sourceDialect target) }
 
-    and private normalizeQuery (query: Query) =
+    and private normalizeQuery sourceDialect target (query: Query) =
         { query with
-            Head = normalizeSelect query.Head
-            SetOperations = query.SetOperations |> List.map (fun (branch: SetBranch) -> { branch with Query = normalizeQuery branch.Query })
-            OrderBy = query.OrderBy |> List.map normalizeOrderBy }
+            Head = normalizeSelect sourceDialect target query.Head
+            SetOperations =
+                query.SetOperations
+                |> List.map (fun (branch: SetBranch) ->
+                    { branch with Query = normalizeQuery sourceDialect target branch.Query })
+            OrderBy = query.OrderBy |> List.map (normalizeOrderBy sourceDialect target) }
 
-    let private normalizeReturning items = items |> List.map (fun (item: SelectItem) -> { item with Expression = normalizeExpr item.Expression })
+    let private normalizeReturning source target items =
+        items
+        |> List.map (fun (item: SelectItem) ->
+            { item with Expression = normalizeExpr source target item.Expression })
 
-    let private normalizeDocument document =
+    let private normalizeDocument source target document =
         let statement =
             match document.Statement with
-            | QueryStatement query -> QueryStatement(normalizeQuery query)
+            | QueryStatement query -> QueryStatement(normalizeQuery source target query)
             | InsertStatement insert ->
                 let input =
                     match insert.Input with
-                    | Values rows -> Values(rows |> NonEmpty.map (NonEmpty.map normalizeExpr))
-                    | QuerySource query -> QuerySource(normalizeQuery query)
+                    | Values rows -> Values(rows |> NonEmpty.map (NonEmpty.map (normalizeExpr source target)))
+                    | QuerySource query -> QuerySource(normalizeQuery source target query)
                     | DefaultValues -> DefaultValues
-                InsertStatement { insert with Input = input; Returning = normalizeReturning insert.Returning }
+                InsertStatement { insert with Input = input; Returning = normalizeReturning source target insert.Returning }
             | UpdateStatement update ->
                 UpdateStatement
                     { update with
-                        AssignmentItems = update.AssignmentItems |> NonEmpty.map (fun assignment -> { assignment with Value = normalizeExpr assignment.Value })
-                        From = update.From |> List.map normalizeSource
-                        Where = update.Where |> Option.map normalizeExpr
-                        Returning = normalizeReturning update.Returning }
+                        AssignmentItems =
+                            update.AssignmentItems
+                            |> NonEmpty.map (fun assignment ->
+                                { assignment with Value = normalizeExpr source target assignment.Value })
+                        From = update.From |> List.map (normalizeSource source target)
+                        Where = update.Where |> Option.map (normalizeExpr source target)
+                        Returning = normalizeReturning source target update.Returning }
             | DeleteStatement delete ->
                 DeleteStatement
                     { delete with
-                        Using = delete.Using |> List.map normalizeSource
-                        Where = delete.Where |> Option.map normalizeExpr
-                        Returning = normalizeReturning delete.Returning }
+                        Using = delete.Using |> List.map (normalizeSource source target)
+                        Where = delete.Where |> Option.map (normalizeExpr source target)
+                        Returning = normalizeReturning source target delete.Returning }
         { document with Statement = statement }
 
-    let normalize sourceRegexProof bound =
+    let normalize sourceDialect targetRuntime sourceRegexProof bound =
         Transition.normalize
             (fun document ->
                 verifySourceRegexDocument sourceRegexProof document
-                normalizeDocument document)
+                normalizeDocument sourceDialect targetRuntime document)
             bound
 
     let private identifierText = Identifier.text
@@ -252,6 +595,7 @@ module internal RewriteStages =
         | FunctionCall call ->
             ensureNoDistinctWildcard call
             call.Arguments |> List.iter (validateExpr allowedTables)
+            call.AggregateOrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
         | FilteredAggregate(value, predicate) -> validateExpr allowedTables value; validateExpr allowedTables predicate
         | Windowed(value, window) ->
             validateExpr allowedTables value
@@ -330,7 +674,9 @@ module internal RewriteStages =
         | Like(value, pattern, _, _, _) -> validateInsertValueScope value; validateInsertValueScope pattern
         | RawRegexCall _ -> invalidOp "Raw REGEXP_LIKE reached INSERT validation before canonicalization."
         | RegexMatch(value, pattern) -> validateInsertValueScope value; validateInsertValueScope pattern
-        | FunctionCall call -> call.Arguments |> List.iter validateInsertValueScope
+        | FunctionCall call ->
+            call.Arguments |> List.iter validateInsertValueScope
+            call.AggregateOrderBy |> List.iter (fun order -> validateInsertValueScope order.Expression)
         | FilteredAggregate(value, predicate) -> validateInsertValueScope value; validateInsertValueScope predicate
         | Windowed(value, window) ->
             validateInsertValueScope value
@@ -443,6 +789,7 @@ module internal RewriteStages =
             proveFilterPredicate proofs pattern
         | FunctionCall call ->
             call.Arguments |> List.iter (proveFilterPredicate proofs)
+            call.AggregateOrderBy |> List.iter (fun order -> proveFilterPredicate proofs order.Expression)
         | FilteredAggregate(value, predicate) ->
             proveFilterPredicate proofs value
             proveFilterPredicate proofs predicate
@@ -487,14 +834,16 @@ module internal RewriteStages =
         | BoundColumn _
         | Wildcard _
         | OrderOrdinal _
-        | Literal _
-        | Interval _ -> ()
+        | Literal _ -> ()
+        | Interval _ ->
+            requireFilterCapability expressionProofs.IntervalLiteral
         | Unary(_, operand) ->
             proveSourceFilterExpr expressionProofs operand
         | Binary(_, left, right) ->
             proveSourceFilterExpr expressionProofs left
             proveSourceFilterExpr expressionProofs right
-        | Like(value, pattern, _, _, _) ->
+        | Like(value, pattern, _, _, caseInsensitive) ->
+            if caseInsensitive then requireFilterCapability expressionProofs.ILike
             proveSourceFilterExpr expressionProofs value
             proveSourceFilterExpr expressionProofs pattern
         | RawRegexCall(arguments, _) ->
@@ -504,6 +853,7 @@ module internal RewriteStages =
             proveSourceFilterExpr expressionProofs pattern
         | FunctionCall call ->
             call.Arguments |> List.iter (proveSourceFilterExpr expressionProofs)
+            call.AggregateOrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
         | FilteredAggregate(value, predicate) ->
             requireFilterCapability expressionProofs.AggregateFilter
             proveFilterPredicate expressionProofs.FilterPredicate predicate
@@ -611,6 +961,7 @@ module internal RewriteStages =
             proveTargetExpr targetRuntime expressionProofs pattern
         | FunctionCall call ->
             call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
+            call.AggregateOrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
         | FilteredAggregate(value, predicate) ->
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs predicate
@@ -812,6 +1163,10 @@ module internal RewriteStages =
             proveOrderingExpr targetRuntime targetOrdering pattern
         | FunctionCall call ->
             call.Arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
+            call.AggregateOrderBy
+            |> List.iter (fun order ->
+                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
+                proveOrderingExpr targetRuntime targetOrdering order.Expression)
         | FilteredAggregate(value, predicate) ->
             proveOrderingExpr targetRuntime targetOrdering value
             proveOrderingExpr targetRuntime targetOrdering predicate

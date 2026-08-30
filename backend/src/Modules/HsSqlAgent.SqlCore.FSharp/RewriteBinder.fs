@@ -102,7 +102,11 @@ module internal RewriteBinder =
             RawRegexCall(arguments |> List.map (bindExpr scope), isDistinct)
         | RegexMatch(value, pattern) ->
             RegexMatch(bindExpr scope value, bindExpr scope pattern)
-        | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map (bindExpr scope) }
+        | FunctionCall call ->
+            FunctionCall
+                { call with
+                    Arguments = call.Arguments |> List.map (bindExpr scope)
+                    AggregateOrderBy = call.AggregateOrderBy |> List.map (bindOrderBy scope []) }
         | FilteredAggregate(value, predicate) -> FilteredAggregate(bindExpr scope value, bindExpr scope predicate)
         | Windowed(value, window) -> Windowed(bindExpr scope value, bindWindow scope window)
         | Cast(value, targetType) -> Cast(bindExpr scope value, targetType)
