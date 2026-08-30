@@ -50,9 +50,9 @@ module internal RewriteRenderer =
         | ScalarValue.Decimal value -> box value
         | ScalarValue.Floating value -> box value
         | ScalarValue.Text value -> box value
-        | ScalarValue.Date value -> box value
-        | ScalarValue.Time value -> box value
-        | ScalarValue.LocalDateTime value -> box value
+        | ScalarValue.Date value -> box (value.ToDateTime(TimeOnly.MinValue))
+        | ScalarValue.Time value -> box (value.ToTimeSpan())
+        | ScalarValue.LocalDateTime value -> box (DateTime.SpecifyKind(value, DateTimeKind.Unspecified))
         | ScalarValue.OffsetDateTime value -> box value
         | ScalarValue.Duration value -> box value
         | ScalarValue.Bytes value -> box value
@@ -129,9 +129,21 @@ module internal RewriteRenderer =
             | _ -> "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
         | Expr.Like(value, pattern, escape, negated, caseInsensitive) ->
             if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp (capabilityError ctx.Provider "operator.ilike")
+            let escapeSql =
+                match escape with
+                | None -> ""
+                | Some(Literal(ScalarValue.Text text)) when text.Length = 1 && not (Char.IsControl text[0]) ->
+                    let literal =
+                        if text[0] = '\\' then
+                            match ctx.Provider with
+                            | PostgreSql -> "E'\\\\'"
+                            | MySql -> "CHAR(92)"
+                            | _ -> "'\\'"
+                        else "'" + text.Replace("'", "''", StringComparison.Ordinal) + "'"
+                    " ESCAPE " + literal
+                | Some _ -> invalidOp "LIKE ESCAPE requires exactly one non-control character."
             let positive =
-                "(" + renderExpr ctx value + " " + (if caseInsensitive then "ILIKE" else "LIKE") + " " + renderExpr ctx pattern
-                + (escape |> Option.map (fun value -> " ESCAPE " + renderExpr ctx value) |> Option.defaultValue "") + ")"
+                "(" + renderExpr ctx value + " " + (if caseInsensitive then "ILIKE" else "LIKE") + " " + renderExpr ctx pattern + escapeSql + ")"
             if negated then "NOT (" + positive + ")" else positive
         | Expr.FunctionCall call ->
             let name = FunctionName.value call.Name
