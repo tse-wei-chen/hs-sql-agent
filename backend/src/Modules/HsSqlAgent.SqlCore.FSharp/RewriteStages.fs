@@ -1126,7 +1126,8 @@ module internal RewriteStages =
                 invalidOp ("INSERT ... SELECT projection width " + string width + " does not match target column count " + string insert.Columns.Length + ".")
             | _ -> ()
 
-    let private validateReturning allowedTables items = items |> List.iter (fun item -> validateExpr allowedTables item.Expression)
+    let private validateReturning allowedTables (items: ReturningItem list) =
+        items |> List.iter (fun (item: ReturningItem) -> validateExpr allowedTables item.Expression)
 
     let private validateDocument allowedTables document =
         match document.Statement with
