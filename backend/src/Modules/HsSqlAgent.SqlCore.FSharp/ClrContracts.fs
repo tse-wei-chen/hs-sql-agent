@@ -1,0 +1,380 @@
+namespace HsSqlAgent.SqlCore.Enums
+
+type SqlAgentToolType =
+    | Sqlite = 0
+    | Postgres = 1
+    | MySQL = 2
+    | MsSqlServer = 3
+    | Oracle = 4
+    | Firebird = 5
+
+type ArithmeticOperator =
+    | Add = 0
+    | Subtract = 1
+    | Multiply = 2
+    | Divide = 3
+    | Modulo = 4
+    | Concat = 5
+    | Equal = 6
+    | NotEqual = 7
+    | GreaterThan = 8
+    | LessThan = 9
+    | GreaterThanOrEqual = 10
+    | LessThanOrEqual = 11
+    | And = 12
+    | Or = 13
+
+type CombineType =
+    | Union = 0
+    | UnionAll = 1
+    | Intersect = 2
+    | Except = 3
+
+type DmlOperation =
+    | Insert = 0
+    | Update = 1
+    | Delete = 2
+
+type JoinType =
+    | Inner = 0
+    | Left = 1
+    | Right = 2
+    | Full = 3
+    | Cross = 4
+
+type NullOrdering =
+    | Default = 0
+    | First = 1
+    | Last = 2
+
+type SortDirection =
+    | Asc = 0
+    | Desc = 1
+    | Random = 2
+
+type WindowFrameUnit =
+    | Rows = 0
+    | Range = 1
+
+type WindowFrameBoundKind =
+    | UnboundedPreceding = 0
+    | Preceding = 1
+    | CurrentRow = 2
+    | Following = 3
+    | UnboundedFollowing = 4
+
+namespace HsSqlAgent.SqlCore.Core.Compilation
+
+open System
+open System.Collections.Immutable
+open HsSqlAgent.SqlCore.Enums
+
+type SqlStatementKind =
+    | Query = 0
+    | Select = 0
+    | Insert = 1
+    | Update = 2
+    | Delete = 3
+
+[<Sealed>]
+type SqlParameterValue(name: string, value: obj) =
+    member _.Name = name
+    member _.Value = value
+
+[<Sealed>]
+type CompiledSqlCommand(
+    sql: string,
+    parameters: ImmutableArray<SqlParameterValue>,
+    kind: SqlStatementKind,
+    planFingerprint: string,
+    targetProvider: SqlAgentToolType) =
+    member _.Sql = sql
+    member _.Parameters = parameters
+    member _.Kind = kind
+    member _.PlanFingerprint = planFingerprint
+    member _.TargetProvider = targetProvider
+    member val ReturnsRows = false with get, set
+
+type SqlCompilationException =
+    inherit InvalidOperationException
+    new(message: string) = { inherit InvalidOperationException(message) }
+    new(message: string, innerException: Exception) = { inherit InvalidOperationException(message, innerException) }
+
+namespace HsSqlAgent.SqlCore.SqlParsing
+
+open System
+
+type SqlParseException =
+    inherit Exception
+    new(message: string) = { inherit Exception(message) }
+    new(message: string, innerException: Exception) = { inherit Exception(message, innerException) }
+
+namespace HsSqlAgent.SqlCore.Models
+
+open System
+open System.Collections.Generic
+open HsSqlAgent.SqlCore.Enums
+
+[<Sealed>]
+type SqlProviderCapabilityProfile(
+    provider: SqlAgentToolType,
+    serverVersion: Version,
+    compatibilityLevel: Nullable<int>,
+    sessionModes: IReadOnlySet<string>,
+    sessionSettings: IReadOnlyDictionary<string, string>) =
+
+    new(provider: SqlAgentToolType) =
+        SqlProviderCapabilityProfile(provider, null, Nullable(), null, null)
+
+    new(provider: SqlAgentToolType, serverVersion: Version) =
+        SqlProviderCapabilityProfile(provider, serverVersion, Nullable(), null, null)
+
+    new(provider: SqlAgentToolType, compatibilityLevel: Nullable<int>) =
+        SqlProviderCapabilityProfile(provider, null, compatibilityLevel, null, null)
+
+    new(provider: SqlAgentToolType, serverVersion: Version, compatibilityLevel: Nullable<int>) =
+        SqlProviderCapabilityProfile(provider, serverVersion, compatibilityLevel, null, null)
+
+    new(provider: SqlAgentToolType, serverVersion: Version, sessionModes: IReadOnlySet<string>, sessionSettings: IReadOnlyDictionary<string, string>) =
+        SqlProviderCapabilityProfile(provider, serverVersion, Nullable(), sessionModes, sessionSettings)
+
+    member _.Provider = provider
+    member _.ServerVersion = serverVersion
+    member _.CompatibilityLevel = compatibilityLevel
+    member _.SessionModes = sessionModes
+    member _.SessionSettings = sessionSettings
+
+    member _.HasSessionMode(mode: string) =
+        not (String.IsNullOrWhiteSpace(mode))
+        && not (isNull sessionModes)
+        && (sessionModes |> Seq.exists (fun candidate -> String.Equals(candidate, mode, StringComparison.OrdinalIgnoreCase)))
+
+    member _.GetSessionSetting(name: string) =
+        if String.IsNullOrWhiteSpace(name) || isNull sessionSettings then null
+        else
+            sessionSettings
+            |> Seq.tryPick (fun pair ->
+                if String.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase) then Some pair.Value else None)
+            |> Option.defaultValue null
+
+type internal SqlProviderCapabilityProfileValidationIssue =
+    | None = 0
+    | ProviderMismatch = 1
+    | NegativeCompatibilityLevel = 2
+
+[<AbstractClass; Sealed>]
+type internal SqlProviderCapabilityProfileRules private () =
+    static member ValidationIssue(profile: SqlProviderCapabilityProfile, expectedProvider: SqlAgentToolType) =
+        if isNull profile then SqlProviderCapabilityProfileValidationIssue.None
+        elif profile.Provider <> expectedProvider then SqlProviderCapabilityProfileValidationIssue.ProviderMismatch
+        elif profile.CompatibilityLevel.HasValue && profile.CompatibilityLevel.Value < 0 then
+            SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel
+        else SqlProviderCapabilityProfileValidationIssue.None
+
+[<AbstractClass>]
+type SqlTemporalValue() = class end
+
+[<Sealed>]
+type SqlDateValue() =
+    inherit SqlTemporalValue()
+    member val Value = DateOnly.MinValue with get, set
+    new(value: DateOnly) as this = SqlDateValue() then this.Value <- value
+
+[<Sealed>]
+type SqlTimeValue() =
+    inherit SqlTemporalValue()
+    member val Value = TimeOnly.MinValue with get, set
+    new(value: TimeOnly) as this = SqlTimeValue() then this.Value <- value
+
+[<Sealed>]
+type SqlLocalDateTimeValue() =
+    inherit SqlTemporalValue()
+    member val Value = DateTime.MinValue with get, set
+    new(value: DateTime) as this = SqlLocalDateTimeValue() then
+        this.Value <- DateTime.SpecifyKind(value, DateTimeKind.Unspecified)
+
+[<Sealed>]
+type SqlOffsetDateTimeValue() =
+    inherit SqlTemporalValue()
+    member val Value = DateTimeOffset.MinValue with get, set
+    new(value: DateTimeOffset) as this = SqlOffsetDateTimeValue() then this.Value <- value
+
+type BuildDbConnectionModelBase() =
+    member val Host: string = null with get, set
+    member val Port: string = null with get, set
+    member val Username: string = null with get, set
+    member val Password: string = null with get, set
+    member val Database: string = null with get, set
+    member val ExtraSettings: string = null with get, set
+
+type BuildDbConnectionModel() =
+    inherit BuildDbConnectionModelBase()
+    member val Provider: string = null with get, set
+
+type ColumnInfo() =
+    let mutable name = String.Empty
+    member _.Name with get() = name and set value = name <- value
+    member _.Column with get() = name and set value = name <- value
+    member val Type = String.Empty with get, set
+    member val Description = String.Empty with get, set
+    member val IsPrimaryKey = false with get, set
+    member val PrimaryKeyOrdinal = Nullable<int>() with get, set
+    new(name: string, typeName: string, isPrimaryKey: bool, primaryKeyOrdinal: Nullable<int>) as this =
+        ColumnInfo()
+        then
+            this.Name <- name
+            this.Type <- typeName
+            this.IsPrimaryKey <- isPrimaryKey
+            this.PrimaryKeyOrdinal <- primaryKeyOrdinal
+    new(name: string, typeName: string) = ColumnInfo(name, typeName, false, Nullable())
+    new(name: string, typeName: string, isPrimaryKey: bool) = ColumnInfo(name, typeName, isPrimaryKey, Nullable())
+
+type SqlExecutionPolicy() =
+    member val QueryMaxRows = 0 with get, set
+    member val QueryTimeoutSeconds = 30 with get, set
+    member val RequireWhereForUpdate = false with get, set
+    member val RequireWhereForDelete = false with get, set
+    member val AllowFullTableUpdate = false with get, set
+    member val AllowFullTableDelete = false with get, set
+    member val DmlMaxAffectedRows = 0 with get, set
+
+type SqlCapabilityStatus =
+    | Supported = 0
+    | Translated = 1
+    | Rejected = 2
+
+[<Sealed>]
+type SqlCapability(id: string, category: string, status: SqlCapabilityStatus, detail: string) =
+    member _.Id = id
+    member _.Category = category
+    member _.Status = status
+    member _.Detail = detail
+
+[<Sealed>]
+type ProviderSqlCapabilities(matrixVersion: string, provider: SqlAgentToolType, capabilities: IReadOnlyList<SqlCapability>) =
+    member _.MatrixVersion = matrixVersion
+    member _.Provider = provider
+    member _.Capabilities = capabilities
+
+namespace HsSqlAgent.SqlCore.Core.Pipeline
+
+open System
+open System.Collections.Generic
+open System.Collections.Immutable
+open System.Data.Common
+open System.Threading
+open System.Threading.Tasks
+open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Core.Compilation
+
+[<Sealed>]
+type DmlCompilationPolicy(
+    requireWhereForUpdate: bool,
+    requireWhereForDelete: bool,
+    allowFullTableUpdate: bool,
+    allowFullTableDelete: bool) =
+    new() = DmlCompilationPolicy(true, true, false, false)
+    new(requireWhereForUpdate: bool) = DmlCompilationPolicy(requireWhereForUpdate, true, false, false)
+    new(requireWhereForUpdate: bool, requireWhereForDelete: bool) =
+        DmlCompilationPolicy(requireWhereForUpdate, requireWhereForDelete, false, false)
+    new(requireWhereForUpdate: bool, requireWhereForDelete: bool, allowFullTableUpdate: bool) =
+        DmlCompilationPolicy(requireWhereForUpdate, requireWhereForDelete, allowFullTableUpdate, false)
+    member _.RequireWhereForUpdate = requireWhereForUpdate
+    member _.RequireWhereForDelete = requireWhereForDelete
+    member _.AllowFullTableUpdate = allowFullTableUpdate
+    member _.AllowFullTableDelete = allowFullTableDelete
+
+[<Sealed>]
+type DmlConflictTargetAssurance(primaryKeyColumns: ImmutableArray<string>) =
+    let mutable matchedUniqueKeyColumns = ImmutableArray<string>.Empty
+    let mutable matchedUniqueKeyName: string = null
+    let mutable matchedUniqueKeyIsPrimaryKey = false
+    let mutable enforcedUniqueKeyCount = 0
+    let mutable hasUnsupportedEnforcedUniqueKeys = false
+    let mutable sourceRowsUniqueByInsertColumns = ImmutableArray<string>.Empty
+
+    member _.PrimaryKeyColumns = primaryKeyColumns
+    member _.MatchedUniqueKeyColumns with get() = matchedUniqueKeyColumns and set value = matchedUniqueKeyColumns <- value
+    member _.MatchedUniqueKeyName with get() = matchedUniqueKeyName and set value = matchedUniqueKeyName <- value
+    member _.MatchedUniqueKeyIsPrimaryKey with get() = matchedUniqueKeyIsPrimaryKey and set value = matchedUniqueKeyIsPrimaryKey <- value
+    member _.EnforcedUniqueKeyCount with get() = enforcedUniqueKeyCount and set value = enforcedUniqueKeyCount <- value
+    member _.HasUnsupportedEnforcedUniqueKeys with get() = hasUnsupportedEnforcedUniqueKeys and set value = hasUnsupportedEnforcedUniqueKeys <- value
+    member _.SourceRowsUniqueByInsertColumns with get() = sourceRowsUniqueByInsertColumns and set value = sourceRowsUniqueByInsertColumns <- value
+    member _.IsSoleEnforcedUniqueKey =
+        not matchedUniqueKeyColumns.IsDefaultOrEmpty
+        && enforcedUniqueKeyCount = 1
+        && not hasUnsupportedEnforcedUniqueKeys
+
+    static member private NormalizeColumns(columns: IEnumerable<string>, assuranceName: string, parameterName: string) =
+        if isNull columns then nullArg parameterName
+        let normalized =
+            columns
+            |> Seq.map (fun column ->
+                if String.IsNullOrWhiteSpace(column) then
+                    raise (ArgumentException(assuranceName + " columns cannot be empty.", parameterName))
+                column.Trim())
+            |> Seq.toArray
+        if normalized.Length = 0 then raise (ArgumentException(assuranceName + " requires at least one column.", parameterName))
+        if (normalized |> Seq.distinctBy (fun value -> value.ToUpperInvariant()) |> Seq.length) <> normalized.Length then
+            raise (ArgumentException(assuranceName + " columns cannot contain duplicates.", parameterName))
+        ImmutableArray.CreateRange(normalized)
+
+    member this.WithSourceRowsUniqueByInsertColumns(columns: IEnumerable<string>) =
+        let clone = DmlConflictTargetAssurance(primaryKeyColumns)
+        clone.MatchedUniqueKeyColumns <- matchedUniqueKeyColumns
+        clone.MatchedUniqueKeyName <- matchedUniqueKeyName
+        clone.MatchedUniqueKeyIsPrimaryKey <- matchedUniqueKeyIsPrimaryKey
+        clone.EnforcedUniqueKeyCount <- enforcedUniqueKeyCount
+        clone.HasUnsupportedEnforcedUniqueKeys <- hasUnsupportedEnforcedUniqueKeys
+        clone.SourceRowsUniqueByInsertColumns <- DmlConflictTargetAssurance.NormalizeColumns(columns, "Source-row uniqueness assurance", "columns")
+        clone
+
+    static member FromPrimaryKey(columns: IEnumerable<string>) =
+        DmlConflictTargetAssurance(DmlConflictTargetAssurance.NormalizeColumns(columns, "Primary-key assurance", "columns"))
+
+    static member FromUniqueKey(
+        columns: IEnumerable<string>,
+        keyName: string,
+        isPrimaryKey: bool,
+        enforcedUniqueKeyCount: int,
+        hasUnsupportedEnforcedUniqueKeys: bool) =
+        if String.IsNullOrWhiteSpace(keyName) then invalidArg "keyName" "Unique-key assurance key name cannot be empty."
+        if enforcedUniqueKeyCount < 1 then
+            raise (ArgumentOutOfRangeException("enforcedUniqueKeyCount", enforcedUniqueKeyCount, "Unique-key assurance requires at least one enforced unique key in the provider inventory."))
+        let value = DmlConflictTargetAssurance(ImmutableArray<string>.Empty)
+        value.MatchedUniqueKeyColumns <- DmlConflictTargetAssurance.NormalizeColumns(columns, "Unique-key assurance", "columns")
+        value.MatchedUniqueKeyName <- keyName.Trim()
+        value.MatchedUniqueKeyIsPrimaryKey <- isPrimaryKey
+        value.EnforcedUniqueKeyCount <- enforcedUniqueKeyCount
+        value.HasUnsupportedEnforcedUniqueKeys <- hasUnsupportedEnforcedUniqueKeys
+        value
+
+[<Sealed>]
+type SqlPlanValidationContext(policyVersion: string, allowedTables: IReadOnlySet<string>) =
+    new(policyVersion: string) = SqlPlanValidationContext(policyVersion, null)
+    member _.PolicyVersion = policyVersion
+    member _.AllowedTables = allowedTables
+
+[<Sealed>]
+type SqlExecutionPlanPolicy(queryMaxRows: int) =
+    new() = SqlExecutionPlanPolicy(0)
+    member _.QueryMaxRows = queryMaxRows
+
+[<Sealed>]
+type QueryExecutionResult(
+    rows: IReadOnlyList<IReadOnlyDictionary<string, obj>>,
+    rowCount: int,
+    duration: TimeSpan,
+    diagnostics: IReadOnlyList<string>) =
+    member _.Rows = rows
+    member _.RowCount = rowCount
+    member _.Duration = duration
+    member _.Diagnostics = diagnostics
+
+
+type ISqlCommandExecutor =
+    abstract ExecuteQueryAsync:
+        CompiledSqlCommand *
+        DbConnection *
+        int *
+        CancellationToken -> Task<QueryExecutionResult>

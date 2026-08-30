@@ -32,6 +32,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="ClrContracts.fs" />
+    <Compile Include="CompatibilityAstTypes.fs" />
+    <Compile Include="CapabilityContracts.fs" />
+    <Compile Include="CapabilityMatrix.fs" />
+    <Compile Include="TranslationContracts.fs" />
+    <Compile Include="RuntimeContracts.fs" />
     <Compile Include="RewriteCoreModel.fs" />
     <Compile Include="RewriteTypestate.fs" />
     <Compile Include="RewriteLegacyAstAdapter.fs" />
@@ -54,23 +60,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj" PrivateAssets="All" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
-
-  <ItemGroup>
-    <None Include="../HsSqlAgent.SqlCore/README.md" Pack="true" PackagePath="\" Link="README.md" />
-  </ItemGroup>
-
-  <PropertyGroup>
-    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyContractsToPackage</TargetsForTfmSpecificBuildOutput>
-  </PropertyGroup>
-
-  <Target Name="CopyContractsToPackage" DependsOnTargets="ResolveReferences">
-    <ItemGroup>
-      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths)"
-        Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference'
-          And '%(ReferenceCopyLocalPaths.Filename)' == 'HsSqlAgent.SqlCore.Contracts'" />
-    </ItemGroup>
-  </Target>
 
 </Project>
