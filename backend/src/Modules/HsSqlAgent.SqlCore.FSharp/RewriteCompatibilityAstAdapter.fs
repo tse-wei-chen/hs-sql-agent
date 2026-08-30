@@ -48,7 +48,8 @@ module internal RewriteCompatibilityAstAdapter =
     let private scalarValue = function
         | ScalarValue.Null -> null
         | ScalarValue.Boolean value -> box value
-        | ScalarValue.Integer value -> box value
+        | ScalarValue.Integer value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue -> box (int value)
+        | ScalarValue.Integer value -> box (decimal value)
         | ScalarValue.Decimal value -> box value
         | ScalarValue.Floating value -> box value
         | ScalarValue.Text value -> box value

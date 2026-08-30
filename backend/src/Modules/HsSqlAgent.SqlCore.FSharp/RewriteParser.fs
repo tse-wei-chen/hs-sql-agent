@@ -609,7 +609,7 @@ module internal RewriteParser =
         | Operator "-" ->
             let sign = cursor.Take()
             match cursor.Current.Kind with
-            | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal(decimal (-value)))
+            | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Integer(-value))
             | DecimalLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal(-value))
             | _ -> fail sign "Unary '-' is only supported for numeric literals"
         | Operator "+" ->
