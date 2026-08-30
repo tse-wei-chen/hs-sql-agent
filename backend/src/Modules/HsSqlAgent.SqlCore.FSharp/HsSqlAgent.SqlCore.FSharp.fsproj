@@ -19,6 +19,7 @@
   <ItemGroup>
     <Compile Include="RewriteCoreModel.fs" />
     <Compile Include="RewriteTypestate.fs" />
+    <Compile Include="RewriteLegacyAstAdapter.fs" />
     <Compile Include="RewriteLexer.fs" />
     <Compile Include="RewriteParser.fs" />
     <Compile Include="RewriteBinder.fs" />
