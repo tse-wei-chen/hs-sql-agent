@@ -1149,7 +1149,7 @@ module internal RewriteStages =
             window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
         | Cast(value, targetType) ->
             match targetRuntime with
-            | FirebirdRuntime when CastType.value targetType |> fun value -> value.Contains(" WITH TIME ZONE", StringComparison.OrdinalIgnoreCase) ->
+            | FirebirdRuntime when (CastType.value targetType).Contains(" WITH TIME ZONE", StringComparison.OrdinalIgnoreCase) ->
                 requireExpressionCapability expressionProofs.FirebirdTimeZoneType
             | _ -> ()
             proveTargetExpr targetRuntime expressionProofs value
