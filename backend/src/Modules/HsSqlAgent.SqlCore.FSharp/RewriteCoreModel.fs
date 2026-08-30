@@ -187,6 +187,8 @@ module internal CoreModel =
         | Unary of UnaryOperator * Expr
         | Binary of BinaryOperator * Expr * Expr
         | Like of value: Expr * pattern: Expr * escape: LikeEscape option * negated: bool * caseInsensitive: bool
+        | RawRegexCall of arguments: Expr list * isDistinct: bool
+        | RegexMatch of value: Expr * pattern: Expr
         | FunctionCall of FunctionCall
         | FilteredAggregate of Expr * Expr
         | Windowed of Expr * WindowSpec
@@ -350,6 +352,12 @@ module internal CoreModel =
                 && leftInsensitive = rightInsensitive
                 && leftEscape = rightEscape
                 && equivalent leftValue rightValue
+                && equivalent leftPattern rightPattern
+            | RawRegexCall(leftArguments, leftDistinct), RawRegexCall(rightArguments, rightDistinct) ->
+                leftDistinct = rightDistinct
+                && listEquivalent equivalent leftArguments rightArguments
+            | RegexMatch(leftValue, leftPattern), RegexMatch(rightValue, rightPattern) ->
+                equivalent leftValue rightValue
                 && equivalent leftPattern rightPattern
             | FunctionCall leftCall, FunctionCall rightCall ->
                 leftCall.Name = rightCall.Name

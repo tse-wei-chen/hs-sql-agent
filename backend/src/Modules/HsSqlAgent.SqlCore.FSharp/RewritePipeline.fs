@@ -25,7 +25,7 @@ module internal RewritePipeline =
         sql
         |> RewriteParser.parseForWith options.SourceSemantics options.SourceDialect
         |> RewriteBinder.bind
-        |> RewriteStages.normalize
+        |> RewriteStages.normalize options.SourceSemantics.Expressions.RegexMatch
         |> RewriteStages.validate options.AllowedTables options.TargetRuntime options.SourceSemantics.Expressions options.TargetExpressions options.TargetJoins options.TargetOrdering options.TargetDml options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
         |> RewriteRenderer.render options.Provider

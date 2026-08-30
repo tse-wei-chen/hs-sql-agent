@@ -40,6 +40,7 @@ module internal RewriteParser =
         let private permissiveExpressions =
             { ILike = ProvenCapability
               IntervalLiteral = ProvenCapability
+              RegexMatch = ProvenCapability
               AggregateFilter = ProvenCapability
               FilterPredicate = permissiveFilterPredicate }
 
@@ -480,7 +481,14 @@ module internal RewriteParser =
                 else arguments.Add(parseExpression cursor)
                 while acceptSymbol ',' cursor do arguments.Add(parseExpression cursor)
                 expectSymbol ')' cursor
-            FunctionCall { Name = functionName name; Arguments = arguments |> Seq.toList; IsDistinct = distinct }
+            let values = arguments |> Seq.toList
+            let isRawRegex =
+                Identifier.parts name
+                |> function
+                    | [ part ] -> part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
+                    | _ -> false
+            if isRawRegex then RawRegexCall(values, distinct)
+            else FunctionCall { Name = functionName name; Arguments = values; IsDistinct = distinct }
         else Column name
 
     and private parsePrimary cursor =

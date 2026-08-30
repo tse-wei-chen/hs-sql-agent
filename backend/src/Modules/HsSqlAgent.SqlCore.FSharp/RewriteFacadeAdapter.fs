@@ -93,6 +93,13 @@ module internal RewriteFacadeAdapter =
                 SqlAggregateFilterPredicateFeature.WindowFunction)
             |> capabilityProof }
 
+    let private sourceRegexProof source =
+        match SqlSourceFunctionRegistry.Find("REGEXP_LIKE") with
+        | null -> invalidOp "REGEXP_LIKE source function contract is missing."
+        | contract ->
+            contract.ValidationError(source, 2)
+            |> capabilityProof
+
     let private sourceExpressionProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
         let filterError =
             match SqlAggregateFilterCapabilityRules.RawSourceSyntaxError(source) with
@@ -104,6 +111,7 @@ module internal RewriteFacadeAdapter =
           IntervalLiteral =
             SqlIntervalLiteralCapabilityRules.SourceValidationError(source)
             |> capabilityProof
+          RegexMatch = sourceRegexProof source
           AggregateFilter = filterError |> capabilityProof
           FilterPredicate = filterPredicateProofs source "source" }
 
@@ -133,6 +141,9 @@ module internal RewriteFacadeAdapter =
                     "SQL capability 'expression.interval' is not supported by provider "
                     + providerName target
                     + " for this Core plan.")
+          RegexMatch =
+            SqlRegexCapabilityRules.TargetValidationError(target, targetProfile)
+            |> capabilityProof
           AggregateFilter =
             SqlAggregateFilterCapabilityRules.ValidationError(target, targetProfile, "target")
             |> capabilityProof

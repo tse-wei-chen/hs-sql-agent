@@ -8,6 +8,103 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 module internal RewriteStages =
 
+    let private requireSourceRegexCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> raise (SqlCompilationException(message))
+
+    let rec private verifySourceRegexExpr regexProof expression =
+        match expression with
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (verifySourceRegexExpr regexProof)
+            requireSourceRegexCapability regexProof
+        | RegexMatch(value, pattern) ->
+            verifySourceRegexExpr regexProof value
+            verifySourceRegexExpr regexProof pattern
+        | Unary(_, operand) -> verifySourceRegexExpr regexProof operand
+        | Binary(_, left, right) ->
+            verifySourceRegexExpr regexProof left
+            verifySourceRegexExpr regexProof right
+        | Like(value, pattern, _, _, _) ->
+            verifySourceRegexExpr regexProof value
+            verifySourceRegexExpr regexProof pattern
+        | FunctionCall call ->
+            call.Arguments |> List.iter (verifySourceRegexExpr regexProof)
+        | FilteredAggregate(value, predicate) ->
+            verifySourceRegexExpr regexProof value
+            verifySourceRegexExpr regexProof predicate
+        | Windowed(value, window) ->
+            verifySourceRegexExpr regexProof value
+            window.PartitionBy |> List.iter (verifySourceRegexExpr regexProof)
+            window.OrderBy |> List.iter (fun order -> verifySourceRegexExpr regexProof order.Expression)
+        | Cast(value, _) | Extract(_, value) ->
+            verifySourceRegexExpr regexProof value
+        | SimpleCase(input, branches, fallback) ->
+            verifySourceRegexExpr regexProof input
+            branches |> NonEmpty.iter (fun branch ->
+                verifySourceRegexExpr regexProof branch.Match
+                verifySourceRegexExpr regexProof branch.Result)
+            fallback |> Option.iter (verifySourceRegexExpr regexProof)
+        | SearchedCase(branches, fallback) ->
+            branches |> NonEmpty.iter (fun branch ->
+                verifySourceRegexExpr regexProof branch.Condition
+                verifySourceRegexExpr regexProof branch.Result)
+            fallback |> Option.iter (verifySourceRegexExpr regexProof)
+        | InList(value, items, _) ->
+            verifySourceRegexExpr regexProof value
+            items |> NonEmpty.iter (verifySourceRegexExpr regexProof)
+        | InSubquery(value, query, _) ->
+            verifySourceRegexExpr regexProof value
+            verifySourceRegexQuery regexProof query
+        | Between(value, lower, upper, _) ->
+            verifySourceRegexExpr regexProof value
+            verifySourceRegexExpr regexProof lower
+            verifySourceRegexExpr regexProof upper
+        | IsNull(value, _) ->
+            verifySourceRegexExpr regexProof value
+        | ScalarSubquery query | Exists(query, _) ->
+            verifySourceRegexQuery regexProof query
+
+    and private verifySourceRegexSource regexProof source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) -> verifySourceRegexQuery regexProof query
+
+    and private verifySourceRegexSelect regexProof select =
+        select.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
+        select.Projection |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
+        select.From |> Option.iter (verifySourceRegexSource regexProof)
+        select.Joins |> List.iter (fun join ->
+            verifySourceRegexSource regexProof join.Source
+            join.Predicate |> Option.iter (verifySourceRegexExpr regexProof))
+        select.Where |> Option.iter (verifySourceRegexExpr regexProof)
+        select.GroupBy |> List.iter (verifySourceRegexExpr regexProof)
+        select.Having |> Option.iter (verifySourceRegexExpr regexProof)
+
+    and private verifySourceRegexQuery regexProof query =
+        verifySourceRegexSelect regexProof query.Head
+        query.SetOperations |> List.iter (fun branch -> verifySourceRegexQuery regexProof branch.Query)
+        query.OrderBy |> List.iter (fun order -> verifySourceRegexExpr regexProof order.Expression)
+
+    let private verifySourceRegexDocument regexProof document =
+        match document.Statement with
+        | QueryStatement query -> verifySourceRegexQuery regexProof query
+        | InsertStatement insert ->
+            match insert.Input with
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (verifySourceRegexExpr regexProof))
+            | QuerySource query -> verifySourceRegexQuery regexProof query
+            | DefaultValues -> ()
+            insert.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
+        | UpdateStatement update ->
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> verifySourceRegexExpr regexProof assignment.Value)
+            update.From |> List.iter (verifySourceRegexSource regexProof)
+            update.Where |> Option.iter (verifySourceRegexExpr regexProof)
+            update.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
+        | DeleteStatement delete ->
+            delete.Using |> List.iter (verifySourceRegexSource regexProof)
+            delete.Where |> Option.iter (verifySourceRegexExpr regexProof)
+            delete.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
+
     let rec private normalizeExpr expression =
         match expression with
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
@@ -15,6 +112,15 @@ module internal RewriteStages =
         | Unary(op, operand) -> Unary(op, normalizeExpr operand)
         | Binary(op, left, right) -> Binary(op, normalizeExpr left, normalizeExpr right)
         | Like(value, pattern, escape, negated, insensitive) -> Like(normalizeExpr value, normalizeExpr pattern, escape, negated, insensitive)
+        | RawRegexCall(arguments, _) ->
+            let normalized = arguments |> List.map normalizeExpr
+            match normalized with
+            | [ value; pattern ] -> RegexMatch(value, pattern)
+            | _ ->
+                raise (SqlCompilationException(
+                    "Canonical function 'CORE_REGEX_MATCH' requires 2 argument(s)."))
+        | RegexMatch(value, pattern) ->
+            RegexMatch(normalizeExpr value, normalizeExpr pattern)
         | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map normalizeExpr }
         | FilteredAggregate(value, predicate) -> FilteredAggregate(normalizeExpr value, normalizeExpr predicate)
         | Windowed(value, window) -> Windowed(normalizeExpr value, normalizeWindow window)
@@ -105,7 +211,12 @@ module internal RewriteStages =
                         Returning = normalizeReturning delete.Returning }
         { document with Statement = statement }
 
-    let normalize bound = Transition.normalize normalizeDocument bound
+    let normalize sourceRegexProof bound =
+        Transition.normalize
+            (fun document ->
+                verifySourceRegexDocument sourceRegexProof document
+                normalizeDocument document)
+            bound
 
     let private identifierText = Identifier.text
 
@@ -129,6 +240,11 @@ module internal RewriteStages =
         | Unary(_, operand) -> validateExpr allowedTables operand
         | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
         | Like(value, pattern, _, _, _) ->
+            validateExpr allowedTables value
+            validateExpr allowedTables pattern
+        | RawRegexCall _ ->
+            invalidOp "Raw REGEXP_LIKE reached plan validation before canonicalization."
+        | RegexMatch(value, pattern) ->
             validateExpr allowedTables value
             validateExpr allowedTables pattern
         | FunctionCall call ->
@@ -210,6 +326,8 @@ module internal RewriteStages =
         | Unary(_, operand) -> validateInsertValueScope operand
         | Binary(_, left, right) -> validateInsertValueScope left; validateInsertValueScope right
         | Like(value, pattern, _, _, _) -> validateInsertValueScope value; validateInsertValueScope pattern
+        | RawRegexCall _ -> invalidOp "Raw REGEXP_LIKE reached INSERT validation before canonicalization."
+        | RegexMatch(value, pattern) -> validateInsertValueScope value; validateInsertValueScope pattern
         | FunctionCall call -> call.Arguments |> List.iter validateInsertValueScope
         | FilteredAggregate(value, predicate) -> validateInsertValueScope value; validateInsertValueScope predicate
         | Windowed(value, window) ->
@@ -316,6 +434,11 @@ module internal RewriteStages =
         | Like(value, pattern, _, _, _) ->
             proveFilterPredicate proofs value
             proveFilterPredicate proofs pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (proveFilterPredicate proofs)
+        | RegexMatch(value, pattern) ->
+            proveFilterPredicate proofs value
+            proveFilterPredicate proofs pattern
         | FunctionCall call ->
             call.Arguments |> List.iter (proveFilterPredicate proofs)
         | FilteredAggregate(value, predicate) ->
@@ -370,6 +493,11 @@ module internal RewriteStages =
             proveSourceFilterExpr expressionProofs left
             proveSourceFilterExpr expressionProofs right
         | Like(value, pattern, _, _, _) ->
+            proveSourceFilterExpr expressionProofs value
+            proveSourceFilterExpr expressionProofs pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (proveSourceFilterExpr expressionProofs)
+        | RegexMatch(value, pattern) ->
             proveSourceFilterExpr expressionProofs value
             proveSourceFilterExpr expressionProofs pattern
         | FunctionCall call ->
@@ -471,6 +599,12 @@ module internal RewriteStages =
             proveTargetExpr targetRuntime expressionProofs right
         | Like(value, pattern, _, _, caseInsensitive) ->
             if caseInsensitive then requireExpressionCapability expressionProofs.ILike
+            proveTargetExpr targetRuntime expressionProofs value
+            proveTargetExpr targetRuntime expressionProofs pattern
+        | RawRegexCall _ ->
+            invalidOp "Raw REGEXP_LIKE reached target validation before canonicalization."
+        | RegexMatch(value, pattern) ->
+            requireExpressionCapability expressionProofs.RegexMatch
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs pattern
         | FunctionCall call ->
@@ -667,6 +801,11 @@ module internal RewriteStages =
             proveOrderingExpr targetRuntime targetOrdering left
             proveOrderingExpr targetRuntime targetOrdering right
         | Like(value, pattern, _, _, _) ->
+            proveOrderingExpr targetRuntime targetOrdering value
+            proveOrderingExpr targetRuntime targetOrdering pattern
+        | RawRegexCall(arguments, _) ->
+            arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
+        | RegexMatch(value, pattern) ->
             proveOrderingExpr targetRuntime targetOrdering value
             proveOrderingExpr targetRuntime targetOrdering pattern
         | FunctionCall call ->

@@ -29,6 +29,7 @@ module internal Typestate =
     type ExpressionProofs =
         { ILike: CapabilityProof
           IntervalLiteral: CapabilityProof
+          RegexMatch: CapabilityProof
           AggregateFilter: CapabilityProof
           FilterPredicate: FilterPredicateProofs }
 

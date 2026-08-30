@@ -149,6 +149,15 @@ module internal RewriteRenderer =
                 "(" + renderExpr ctx value + " " + (if caseInsensitive then "ILIKE" else "LIKE") + " " + renderExpr ctx pattern
                 + (escape |> Option.map (fun value -> " ESCAPE " + renderLikeEscape ctx.Provider value) |> Option.defaultValue "") + ")"
             if negated then "NOT (" + positive + ")" else positive
+        | Expr.RawRegexCall _ ->
+            invalidOp "Raw REGEXP_LIKE reached rendering before canonicalization."
+        | Expr.RegexMatch(value, pattern) ->
+            let valueSql = renderExpr ctx value
+            let patternSql = renderExpr ctx pattern
+            match ctx.Provider with
+            | PostgreSql -> "(" + valueSql + " ~ " + patternSql + ")"
+            | MySql | Oracle | SqlServer -> "REGEXP_LIKE(" + valueSql + ", " + patternSql + ")"
+            | SQLite | Firebird -> invalidOp (capabilityError ctx.Provider "function.regex_match")
         | Expr.FunctionCall call ->
             let name = FunctionName.value call.Name
             let args = call.Arguments |> List.map (renderExpr ctx) |> String.concat ", "

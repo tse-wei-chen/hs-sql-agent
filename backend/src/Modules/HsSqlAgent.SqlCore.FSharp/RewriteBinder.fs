@@ -98,6 +98,10 @@ module internal RewriteBinder =
         | Binary(op, left, right) -> Binary(op, bindExpr scope left, bindExpr scope right)
         | Like(value, pattern, escape, negated, caseInsensitive) ->
             Like(bindExpr scope value, bindExpr scope pattern, escape, negated, caseInsensitive)
+        | RawRegexCall(arguments, isDistinct) ->
+            RawRegexCall(arguments |> List.map (bindExpr scope), isDistinct)
+        | RegexMatch(value, pattern) ->
+            RegexMatch(bindExpr scope value, bindExpr scope pattern)
         | FunctionCall call -> FunctionCall { call with Arguments = call.Arguments |> List.map (bindExpr scope) }
         | FilteredAggregate(value, predicate) -> FilteredAggregate(bindExpr scope value, bindExpr scope predicate)
         | Windowed(value, window) -> Windowed(bindExpr scope value, bindWindow scope window)
