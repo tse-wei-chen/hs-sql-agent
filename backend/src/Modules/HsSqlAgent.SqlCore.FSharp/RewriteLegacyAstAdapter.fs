@@ -251,6 +251,9 @@ module internal RewriteLegacyAstAdapter =
         | :? HsSqlAgent.SqlCore.Core.Ast.CastExpr as cast ->
             Cast(exprOf cast.Expression, CastType.create cast.TypeName)
 
+        | :? HsSqlAgent.SqlCore.Core.Ast.ExtractExpr as extract ->
+            Extract(ExtractField.create extract.Field, exprOf extract.Expression)
+
         | :? HsSqlAgent.SqlCore.Core.Ast.SimpleCaseExpr as simpleCase ->
             simpleCaseOf simpleCase
 

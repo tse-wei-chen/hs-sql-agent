@@ -45,6 +45,7 @@
     <Compile Include="RewriteLegacyAstAdapter.fs" />
     <Compile Include="RewriteLexer.fs" />
     <Compile Include="RewriteParser.fs" />
+    <Compile Include="RewriteCompatibilityAstAdapter.fs" />
     <Compile Include="RewriteCastTypes.fs" />
     <Compile Include="RewriteBinder.fs" />
     <Compile Include="RewriteStages.fs" />
@@ -52,6 +53,7 @@
     <Compile Include="RewriteRenderer.fs" />
     <Compile Include="RewritePipeline.fs" />
     <Compile Include="RewriteFacadeAdapter.fs" />
+    <Compile Include="CompatibilityParserFacade.fs" />
     <Compile Include="Facade.fs" />
     <Compile Include="LegacyCompilerFacade.fs" />
   </ItemGroup>

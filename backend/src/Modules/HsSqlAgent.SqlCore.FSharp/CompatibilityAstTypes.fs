@@ -151,6 +151,12 @@ type CastExpr(expression: SqlExpr, typeName: string, span: SourceSpan) =
     member _.TypeName = typeName
 
 [<Sealed>]
+type ExtractExpr(field: string, expression: SqlExpr, span: SourceSpan) =
+    inherit SqlExpr(span)
+    member _.Field = field
+    member _.Expression = expression
+
+[<Sealed>]
 type IntervalExpr(literal: string, span: SourceSpan) =
     inherit SqlExpr(span)
     member _.Literal = literal
@@ -457,6 +463,7 @@ type ParsedStatement(statement: SqlStatement, sourceDialect: SqlAgentToolType, e
     member _.SourceDialect = sourceDialect
     member val EnforceSourceDialectSyntax = enforceSourceDialectSyntax with get, set
     member val SourceProfile = sourceProfile with get, set
+    member val RawSql: string = null with get, set
 
 [<Sealed>]
 type BoundStatement(statement: SqlStatement, facts: QueryFacts, sourceDialect: SqlAgentToolType) =
