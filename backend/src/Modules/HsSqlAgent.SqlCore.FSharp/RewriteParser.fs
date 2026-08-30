@@ -728,7 +728,7 @@ module internal RewriteParser =
         | Keyword "FALSE" ->
             if cursor.Dialect = SourceDialect.SqlServer then fail token "FALSE is not valid in T-SQL (SQL Server source dialect); use an explicit predicate or 0 or 1 where a bit value is required"
             cursor.Advance(); Literal(ScalarValue.Boolean false)
-        | Keyword "DATE" when match (cursor.Peek 1).Kind with StringLiteral _ -> true | _ -> false ->
+        | Keyword "DATE" when (match (cursor.Peek 1).Kind with | StringLiteral _ -> true | _ -> false) ->
             match cursor.Dialect with
             | SourceDialect.PostgreSql
             | SourceDialect.MySql
