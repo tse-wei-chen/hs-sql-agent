@@ -111,6 +111,10 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "returning-wildcard-mixed",
             "DELETE FROM users WHERE id = 1 RETURNING *, id",
             "wildcard");
+        yield return Reject(
+            "duplicate-returning-column",
+            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id, id",
+            "more than once");
     }
 
     [Fact]
