@@ -194,16 +194,14 @@ type SqlCoreInspection private () =
     static member GetQueryFacts(parsed: ParsedStatement) =
         ArgumentNullException.ThrowIfNull(parsed)
 
-        let native =
-            if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
-                RewriteFacadeAdapter.parseSourceValidated
-                    parsed.RawSql
-                    parsed.SourceDialect
-                    parsed.SourceProfile
-            else
-                RewriteLegacyAstAdapter.toParsed parsed.Statement
+        if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
+            RewriteFacadeAdapter.parseSourceValidated
+                parsed.RawSql
+                parsed.SourceDialect
+                parsed.SourceProfile
+            |> ignore
 
-        native
+        RewriteLegacyAstAdapter.toParsed parsed.Statement
         |> RewriteBinder.bind parsed.SourceDialect
         |> Bound.value
         |> Inspection.inspectDocument

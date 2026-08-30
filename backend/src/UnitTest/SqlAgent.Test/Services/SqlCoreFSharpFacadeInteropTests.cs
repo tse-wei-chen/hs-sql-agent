@@ -100,6 +100,23 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void LegacyParsedStatement_InspectionUsesCurrentStatement_NotOriginalRawSql()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM users",
+            SqlAgentToolType.Postgres);
+        var replacement = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM accounts",
+            SqlAgentToolType.Postgres);
+        parsed.Statement = replacement.Statement;
+
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
+
+        Assert.Contains("accounts", facts.ReferencedTables);
+        Assert.DoesNotContain("users", facts.ReferencedTables);
+    }
+
+    [Fact]
     public void Parser_CompatibilityProjection_PreservesNestedSourceSpans()
     {
         const string sql =
