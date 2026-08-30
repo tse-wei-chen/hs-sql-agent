@@ -88,15 +88,27 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+
+  sqlagent-package-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: Enable pnpm
         run: corepack enable pnpm
-      - run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-        env:
-          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
-          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
       - name: Pack public NuGet packages
         shell: bash
         run: |
