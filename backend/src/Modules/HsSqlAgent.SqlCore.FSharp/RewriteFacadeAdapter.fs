@@ -53,9 +53,11 @@ module internal RewriteFacadeAdapter =
     let private compilationErrorMessage (message: string) =
         message.StartsWith("INSERT ", StringComparison.Ordinal)
         || message.StartsWith("CTE ", StringComparison.Ordinal)
-        || message.StartsWith("Wildcard projection", StringComparison.Ordinal)
-        || message.StartsWith("DISTINCT aggregate", StringComparison.Ordinal)
+        || message.StartsWith("Column reference", StringComparison.Ordinal)
+        || message.StartsWith("COUNT(DISTINCT *)", StringComparison.Ordinal)
+        || message.StartsWith("ORDER BY projection alias", StringComparison.Ordinal)
         || message.StartsWith("ORDER BY alias", StringComparison.Ordinal)
+        || message.StartsWith("SQL capability", StringComparison.Ordinal)
         || message.Contains("not supported by the target provider", StringComparison.Ordinal)
         || message.Contains("requires provider", StringComparison.Ordinal)
         || message.Contains("cannot be safely lowered", StringComparison.Ordinal)

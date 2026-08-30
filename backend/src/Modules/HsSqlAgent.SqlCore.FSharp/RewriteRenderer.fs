@@ -31,6 +31,15 @@ module internal RewriteRenderer =
     let private renderIdentifier provider identifier = identifier |> Identifier.parts |> List.map (quotePart provider) |> String.concat "."
     let private renderAlias provider alias = quotePart provider alias
     let private tableAliasPrefix = function Oracle -> " " | _ -> " AS "
+    let private providerName = function
+        | PostgreSql -> "Postgres"
+        | MySql -> "MySQL"
+        | SqlServer -> "MsSqlServer"
+        | SQLite -> "Sqlite"
+        | Oracle -> "Oracle"
+        | Firebird -> "Firebird"
+    let private capabilityError provider capability =
+        "SQL capability '" + capability + "' is not supported by provider " + providerName provider + " for this Core plan."
 
     let private scalarObject value : obj | null =
         match value with
@@ -119,9 +128,11 @@ module internal RewriteRenderer =
             | BinaryOperator.Concat, SqlServer -> "(" + leftSql + " + " + rightSql + ")"
             | _ -> "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
         | Expr.Like(value, pattern, escape, negated, caseInsensitive) ->
-            if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp "ILIKE is not supported by the target provider."
-            let op = (if negated then " NOT " else " ") + (if caseInsensitive then "ILIKE" else "LIKE") + " "
-            renderExpr ctx value + op + renderExpr ctx pattern + (escape |> Option.map (fun value -> " ESCAPE " + renderExpr ctx value) |> Option.defaultValue "")
+            if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp (capabilityError ctx.Provider "operator.ilike")
+            let positive =
+                "(" + renderExpr ctx value + " " + (if caseInsensitive then "ILIKE" else "LIKE") + " " + renderExpr ctx pattern
+                + (escape |> Option.map (fun value -> " ESCAPE " + renderExpr ctx value) |> Option.defaultValue "") + ")"
+            if negated then "NOT (" + positive + ")" else positive
         | Expr.FunctionCall call ->
             let name = FunctionName.value call.Name
             let args = call.Arguments |> List.map (renderExpr ctx) |> String.concat ", "
@@ -140,10 +151,10 @@ module internal RewriteRenderer =
             let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Condition + " THEN " + renderExpr ctx branch.Result) |> String.concat ""
             "CASE" + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
         | Expr.InList(value, items, negated) ->
-            renderExpr ctx value + (if negated then " NOT IN " else " IN ") + "(" + (items |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")"
-        | Expr.InSubquery(value, query, negated) -> renderExpr ctx value + (if negated then " NOT IN (" else " IN (") + renderQuery ctx query + ")"
-        | Expr.Between(value, lower, upper, negated) -> renderExpr ctx value + (if negated then " NOT BETWEEN " else " BETWEEN ") + renderExpr ctx lower + " AND " + renderExpr ctx upper
-        | Expr.IsNull(value, negated) -> renderExpr ctx value + (if negated then " IS NOT NULL" else " IS NULL")
+            "(" + renderExpr ctx value + (if negated then " NOT IN " else " IN ") + "(" + (items |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + "))"
+        | Expr.InSubquery(value, query, negated) -> "(" + renderExpr ctx value + (if negated then " NOT IN (" else " IN (") + renderQuery ctx query + "))"
+        | Expr.Between(value, lower, upper, negated) -> "(" + renderExpr ctx value + (if negated then " NOT BETWEEN " else " BETWEEN ") + renderExpr ctx lower + " AND " + renderExpr ctx upper + ")"
+        | Expr.IsNull(value, negated) -> "(" + renderExpr ctx value + (if negated then " IS NOT NULL)" else " IS NULL)")
         | Expr.ScalarSubquery query -> "(" + renderQuery ctx query + ")"
         | Expr.Exists(query, negated) -> (if negated then "NOT EXISTS (" else "EXISTS (") + renderQuery ctx query + ")"
 
@@ -165,15 +176,17 @@ module internal RewriteRenderer =
         | NullOrdering.NullsFirst, (PostgreSql | SQLite | Oracle | Firebird) -> [ expression + direction + " NULLS FIRST" ]
         | NullOrdering.NullsLast, (PostgreSql | SQLite | Oracle | Firebird) -> [ expression + direction + " NULLS LAST" ]
         | explicitNulls, (MySql | SqlServer) ->
-            if setTail then invalidOp "Explicit NULL ordering on a set-operation tail cannot be safely lowered for this provider."
+            if setTail then invalidOp (capabilityError ctx.Provider "ordering.nulls")
             let targetDefault = (not order.Descending && explicitNulls = NullOrdering.NullsFirst) || (order.Descending && explicitNulls = NullOrdering.NullsLast)
             if targetDefault then [ expression + direction ]
             else
                 match order.Expression with
                 | Column _ ->
                     let nullRank, nonNullRank = if explicitNulls = NullOrdering.NullsLast then 1, 0 else 0, 1
-                    [ "CASE WHEN " + expression + " IS NULL THEN " + string nullRank + " ELSE " + string nonNullRank + " END ASC"; expression + direction ]
-                | _ -> invalidOp "Explicit NULL ordering requires a stable row-source column for this provider."
+                    let nullRankSql = ctx.Bind(box nullRank)
+                    let nonNullRankSql = ctx.Bind(box nonNullRank)
+                    [ "CASE WHEN (" + expression + " IS NULL) THEN " + nullRankSql + " ELSE " + nonNullRankSql + " END ASC"; expression + direction ]
+                | _ -> invalidOp (capabilityError ctx.Provider "ordering.nulls")
 
     and private renderCtes (ctx: RenderContext) ctes =
         if List.isEmpty ctes then ""
@@ -303,26 +316,35 @@ module internal RewriteRenderer =
         if isSetQuery query && hasTail query then renderSetTailWrapper ctx query
         elif ctx.Provider = SqlServer && query.Offset |> Option.exists (fun value -> NonNegativeRowCount.value value > 0) && not (isSetQuery query) then renderSqlServerOffset ctx query
         else
-            let ctes = renderCtes ctx query.Head.Ctes
-            let body = if isSetQuery query then renderSetBody ctx query else renderSelectBody ctx { query.Head with Ctes = [] }
-            let withOrder = body + renderOrderClause ctx (isSetQuery query) query.OrderBy
             match ctx.Provider, query.Offset, query.Limit, isSetQuery query with
             | SqlServer, None, Some limit, false ->
                 let top = ctx.Bind(box (NonNegativeRowCount.value limit))
+                let ctes = renderCtes ctx query.Head.Ctes
+                let body = renderSelectBody ctx { query.Head with Ctes = [] }
+                let withOrder = body + renderOrderClause ctx false query.OrderBy
                 let head = if query.Head.Distinct then "SELECT DISTINCT " else "SELECT "
-                let rest = withOrder.Substring(head.Length)
-                ctes + head + "TOP (" + top + ") " + rest
+                ctes + head + "TOP (" + top + ") " + withOrder.Substring(head.Length)
             | Firebird, None, Some limit, false ->
                 let first = ctx.Bind(box (NonNegativeRowCount.value limit))
+                let ctes = renderCtes ctx query.Head.Ctes
+                let body = renderSelectBody ctx { query.Head with Ctes = [] }
+                let withOrder = body + renderOrderClause ctx false query.OrderBy
                 let head = if query.Head.Distinct then "SELECT DISTINCT " else "SELECT "
                 let replacement = if query.Head.Distinct then "SELECT FIRST " + first + " DISTINCT " else "SELECT FIRST " + first + " "
                 ctes + replacement + withOrder.Substring(head.Length)
             | Firebird, Some offset, None, false when NonNegativeRowCount.value offset > 0 ->
                 let skip = ctx.Bind(box (NonNegativeRowCount.value offset))
+                let ctes = renderCtes ctx query.Head.Ctes
+                let body = renderSelectBody ctx { query.Head with Ctes = [] }
+                let withOrder = body + renderOrderClause ctx false query.OrderBy
                 let head = if query.Head.Distinct then "SELECT DISTINCT " else "SELECT "
                 let replacement = if query.Head.Distinct then "SELECT SKIP " + skip + " DISTINCT " else "SELECT SKIP " + skip + " "
                 ctes + replacement + withOrder.Substring(head.Length)
-            | _ -> ctes + renderPaging ctx query withOrder
+            | _ ->
+                let ctes = renderCtes ctx query.Head.Ctes
+                let body = if isSetQuery query then renderSetBody ctx query else renderSelectBody ctx { query.Head with Ctes = [] }
+                let withOrder = body + renderOrderClause ctx (isSetQuery query) query.OrderBy
+                ctes + renderPaging ctx query withOrder
 
     and private renderQuery (ctx: RenderContext) query = renderQueryCore ctx query
 

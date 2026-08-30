@@ -130,7 +130,7 @@ module internal CoreModel =
         let private safeCastType = Regex("^[A-Za-z][A-Za-z0-9_ ]*(\\([0-9]+(,[0-9]+)?\\))?$", RegexOptions.CultureInvariant)
         let create value =
             if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then invalidArg (nameof value) ("Unsafe CAST type '" + string value + "'.")
-            CastType value
+            CastType(value.ToUpperInvariant())
         let value (CastType value) = value
 
     type FunctionName = private FunctionName of string

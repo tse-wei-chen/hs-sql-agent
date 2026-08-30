@@ -51,9 +51,9 @@ module internal RewriteStages =
         else
             let projection = query.Head.Projection
             if projection |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then
-                invalidOp "CTE column aliases require a statically known projection width; wildcard projections are rejected."
+                invalidOp ("CTE '" + cte.Name.Value + "' column aliases cannot be lowered safely when the CTE projection contains a wildcard.")
             if projection.Length <> cte.ColumnAliases.Length then
-                invalidOp ("CTE column alias count " + string cte.ColumnAliases.Length + " does not match projection width " + string projection.Length + ".")
+                invalidOp ("CTE '" + cte.Name.Value + "' declares " + string cte.ColumnAliases.Length + " column alias(es) but its statically modeled projection has " + string projection.Length + " column(s).")
             let rewritten =
                 (projection, cte.ColumnAliases)
                 ||> List.map2 (fun item alias -> { item with Alias = Some alias })
@@ -120,7 +120,7 @@ module internal RewriteStages =
 
     let private ensureNoDistinctWildcard (call: FunctionCall) =
         if call.IsDistinct && call.Arguments |> List.exists isWildcard then
-            invalidOp "DISTINCT aggregate wildcard is not supported; COUNT(DISTINCT *) is invalid."
+            invalidOp "COUNT(DISTINCT *) is not a valid Core aggregate shape."
 
     let rec private validateExpr allowedTables expression =
         match expression with
@@ -164,7 +164,7 @@ module internal RewriteStages =
     and private validateSelect allowedTables select =
         for cte in select.Ctes do validateQuery allowedTables cte.Query
         if select.From.IsNone && select.Joins.IsEmpty && select.Projection |> List.exists (fun item -> isWildcard item.Expression) then
-            invalidOp "Wildcard projection requires a FROM source."
+            invalidOp "Column reference '*' requires a FROM source in the portable Core query model."
         select.From |> Option.iter (validateSource allowedTables)
         select.ProjectionItems |> NonEmpty.iter (fun item -> validateExpr allowedTables item.Expression)
         select.Where |> Option.iter (validateExpr allowedTables)
@@ -188,7 +188,11 @@ module internal RewriteStages =
                 match order.Expression with
                 | Column identifier when Identifier.parts identifier |> List.length = 1 ->
                     let name = identifierText identifier
-                    if duplicateAliases.Contains name then invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
+                    if duplicateAliases.Contains name then
+                        if query.Head.From.IsNone && query.Head.Joins.IsEmpty then
+                            invalidOp ("ORDER BY projection alias '" + name + "' is ambiguous in a no-FROM query.")
+                        else
+                            invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
                 | _ -> ()
         query.SetOperations |> List.iter (fun branch -> validateQuery allowedTables branch.Query)
         query.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
