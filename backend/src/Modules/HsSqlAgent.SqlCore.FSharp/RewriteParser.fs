@@ -563,7 +563,7 @@ module internal RewriteParser =
         let upper = parseAdd cursor
         Between(value, lower, upper, negated)
 
-    and private parseConcat cursor =
+    and private parseConcat (cursor: Cursor) =
         let start = cursor.Current.Start
         let mutable left = parseAdd cursor
         while isOperator "||" cursor.Current do
@@ -577,7 +577,7 @@ module internal RewriteParser =
             left <- Binary(BinaryOperator.Concat, left, parseAdd cursor)
         markExpr start cursor left
 
-    and private parseAdd cursor =
+    and private parseAdd (cursor: Cursor) =
         let start = cursor.Current.Start
         let mutable left = parseMultiply cursor
         let mutable keepGoing = true
