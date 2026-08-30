@@ -67,6 +67,21 @@ public sealed class PostgresSyntaxBombardmentTests
             "EXISTS",
             "users,orders");
         yield return Case(
+            "correlated-exists-alias",
+            "SELECT u.id FROM users u WHERE EXISTS (SELECT o.id FROM orders o WHERE o.user_id = u.id)",
+            "EXISTS",
+            "users,orders");
+        yield return Case(
+            "correlated-shadowing-local",
+            "SELECT u.id FROM users u WHERE EXISTS (SELECT u.id FROM orders u WHERE u.user_id = u.id)",
+            "EXISTS",
+            "users,orders");
+        yield return Case(
+            "correlated-exists-with-cte",
+            "SELECT u.id FROM users u WHERE EXISTS (WITH recent AS (SELECT user_id FROM orders) SELECT user_id FROM recent WHERE user_id = u.id)",
+            "WITH",
+            "users,orders");
+        yield return Case(
             "comma-from",
             "SELECT a.id FROM alpha a, beta b WHERE a.id = b.id",
             "CROSS JOIN",
@@ -180,6 +195,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "nulls-last",
             "SELECT amount FROM orders ORDER BY amount DESC NULLS LAST",
             "NULLS LAST",
+            "orders");
+        yield return Case(
+            "nulls-first",
+            "SELECT amount FROM orders ORDER BY amount ASC NULLS FIRST",
+            "NULLS FIRST",
             "orders");
         yield return Case(
             "limit-offset",
@@ -302,6 +322,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "NOT IN",
             "users");
         yield return Case(
+            "signed-in-list",
+            "SELECT id FROM users WHERE id IN (-1, +2, 3.5, -4.25, 'x', NULL, TRUE, FALSE)",
+            " IN ",
+            "users");
+        yield return Case(
+            "signed-not-in-list",
+            "SELECT id FROM users WHERE id NOT IN (-10, +20)",
+            "NOT IN",
+            "users");
+        yield return Case(
             "concat",
             "SELECT first_name || last_name FROM users",
             "||",
@@ -310,6 +340,21 @@ public sealed class PostgresSyntaxBombardmentTests
             "postfix-cast",
             "SELECT created_at::date FROM events",
             "CAST",
+            "events");
+        yield return Case(
+            "standard-multiword-cast",
+            "SELECT CAST(created_at AS TIMESTAMP(6) WITHOUT TIME ZONE) FROM events",
+            "CAST",
+            "events");
+        yield return Case(
+            "postfix-multiword-cast",
+            "SELECT created_at::TIMESTAMP(6) WITHOUT TIME ZONE FROM events",
+            "CAST",
+            "events");
+        yield return Case(
+            "cast-in-having",
+            "SELECT customer_id, MAX(created_at) FROM events GROUP BY customer_id HAVING MAX(created_at)::date > DATE '2026-01-01'",
+            "HAVING",
             "events");
         yield return Case(
             "fetch-first",
@@ -434,6 +479,26 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Reject(
             "unterminated-string",
             "SELECT 'unterminated FROM users");
+    }
+
+    [Fact]
+    public void ExplicitTimestampTimezoneIntent_PreservesLegacyClrType()
+    {
+        var withZone = CoreSqlTextParser.ParseQuery(
+            "SELECT TIMESTAMP WITH TIME ZONE '2026-08-21T09:30:00+08:00' FROM events",
+            SqlAgentToolType.Postgres);
+        var withoutZone = CoreSqlTextParser.ParseQuery(
+            "SELECT TIMESTAMP WITHOUT TIME ZONE '2026-08-21 09:30:00' FROM events",
+            SqlAgentToolType.Postgres);
+
+        var withZoneSelect = Assert.IsType<SelectStatement>(withZone.Statement);
+        var withoutZoneSelect = Assert.IsType<SelectStatement>(withoutZone.Statement);
+
+        var offset = Assert.IsType<LiteralExpr>(Assert.Single(withZoneSelect.Select).Expression);
+        var local = Assert.IsType<LiteralExpr>(Assert.Single(withoutZoneSelect.Select).Expression);
+
+        Assert.IsType<SqlOffsetDateTimeValue>(offset.Value);
+        Assert.IsType<SqlLocalDateTimeValue>(local.Value);
     }
 
     [Fact]

@@ -97,6 +97,26 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "wildcard");
     }
 
+    [Fact]
+    public void ExplicitTimestampTimezoneIntent_PreservesLegacyAssignmentTypes()
+    {
+        var withZone = CoreSqlTextParser.ParseDml(
+            "UPDATE events SET occurred_at = TIMESTAMP WITH TIME ZONE '2026-08-21T09:30:00+08:00' WHERE id = 1",
+            SqlAgentToolType.Postgres);
+        var withoutZone = CoreSqlTextParser.ParseDml(
+            "UPDATE events SET occurred_at = TIMESTAMP WITHOUT TIME ZONE '2026-08-21 09:30:00' WHERE id = 1",
+            SqlAgentToolType.Postgres);
+
+        var withZoneUpdate = Assert.IsType<UpdateStatement>(withZone.Statement);
+        var withoutZoneUpdate = Assert.IsType<UpdateStatement>(withoutZone.Statement);
+
+        var offset = Assert.IsType<LiteralExpr>(Assert.Single(withZoneUpdate.Assignments).Value);
+        var local = Assert.IsType<LiteralExpr>(Assert.Single(withoutZoneUpdate.Assignments).Value);
+
+        Assert.IsType<SqlOffsetDateTimeValue>(offset.Value);
+        Assert.IsType<SqlLocalDateTimeValue>(local.Value);
+    }
+
     [Theory]
     [MemberData(nameof(SupportedPostgresDml))]
     public void SupportedPostgresDml_ParsesCompilesAndPreservesClause(
