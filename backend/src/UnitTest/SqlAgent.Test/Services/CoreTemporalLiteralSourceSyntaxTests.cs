@@ -63,8 +63,10 @@ public sealed class CoreTemporalLiteralSourceSyntaxTests
             SqlAgentToolType.MsSqlServer,
             SqlAgentToolType.Postgres);
 
-        Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(" AS DATE)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("2026-08-24", command.Sql, StringComparison.Ordinal);
+        var parameter = Assert.Single(command.Parameters);
+        var value = Assert.IsType<DateTime>(parameter.Value);
+        Assert.Equal(new DateTime(2026, 8, 24), value);
     }
 
     [Fact]

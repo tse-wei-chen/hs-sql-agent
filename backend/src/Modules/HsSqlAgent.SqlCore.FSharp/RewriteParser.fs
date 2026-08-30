@@ -354,6 +354,13 @@ module internal RewriteParser =
             match DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None) with
             | true, value -> Literal(ScalarValue.Date value)
             | _ -> fail cursor.Current "Invalid DATE literal in CAST"
+        | Literal(ScalarValue.Text text), typeName
+            when typeName.Equals("DATETIME", StringComparison.OrdinalIgnoreCase)
+              || typeName.Equals("DATETIME2", StringComparison.OrdinalIgnoreCase)
+              || typeName.Equals("SMALLDATETIME", StringComparison.OrdinalIgnoreCase) ->
+            match DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
+            | true, value -> Literal(ScalarValue.LocalDateTime(DateTime.SpecifyKind(value, DateTimeKind.Unspecified)))
+            | _ -> fail cursor.Current ("Invalid " + typeName + " literal in CAST")
         | _ -> Cast(expression, target)
 
     let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor
@@ -700,10 +707,10 @@ module internal RewriteParser =
         | Operator "*" -> cursor.Advance(); Wildcard None
         | Keyword "NULL" -> cursor.Advance(); Literal ScalarValue.Null
         | Keyword "TRUE" ->
-            if cursor.Dialect = SourceDialect.SqlServer then fail token "TRUE is not valid in T-SQL (SQL Server source dialect)"
+            if cursor.Dialect = SourceDialect.SqlServer then fail token "TRUE is not valid in T-SQL (SQL Server source dialect); use an explicit predicate or 0 or 1 where a bit value is required"
             cursor.Advance(); Literal(ScalarValue.Boolean true)
         | Keyword "FALSE" ->
-            if cursor.Dialect = SourceDialect.SqlServer then fail token "FALSE is not valid in T-SQL (SQL Server source dialect)"
+            if cursor.Dialect = SourceDialect.SqlServer then fail token "FALSE is not valid in T-SQL (SQL Server source dialect); use an explicit predicate or 0 or 1 where a bit value is required"
             cursor.Advance(); Literal(ScalarValue.Boolean false)
         | Keyword "DATE" ->
             match cursor.Dialect with
