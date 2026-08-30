@@ -1105,7 +1105,11 @@ module internal RewriteParser =
     and private parseSelectWithCtes (cursor: Cursor) (ctes: Cte list) =
         let start = cursor.Current.Start
         expectKeyword "SELECT" cursor
-        let distinct = acceptKeyword "DISTINCT" cursor
+        let distinct =
+            if acceptKeyword "DISTINCT" cursor then true
+            else
+                acceptKeyword "ALL" cursor |> ignore
+                false
         let mutable top = None
         if acceptKeyword "TOP" cursor then
             if cursor.Dialect <> SourceDialect.SqlServer then fail cursor.Current "TOP is only valid in the SQL Server source dialect"
@@ -1180,12 +1184,17 @@ module internal RewriteParser =
 
     and private parseSetOperator cursor =
         if acceptKeyword "UNION" cursor then
-            if acceptKeyword "ALL" cursor then Some SetOperator.UnionAll else Some SetOperator.Union
+            if acceptKeyword "ALL" cursor then Some SetOperator.UnionAll
+            else
+                acceptKeyword "DISTINCT" cursor |> ignore
+                Some SetOperator.Union
         elif acceptKeyword "INTERSECT" cursor then
             if acceptKeyword "ALL" cursor then fail cursor.Current "INTERSECT ALL is not supported"
+            acceptKeyword "DISTINCT" cursor |> ignore
             Some SetOperator.Intersect
         elif acceptKeyword "EXCEPT" cursor then
             if acceptKeyword "ALL" cursor then fail cursor.Current "EXCEPT ALL is not supported"
+            acceptKeyword "DISTINCT" cursor |> ignore
             Some SetOperator.Except
         else None
 
