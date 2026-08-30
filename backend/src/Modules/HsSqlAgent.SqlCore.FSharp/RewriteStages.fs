@@ -414,7 +414,7 @@ module internal RewriteStages =
         | DeleteStatement delete ->
             delete.Using |> List.iter (proveTargetJoinSource proofs)
 
-    let private exactColumnSetMatch left right =
+    let private exactColumnSetMatch (left: string list) (right: string list) =
         let leftSet = HashSet<string>(left, StringComparer.OrdinalIgnoreCase)
         let rightSet = HashSet<string>(right, StringComparer.OrdinalIgnoreCase)
         leftSet.Count = List.length left
@@ -440,7 +440,7 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "INSERT conflict target column '" + name + "' must be explicitly present in the INSERT column list so Core does not depend on provider-default conflict-key values."))
 
-    let private validateInsertSelectConflictAssurance (conflict: InsertConflict) proofs =
+    let private validateInsertSelectConflictAssurance (conflict: InsertConflict) (proofs: ConflictProofs) =
         let proven =
             assuredColumns
                 "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target."
@@ -453,14 +453,14 @@ module internal RewriteStages =
             raise (SqlCompilationException(
                 "INSERT ... SELECT conflict DO UPDATE requires source-row uniqueness assurance to match the complete explicit conflict target exactly."))
 
-    let private validateConflictAssignments (insert: Insert) assignments =
+    let private validateConflictAssignments (insert: Insert) (assignments: NonEmpty<ConflictAssignment>) =
         let insertColumns =
             HashSet<string>(
                 insert.Columns |> List.map (fun column -> column.Value),
                 StringComparer.OrdinalIgnoreCase)
         let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
         assignments
-        |> NonEmpty.iter (fun assignment ->
+        |> NonEmpty.iter (fun (assignment: ConflictAssignment) ->
             let target = Identifier.text assignment.Target
             let proposed = Identifier.text assignment.Proposed
             if not (assigned.Add target) then
@@ -470,7 +470,7 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values.")))
 
-    let private validatePortableConflict targetRuntime proofs (insert: Insert) (conflict: InsertConflict) =
+    let private validatePortableConflict targetRuntime (proofs: ConflictProofs) (insert: Insert) (conflict: InsertConflict) =
         match insert.Input with
         | DefaultValues ->
             raise (SqlCompilationException("Unsupported INSERT source for conflict handling."))
@@ -496,7 +496,7 @@ module internal RewriteStages =
             | DefaultValues -> ()
             validateConflictAssignments insert assignments
 
-    let private validateFirebirdFullProposedRowUpdate (insert: Insert) assignments =
+    let private validateFirebirdFullProposedRowUpdate (insert: Insert) (assignments: NonEmpty<ConflictAssignment>) =
         let assignmentList = NonEmpty.toList assignments
         if assignmentList.Length <> insert.Columns.Length then
             raise (SqlCompilationException(
@@ -507,7 +507,7 @@ module internal RewriteStages =
                 insert.Columns |> List.map (fun column -> column.Value),
                 StringComparer.OrdinalIgnoreCase)
         let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        for assignment in assignmentList do
+        for (assignment: ConflictAssignment) in assignmentList do
             let target = Identifier.text assignment.Target
             let proposed = Identifier.text assignment.Proposed
             if not (StringComparer.OrdinalIgnoreCase.Equals(target, proposed)) then
@@ -521,7 +521,7 @@ module internal RewriteStages =
             raise (SqlCompilationException(
                 "Firebird UPDATE OR INSERT requires conflict assignments to cover the complete INSERT column set."))
 
-    let private validateFirebirdConflict proofs (insert: Insert) (conflict: InsertConflict) =
+    let private validateFirebirdConflict (proofs: ConflictProofs) (insert: Insert) (conflict: InsertConflict) =
         match conflict.Action with
         | DoNothing ->
             raise (SqlCompilationException(
@@ -540,7 +540,7 @@ module internal RewriteStages =
                     "Firebird UPDATE OR INSERT requires the canonical conflict target to match the complete resolved primary key exactly; general UNIQUE-key and non-unique MATCHING metadata are not represented yet."))
             validateFirebirdFullProposedRowUpdate insert assignments
 
-    let private proveConflicts targetRuntime proofs document =
+    let private proveConflicts targetRuntime (proofs: ConflictProofs) document =
         match document.Statement with
         | InsertStatement insert ->
             match insert.Conflict with
