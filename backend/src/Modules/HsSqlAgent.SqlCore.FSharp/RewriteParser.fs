@@ -562,20 +562,6 @@ module internal RewriteParser =
         let upper = parseAdd cursor
         Between(value, lower, upper, negated)
 
-    and private parseConcat (cursor: Cursor) =
-        let start = cursor.Current.Start
-        let mutable left = parseAdd cursor
-        while isOperator "||" cursor.Current do
-            if cursor.Dialect = SourceDialect.MySql then
-                let message =
-                    match SqlConcatCapabilityRules.SourceSemanticValidationError(SqlAgentToolType.MySQL) with
-                    | null -> "MySQL '||' semantics require an explicit PIPES_AS_CONCAT or ANSI source-session contract."
-                    | value -> value
-                raise (SqlCompilationException(message))
-            cursor.Advance()
-            left <- Binary(BinaryOperator.Concat, left, parseAdd cursor)
-        markExpr start cursor left
-
     and private parseAdd (cursor: Cursor) =
         let start = cursor.Current.Start
         let mutable left = parseMultiply cursor
