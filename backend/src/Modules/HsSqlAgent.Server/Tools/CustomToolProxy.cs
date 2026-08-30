@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Diagnostics;
 using System.Text.Json;
 using Admin.Service.Data.Entites;
@@ -66,7 +67,7 @@ public class CustomToolProxy(
         }
 
         CustomSqlTool? tool = null;
-        ParsedStatement? auditQuery = null;
+        QueryFacts? auditQueryFacts = null;
         ParsedStatement? auditDml = null;
         string renderedSql = string.Empty;
         try
@@ -114,8 +115,7 @@ public class CustomToolProxy(
 
             if (isQuery)
             {
-                var parsedQuery = CoreSqlTextParser.ParseQuery(renderedSql, dbType);
-                auditQuery = parsedQuery;
+                auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
 
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
@@ -124,7 +124,8 @@ public class CustomToolProxy(
                     var execution = await _typedQueryRuntime.ExecuteAsync(
                         provider,
                         sqlConfig.ConnectionString,
-                        parsedQuery,
+                        renderedSql,
+                        dbType,
                         _securityPolicyRuntimeState.GetCurrent(),
                         ResolveTableWhitelist(),
                         cancellationToken);
@@ -202,8 +203,8 @@ public class CustomToolProxy(
                     ReturnedRows = isQuery ? queryReturnedRows : null,
                     AffectedRows = isDml ? dmlAffectedRows : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
-                    Definition = isQuery && auditQuery != null
-                        ? DescribeQuery(auditQuery)
+                    Definition = isQuery && auditQueryFacts != null
+                        ? DescribeQuery(renderedSql, dbType, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 $"Type: {tool.Type}",
@@ -219,7 +220,7 @@ public class CustomToolProxy(
                 new AuditEventContext
                 {
                     ToolName = _name,
-                    Operation = auditQuery != null
+                    Operation = auditQueryFacts != null
                         ? "select"
                         : auditDml is null ? null : DmlOperationName(auditDml),
                     DurationMs = auditDml == null
@@ -228,8 +229,8 @@ public class CustomToolProxy(
                     ReturnedRows = queryReturnedRows,
                     AffectedRows = dmlAffectedRows,
                     ErrorCategory = ex.GetType().Name,
-                    Definition = auditQuery != null
-                        ? DescribeQuery(auditQuery)
+                    Definition = auditQueryFacts != null
+                        ? DescribeQuery(renderedSql, dbType, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 ex.Message,
@@ -245,29 +246,18 @@ public class CustomToolProxy(
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
         Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
-    private static string DescribeQuery(ParsedStatement parsed)
-    {
-        var containsCte = parsed.Statement switch
+    private static string DescribeQuery(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        QueryFacts facts) =>
+        JsonSerializer.Serialize(new
         {
-            SelectStatement select => !select.Ctes.IsDefaultOrEmpty,
-            QueryStatement query => !query.Head.Ctes.IsDefaultOrEmpty,
-            _ => false
-        };
-        var containsSubquery = parsed.Statement switch
-        {
-            SelectStatement { From: DerivedTableSource } => true,
-            QueryStatement { Head.From: DerivedTableSource } => true,
-            _ => false
-        };
-        return JsonSerializer.Serialize(new
-        {
-            SourceDialect = parsed.SourceDialect.ToString(),
-            Span = new { parsed.Statement.Span.Start, parsed.Statement.Span.End },
-            ReferencedTables = Array.Empty<string>(),
-            ContainsCte = containsCte,
-            ContainsSubquery = containsSubquery
+            SourceDialect = sourceDialect.ToString(),
+            Span = new { Start = 0, End = sql.Length },
+            ReferencedTables = facts.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
+            facts.ContainsCte,
+            facts.ContainsSubquery
         });
-    }
 
     private static string DescribeDml(ParsedStatement parsedDml)
     {

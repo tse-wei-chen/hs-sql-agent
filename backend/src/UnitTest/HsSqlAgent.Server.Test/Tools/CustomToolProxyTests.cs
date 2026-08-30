@@ -133,7 +133,8 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
-                It.Is<ParsedStatement>(parsed => IsTable(parsed, "users")),
+                It.Is<string>(sql => sql.Contains("users", StringComparison.OrdinalIgnoreCase)),
+                SqlAgentToolType.Postgres,
                 It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == 1000 && p.QueryTimeoutSeconds == 30),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
@@ -173,7 +174,8 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
-            It.IsAny<ParsedStatement>(),
+            It.IsAny<string>(),
+            It.IsAny<SqlAgentToolType>(),
             It.IsAny<SecurityPolicyModel>(),
             It.IsAny<IReadOnlySet<string>?>(),
             It.IsAny<CancellationToken>()), Times.Never);
@@ -340,7 +342,8 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
-                It.IsAny<ParsedStatement>(),
+                It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(),
                 It.IsAny<SecurityPolicyModel>(),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
@@ -391,12 +394,6 @@ public class CustomToolProxyTests
             .Returns(provider.Object);
     }
 
-    private static bool IsTable(ParsedStatement parsed, string expected)
-    {
-        if (parsed.Statement is not SelectStatement { From: NamedTableSource source }) return false;
-        var actual = string.Join('.', source.Name.Parts.Select(part => part.Value));
-        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
-    }
 
     private sealed class DecliningApprovalClient : IDmlApprovalClient
     {

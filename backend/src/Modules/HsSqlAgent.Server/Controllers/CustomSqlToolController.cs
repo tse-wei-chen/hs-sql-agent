@@ -220,9 +220,9 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 return null;
             }
 
-            var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
             _ = SqlCoreFacade.CompileQuery(
-                parsed,
+                sql,
+                dbType,
                 dbType,
                 new SqlPlanValidationContext("custom-tool-definition-validation"),
                 new SqlExecutionPlanPolicy(policy?.QueryMaxRows ?? 0));
@@ -326,11 +326,11 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             string result;
             if (isQuery)
             {
-                var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
                 var execution = await typedQueryRuntime.ExecuteAsync(
                     provider,
                     connectionString,
-                    parsed,
+                    sql,
+                    dbType,
                     runtimePolicy,
                     allowedTables: null,
                     cancellationToken);

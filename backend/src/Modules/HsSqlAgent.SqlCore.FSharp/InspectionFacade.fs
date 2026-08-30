@@ -7,6 +7,7 @@ open System.Collections.Generic
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Binding
 open HsSqlAgent.SqlCore.Core.Pipeline
+open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -182,6 +183,14 @@ module private Inspection =
 
 [<AbstractClass; Sealed>]
 type SqlCoreInspection private () =
+    static member GetQueryFacts(sql: string, sourceDialect: SqlAgentToolType) =
+        ArgumentNullException.ThrowIfNull(sql)
+
+        RewriteFacadeAdapter.parseSourceValidated sql sourceDialect null
+        |> RewriteBinder.bind
+        |> Bound.value
+        |> Inspection.inspectDocument
+
     static member GetQueryFacts(parsed: ParsedStatement) =
         ArgumentNullException.ThrowIfNull(parsed)
 
