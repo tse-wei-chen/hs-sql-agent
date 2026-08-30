@@ -248,13 +248,16 @@ module internal RewriteLegacyAstAdapter =
             simpleCaseOf simpleCase
 
         | :? HsSqlAgent.SqlCore.Core.Ast.CaseExpr as searchedCase ->
-            let branches =
+            let converted =
                 searchedCase.Branches
                 |> Seq.map (fun branch ->
                     { SearchedCaseBranch.Condition = exprOf branch.Condition
                       Result = exprOf branch.Value })
                 |> Seq.toList
-                |> NonEmpty.ofList "branches"
+            let branches =
+                match converted with
+                | [] -> raise (SqlCompilationException("Searched CASE requires at least one WHEN branch."))
+                | head :: tail -> NonEmpty.create head tail
             SearchedCase(branches, Option.ofObj searchedCase.ElseExpression |> Option.map exprOf)
 
         | :? HsSqlAgent.SqlCore.Core.Ast.InExpr as inExpression ->
@@ -288,20 +291,21 @@ module internal RewriteLegacyAstAdapter =
                 match branch.Condition with
                 | :? HsSqlAgent.SqlCore.Core.Ast.BinaryExpr as equality
                     when equality.Operator.Equals("=", StringComparison.OrdinalIgnoreCase) ->
-                    exprOf equality.Left, exprOf equality.Right, exprOf branch.Value
+                    equality.Left, exprOf equality.Left, exprOf equality.Right, exprOf branch.Value
                 | _ -> failClosed "simple CASE compatibility branch" branch.Condition)
             |> Seq.toList
 
         match converted with
         | [] -> raise (SqlCompilationException("Simple CASE requires at least one WHEN branch."))
-        | (input, firstMatch, firstResult) :: tail ->
+        | (legacyInput, input, firstMatch, firstResult) :: tail ->
             let branches =
                 { SimpleCaseBranch.Match = firstMatch; Result = firstResult }
                 :: (tail
-                    |> List.map (fun (candidateInput, matchValue, result) ->
-                        if not (Expr.equivalent input candidateInput) then
+                    |> List.map (fun (candidateLegacyInput, candidateInput, matchValue, result) ->
+                        if not (Object.Equals(legacyInput, candidateLegacyInput))
+                           && not (Expr.equivalent input candidateInput) then
                             raise (SqlCompilationException(
-                                "Simple CASE branches must share one input expression."))
+                                "Simple CASE branches must share one canonical operand."))
                         { SimpleCaseBranch.Match = matchValue; Result = result }))
                 |> NonEmpty.ofList "branches"
             SimpleCase(
@@ -361,13 +365,21 @@ module internal RewriteLegacyAstAdapter =
           Query = queryOfStatement cte.Query }
 
     and private selectOf (select: HsSqlAgent.SqlCore.Core.Ast.SelectStatement) =
-        { Select.Ctes = select.Ctes |> Seq.map cteOf |> Seq.toList
-          Distinct = select.Distinct
-          ProjectionItems =
+        let projection =
             select.Select
             |> Seq.map selectItemOf
             |> Seq.toList
-            |> NonEmpty.ofList "projection"
+        let projectionItems =
+            match projection with
+            | [] ->
+                NonEmpty.create
+                    { SelectItem.Expression = Wildcard None
+                      Alias = None }
+                    []
+            | head :: tail -> NonEmpty.create head tail
+        { Select.Ctes = select.Ctes |> Seq.map cteOf |> Seq.toList
+          Distinct = select.Distinct
+          ProjectionItems = projectionItems
           From = Option.ofObj select.From |> Option.map tableSourceOf
           Joins = select.Joins |> Seq.map joinOf |> Seq.toList
           Where = Option.ofObj select.Where |> Option.map exprOf
@@ -498,6 +510,11 @@ module internal RewriteLegacyAstAdapter =
 
     let toParsed (statement: HsSqlAgent.SqlCore.Core.Ast.SqlStatement) =
         ArgumentNullException.ThrowIfNull(statement)
-        Parsed.create
-            { Document.Statement = statementOf statement
-              Span = spanOf statement.Span }
+        try
+            Parsed.create
+                { Document.Statement = statementOf statement
+                  Span = spanOf statement.Span }
+        with
+        | :? SqlCompilationException -> reraise()
+        | :? ArgumentException as ex ->
+            raise (SqlCompilationException(ex.Message, ex))

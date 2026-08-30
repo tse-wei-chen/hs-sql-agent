@@ -157,99 +157,133 @@ module internal RewriteStages =
                 | None -> ()
         | _ -> ()
 
-    let rec private validateRawSourceExpr source expression =
+    let private requireSourceOrderingCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> raise (SqlCompilationException(message))
+
+    let private validateRawSourceOrder orderingProofs (order: OrderBy) =
+        match order.NullOrdering with
+        | NullOrdering.Default -> ()
+        | NullOrdering.NullsFirst -> requireSourceOrderingCapability orderingProofs.NullsFirst
+        | NullOrdering.NullsLast -> requireSourceOrderingCapability orderingProofs.NullsLast
+
+    let private validateRawConcat source mySqlPipes =
+        if source = SqlAgentToolType.MySQL
+           && mySqlPipes <> RewriteParser.MySqlPipesSemantics.PipesAsConcat then
+            match SqlConcatCapabilityRules.SourceSemanticValidationError(source) with
+            | null -> ()
+            | message -> compilationError message
+        elif source = SqlAgentToolType.MsSqlServer then
+            match SqlConcatCapabilityRules.RawSourceSyntaxError(source) with
+            | null -> ()
+            | message -> compilationError message
+
+    let rec private validateRawSourceExpr source orderingProofs mySqlPipes expression =
         validateRawSourceFunction source expression
         match expression with
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | Unary(_, operand) -> validateRawSourceExpr source operand
+        | Unary(_, operand) -> validateRawSourceExpr source orderingProofs mySqlPipes operand
+        | Binary(BinaryOperator.Concat, left, right) ->
+            validateRawConcat source mySqlPipes
+            validateRawSourceExpr source orderingProofs mySqlPipes left
+            validateRawSourceExpr source orderingProofs mySqlPipes right
         | Binary(_, left, right) ->
-            validateRawSourceExpr source left
-            validateRawSourceExpr source right
+            validateRawSourceExpr source orderingProofs mySqlPipes left
+            validateRawSourceExpr source orderingProofs mySqlPipes right
         | Like(value, pattern, _, _, _) ->
-            validateRawSourceExpr source value
-            validateRawSourceExpr source pattern
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+            validateRawSourceExpr source orderingProofs mySqlPipes pattern
         | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateRawSourceExpr source)
+            arguments |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
         | RegexMatch(value, pattern) ->
-            validateRawSourceExpr source value
-            validateRawSourceExpr source pattern
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+            validateRawSourceExpr source orderingProofs mySqlPipes pattern
         | FunctionCall call ->
-            call.Arguments |> List.iter (validateRawSourceExpr source)
-            call.AggregateOrderBy |> List.iter (fun order -> validateRawSourceExpr source order.Expression)
+            call.Arguments |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+            call.AggregateOrderBy
+            |> List.iter (fun order ->
+                validateRawSourceOrder orderingProofs order
+                validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
         | FilteredAggregate(value, predicate) ->
-            validateRawSourceExpr source value
-            validateRawSourceExpr source predicate
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+            validateRawSourceExpr source orderingProofs mySqlPipes predicate
         | Windowed(value, window) ->
-            validateRawSourceExpr source value
-            window.PartitionBy |> List.iter (validateRawSourceExpr source)
-            window.OrderBy |> List.iter (fun order -> validateRawSourceExpr source order.Expression)
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+            window.PartitionBy |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+            window.OrderBy
+            |> List.iter (fun order ->
+                validateRawSourceOrder orderingProofs order
+                validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
         | Cast(value, _) | Extract(_, value) ->
-            validateRawSourceExpr source value
+            validateRawSourceExpr source orderingProofs mySqlPipes value
         | SimpleCase(input, branches, fallback) ->
-            validateRawSourceExpr source input
+            validateRawSourceExpr source orderingProofs mySqlPipes input
             branches |> NonEmpty.iter (fun branch ->
-                validateRawSourceExpr source branch.Match
-                validateRawSourceExpr source branch.Result)
-            fallback |> Option.iter (validateRawSourceExpr source)
+                validateRawSourceExpr source orderingProofs mySqlPipes branch.Match
+                validateRawSourceExpr source orderingProofs mySqlPipes branch.Result)
+            fallback |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
         | SearchedCase(branches, fallback) ->
             branches |> NonEmpty.iter (fun branch ->
-                validateRawSourceExpr source branch.Condition
-                validateRawSourceExpr source branch.Result)
-            fallback |> Option.iter (validateRawSourceExpr source)
+                validateRawSourceExpr source orderingProofs mySqlPipes branch.Condition
+                validateRawSourceExpr source orderingProofs mySqlPipes branch.Result)
+            fallback |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
         | InList(value, items, _) ->
-            validateRawSourceExpr source value
-            items |> NonEmpty.iter (validateRawSourceExpr source)
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+            items |> NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
         | InSubquery(value, query, _) ->
-            validateRawSourceExpr source value
-            validateRawSourceQuery source query
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+            validateRawSourceQuery source orderingProofs mySqlPipes query
         | Between(value, lower, upper, _) ->
-            validateRawSourceExpr source value
-            validateRawSourceExpr source lower
-            validateRawSourceExpr source upper
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+            validateRawSourceExpr source orderingProofs mySqlPipes lower
+            validateRawSourceExpr source orderingProofs mySqlPipes upper
         | IsNull(value, _) ->
-            validateRawSourceExpr source value
+            validateRawSourceExpr source orderingProofs mySqlPipes value
         | ScalarSubquery query | Exists(query, _) ->
-            validateRawSourceQuery source query
+            validateRawSourceQuery source orderingProofs mySqlPipes query
 
-    and private validateRawSourceTable source table =
+    and private validateRawSourceTable source orderingProofs mySqlPipes table =
         match table with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> validateRawSourceQuery source query
+        | DerivedTable(query, _) -> validateRawSourceQuery source orderingProofs mySqlPipes query
 
-    and private validateRawSourceSelect source select =
-        select.Ctes |> List.iter (fun cte -> validateRawSourceQuery source cte.Query)
-        select.Projection |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
-        select.From |> Option.iter (validateRawSourceTable source)
+    and private validateRawSourceSelect source orderingProofs mySqlPipes select =
+        select.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
+        select.Projection |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
+        select.From |> Option.iter (validateRawSourceTable source orderingProofs mySqlPipes)
         select.Joins |> List.iter (fun join ->
-            validateRawSourceTable source join.Source
-            join.Predicate |> Option.iter (validateRawSourceExpr source))
-        select.Where |> Option.iter (validateRawSourceExpr source)
-        select.GroupBy |> List.iter (validateRawSourceExpr source)
-        select.Having |> Option.iter (validateRawSourceExpr source)
+            validateRawSourceTable source orderingProofs mySqlPipes join.Source
+            join.Predicate |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
+        select.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+        select.GroupBy |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+        select.Having |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
 
-    and private validateRawSourceQuery source query =
-        validateRawSourceSelect source query.Head
-        query.SetOperations |> List.iter (fun branch -> validateRawSourceQuery source branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateRawSourceExpr source order.Expression)
+    and private validateRawSourceQuery source orderingProofs mySqlPipes query =
+        validateRawSourceSelect source orderingProofs mySqlPipes query.Head
+        query.SetOperations |> List.iter (fun branch -> validateRawSourceQuery source orderingProofs mySqlPipes branch.Query)
+        query.OrderBy
+        |> List.iter (fun order ->
+            validateRawSourceOrder orderingProofs order
+            validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
 
-    let private validateRawSourceDocument source document =
+    let private validateRawSourceDocument source orderingProofs mySqlPipes document =
         match document.Statement with
-        | QueryStatement query -> validateRawSourceQuery source query
+        | QueryStatement query -> validateRawSourceQuery source orderingProofs mySqlPipes query
         | InsertStatement insert ->
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (validateRawSourceExpr source))
-            | QuerySource query -> validateRawSourceQuery source query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
+            | QuerySource query -> validateRawSourceQuery source orderingProofs mySqlPipes query
             | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
+            insert.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
         | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun item -> validateRawSourceExpr source item.Value)
-            update.From |> List.iter (validateRawSourceTable source)
-            update.Where |> Option.iter (validateRawSourceExpr source)
-            update.Returning |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
+            update.AssignmentItems |> NonEmpty.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Value)
+            update.From |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
+            update.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+            update.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
         | DeleteStatement delete ->
-            delete.Using |> List.iter (validateRawSourceTable source)
-            delete.Where |> Option.iter (validateRawSourceExpr source)
-            delete.Returning |> List.iter (fun item -> validateRawSourceExpr source item.Expression)
+            delete.Using |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
+            delete.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+            delete.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
 
     let private emptyFunction name arguments =
         { FunctionCall.Name = FunctionName.create name
@@ -678,12 +712,12 @@ module internal RewriteStages =
                         Returning = normalizeReturning source target delete.Returning }
         { document with Statement = statement }
 
-    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof bound =
+    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes bound =
         Transition.normalize
             (fun document ->
                 verifySourceRegexDocument sourceRegexProof document
                 if enforceDialectSyntax then
-                    validateRawSourceDocument (sourceProvider sourceDialect) document
+                    validateRawSourceDocument (sourceProvider sourceDialect) sourceOrdering mySqlPipes document
                 normalizeDocument sourceDialect targetRuntime document)
             bound
 
@@ -1865,6 +1899,259 @@ module internal RewriteStages =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
         name, SqlCanonicalFunctionRegistry.IsAggregate(name), SqlCanonicalFunctionRegistry.IsWindow(name)
 
+    let private targetCapabilityError provider capability =
+        SqlCompilationException(
+            "SQL capability '" + capability + "' is not supported by provider "
+            + string provider + " for this Core plan.")
+
+    let private integerLiteral = function
+        | Literal(ScalarValue.Integer value) -> Some value
+        | Literal(ScalarValue.Decimal value)
+            when value = Decimal.Truncate(value)
+                 && value >= decimal Int64.MinValue
+                 && value <= decimal Int64.MaxValue ->
+            Some(int64 value)
+        | Literal(ScalarValue.Floating value)
+            when Double.IsFinite(value)
+                 && value = Math.Truncate(value)
+                 && value >= float Int64.MinValue
+                 && value <= float Int64.MaxValue ->
+            Some(int64 value)
+        | _ -> None
+
+    let private validateJsonPath provider arguments =
+        let path =
+            match arguments |> List.tryItem 1 with
+            | Some(Literal(ScalarValue.Text value)) -> value
+            | _ -> raise (targetCapabilityError provider "json.path.constant")
+        if not (System.Text.RegularExpressions.Regex.IsMatch(
+                    path,
+                    "^\\$\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant)) then
+            raise (SqlCompilationException(
+                "JSON path '" + path + "' is outside the portable Core property-chain subset. "
+                + "SQL capability 'json.path.property_chain' is not supported by provider "
+                + string provider + " for this Core plan."))
+
+    let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
+        let provider = targetProvider targetRuntime
+        let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        let contract = SqlCanonicalFunctionRegistry.Find(name)
+        if isNull contract then
+            if call.IsDistinct then
+                raise (SqlCompilationException(
+                    "Function '" + name + "' has no Core DISTINCT capability declaration."))
+        else
+            if not (contract.AcceptsArgumentCount(call.Arguments.Length)) then
+                let expected =
+                    if contract.MinArguments = contract.MaxArguments then string contract.MinArguments
+                    else string contract.MinArguments + "-" + string contract.MaxArguments
+                raise (SqlCompilationException(
+                    "Function '" + name + "' requires " + expected + " argument(s); received "
+                    + string call.Arguments.Length + "."))
+            if call.IsDistinct && not contract.AllowDistinct then
+                raise (SqlCompilationException(
+                    "Function '" + name + "' does not support DISTINCT in the Core pipeline."))
+            if contract.RequireWindow && not withinWindow then
+                raise (SqlCompilationException("Function '" + name + "' requires an OVER clause."))
+
+            contract.PlanShapeRules
+            |> Seq.iter (fun rule ->
+                if rule.ArgumentIndex < 0 || call.Arguments.Length <= rule.ArgumentIndex then
+                    raise (SqlCompilationException(
+                        "Canonical function '" + contract.Name
+                        + "' declares an invalid plan-shape argument index "
+                        + string rule.ArgumentIndex + "."))
+                let argument = call.Arguments |> List.item rule.ArgumentIndex
+                match rule.Kind with
+                | SqlCanonicalPlanShapeValidationKind.DistinctWildcardForbidden ->
+                    if call.IsDistinct then
+                        match argument with
+                        | Wildcard None ->
+                            let message =
+                                if String.IsNullOrWhiteSpace(rule.ValidationMessage) then
+                                    "Canonical function '" + contract.Name
+                                    + "' does not allow DISTINCT wildcard arguments."
+                                else rule.ValidationMessage
+                            raise (SqlCompilationException(message))
+                        | _ -> ()
+                | SqlCanonicalPlanShapeValidationKind.LiteralStringRequired ->
+                    match argument with
+                    | Literal(ScalarValue.Text _) -> ()
+                    | _ ->
+                        if String.IsNullOrWhiteSpace(rule.CapabilityId) then
+                            let message =
+                                if String.IsNullOrWhiteSpace(rule.ValidationMessage) then
+                                    "Canonical function '" + contract.Name
+                                    + "' requires a literal string argument at position "
+                                    + string (rule.ArgumentIndex + 1) + "."
+                                else rule.ValidationMessage
+                            raise (SqlCompilationException(message))
+                        else raise (targetCapabilityError provider rule.CapabilityId)
+                | value ->
+                    raise (SqlCompilationException(
+                        "Unsupported canonical plan-shape rule '" + string value
+                        + "' for function '" + contract.Name + "'.")))
+
+            match contract.TargetCapabilityFamily with
+            | SqlCanonicalTargetCapabilityFamily.None -> ()
+            | SqlCanonicalTargetCapabilityFamily.WindowFunction ->
+                match SqlWindowCapabilityRules.FunctionValidationError(contract.Name, provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | SqlCanonicalTargetCapabilityFamily.TemporalFormat ->
+                match SqlTemporalFormatCapabilityRules.TargetValidationError(contract.Name, provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | SqlCanonicalTargetCapabilityFamily.Json ->
+                match SqlJsonCapabilityRules.TargetValidationError(contract.Name, provider) with
+                | null -> validateJsonPath provider call.Arguments
+                | message -> raise (SqlCompilationException(message))
+            | SqlCanonicalTargetCapabilityFamily.Regex ->
+                match SqlRegexCapabilityRules.ProviderValidationError(provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | SqlCanonicalTargetCapabilityFamily.DatePart ->
+                match call.Arguments |> List.tryHead with
+                | Some(Literal(ScalarValue.Text rawPart)) ->
+                    match SqlDatePartCapabilityRules.TargetValidationError(rawPart, provider) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                | _ -> raise (SqlCompilationException(
+                            "Canonical function 'CORE_DATE_PART' requires a literal date-part unit."))
+            | SqlCanonicalTargetCapabilityFamily.DateMath ->
+                match call.Arguments |> List.tryHead with
+                | Some(Literal(ScalarValue.Text rawUnit)) ->
+                    match SqlDateMathCapabilityRules.TargetValidationError(rawUnit, provider, contract.Name) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                | _ -> raise (SqlCompilationException(
+                            "Canonical function '" + contract.Name
+                            + "' requires a literal date-part unit."))
+            | SqlCanonicalTargetCapabilityFamily.CurrentTemporal ->
+                if not contract.CurrentTemporalKind.HasValue then
+                    raise (SqlCompilationException(
+                        "Canonical function '" + contract.Name
+                        + "' declares the current-temporal target family without a temporal kind."))
+                match SqlCurrentTemporalCapabilityRules.TargetValidationError(
+                          contract.CurrentTemporalKind.Value,
+                          provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | value ->
+                raise (SqlCompilationException(
+                    "Unsupported canonical target capability family '" + string value
+                    + "' for function '" + contract.Name + "'."))
+
+            contract.LiteralArgumentRules
+            |> Seq.iter (fun rule ->
+                if rule.ArgumentIndex < 0 then
+                    raise (SqlCompilationException(
+                        "Canonical function '" + contract.Name
+                        + "' declares an invalid literal argument index "
+                        + string rule.ArgumentIndex + "."))
+                match call.Arguments |> List.tryItem rule.ArgumentIndex |> Option.bind integerLiteral with
+                | None -> ()
+                | Some value ->
+                    match rule.Kind with
+                    | SqlCanonicalLiteralArgumentValidationKind.PositiveInteger ->
+                        if value <= 0L then
+                            let message =
+                                if String.IsNullOrWhiteSpace(rule.ValidationMessage) then
+                                    "Canonical function '" + contract.Name
+                                    + "' requires a positive integer argument."
+                                else rule.ValidationMessage
+                            raise (SqlCompilationException(message))
+                    | SqlCanonicalLiteralArgumentValidationKind.WindowOffset ->
+                        match SqlWindowCapabilityRules.LiteralOffsetValidationError(
+                                  contract.Name, value, provider) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    | value ->
+                        raise (SqlCompilationException(
+                            "Unsupported canonical literal argument rule '" + string value
+                            + "' for function '" + contract.Name + "'.")))
+
+    let private windowBoundPosition = function
+        | WindowFrameBound.UnboundedPreceding -> Int64.MinValue
+        | WindowFrameBound.Preceding offset -> -(int64 (FrameOffset.value offset))
+        | WindowFrameBound.CurrentRow -> 0L
+        | WindowFrameBound.Following offset -> int64 (FrameOffset.value offset)
+        | WindowFrameBound.UnboundedFollowing -> Int64.MaxValue
+
+    let private hasOffsetBound = function
+        | WindowFrameBound.Preceding _
+        | WindowFrameBound.Following _ -> true
+        | _ -> false
+
+    let private validateWindowFrameShape (frame: WindowFrame) =
+        match frame.Extent with
+        | WindowFrameExtent.SingleBound WindowFrameBound.UnboundedFollowing ->
+            raise (SqlCompilationException("Window frame cannot start with UNBOUNDED FOLLOWING."))
+        | WindowFrameExtent.SingleBound _ -> ()
+        | WindowFrameExtent.BetweenBounds(start, finish) ->
+            if start = WindowFrameBound.UnboundedFollowing then
+                raise (SqlCompilationException("Window frame cannot start with UNBOUNDED FOLLOWING."))
+            if finish = WindowFrameBound.UnboundedPreceding then
+                raise (SqlCompilationException("Window frame cannot end with UNBOUNDED PRECEDING."))
+            if windowBoundPosition start > windowBoundPosition finish then
+                raise (SqlCompilationException(
+                    "Window frame start must not be logically after its end bound."))
+
+    let private directWindowFunction = function
+        | FunctionCall call -> Some call
+        | FilteredAggregate(FunctionCall call, _) -> Some call
+        | _ -> None
+
+    let private validateFilterTarget = function
+        | FunctionCall call ->
+            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            let contract = SqlCanonicalFunctionRegistry.Find(name)
+            if isNull contract || not contract.AllowFilter then
+                raise (SqlCompilationException(
+                    "Function '" + name + "' does not support FILTER in the Core pipeline."))
+        | _ ->
+            raise (SqlCompilationException(
+                "FILTER must modify a directly modeled aggregate function."))
+
+    let private validateWindowTarget targetRuntime value (window: WindowSpec) =
+        let provider = targetProvider targetRuntime
+        match directWindowFunction value with
+        | None -> raise (SqlCompilationException(
+                    "OVER must modify a directly modeled aggregate or window function."))
+        | Some call ->
+            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            let contract = SqlCanonicalFunctionRegistry.Find(name)
+            if isNull contract || not contract.AllowWindow then
+                raise (SqlCompilationException(
+                    "Function '" + name + "' does not support OVER in the Core pipeline."))
+            if call.IsDistinct then
+                raise (SqlCompilationException(
+                    "DISTINCT window aggregate '" + name
+                    + "' is not a portable Core capability and is rejected before lowering."))
+            match window.Frame with
+            | Some frame ->
+                validateWindowFrameShape frame
+                if contract.IsWindowFrameInsensitive
+                   && (provider = SqlAgentToolType.MsSqlServer
+                       || provider = SqlAgentToolType.Oracle) then
+                    raise (targetCapabilityError provider (
+                        "window.frame." + name.ToLowerInvariant()))
+                if provider = SqlAgentToolType.MsSqlServer
+                   && frame.Unit = WindowFrameUnit.Range then
+                    match frame.Extent with
+                    | WindowFrameExtent.SingleBound bound when hasOffsetBound bound ->
+                        raise (targetCapabilityError provider "window.range_offset")
+                    | WindowFrameExtent.BetweenBounds(start, finish)
+                        when hasOffsetBound start || hasOffsetBound finish ->
+                        raise (targetCapabilityError provider "window.range_offset")
+                    | _ -> ()
+            | None -> ()
+            if provider = SqlAgentToolType.MsSqlServer
+               && contract.Kind = SqlCanonicalFunctionKind.Window
+               && window.OrderBy.IsEmpty then
+                raise (targetCapabilityError provider "window.order_by")
+
     let rec private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
         match context with
         | ProjectionClause -> validateBooleanScalar targetRuntime "expression.boolean_select" expression
@@ -1888,6 +2175,7 @@ module internal RewriteStages =
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
         | FunctionCall call ->
+            validateCanonicalFunction targetRuntime withinWindow call
             let name, isAggregate, isWindowFunction = canonicalFunctionKind call
             if isAggregate then
                 let allowed =
@@ -1918,9 +2206,11 @@ module internal RewriteStages =
             |> List.iter (fun order ->
                 validateSemanticExpr targetRuntime OrderByClause nested false order.Expression)
         | FilteredAggregate(value, predicate) ->
+            validateFilterTarget value
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
             validateSemanticExpr targetRuntime PredicateClause false false predicate
         | Windowed(value, window) ->
+            validateWindowTarget targetRuntime value window
             if context <> ProjectionClause && context <> OrderByClause then
                 raise (SqlCompilationException(
                     "Window expressions are not allowed in SQL clause '" + clauseName context + "'."))
