@@ -1,5 +1,3 @@
-#nowarn "3261" "3262"
-
 namespace HsSqlAgent.SqlCore.Models
 
 open System
@@ -151,10 +149,11 @@ type SqlCapabilityMatrix private () =
         let capabilities : SqlCapability list =
             [
                 cap("provider.target_profile","provider",supported,
-                    "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings.")
+                    "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+, SQL Server canonical string concatenation requires runtime proof (ServerVersion 17.x with compatibility level 170+ emits native ||; ServerVersion 14.x+ or an explicit CONCAT_NULL_YIELDS_NULL=ON contract uses +), SQLite RIGHT/FULL OUTER JOIN requires ServerVersion 3.39+, SQLite deterministic ON CONFLICT UPSERT requires ServerVersion 3.24+, SQLite DML RETURNING requires ServerVersion 3.35+, portable multi-row Firebird DSQL RETURNING requires ServerVersion 5.0+, and conditional MySQL assured ON DUPLICATE KEY UPDATE lowering requires ServerVersion 8.0.19+ so Core can use proposed-row aliases instead of deprecated VALUES(column).")
                 cap("provider.source_profile","provider",supported,
-                    "Raw SQL compilation accepts a separate optional source runtime profile. MySQL PIPES_AS_CONCAT (or ANSI) enables source || concatenation, ANSI_QUOTES enables double-quoted identifiers, and NO_BACKSLASH_ESCAPES changes string-literal semantics; ANSI does not imply NO_BACKSLASH_ESCAPES. LIKE under NO_BACKSLASH_ESCAPES requires an explicit single-character ESCAPE. Raw SQLite RETURNING requires source ServerVersion 3.35 or newer, and portable multi-row Firebird RETURNING requires source ServerVersion 5.0 or newer. Omitting a required source-profile capability remains fail-closed.")
-                cap("provider.unique_key_metadata","provider",supported,"Provider metadata inventories enforced unique-key sources.")
+                    "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent and version-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Raw SQL Server || source spelling remains fail-closed, including SQL Server 2025, until the Core source parser has an explicit T-SQL 17.x precedence/grammar contract. Raw SQLite RIGHT/FULL OUTER JOIN requires source ServerVersion 3.39+, raw SQLite ON CONFLICT UPSERT requires source ServerVersion 3.24+, raw SQLite RETURNING requires source ServerVersion 3.35+, and portable multi-row Firebird DSQL RETURNING requires source ServerVersion 5.0+. Absent or unrelated modes and versions remain fail-closed rather than guessing runtime semantics.")
+                cap("provider.unique_key_metadata","provider",supported,
+                    "Provider metadata readers inventory PRIMARY and UNIQUE conflict sources across PostgreSQL, MySQL, SQLite, SQL Server, Oracle, and Firebird. Simple enforced full-column keys are distinguishable from partial, expression/computed, prefix, disabled/invalid, or otherwise richer key shapes, and richer enforced keys remain visible instead of being filtered out. This metadata is an assurance prerequisite only; it does not by itself authorize a SQL lowering.")
                 cap("select.basic","query",translated,"SELECT/WHERE/GROUP BY/HAVING/ORDER BY and JOIN are represented structurally.")
                 cap("join.right","query",rightJoinStatus,
                     if provider = SqlAgentToolType.Sqlite && rightJoinStatus = translated then "SQLite 3.39+ RIGHT JOIN runtime contract is satisfied." else "RIGHT JOIN follows provider capability rules.")
@@ -208,7 +207,8 @@ type SqlCapabilityMatrix private () =
                 cap("temporal.offset_timestamp","temporal",offsetStatus,offsetDetail)
                 cap("temporal.current_keywords","temporal",currentTemporal,"CURRENT_DATE/TIME/TIMESTAMP use provider translation where required.")
                 cap("temporal.date_part.quarter","temporal",quarter,"QUARTER is in the declared portable subset only for PostgreSQL targets.")
-                cap("temporal.date_arithmetic","temporal",translated,"DATEADD/DATEDIFF forms are normalized and target-unit restrictions are validated before lowering.")
+                cap("temporal.date_arithmetic","temporal",translated,
+                    "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering.")
                 cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")
                 cap("temporal.formatted_parse","temporal",(if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected),"Formatted parse uses declared provider lowering.")
                 cap("json.extract","json",jsonExtract,"Portable JSON extraction is provider-gated.")
@@ -218,7 +218,11 @@ type SqlCapabilityMatrix private () =
                 cap("window.basic","window",translated,"OVER with PARTITION BY and ORDER BY is represented structurally.")
                 cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
                 cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
-                cap("ordering.nulls","ordering",nullOrdering,"NULL ordering follows provider-native or translated behavior.")
+                cap("ordering.nulls","ordering",nullOrdering,
+                    if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
+                        "Structured ASC NULLS FIRST and DESC NULLS LAST are canonicalized to the provider's identical native default ordering and the unsupported modifier is omitted. ASC NULLS LAST and DESC NULLS FIRST are translated with a CASE null-rank only when ORDER BY is a direct row-source column, including window ordering and nested DML SELECTs. DISTINCT statement tails, set-operation tails, projection alias references, and computed expressions remain fail-closed so Core does not duplicate arbitrary expression evaluation or violate provider ORDER BY select-list rules. Raw MySQL/SQL Server source syntax with NULLS modifiers is rejected at the source-dialect boundary."
+                    else
+                        "NULLS FIRST/LAST is emitted natively.")
                 cap("parameter.unbound","parameter",rejected,"Unbound SQL parameters are rejected.")
                 cap("dml.basic","dml",translated,"INSERT VALUES, UPDATE, and DELETE use the structured DML path.")
                 cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
@@ -255,7 +259,21 @@ type SqlCapabilityMatrix private () =
                             "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."
                         | _ -> "DML RETURNING result rows remain fail-closed.")
                 cap("dml.upsert_merge","dml",upsertStatus,
-                    if upsertStatus=translated then "Deterministic explicit-target upsert is enabled by the provider/runtime contract." else "Portable upsert remains fail-closed.")
+                    if upsertStatus=translated then
+                        if provider=SqlAgentToolType.Postgres then
+                            "PostgreSQL supports the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and closed assignments of the form target = EXCLUDED.source. Arbitrary expressions, predicates, named constraints, partial-index predicates, INSERT ... SELECT upsert, and typed approval execution remain fail-closed."
+                        else
+                            "SQLite ServerVersion 3.24+ target profiles support the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and target = EXCLUDED.source assignments. The target version must be explicit; richer SQLite UPSERT grammar and typed approval execution remain fail-closed."
+                    else
+                        match provider with
+                        | SqlAgentToolType.Sqlite ->
+                            "SQLite UPSERT remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.24 or newer."
+                        | SqlAgentToolType.MySQL ->
+                            "MySQL ON DUPLICATE KEY UPDATE can fire on any UNIQUE or PRIMARY KEY and has no explicit conflict target. Core inventories provider-native enforced unique keys, including richer partial/expression/prefix shapes. The compiler has a conditional single-row DO UPDATE path only when an explicit ServerVersion 8.0.19+ target profile and statement-level assurance prove the matched explicit conflict target is the sole enforced native conflict source; it uses a proposed-row alias rather than deprecated VALUES(column). Because this capability matrix has no per-statement assurance input, the default capability remains Rejected and fail-closed; DO NOTHING, multiple native conflict sources, richer unsupported enforced unique sources, and typed approval execution remain rejected."
+                        | SqlAgentToolType.Firebird ->
+                            "Firebird raw UPDATE OR INSERT ... MATCHING is canonicalized only with an explicit MATCHING column list. Firebird target lowering is available only when DmlConflictTargetAssurance proves that the canonical conflict target equals the complete resolved primary key and the conflict update mirrors every supplied INSERT column as the same proposed-row column. Because this capability matrix has no per-statement primary-key assurance input, the default Firebird capability remains Rejected and fail-closed; DO NOTHING, partial updates, general UNIQUE-key matching, and general MERGE remain rejected."
+                        | _ ->
+                            "This provider requires MERGE-style source and match semantics. Core has not yet modeled the source-row cardinality and match guarantees needed for a portable MERGE contract, so upsert remains fail-closed.")
             ]
 
         ProviderSqlCapabilities(
