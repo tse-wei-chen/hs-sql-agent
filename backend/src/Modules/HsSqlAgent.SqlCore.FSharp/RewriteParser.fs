@@ -169,7 +169,7 @@ module internal RewriteParser =
         match token.Kind with
         | Identifier(value, quoted) ->
             { Value = value; WasQuoted = quoted; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
-        | Keyword value when value = "FETCH" || value = "KEY" ->
+        | Keyword value when value = "FETCH" || value = "KEY" || value = "DATE" ->
             { Value = value; WasQuoted = false; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
         | _ -> fail token "Expected identifier"
 
@@ -728,7 +728,7 @@ module internal RewriteParser =
         | Keyword "FALSE" ->
             if cursor.Dialect = SourceDialect.SqlServer then fail token "FALSE is not valid in T-SQL (SQL Server source dialect); use an explicit predicate or 0 or 1 where a bit value is required"
             cursor.Advance(); Literal(ScalarValue.Boolean false)
-        | Keyword "DATE" ->
+        | Keyword "DATE" when match (cursor.Peek 1).Kind with StringLiteral _ -> true | _ -> false ->
             match cursor.Dialect with
             | SourceDialect.PostgreSql
             | SourceDialect.MySql
@@ -739,6 +739,8 @@ module internal RewriteParser =
             | SourceDialect.SqlServer
             | SourceDialect.SQLite ->
                 typedTemporalSourceError cursor "DATE"
+        | Keyword "DATE" ->
+            parseIdentifierExpression cursor
         | Keyword "TIME" ->
             match cursor.Dialect with
             | SourceDialect.PostgreSql
@@ -1081,6 +1083,8 @@ module internal RewriteParser =
                         fail cursor.Current "LIMIT offset,row_count is only valid in MySQL and SQLite"
                     offset <- Some first
                     limit <- Some(parseNonNegativeRowCount "LIMIT count" cursor)
+                    if isKeyword "OFFSET" cursor.Current then
+                        fail cursor.Current "LIMIT offset,row_count cannot be combined with a separate OFFSET clause"
                 else
                     limit <- Some first
                     if acceptKeyword "OFFSET" cursor then

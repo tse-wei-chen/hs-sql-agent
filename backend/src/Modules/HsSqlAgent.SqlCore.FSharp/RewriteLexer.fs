@@ -247,6 +247,12 @@ module internal RewriteLexer =
                     i <- i + 2
                 | _ ->
                     match c with
+                    | ':' when isIdentifierStart sql[i + 1] ->
+                        let start = i
+                        i <- i + 1
+                        while i < length && isIdentifierPart sql[i] do i <- i + 1
+                        let parameter = sql.Substring(start, i - start)
+                        invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
                     | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
                     | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
                     | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
