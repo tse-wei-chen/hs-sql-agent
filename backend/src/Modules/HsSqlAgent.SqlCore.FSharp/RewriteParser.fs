@@ -173,7 +173,12 @@ module internal RewriteParser =
         match token.Kind with
         | Identifier(value, quoted) ->
             { Value = value; WasQuoted = quoted; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
-        | Keyword value when value = "FETCH" || value = "KEY" || value = "DATE" ->
+        | Keyword value
+            when value = "FETCH"
+              || value = "KEY"
+              || value = "DATE"
+              || value = "TIME"
+              || value = "TIMESTAMP" ->
             { Value = value; WasQuoted = false; PreserveSpelling = false; Span = { Start = token.Start; Length = token.Length } }
         | _ -> fail token "Expected identifier"
 
@@ -237,6 +242,21 @@ module internal RewriteParser =
             | Symbol ',' ->
                 parts.Add(",")
                 cursor.Advance()
+            | Symbol '.' ->
+                let previousIsComponent =
+                    parts.Count > 0
+                    && parts[parts.Count - 1] <> "."
+                    && parts[parts.Count - 1] <> "("
+                    && parts[parts.Count - 1] <> ","
+                let nextIsComponent =
+                    match (cursor.Peek 1).Kind with
+                    | Identifier _
+                    | Keyword _ -> true
+                    | _ -> false
+                if not previousIsComponent || not nextIsComponent then
+                    fail cursor.Current "CAST target type contains a malformed qualified name"
+                parts.Add(".")
+                cursor.Advance()
             | _ -> fail cursor.Current "CAST target type contains an unsupported token"
         if parts.Count = 0 then fail cursor.Current "CAST target type cannot be empty"
         parts
@@ -247,6 +267,7 @@ module internal RewriteParser =
                  .Replace(" (", "(", StringComparison.Ordinal)
                  .Replace(" )", ")", StringComparison.Ordinal)
                  .Replace(" , ", ",", StringComparison.Ordinal)
+                 .Replace(" . ", ".", StringComparison.Ordinal)
         |> CastType.create
 
     let private parsePostfixCastType (cursor: Cursor) =
@@ -309,6 +330,21 @@ module internal RewriteParser =
             | Symbol ',' when depth > 0 ->
                 parts.Add(",")
                 cursor.Advance()
+            | Symbol '.' ->
+                let previousIsComponent =
+                    parts.Count > 0
+                    && parts[parts.Count - 1] <> "."
+                    && parts[parts.Count - 1] <> "("
+                    && parts[parts.Count - 1] <> ","
+                let nextIsComponent =
+                    match (cursor.Peek 1).Kind with
+                    | Identifier _
+                    | Keyword _ -> true
+                    | _ -> false
+                if not previousIsComponent || not nextIsComponent then
+                    fail cursor.Current "PostgreSQL CAST shorthand contains a malformed qualified type name"
+                parts.Add(".")
+                cursor.Advance()
             | _ ->
                 scanning <- false
 
@@ -323,6 +359,7 @@ module internal RewriteParser =
                  .Replace(" (", "(", StringComparison.Ordinal)
                  .Replace(" )", ")", StringComparison.Ordinal)
                  .Replace(" , ", ",", StringComparison.Ordinal)
+                 .Replace(" . ", ".", StringComparison.Ordinal)
         |> CastType.create
 
     let private parseDateLiteral (cursor: Cursor) =
@@ -732,6 +769,8 @@ module internal RewriteParser =
                 fail cursor.Current "Quoted or qualified function identifiers are not supported by the portable Core grammar"
             cursor.Advance()
             let distinct = acceptKeyword "DISTINCT" cursor
+            if not distinct then
+                acceptKeyword "ALL" cursor |> ignore
             let arguments = ResizeArray<Expr>()
             let mutable aggregateOrderBy : OrderBy list = []
             let mutable aggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
@@ -807,6 +846,8 @@ module internal RewriteParser =
                 typedTemporalSourceError cursor "DATE"
         | Keyword "DATE" ->
             parseIdentifierExpression cursor
+        | Keyword "TIME" when isSymbol '(' (cursor.Peek 1) ->
+            parseIdentifierExpression cursor
         | Keyword "TIME" ->
             match cursor.Dialect with
             | SourceDialect.PostgreSql
@@ -820,6 +861,8 @@ module internal RewriteParser =
             | SourceDialect.SQLite
             | SourceDialect.Oracle ->
                 typedTemporalSourceError cursor "TIME"
+        | Keyword "TIMESTAMP" when isSymbol '(' (cursor.Peek 1) ->
+            parseIdentifierExpression cursor
         | Keyword "TIMESTAMP" ->
             cursor.Advance()
             if acceptKeyword "WITH" cursor then

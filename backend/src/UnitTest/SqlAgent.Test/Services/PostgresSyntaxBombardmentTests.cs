@@ -239,7 +239,7 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Case(
             "fetch-first",
             "SELECT id FROM users ORDER BY id FETCH FIRST 5 ROWS ONLY",
-            "FETCH",
+            "LIMIT",
             "users");
         yield return Case(
             "offset-fetch",
@@ -370,6 +370,8 @@ public sealed class PostgresSyntaxBombardmentTests
 
         if (name == "not-ilike")
             Assert.Contains("NOT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        if (name == "fetch-first")
+            Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 5));
     }
 
     [Theory]
