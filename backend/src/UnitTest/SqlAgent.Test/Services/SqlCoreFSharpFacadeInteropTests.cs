@@ -2598,6 +2598,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         var sourceProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Sqlite,
             ServerVersion: new Version(3, 30));
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite);
         var validation = new SqlPlanValidationContext(
             "fsharp-filter-sqlite-target-v1",
             new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
@@ -2618,7 +2619,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
                 validation,
                 policy,
                 sourceProfile,
-                null));
+                targetProfile));
 
         Assert.Equal(legacy.GetType(), migrated.GetType());
         Assert.Equal(legacy.Message, migrated.Message);
@@ -2667,6 +2668,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     {
         const string sql =
             "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
         var targetProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Oracle,
             ServerVersion: new Version(26, 0));
@@ -2688,7 +2690,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
             SqlAgentToolType.Oracle,
             validation,
             policy,
-            null,
+            sourceProfile,
             targetProfile);
 
         Assert.Equal(legacy.Sql, migrated.Sql);
@@ -2707,6 +2709,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     public void Facade_TextQuery_Oracle26TargetFilterUnsafePredicate_RemainsFailClosedLikeLegacy(
         string sql)
     {
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
         var targetProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Oracle,
             ServerVersion: new Version(26, 0));
@@ -2732,7 +2735,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
                 SqlAgentToolType.Oracle,
                 validation,
                 policy,
-                null,
+                sourceProfile,
                 targetProfile));
 
         Assert.Equal(legacy.GetType(), migrated.GetType());
@@ -2747,6 +2750,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         var sourceProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Oracle,
             ServerVersion: new Version(26, 0));
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
         var validation = new SqlPlanValidationContext(
             "fsharp-filter-oracle26-source-v1",
             new HashSet<string>(
@@ -2769,7 +2773,7 @@ public sealed class SqlCoreFSharpFacadeInteropTests
                 validation,
                 policy,
                 sourceProfile,
-                null));
+                targetProfile));
 
         Assert.Equal(legacy.GetType(), migrated.GetType());
         Assert.Equal(legacy.Message, migrated.Message);
