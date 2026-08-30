@@ -39,11 +39,11 @@ module private FacadeCompile =
         if profile.CompatibilityLevel.HasValue && profile.CompatibilityLevel.Value < 0 then
             raise (ArgumentOutOfRangeException(argumentName, profile.CompatibilityLevel.Value, "Provider compatibility level must be non-negative."))
 
-    let queryText sql sourceDialect targetProvider validationContext executionPolicy =
-        RewriteFacadeAdapter.compileQueryValidated sql sourceDialect targetProvider validationContext executionPolicy
+    let queryText sql sourceDialect targetProvider sourceProfile validationContext executionPolicy =
+        RewriteFacadeAdapter.compileQueryValidated sql sourceDialect targetProvider sourceProfile validationContext executionPolicy
 
-    let dmlText sql sourceDialect targetProvider validationContext policy =
-        RewriteFacadeAdapter.compileDmlValidated sql sourceDialect targetProvider validationContext policy
+    let dmlText sql sourceDialect targetProvider sourceProfile validationContext policy =
+        RewriteFacadeAdapter.compileDmlValidated sql sourceDialect targetProvider sourceProfile validationContext policy
 
 /// C#-oriented facade. SQL-text compilation is owned by the closed F# DU pipeline.
 /// ParsedStatement overloads remain solely as a source-compatible CLR boundary for callers that
@@ -82,14 +82,14 @@ type SqlCoreFacade private () =
     static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
-        FacadeCompile.queryText sql sourceDialect targetProvider validationContext executionPolicy
+        FacadeCompile.queryText sql sourceDialect targetProvider null validationContext executionPolicy
 
     static member CompileQuery(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, executionPolicy: SqlExecutionPlanPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         FacadeCompile.validateProfile sourceDialect "sourceProfile" sourceProfile
         FacadeCompile.validateProfile targetProvider "targetProfile" targetProfile
-        FacadeCompile.queryText sql sourceDialect targetProvider validationContext executionPolicy
+        FacadeCompile.queryText sql sourceDialect targetProvider sourceProfile validationContext executionPolicy
 
     static member CompileDml(parsed: ParsedStatement, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         FunctionalAst.verify parsed.Statement |> ignore
@@ -101,7 +101,7 @@ type SqlCoreFacade private () =
 
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
-        FacadeCompile.dmlText sql sourceDialect targetProvider validationContext null
+        FacadeCompile.dmlText sql sourceDialect targetProvider null validationContext null
 
     static member CompileDml(sql: string, sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType, validationContext: SqlPlanValidationContext, policy: DmlCompilationPolicy, sourceProfile: SqlProviderCapabilityProfile, targetProfile: SqlProviderCapabilityProfile, conflictTargetAssurance: DmlConflictTargetAssurance) : CompiledSqlCommand =
         ArgumentNullException.ThrowIfNull(validationContext)
@@ -109,7 +109,7 @@ type SqlCoreFacade private () =
         ArgumentNullException.ThrowIfNull(conflictTargetAssurance)
         FacadeCompile.validateProfile sourceDialect "sourceProfile" sourceProfile
         FacadeCompile.validateProfile targetProvider "targetProfile" targetProfile
-        FacadeCompile.dmlText sql sourceDialect targetProvider validationContext policy
+        FacadeCompile.dmlText sql sourceDialect targetProvider sourceProfile validationContext policy
 
     static member TryParseQuery(sql: string, sourceDialect: SqlAgentToolType) : SqlCoreTryResult<ParsedStatement> =
         FacadeResult.capture (fun () -> SqlCoreFacade.ParseQuery(sql, sourceDialect))

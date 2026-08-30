@@ -9,13 +9,14 @@ module internal RewritePipeline =
 
     type CompileOptions =
         { SourceDialect: SourceDialect
+          SourceSemantics: SourceSemantics
           Provider: Provider
           Policy: ExecutionPolicy
           AllowedTables: string list option }
 
     let compile options sql =
         sql
-        |> RewriteParser.parseFor options.SourceDialect
+        |> RewriteParser.parseForWith options.SourceSemantics options.SourceDialect
         |> RewriteBinder.bind
         |> RewriteStages.normalize
         |> RewriteStages.validate options.AllowedTables

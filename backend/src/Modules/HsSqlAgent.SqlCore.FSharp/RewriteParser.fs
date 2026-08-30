@@ -2,6 +2,9 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Globalization
+open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -10,7 +13,18 @@ module internal RewriteParser =
 
     type SourceDialect = PostgreSql | MySql | SqlServer | SQLite | Oracle | Firebird
 
-    type private Cursor(tokens: Token list, dialect: SourceDialect) =
+    type MySqlPipesSemantics =
+        | RejectAmbiguousPipes
+        | PipesAsConcat
+
+    type SourceSemantics =
+        { MySqlPipes: MySqlPipesSemantics }
+
+    module SourceSemantics =
+        let defaultValue = { MySqlPipes = RejectAmbiguousPipes }
+        let mysqlPipesAsConcat = { MySqlPipes = PipesAsConcat }
+
+    type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
         let mutable index = 0
         member _.Current = data[index]
@@ -21,6 +35,7 @@ module internal RewriteParser =
             if index < data.Length - 1 then index <- index + 1
             token
         member _.Dialect = dialect
+        member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
 
     let private fail (token: Token) (message: string) : 'T =
         invalidArg "sql" (message + " at offset " + string token.Start + ".")
@@ -207,7 +222,12 @@ module internal RewriteParser =
 
     and private parseConcat cursor =
         let mutable left = parseAdd cursor
-        while acceptOperator "||" cursor do left <- Binary(BinaryOperator.Concat, left, parseAdd cursor)
+        while isOperator "||" cursor.Current do
+            if cursor.Dialect = SourceDialect.MySql then
+                let message = SqlConcatCapabilityRules.SourceSemanticValidationError(SqlAgentToolType.MySQL)
+                raise (SqlCompilationException(message))
+            cursor.Advance()
+            left <- Binary(BinaryOperator.Concat, left, parseAdd cursor)
         left
 
     and private parseAdd cursor =
@@ -221,14 +241,21 @@ module internal RewriteParser =
         left
 
     and private parseMultiply cursor =
-        let mutable left = parseUnary cursor
+        let mutable left = parseProfiledConcat cursor
         let mutable keepGoing = true
         while keepGoing do
             match cursor.Current.Kind with
-            | Operator "*" -> cursor.Advance(); left <- Binary(BinaryOperator.Multiply, left, parseUnary cursor)
-            | Operator "/" -> cursor.Advance(); left <- Binary(BinaryOperator.Divide, left, parseUnary cursor)
-            | Operator "%" -> cursor.Advance(); left <- Binary(BinaryOperator.Modulo, left, parseUnary cursor)
+            | Operator "*" -> cursor.Advance(); left <- Binary(BinaryOperator.Multiply, left, parseProfiledConcat cursor)
+            | Operator "/" -> cursor.Advance(); left <- Binary(BinaryOperator.Divide, left, parseProfiledConcat cursor)
+            | Operator "%" -> cursor.Advance(); left <- Binary(BinaryOperator.Modulo, left, parseProfiledConcat cursor)
             | _ -> keepGoing <- false
+        left
+
+    and private parseProfiledConcat cursor =
+        let mutable left = parseUnary cursor
+        if cursor.Dialect = SourceDialect.MySql && cursor.MySqlPipesAsConcat then
+            while acceptOperator "||" cursor do
+                left <- Binary(BinaryOperator.Concat, left, parseUnary cursor)
         left
 
     and private parseUnary cursor =
@@ -747,10 +774,10 @@ module internal RewriteParser =
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
           Returning = parseReturning cursor }
 
-    let parseFor dialect (sql: string) =
+    let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let tokens = RewriteLexer.tokenize sql
-        let cursor = Cursor(tokens, dialect)
+        let cursor = Cursor(tokens, dialect, semantics)
         let start = cursor.Current.Start
         let statement =
             match cursor.Current.Kind with
@@ -765,5 +792,7 @@ module internal RewriteParser =
         acceptSymbol ';' cursor |> ignore
         match cursor.Current.Kind with End -> () | _ -> fail cursor.Current "Unexpected trailing token"
         Parsed.create { Statement = statement; Span = { Start = start; Length = sql.Length - start } }
+
+    let parseFor dialect sql = parseForWith SourceSemantics.defaultValue dialect sql
 
     let parse (sql: string) = parseFor SourceDialect.PostgreSql sql

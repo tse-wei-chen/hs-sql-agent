@@ -500,6 +500,86 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TextQuery_MySqlPipesWithoutSourceProfile_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT first_name || last_name AS full_name FROM users";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-pipes-failclosed-v1",
+            new HashSet<string>(
+                new[] { "users" },
+                StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.MySQL);
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler
+                .CreateDefault()
+                .Compile(
+                    parsed,
+                    SqlAgentToolType.Postgres,
+                    validation,
+                    policy));
+
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_MySqlPipesProfile_PreservesHighPrecedenceLikeLegacy()
+    {
+        const string sql =
+            "SELECT 1 + 2 || 3 AS value";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            ServerVersion: new Version(8, 4),
+            SessionModes: new HashSet<string>(
+                new[] { "PIPES_AS_CONCAT" },
+                StringComparer.OrdinalIgnoreCase));
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-mysql-pipes-precedence-v1");
+        var policy = new SqlExecutionPlanPolicy();
+
+        var parsed = CoreSqlTextParser.ParseQuery(
+            sql,
+            SqlAgentToolType.MySQL,
+            sourceProfile);
+        var legacy = CoreSqlCompiler
+            .CreateDefault()
+            .Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                targetProfile);
+
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+    }
+
+    [Fact]
     public void Facade_FunctionalSourceProfileValidation_MatchesLegacyCompilationFailure()
     {
         var parsed = CoreSqlTextParser.ParseQuery(

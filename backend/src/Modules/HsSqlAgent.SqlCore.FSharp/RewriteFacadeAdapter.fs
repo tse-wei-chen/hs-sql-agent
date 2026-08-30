@@ -7,6 +7,7 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Execution
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
@@ -31,6 +32,12 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Oracle -> RewriteParser.SourceDialect.Oracle
         | SqlAgentToolType.Firebird -> RewriteParser.SourceDialect.Firebird
         | value -> invalidArg "sourceDialect" ("Unsupported source dialect '" + string value + "'.")
+
+    let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) =
+        if SqlConcatCapabilityRules.SupportsMySqlPipesAsConcat(source, sourceProfile) then
+            RewriteParser.SourceSemantics.mysqlPipesAsConcat
+        else
+            RewriteParser.SourceSemantics.defaultValue
 
     let private parameters targetProvider (values: (obj | null) list) =
         let prefix = if targetProvider = SqlAgentToolType.Oracle then ":p" else "@p"
@@ -84,11 +91,12 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (SqlCompilationException(ex.Message, ex))
 
-    let private compile source target policyVersion policy allowed sql =
+    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let rendered =
             run
                 { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
+                  SourceSemantics = sourceSemantics source sourceProfile
                   Provider = provider target
                   Policy = policy
                   AllowedTables = allowed }
@@ -105,17 +113,17 @@ module internal RewriteFacadeAdapter =
         let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
         CompiledSqlCommand(rendered.Sql, parameterValues, kind, fingerprint, target, ReturnsRows = rendered.ReturnsRows)
 
-    let compileQueryValidated sql source target (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
+    let compileQueryValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
-    let compileDmlValidated sql source target (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) =
+    let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
         if command.Kind = SqlStatementKind.Query then invalidArg "sql" "CompileDml requires INSERT, UPDATE, or DELETE."
         command
