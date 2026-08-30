@@ -988,7 +988,9 @@ module internal RewriteParser =
             values
 
     and private parseTableSource cursor =
-        if acceptSymbol '(' cursor then
+        if isKeyword "LATERAL" cursor.Current then
+            fail cursor.Current "LATERAL sources are not represented by the portable Core grammar"
+        elif acceptSymbol '(' cursor then
             let query = parseQuery cursor
             expectSymbol ')' cursor
             acceptKeyword "AS" cursor |> ignore
@@ -1014,10 +1016,13 @@ module internal RewriteParser =
             | ProvenCapability -> ()
             | RejectedCapability message -> raise (SqlCompilationException(message))
 
-        if acceptKeyword "CROSS" cursor then
+        if isKeyword "NATURAL" cursor.Current then
+            fail cursor.Current "NATURAL JOIN is rejected because its schema-dependent implicit predicate is not represented by the portable Core grammar"
+        elif acceptKeyword "CROSS" cursor then
             expectKeyword "JOIN" cursor
             let source = parseTableSource cursor
-            if acceptKeyword "ON" cursor then fail cursor.Current "CROSS JOIN cannot have an ON predicate"
+            if isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current then
+                fail cursor.Current "CROSS JOIN must not have ON/USING predicates"
             CrossJoin source
         else
             let kind =
@@ -1048,7 +1053,8 @@ module internal RewriteParser =
             OnJoin(kind, source, parseExpression cursor)
 
     and private startsJoin (cursor: Cursor) =
-        [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS" ] |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
+        [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS"; "NATURAL" ]
+        |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
 
     and private parseCtes (cursor: Cursor) =
         if not (acceptKeyword "WITH" cursor) then []
