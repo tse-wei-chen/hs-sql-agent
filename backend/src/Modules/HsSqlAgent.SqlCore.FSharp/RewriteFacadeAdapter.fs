@@ -242,6 +242,8 @@ module internal RewriteFacadeAdapter =
                 RewriteParser.MySqlPipesSemantics.PipesAsConcat
             else
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
+          MySqlNoBackslashEscapes =
+            SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(source, sourceProfile)
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile

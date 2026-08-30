@@ -158,22 +158,23 @@ module internal RewriteCompatibilityAstAdapter =
                 expressionSpan)
 
         | Expr.Like(value, pattern, escape, negated, insensitive) ->
-            let op =
-                match negated, insensitive with
-                | false, false -> "LIKE"
-                | true, false -> "NOT LIKE"
-                | false, true -> "ILIKE"
-                | true, true -> "NOT ILIKE"
+            let op = if insensitive then "ILIKE" else "LIKE"
             let escapeText =
                 escape
                 |> Option.map (LikeEscape.value >> string)
                 |> Option.defaultValue null
-            HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
-                exprOf value,
-                op,
-                exprOf pattern,
-                expressionSpan,
-                escapeText)
+            let like =
+                HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
+                    exprOf value,
+                    op,
+                    exprOf pattern,
+                    expressionSpan,
+                    escapeText) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+            if negated then
+                HsSqlAgent.SqlCore.Core.Ast.UnaryExpr("NOT", like, expressionSpan)
+                :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+            else
+                like
 
         | Expr.RawRegexCall(arguments, distinct) ->
             HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(

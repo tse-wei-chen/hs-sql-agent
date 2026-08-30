@@ -21,6 +21,7 @@ module internal RewriteParser =
     type SourceSemantics =
         { EnforceDialectSyntax: bool
           MySqlPipes: MySqlPipesSemantics
+          MySqlNoBackslashEscapes: bool
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
@@ -62,6 +63,7 @@ module internal RewriteParser =
         let defaultValue =
             { EnforceDialectSyntax = false
               MySqlPipes = RejectAmbiguousPipes
+              MySqlNoBackslashEscapes = false
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
@@ -72,6 +74,7 @@ module internal RewriteParser =
         let mysqlPipesAsConcat =
             { EnforceDialectSyntax = true
               MySqlPipes = PipesAsConcat
+              MySqlNoBackslashEscapes = false
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
@@ -91,6 +94,7 @@ module internal RewriteParser =
             token
         member _.Dialect = dialect
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
+        member _.MySqlNoBackslashEscapes = semantics.MySqlNoBackslashEscapes
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
@@ -423,8 +427,12 @@ module internal RewriteParser =
 
     and private parseLikeTail cursor value negated caseInsensitive =
         let pattern = parseConcat cursor
+        let hasExplicitEscape = acceptKeyword "ESCAPE" cursor
+        if cursor.MySqlNoBackslashEscapes && not hasExplicitEscape then
+            fail cursor.Current
+                "MySQL source profile declares NO_BACKSLASH_ESCAPES; LIKE requires an explicit single-character ESCAPE so source semantics remain fail-closed"
         let escape =
-            if not (acceptKeyword "ESCAPE" cursor) then
+            if not hasExplicitEscape then
                 None
             else
                 let token = cursor.Take()
