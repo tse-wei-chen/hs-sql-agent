@@ -62,6 +62,7 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
                 provider.Type,
                 validationContext,
                 executionPolicy,
+                targetProfile,
                 targetProfile);
     }
 

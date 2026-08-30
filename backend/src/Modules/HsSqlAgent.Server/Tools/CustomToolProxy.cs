@@ -68,6 +68,7 @@ public class CustomToolProxy(
 
         CustomSqlTool? tool = null;
         QueryFacts? auditQueryFacts = null;
+        SqlAgentToolType? auditQueryDialect = null;
         ParsedStatement? auditDml = null;
         string renderedSql = string.Empty;
         try
@@ -115,6 +116,7 @@ public class CustomToolProxy(
 
             if (isQuery)
             {
+                auditQueryDialect = dbType;
                 auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
 
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
@@ -229,8 +231,8 @@ public class CustomToolProxy(
                     ReturnedRows = queryReturnedRows,
                     AffectedRows = dmlAffectedRows,
                     ErrorCategory = ex.GetType().Name,
-                    Definition = auditQueryFacts != null
-                        ? DescribeQuery(renderedSql, dbType, auditQueryFacts)
+                    Definition = auditQueryFacts != null && auditQueryDialect.HasValue
+                        ? DescribeQuery(renderedSql, auditQueryDialect.Value, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 ex.Message,
