@@ -2779,6 +2779,242 @@ public sealed class SqlCoreFSharpFacadeInteropTests
         Assert.Equal(legacy.Message, migrated.Message);
     }
 
+    [Fact]
+    public void Facade_TextQuery_Postgres93SourceFilter_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Postgres,
+            ServerVersion: new Version(9, 3));
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-postgres93-source-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                targetProfile));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_Postgres93TargetFilter_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Postgres,
+            ServerVersion: new Version(9, 3));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-postgres93-target-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                targetProfile));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_Firebird30SourceFilter_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Firebird,
+            ServerVersion: new Version(3, 0));
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-firebird30-source-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Firebird, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                targetProfile));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Firebird,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_FirebirdFilterMissingTargetVersion_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Firebird);
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-firebird-target-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Firebird,
+                validation,
+                policy,
+                targetProfile));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Firebird,
+                validation,
+                policy,
+                sourceProfile,
+                targetProfile));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_Firebird40TargetFilter_MatchesLegacy()
+    {
+        const string sql =
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var sourceProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Firebird,
+            ServerVersion: new Version(4, 0));
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-firebird40-target-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres, sourceProfile);
+
+        var legacy = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Firebird,
+            validation,
+            policy,
+            targetProfile);
+        var migrated = SqlCoreFacade.CompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Firebird,
+            validation,
+            policy,
+            sourceProfile,
+            targetProfile);
+
+        Assert.Equal(legacy.Sql, migrated.Sql);
+        Assert.Equal(legacy.Parameters.ToArray(), migrated.Parameters.ToArray());
+        Assert.Equal(legacy.PlanFingerprint, migrated.PlanFingerprint);
+        Assert.Contains("FILTER (WHERE", migrated.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Facade_TextDml_InsertSelectSqliteFilterWithoutSourceVersion_RemainsFailClosedLikeLegacy()
+    {
+        const string sql =
+            "INSERT INTO order_totals (amount) " +
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-dml-sqlite-source-v1",
+            new HashSet<string>(
+                new[] { "order_totals", "orders" },
+                StringComparer.OrdinalIgnoreCase));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Sqlite);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileDml(
+                sql,
+                SqlAgentToolType.Sqlite,
+                SqlAgentToolType.Postgres,
+                validation));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
+    [Fact]
+    public void Facade_TextQuery_UnsupportedFilter_PreservesBinderFailureOrderingLikeLegacy()
+    {
+        const string sql =
+            "SELECT SUM(x.amount) FILTER (WHERE status = 'open') FROM orders o";
+        var validation = new SqlPlanValidationContext(
+            "fsharp-filter-binder-order-v1",
+            new HashSet<string>(new[] { "orders" }, StringComparer.OrdinalIgnoreCase));
+        var policy = new SqlExecutionPlanPolicy();
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL);
+
+        var legacy = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+        var migrated = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql,
+                SqlAgentToolType.MySQL,
+                SqlAgentToolType.Postgres,
+                validation,
+                policy));
+
+        Assert.Equal(legacy.GetType(), migrated.GetType());
+        Assert.Equal(legacy.Message, migrated.Message);
+    }
+
     public static IEnumerable<object[]> QueryValidatorFailureParityCases()
     {
         yield return new object[]

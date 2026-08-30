@@ -362,7 +362,6 @@ module internal RewriteParser =
             if acceptOperator "::" cursor then
                 expression <- Cast(expression, parseCastType cursor)
             elif acceptKeyword "FILTER" cursor then
-                requireSourceCapability cursor.SourceExpressions.AggregateFilter
                 expectSymbol '(' cursor
                 expectKeyword "WHERE" cursor
                 let predicate = parseExpression cursor

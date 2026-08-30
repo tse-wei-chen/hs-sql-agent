@@ -286,10 +286,14 @@ module internal RewriteStages =
         | ProvenCapability -> ()
         | RejectedCapability message -> invalidOp message
 
+    let private requireFilterCapability = function
+        | ProvenCapability -> ()
+        | RejectedCapability message -> raise (SqlCompilationException(message))
+
     let rec private proveFilterPredicate (proofs: FilterPredicateProofs) expression =
         match expression with
         | BoundColumn(_, OuterRowSource) ->
-            requireExpressionCapability proofs.OuterReference
+            requireFilterCapability proofs.OuterReference
         | Column _
         | BoundColumn(_, LocalRowSource)
         | BoundColumn(_, ProjectionAlias)
@@ -311,7 +315,7 @@ module internal RewriteStages =
             proveFilterPredicate proofs value
             proveFilterPredicate proofs predicate
         | Windowed(value, window) ->
-            requireExpressionCapability proofs.WindowFunction
+            requireFilterCapability proofs.WindowFunction
             proveFilterPredicate proofs value
             window.PartitionBy |> List.iter (proveFilterPredicate proofs)
             window.OrderBy |> List.iter (fun order -> proveFilterPredicate proofs order.Expression)
@@ -334,7 +338,7 @@ module internal RewriteStages =
             items |> NonEmpty.iter (proveFilterPredicate proofs)
         | InSubquery(value, _, _) ->
             proveFilterPredicate proofs value
-            requireExpressionCapability proofs.Subquery
+            requireFilterCapability proofs.Subquery
         | Between(value, lower, upper, _) ->
             proveFilterPredicate proofs value
             proveFilterPredicate proofs lower
@@ -343,7 +347,7 @@ module internal RewriteStages =
             proveFilterPredicate proofs value
         | ScalarSubquery _
         | Exists _ ->
-            requireExpressionCapability proofs.Subquery
+            requireFilterCapability proofs.Subquery
 
     let rec private proveSourceFilterExpr (expressionProofs: ExpressionProofs) expression =
         match expression with
@@ -364,6 +368,7 @@ module internal RewriteStages =
         | FunctionCall call ->
             call.Arguments |> List.iter (proveSourceFilterExpr expressionProofs)
         | FilteredAggregate(value, predicate) ->
+            requireFilterCapability expressionProofs.AggregateFilter
             proveFilterPredicate expressionProofs.FilterPredicate predicate
             proveSourceFilterExpr expressionProofs value
             proveSourceFilterExpr expressionProofs predicate
@@ -463,8 +468,6 @@ module internal RewriteStages =
         | FunctionCall call ->
             call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
         | FilteredAggregate(value, predicate) ->
-            requireExpressionCapability expressionProofs.AggregateFilter
-            proveFilterPredicate expressionProofs.FilterPredicate predicate
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs predicate
         | Windowed(value, window) ->
@@ -1022,8 +1025,9 @@ module internal RewriteStages =
 
     let validate allowedTables targetRuntime sourceExpressions targetExpressions targetJoins targetOrdering targetDml conflictProofs canonical =
         Transition.validate targetRuntime (fun document ->
+            proveSourceFilterDocument sourceExpressions document
+            proveSourceFilterDocument targetExpressions document
             let validated = validateDocument allowedTables document
-            proveSourceFilterDocument sourceExpressions validated
             proveTargetDocument targetRuntime targetExpressions validated |> ignore
             proveTargetJoins targetJoins validated
             proveOrderingAndPaging targetRuntime targetOrdering validated
