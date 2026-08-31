@@ -658,5 +658,21 @@
     "name": "firebird-unary-minus-column",
     "dialect": "Firebird",
     "sql": "SELECT -amount FROM orders"
+  },
+  {
+    "name": "oracle-fetch-negative-percent-versioned",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST -10 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-fetch-null-percent-versioned",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST NULL PERCENT ROWS ONLY"
   }
 ]

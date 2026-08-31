@@ -1452,9 +1452,25 @@ module internal RewriteParser =
                     fail cursor.Current "SQL Server FETCH requires an explicit positive integer row count"
                 parsedRowCount <- Some 1
             else
-                match cursor.Current.Kind, cursor.Peek(1).Kind with
-                | DecimalLiteral _, Keyword "PERCENT"
-                | IntegerLiteral _, Keyword "PERCENT" ->
+                match cursor.Current.Kind, cursor.Peek(1).Kind, cursor.Peek(2).Kind with
+                | Operator "-", IntegerLiteral _, Keyword "PERCENT"
+                | Operator "-", DecimalLiteral _, Keyword "PERCENT" ->
+                    let percentToken = cursor.Current
+                    cursor.Advance()
+                    parseNonNegativePercentage "FETCH percentage" cursor |> ignore
+                    expectKeyword "PERCENT" cursor
+                    requireSourceParseCapability percentToken cursor.SourceFetchPercent
+                    // Oracle row_limiting_clause treats a negative percentage as zero.
+                    fetchPercent <- Some(NonNegativePercentage.create 0M)
+                | Keyword "NULL", Keyword "PERCENT", _ ->
+                    let percentToken = cursor.Current
+                    cursor.Advance()
+                    expectKeyword "PERCENT" cursor
+                    requireSourceParseCapability percentToken cursor.SourceFetchPercent
+                    // Oracle row_limiting_clause treats NULL percentage as zero.
+                    fetchPercent <- Some(NonNegativePercentage.create 0M)
+                | DecimalLiteral _, Keyword "PERCENT", _
+                | IntegerLiteral _, Keyword "PERCENT", _ ->
                     let percentToken = cursor.Current
                     let percent = parseNonNegativePercentage "FETCH percentage" cursor
                     expectKeyword "PERCENT" cursor

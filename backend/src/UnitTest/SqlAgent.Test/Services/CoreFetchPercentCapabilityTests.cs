@@ -49,6 +49,42 @@ public sealed class CoreFetchPercentCapabilityTests
         Assert.Contains("PERCENT ROWS WITH TIES", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("-10")]
+    [InlineData("-12.5")]
+    public void Parse_OracleNegativeFetchPercent_NormalizesToZero(string percentage)
+    {
+        var profile = Profile(SqlAgentToolType.Oracle, 12, 1);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            $"SELECT id FROM users ORDER BY id FETCH FIRST {percentage} PERCENT ROWS ONLY",
+            SqlAgentToolType.Oracle,
+            profile);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+
+        Assert.Equal(0m, select.FetchPercent);
+
+        var command = Compile(parsed, SqlAgentToolType.Oracle, profile);
+        Assert.Contains("PERCENT ROWS ONLY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(command.Parameters, parameter => Convert.ToDecimal(parameter.Value) == 0m);
+    }
+
+    [Fact]
+    public void Parse_OracleNullFetchPercent_NormalizesToZero()
+    {
+        var profile = Profile(SqlAgentToolType.Oracle, 12, 1);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM users ORDER BY id FETCH FIRST NULL PERCENT ROWS ONLY",
+            SqlAgentToolType.Oracle,
+            profile);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+
+        Assert.Equal(0m, select.FetchPercent);
+
+        var command = Compile(parsed, SqlAgentToolType.Oracle, profile);
+        Assert.Contains("PERCENT ROWS ONLY", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(command.Parameters, parameter => Convert.ToDecimal(parameter.Value) == 0m);
+    }
+
     [Fact]
     public void Parse_OraclePre121FetchPercent_FailsAtSourceBoundary()
     {
