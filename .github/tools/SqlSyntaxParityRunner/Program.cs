@@ -85,11 +85,14 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                     .OrderBy(method => method.GetParameters().Length)
                     .FirstOrDefault();
 
-            parse ??= throw new MissingMethodException(
-                parserType.FullName,
-                sourceProfile is null
-                    ? "ParseQuery(sql, dialect[, sourceProfile])"
-                    : "ParseQuery(sql, dialect, sourceProfile)");
+            if (parse is null)
+            {
+                throw new MissingMethodException(
+                    parserType.FullName,
+                    sourceProfile is null
+                        ? "ParseQuery(sql, dialect[, sourceProfile])"
+                        : "ParseQuery(sql, dialect, sourceProfile)");
+            }
 
             parsed = sourceProfile is null
                 ? InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect)
@@ -140,11 +143,14 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                     .OrderBy(method => method.GetParameters().Length)
                     .FirstOrDefault();
 
-            compile ??= throw new MissingMethodException(
-                compilerType.FullName,
-                targetProfile is null
-                    ? "Compile(parsed, target, validation, policy[, targetProfile])"
-                    : "Compile(parsed, target, validation, policy, targetProfile)");
+            if (compile is null)
+            {
+                throw new MissingMethodException(
+                    compilerType.FullName,
+                    targetProfile is null
+                        ? "Compile(parsed, target, validation, policy[, targetProfile])"
+                        : "Compile(parsed, target, validation, policy, targetProfile)");
+            }
 
             _ = targetProfile is null
                 ? InvokeWithOptionalTail(
