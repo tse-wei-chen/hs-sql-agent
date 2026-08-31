@@ -1545,7 +1545,7 @@ module internal RewriteParser =
           Conflict = Some { TargetColumns = targets |> Seq.toList |> NonEmpty.ofList "conflict target"; Action = action }
           Returning = parseReturning cursor }
 
-    and private parseDmlTargetAlias cursor =
+    and private parseDmlTargetAlias (cursor: Cursor) =
         let aliasToken = cursor.Current
         let alias =
             if acceptKeyword "AS" cursor then
