@@ -61,8 +61,28 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             " FROM ",
             false);
         yield return Case(
+            "update-from-source-alias",
+            "UPDATE users SET status = a.status FROM archived AS a WHERE users.id = a.id",
+            " FROM ",
+            false);
+        yield return Case(
+            "update-from-derived-source",
+            "UPDATE users SET status = a.status FROM (SELECT id, status FROM archived) AS a WHERE users.id = a.id",
+            " FROM ",
+            false);
+        yield return Case(
             "delete-using",
             "DELETE FROM inventory USING warehouse WHERE inventory.id = warehouse.inventory_id",
+            "USING",
+            false);
+        yield return Case(
+            "delete-using-source-alias",
+            "DELETE FROM inventory USING warehouse AS w WHERE inventory.id = w.inventory_id",
+            "USING",
+            false);
+        yield return Case(
+            "delete-using-derived-source",
+            "DELETE FROM inventory USING (SELECT inventory_id FROM warehouse) AS w WHERE inventory.id = w.inventory_id",
             "USING",
             false);
         yield return Case(
@@ -117,14 +137,6 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "duplicate-update-assignment",
             "UPDATE users SET name = 'Alice', name = 'Bob' WHERE id = 1",
             "more than once");
-        yield return Reject(
-            "update-from-source-alias",
-            "UPDATE users SET status = a.status FROM archived AS a WHERE users.id = a.id",
-            "aliases");
-        yield return Reject(
-            "delete-using-source-alias",
-            "DELETE FROM inventory USING warehouse AS w WHERE inventory.id = w.inventory_id",
-            "aliases");
         yield return Reject(
             "conflict-arbitrary-expression",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name || '!'",
