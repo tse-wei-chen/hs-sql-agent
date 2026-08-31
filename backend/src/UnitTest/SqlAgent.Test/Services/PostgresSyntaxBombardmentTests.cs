@@ -102,6 +102,21 @@ public sealed class PostgresSyntaxBombardmentTests
             "LEFT JOIN",
             "alpha,beta");
         yield return Case(
+            "join-using",
+            "SELECT id FROM alpha JOIN beta USING (id)",
+            "USING",
+            "alpha,beta");
+        yield return Case(
+            "left-join-using",
+            "SELECT id FROM alpha LEFT JOIN beta USING (id)",
+            "USING",
+            "alpha,beta");
+        yield return Case(
+            "join-using-multiple-columns",
+            "SELECT tenant_id, id FROM alpha JOIN beta USING (tenant_id, id)",
+            "USING",
+            "alpha,beta");
+        yield return Case(
             "right-outer-join",
             "SELECT a.id FROM alpha a RIGHT OUTER JOIN beta b ON a.id = b.id",
             "RIGHT JOIN",
@@ -868,10 +883,6 @@ public sealed class PostgresSyntaxBombardmentTests
             "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
             "WITH RECURSIVE");
         yield return RejectWithMessage(
-            "join-using",
-            "SELECT a.id FROM a JOIN b USING (id)",
-            "USING");
-        yield return RejectWithMessage(
             "cross-join-using",
             "SELECT a.id FROM a CROSS JOIN b USING (id)",
             "ON/USING");
@@ -951,9 +962,6 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Reject(
             "recursive-cte",
             "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x");
-        yield return Reject(
-            "join-using",
-            "SELECT a.id FROM a JOIN b USING (id)");
         yield return Reject(
             "lateral-source",
             "SELECT q.id FROM LATERAL (SELECT id FROM users) q");
