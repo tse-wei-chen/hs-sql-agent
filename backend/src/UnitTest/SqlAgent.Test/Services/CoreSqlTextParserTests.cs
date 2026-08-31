@@ -115,6 +115,37 @@ public class CoreSqlTextParserTests
         Assert.IsType<LiteralExpr>(Assert.Single(Assert.IsType<SelectStatement>(parsed.Statement).Select).Expression);
     }
 
+    [Fact]
+    public void Compile_MySqlDateFunction_PreservesNativeSemantics()
+    {
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(
+                "SELECT DATE(created_at) FROM events",
+                SqlAgentToolType.MySQL),
+            SqlAgentToolType.MySQL,
+            new SqlPlanValidationContext("mysql-date-function-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("DATE(", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_MySqlDateFunction_CrossProviderRemainsFailClosed()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseQuery(
+                    "SELECT DATE(created_at) FROM events",
+                    SqlAgentToolType.MySQL),
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("mysql-date-function-cross-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("DATE(expr)", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("native-only", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Postgres", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]

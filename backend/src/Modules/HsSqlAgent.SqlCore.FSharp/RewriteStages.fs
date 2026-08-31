@@ -844,6 +844,17 @@ module internal RewriteStages =
                 compilationError (
                     "Unsupported source function canonicalization kind '" + string value + "' for function '" + sourceName + "'.")
 
+        | None when sourceName = "DATE" && sourceTool = SqlAgentToolType.MySQL ->
+            if arguments.Length <> 1 then
+                compilationError "MySQL DATE(expr) requires exactly 1 argument."
+            if targetTool <> SqlAgentToolType.MySQL then
+                compilationError (
+                    "MySQL DATE(expr) is currently a native-only source capability. "
+                    + "Cross-provider lowering remains fail-closed because MySQL DATE coercion and invalid-input semantics "
+                    + "are not proven equivalent to target CAST/date functions. Target provider is "
+                    + string targetTool + ".")
+            FunctionCall { call with Name = FunctionName.create "DATE"; Arguments = arguments }
+
         | None when sourceName = "COALESCE" ->
             if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
             FunctionCall { call with Name = FunctionName.create "COALESCE"; Arguments = arguments }
