@@ -29,6 +29,7 @@ module internal RewriteParser =
           Ordering: SourceOrderingProofs
           FetchWithTies: CapabilityProof
           LateralDerivedTable: CapabilityProof
+          RecursiveCte: CapabilityProof
           Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
@@ -75,6 +76,7 @@ module internal RewriteParser =
               Ordering = permissiveOrdering
               FetchWithTies = ProvenCapability
               LateralDerivedTable = ProvenCapability
+              RecursiveCte = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
@@ -88,6 +90,7 @@ module internal RewriteParser =
               Ordering = permissiveOrdering
               FetchWithTies = ProvenCapability
               LateralDerivedTable = ProvenCapability
+              RecursiveCte = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
@@ -110,6 +113,7 @@ module internal RewriteParser =
         member _.SourceOrdering = semantics.Ordering
         member _.SourceFetchWithTies = semantics.FetchWithTies
         member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
+        member _.SourceRecursiveCte = semantics.RecursiveCte
 
     let private rememberNodeSpan start (cursor: Cursor) (node: obj | null) =
         Parsed.rememberSpan node
@@ -1239,7 +1243,14 @@ module internal RewriteParser =
     and private parseCtes (cursor: Cursor) =
         if not (acceptKeyword "WITH" cursor) then []
         else
-            if acceptKeyword "RECURSIVE" cursor then fail cursor.Current "WITH RECURSIVE is not supported by the portable compiler"
+            let recursiveScope =
+                if isKeyword "RECURSIVE" cursor.Current then
+                    let token = cursor.Current
+                    cursor.Advance()
+                    requireSourceParseCapability token cursor.SourceRecursiveCte
+                    true
+                else
+                    false
             let ctes = ResizeArray<Cte>()
             let parseOne () =
                 let start = cursor.Current.Start
@@ -1253,7 +1264,11 @@ module internal RewriteParser =
                 expectSymbol '(' cursor
                 let query = parseQuery cursor
                 expectSymbol ')' cursor
-                let cte = { Name = name; ColumnAliases = aliases |> Seq.toList; Query = query }
+                let cte =
+                    { Name = name
+                      ColumnAliases = aliases |> Seq.toList
+                      Query = query
+                      RecursiveScope = recursiveScope }
                 rememberNodeSpan start cursor (box cte)
                 cte
             ctes.Add(parseOne())

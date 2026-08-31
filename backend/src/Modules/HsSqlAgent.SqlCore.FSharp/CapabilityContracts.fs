@@ -392,6 +392,36 @@ module internal SqlJoinCapabilityRules =
         elif provider = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind targetProfile "target"
         else null
 
+module internal SqlRecursiveCteCapabilityRules =
+    let PostgresMinimumVersion = Version(8,4)
+
+    let private validationError
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (side: string) : string | null =
+        if provider <> SqlAgentToolType.Postgres then
+            "SQL capability 'select.recursive_cte' is not supported by " + side
+            + " provider " + string provider
+            + "; Core currently proves WITH RECURSIVE semantics only for PostgreSQL."
+        elif isNull profile || isNull profile.ServerVersion then
+            null
+        elif profile.ServerVersion.CompareTo(PostgresMinimumVersion) >= 0 then
+            null
+        else
+            "SQL capability 'select.recursive_cte' requires PostgreSQL " + side
+            + " ServerVersion 8.4+; declared version is "
+            + profile.ServerVersion.ToString() + "."
+
+    let SourceValidationError(
+        provider: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
+
 module internal SqlNaturalJoinCapabilityRules =
     let SupportsNative(provider: SqlAgentToolType) =
         provider = SqlAgentToolType.Postgres

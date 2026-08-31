@@ -240,7 +240,8 @@ module internal CoreModel =
     and Cte =
         { Name: IdentifierPart
           ColumnAliases: IdentifierPart list
-          Query: Query }
+          Query: Query
+          RecursiveScope: bool }
 
     and TableSource =
         | NamedTable of Identifier * IdentifierPart option

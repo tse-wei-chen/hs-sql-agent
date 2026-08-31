@@ -268,6 +268,9 @@ module internal RewriteFacadeAdapter =
           LateralDerivedTable =
             SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile)
             |> capabilityProof
+          RecursiveCte =
+            SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> capabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
 
     let parseSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
