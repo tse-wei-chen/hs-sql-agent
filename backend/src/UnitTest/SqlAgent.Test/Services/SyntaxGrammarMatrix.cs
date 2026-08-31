@@ -6,6 +6,9 @@ internal sealed record GrammarVariant<T>(
 
 internal static class SyntaxGrammarMatrix
 {
+    public static string CaseName(params string[] dimensions) =>
+        string.Join("__", dimensions);
+
     public static int ProductCount<T1, T2, T3, T4>(
         IReadOnlyList<GrammarVariant<T1>> first,
         IReadOnlyList<GrammarVariant<T2>> second,

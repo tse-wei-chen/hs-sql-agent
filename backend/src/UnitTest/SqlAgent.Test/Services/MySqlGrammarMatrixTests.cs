@@ -6,21 +6,21 @@ using Xunit;
 
 namespace SqlAgent.Test.Services;
 
-public sealed class PostgresGrammarMatrixTests
+public sealed class MySqlGrammarMatrixTests
 {
     private sealed record BodyVariant(
         string Sql,
-        string RenderedFragment,
+        string RenderedMarker,
         string[] PhysicalTables);
 
     private sealed record RootVariant(
         string Sql,
-        string RenderedFragment,
+        string RenderedMarker,
         string[] PhysicalTables);
 
     private sealed record TailVariant(
         string Sql,
-        string? RenderedFragment);
+        string? RenderedMarker);
 
     private static readonly GrammarVariant<Func<string, string>>[] CteForms =
     [
@@ -41,20 +41,26 @@ public sealed class PostgresGrammarMatrixTests
             "simple",
             new BodyVariant(
                 "SELECT id FROM orders",
-                "FROM \"orders\"",
+                "orders",
                 ["orders"])),
         new(
             "where",
             new BodyVariant(
                 "SELECT id FROM orders WHERE active = TRUE",
-                "\"active\"",
+                "WHERE",
                 ["orders"])),
         new(
-            "join",
+            "join-on",
             new BodyVariant(
                 "SELECT o.id AS id FROM orders o JOIN customers c ON o.customer_id = c.id",
-                "JOIN \"customers\"",
+                "JOIN",
                 ["orders", "customers"])),
+        new(
+            "join-using",
+            new BodyVariant(
+                "SELECT id FROM orders JOIN archived_orders USING (id)",
+                "USING",
+                ["orders", "archived_orders"])),
         new(
             "group-having",
             new BodyVariant(
@@ -62,35 +68,47 @@ public sealed class PostgresGrammarMatrixTests
                 "HAVING",
                 ["orders"])),
         new(
-            "filter-window",
+            "window",
             new BodyVariant(
-                "SELECT SUM(amount) FILTER (WHERE status = 'open') OVER (PARTITION BY customer_id ORDER BY created_at ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS id FROM orders",
-                "FILTER (WHERE",
+                "SELECT ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) AS id FROM orders",
+                "ROW_NUMBER",
                 ["orders"])),
         new(
             "subquery",
             new BodyVariant(
                 "SELECT id FROM orders WHERE EXISTS (SELECT id FROM audit_events WHERE audit_events.order_id = orders.id)",
-                "FROM \"audit_events\"",
+                "EXISTS",
                 ["orders", "audit_events"])),
         new(
             "set-operation",
             new BodyVariant(
                 "SELECT id FROM orders UNION ALL SELECT id FROM archive_orders",
-                "FROM \"archive_orders\"",
+                "UNION ALL",
                 ["orders", "archive_orders"])),
         new(
             "nested-cte",
             new BodyVariant(
                 "WITH nested AS (SELECT id FROM orders) SELECT id FROM nested",
-                "WITH \"nested\"",
+                "nested",
                 ["orders"])),
         new(
-            "postgres-expression-stack",
+            "backtick-identifiers",
             new BodyVariant(
-                "SELECT id::bigint AS id FROM orders WHERE name ILIKE 'a%' AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 day'",
-                "ILIKE",
-                ["orders"]))
+                "SELECT `id` AS id FROM `orders`",
+                "orders",
+                ["orders"])),
+        new(
+            "mysql-expression-stack",
+            new BodyVariant(
+                "SELECT CAST(id AS SIGNED) AS id FROM orders WHERE DATE(created_at) = DATE(created_at)",
+                "CAST(",
+                ["orders"])),
+        new(
+            "ordered-group-concat",
+            new BodyVariant(
+                "SELECT GROUP_CONCAT(name ORDER BY created_at DESC SEPARATOR '|') AS id FROM users",
+                "GROUP_CONCAT(",
+                ["users"]))
     ];
 
     private static readonly GrammarVariant<RootVariant>[] Roots =
@@ -99,25 +117,31 @@ public sealed class PostgresGrammarMatrixTests
             "select",
             new RootVariant(
                 "SELECT id FROM recent",
-                "FROM \"recent\"",
+                "recent",
                 [])),
         new(
             "physical-join",
             new RootVariant(
                 "SELECT recent.id FROM recent JOIN users u ON recent.id = u.id",
-                "JOIN \"users\"",
+                "JOIN",
                 ["users"])),
         new(
             "correlated-subquery",
             new RootVariant(
                 "SELECT id FROM recent WHERE EXISTS (SELECT id FROM users u WHERE u.id = recent.id)",
-                "FROM \"users\"",
+                "EXISTS",
                 ["users"])),
         new(
             "root-set-operation",
             new RootVariant(
                 "SELECT id FROM recent UNION ALL SELECT id FROM users",
-                "FROM \"users\"",
+                "UNION ALL",
+                ["users"])),
+        new(
+            "root-join-using",
+            new RootVariant(
+                "SELECT id FROM recent JOIN users USING (id)",
+                "USING",
                 ["users"]))
     ];
 
@@ -134,16 +158,22 @@ public sealed class PostgresGrammarMatrixTests
             new TailVariant(" ORDER BY id LIMIT 10", "LIMIT")),
         new(
             "limit-offset",
-            new TailVariant(" ORDER BY id LIMIT 10 OFFSET 2", "OFFSET"))
+            new TailVariant(" ORDER BY id LIMIT 10 OFFSET 2", "OFFSET")),
+        new(
+            "comma-limit",
+            new TailVariant(" ORDER BY id LIMIT 2, 10", "LIMIT"))
     ];
 
-    public static IEnumerable<object[]> PostgresCteGrammarMatrix()
+    public static IEnumerable<object[]> MySqlCteGrammarMatrix()
     {
         foreach (var (cteForm, body, root, tail) in
                  SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Tails))
         {
-            var cte = cteForm.Value(body.Value.Sql);
-            var sql = cte + " " + root.Value.Sql + tail.Value.Sql;
+            var sql =
+                cteForm.Value(body.Value.Sql) +
+                " " +
+                root.Value.Sql +
+                tail.Value.Sql;
             var expectedTables = body.Value.PhysicalTables
                 .Concat(root.Value.PhysicalTables)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -158,25 +188,25 @@ public sealed class PostgresGrammarMatrixTests
                     root.Name,
                     tail.Name),
                 sql,
-                body.Value.RenderedFragment,
-                root.Value.RenderedFragment,
-                tail.Value.RenderedFragment,
+                body.Value.RenderedMarker,
+                root.Value.RenderedMarker,
+                tail.Value.RenderedMarker,
                 string.Join(",", expectedTables)
             ];
         }
     }
 
     [Fact]
-    public void PostgresCteGrammarMatrix_IsCartesianAndCollisionFree()
+    public void MySqlCteGrammarMatrix_IsCartesianAndCollisionFree()
     {
-        var cases = PostgresCteGrammarMatrix().ToArray();
+        var cases = MySqlCteGrammarMatrix().ToArray();
         var expectedCount = SyntaxGrammarMatrix.ProductCount(
             CteForms,
             Bodies,
             Roots,
             Tails);
 
-        Assert.Equal(432, expectedCount);
+        Assert.Equal(900, expectedCount);
         Assert.Equal(expectedCount, cases.Length);
         Assert.Equal(
             expectedCount,
@@ -191,18 +221,18 @@ public sealed class PostgresGrammarMatrixTests
     }
 
     [Theory]
-    [MemberData(nameof(PostgresCteGrammarMatrix))]
-    public void PostgresCteGrammarMatrix_ParsesBindsValidatesCompilesAndRenders(
+    [MemberData(nameof(MySqlCteGrammarMatrix))]
+    public void MySqlCteGrammarMatrix_ParsesBindsValidatesCompilesAndRenders(
         string name,
         string sql,
-        string bodyRenderedFragment,
-        string rootRenderedFragment,
-        string? tailRenderedFragment,
+        string bodyRenderedMarker,
+        string rootRenderedMarker,
+        string? tailRenderedMarker,
         string expectedTablesCsv)
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             sql,
-            SqlAgentToolType.Postgres);
+            SqlAgentToolType.MySQL);
         var facts = SqlCoreInspection.GetQueryFacts(parsed);
         var expectedTables = expectedTablesCsv.Split(
             ',',
@@ -222,50 +252,66 @@ public sealed class PostgresGrammarMatrixTests
 
         var command = SqlCoreFacade.CompileQuery(
             sql,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.MySQL,
             new SqlPlanValidationContext(
-                "postgres-combinatorial-grammar-matrix-v1"),
+                "mysql-combinatorial-grammar-matrix-v1"),
             new SqlExecutionPlanPolicy());
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("FROM \"recent\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("recent", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            bodyRenderedMarker,
+            command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            rootRenderedMarker,
+            command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+
+        if (tailRenderedMarker is not null)
+        {
+            Assert.Contains(
+                tailRenderedMarker,
+                command.Sql,
+                StringComparison.OrdinalIgnoreCase);
+        }
 
         foreach (var table in expectedTables)
         {
             Assert.Contains(
-                $"\"{table}\"",
+                table,
                 command.Sql,
                 StringComparison.OrdinalIgnoreCase);
         }
-        Assert.Contains(
-            bodyRenderedFragment,
-            command.Sql,
-            StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(
-            rootRenderedFragment,
-            command.Sql,
-            StringComparison.OrdinalIgnoreCase);
 
-        if (tailRenderedFragment is not null)
+        if (name.Contains("__backtick-identifiers__", StringComparison.Ordinal))
+        {
+            Assert.Contains("`orders`", command.Sql, StringComparison.Ordinal);
+        }
+
+        if (name.Contains("__mysql-expression-stack__", StringComparison.Ordinal))
+        {
+            Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("DATE(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (name.Contains("__ordered-group-concat__", StringComparison.Ordinal))
+        {
+            Assert.Contains("GROUP_CONCAT(", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("SEPARATOR '|'", command.Sql, StringComparison.Ordinal);
+        }
+
+        if (name.EndsWith("__comma-limit", StringComparison.Ordinal))
         {
             Assert.Contains(
-                tailRenderedFragment,
-                command.Sql,
-                StringComparison.OrdinalIgnoreCase);
-        }
-
-        if (name.Contains("__postgres-expression-stack__", StringComparison.Ordinal))
-        {
-            Assert.Contains("ILIKE", command.Sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("INTERVAL", command.Sql, StringComparison.OrdinalIgnoreCase);
-        }
-
-        if (name.Contains("__filter-window__", StringComparison.Ordinal))
-        {
-            Assert.Contains("OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("FILTER", command.Sql, StringComparison.OrdinalIgnoreCase);
+                command.Parameters,
+                parameter => Convert.ToInt64(parameter.Value) == 10L);
+            Assert.Contains(
+                command.Parameters,
+                parameter => Convert.ToInt64(parameter.Value) == 2L);
         }
     }
 }
