@@ -720,5 +720,11 @@
     "dialect": "Firebird",
     "targetDialect": "Firebird",
     "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "sqlserver-update-from-native",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id"
   }
 ]

@@ -469,5 +469,44 @@
       "conflict handling",
       "explicit target columns"
     ]
+  },
+  {
+    "name": "mysql-update-from",
+    "dialect": "MySQL",
+    "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "dml.update.from",
+      "MySQL"
+    ]
+  },
+  {
+    "name": "sqlserver-update-from-to-postgres",
+    "dialect": "MsSqlServer",
+    "targetDialect": "Postgres",
+    "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.update.from",
+      "native-only",
+      "MsSqlServer",
+      "Postgres"
+    ]
+  },
+  {
+    "name": "postgres-update-from-to-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.update.from",
+      "native-only",
+      "Postgres",
+      "MsSqlServer"
+    ]
   }
 ]
