@@ -388,14 +388,32 @@ module internal RewriteFacadeAdapter =
     let private unknownQualifierError (message: string) =
         message.Contains("references unknown table/alias qualifier", StringComparison.Ordinal)
 
+    let private verifiedSource source semantics sourceProfile =
+        RewritePipeline.VerifiedSource.create
+            (sourceDialect source)
+            semantics
+            sourceProfile
+
+    let private verifiedTarget target targetProfile =
+        RewritePipeline.VerifiedTarget.create
+            (targetRuntime target targetProfile)
+            targetProfile
+            (targetExpressionProofs target targetProfile)
+            (targetJoinProofs target targetProfile)
+            (targetNullOrdering target)
+            (targetDmlProofs target targetProfile)
+
+    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance policy allowed =
+        RewritePipeline.createOptions
+            (verifiedSource source semantics sourceProfile)
+            (verifiedTarget target targetProfile)
+            (conflictProofs source target targetProfile conflictTargetAssurance)
+            policy
+            allowed
+
     let private run (options: RewritePipeline.CompileOptions) (sql: string) =
         try
-            let parsed =
-                RewriteParser.parseForWith
-                    options.SourceSemantics
-                    options.SourceDialect
-                    sql
-            parsed, RewritePipeline.compileParsed options parsed
+            RewritePipeline.compileWithParsed options sql
         with
         | :? UnauthorizedAccessException -> reraise()
         | :? SqlCompilationException -> reraise()
@@ -409,18 +427,15 @@ module internal RewriteFacadeAdapter =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let parsed, rendered =
             run
-                { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
-                  SourceSemantics = sourceSemantics source sourceProfile
-                  TargetRuntime = targetRuntime target targetProfile
-                  SourceProfile = sourceProfile
-                  TargetProfile = targetProfile
-                  TargetExpressions = targetExpressionProofs target targetProfile
-                  TargetJoins = targetJoinProofs target targetProfile
-                  TargetOrdering = targetNullOrdering target
-                  TargetDml = targetDmlProofs target targetProfile
-                  ConflictProofs = conflictProofs source target targetProfile conflictTargetAssurance
-                  Policy = policy
-                  AllowedTables = allowed }
+                (compileOptions
+                    source
+                    (sourceSemantics source sourceProfile)
+                    target
+                    sourceProfile
+                    targetProfile
+                    conflictTargetAssurance
+                    policy
+                    allowed)
                 sql
         let parameterValues = parameters target rendered.Parameters
         let kind = RewriteCompatibilityAstAdapter.kind parsed
@@ -483,18 +498,15 @@ module internal RewriteFacadeAdapter =
             parseSourceValidated parsed.RawSql source parsed.SourceProfile |> ignore
         let rendered =
             runParsed
-                { RewritePipeline.CompileOptions.SourceDialect = sourceDialect source
-                  SourceSemantics = parsedSourceSemantics parsed
-                  TargetRuntime = targetRuntime target targetProfile
-                  SourceProfile = parsed.SourceProfile
-                  TargetProfile = targetProfile
-                  TargetExpressions = targetExpressionProofs target targetProfile
-                  TargetJoins = targetJoinProofs target targetProfile
-                  TargetOrdering = targetNullOrdering target
-                  TargetDml = targetDmlProofs target targetProfile
-                  ConflictProofs = conflictProofs source target targetProfile conflictTargetAssurance
-                  Policy = policy
-                  AllowedTables = allowed }
+                (compileOptions
+                    source
+                    (parsedSourceSemantics parsed)
+                    target
+                    parsed.SourceProfile
+                    targetProfile
+                    conflictTargetAssurance
+                    policy
+                    allowed)
                 (RewriteLegacyAstAdapter.toParsed parsed.Statement)
         let kind = legacyKind parsed.Statement
         let parameterValues = parameters target rendered.Parameters
