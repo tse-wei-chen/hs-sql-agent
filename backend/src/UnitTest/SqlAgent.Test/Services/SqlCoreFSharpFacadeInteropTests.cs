@@ -148,6 +148,29 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void Facade_TryCompileQuery_ReportsBindingFailureAsTypedBindingDiagnostic()
+    {
+        const string sql = "SELECT missing.id FROM users";
+        var result = SqlCoreFacade.TryCompileQuery(
+            sql,
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("fsharp-binding-diagnostic-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.False(result.Success);
+        Assert.Equal("SQL_COMPILATION_ERROR", result.ErrorCode);
+
+        var diagnostic = Assert.Single(result.TypedDiagnostics);
+        Assert.Equal("SQL_BINDING_ERROR", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Binding, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Binding, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.Equal(0, diagnostic.Span.Start);
+        Assert.Equal(sql.Length, diagnostic.Span.Length);
+    }
+
+    [Fact]
     public void LegacyParsedStatement_CompilationUsesCurrentStatement_NotOriginalRawSql()
     {
         var parsed = CoreSqlTextParser.ParseQuery("SELECT 1", SqlAgentToolType.Postgres);

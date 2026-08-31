@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
@@ -560,4 +561,25 @@ module internal RewriteBinder =
                         Returning = bindReturning scope delete.Returning }
         { document with Statement = statement }
 
-    let bind sourceDialect parsed = Transition.bind (bindDocument sourceDialect) parsed
+    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
+
+    let bind sourceDialect parsed =
+        let document = Parsed.value parsed
+        try
+            Transition.bind (bindDocument sourceDialect) parsed
+        with
+        | :? SqlCompilationException as ex when not (isNull ex.Diagnostic) ->
+            reraise()
+        | :? InvalidOperationException as ex ->
+            let span =
+                if document.Span.Start < 0 || document.Span.Length < 0 then null
+                else SqlDiagnosticSpan(document.Span.Start, document.Span.Length)
+            let diagnostic =
+                SqlDiagnostic(
+                    "SQL_BINDING_ERROR",
+                    SqlDiagnosticStage.Binding,
+                    SqlDiagnosticCategory.Binding,
+                    ex.Message,
+                    span)
+            ex.Data[diagnosticDataKey] <- diagnostic
+            reraise()

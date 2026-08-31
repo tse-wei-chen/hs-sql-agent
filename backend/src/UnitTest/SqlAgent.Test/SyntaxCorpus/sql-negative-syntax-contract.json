@@ -532,5 +532,47 @@
       "dml.insert_implicit_columns",
       "native-only"
     ]
+  },
+  {
+    "name": "postgres-unterminated-string",
+    "dialect": "Postgres",
+    "sql": "SELECT 'abc",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "Unterminated string literal"
+    ],
+    "expectedDiagnosticCode": "SQL_LEXICAL_ERROR",
+    "expectedDiagnosticStage": "Lexical",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-unbound-named-parameter",
+    "dialect": "Postgres",
+    "sql": "SELECT :id",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "Unbound SQL parameter"
+    ],
+    "expectedDiagnosticCode": "SQL_LEXICAL_ERROR",
+    "expectedDiagnosticStage": "Lexical",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-unknown-qualified-column",
+    "dialect": "Postgres",
+    "sql": "SELECT missing.id FROM users",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "InvalidOperationException",
+    "messageContains": [
+      "unknown table/alias qualifier"
+    ],
+    "expectedDiagnosticCode": "SQL_BINDING_ERROR",
+    "expectedDiagnosticStage": "Binding",
+    "expectedDiagnosticCategory": "Binding",
+    "requireDiagnosticSpan": true
   }
 ]

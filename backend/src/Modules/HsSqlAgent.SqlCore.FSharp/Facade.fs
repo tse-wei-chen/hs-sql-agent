@@ -46,14 +46,6 @@ module private FacadeResult =
     let private noTypedDiagnostics : IReadOnlyList<SqlDiagnostic> =
         Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>
 
-    let private codeFor (ex: exn) =
-        match ex with
-        | :? SqlParseException -> "SQL_PARSE_ERROR"
-        | :? SqlCompilationException -> "SQL_COMPILATION_ERROR"
-        | :? UnauthorizedAccessException -> "SQL_POLICY_DENIED"
-        | :? ArgumentException -> "INVALID_ARGUMENT"
-        | _ -> "SQLCORE_ERROR"
-
     let private singletonDiagnostic diagnostic : IReadOnlyList<SqlDiagnostic> =
         [| diagnostic |] :> IReadOnlyList<SqlDiagnostic>
 
@@ -63,6 +55,28 @@ module private FacadeResult =
         match ex.Data[diagnosticDataKey] with
         | :? SqlDiagnostic as diagnostic -> Some diagnostic
         | _ -> None
+
+    let private codeFor (ex: exn) =
+        match dataDiagnostic ex with
+        | Some diagnostic when diagnostic.Stage = SqlDiagnosticStage.Policy ->
+            "SQL_POLICY_DENIED"
+        | Some diagnostic
+            when diagnostic.Stage = SqlDiagnosticStage.Binding
+                 || diagnostic.Stage = SqlDiagnosticStage.SemanticValidation
+                 || diagnostic.Stage = SqlDiagnosticStage.TargetCapability ->
+            "SQL_COMPILATION_ERROR"
+        | Some diagnostic
+            when diagnostic.Stage = SqlDiagnosticStage.Lexical
+                 || diagnostic.Stage = SqlDiagnosticStage.Parse
+                 || diagnostic.Stage = SqlDiagnosticStage.SourceValidation ->
+            "SQL_PARSE_ERROR"
+        | _ ->
+            match ex with
+            | :? SqlParseException -> "SQL_PARSE_ERROR"
+            | :? SqlCompilationException -> "SQL_COMPILATION_ERROR"
+            | :? UnauthorizedAccessException -> "SQL_POLICY_DENIED"
+            | :? ArgumentException -> "INVALID_ARGUMENT"
+            | _ -> "SQLCORE_ERROR"
 
     let private typedDiagnosticsFor (ex: exn) =
         match ex with

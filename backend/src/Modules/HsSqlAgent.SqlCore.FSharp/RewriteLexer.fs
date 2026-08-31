@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Globalization
+open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.SqlParsing
 
 module internal RewriteLexer =
@@ -104,8 +105,9 @@ module internal RewriteLexer =
             tokens.Add({ Kind = kind; Start = start; Length = finish - start })
 
         let parseError message start spanLength : 'T =
-            let finish = start + max spanLength 1
-            raise (SqlParseException(
+            let actualLength = max spanLength 1
+            let finish = start + actualLength
+            let detail =
                 message
                 + " Position "
                 + string start
@@ -113,7 +115,16 @@ module internal RewriteLexer =
                 + string start
                 + ".."
                 + string finish
-                + ")."))
+                + ")."
+            raise (
+                SqlParseException(
+                    detail,
+                    SqlDiagnostic(
+                        "SQL_LEXICAL_ERROR",
+                        SqlDiagnosticStage.Lexical,
+                        SqlDiagnosticCategory.Syntax,
+                        detail,
+                        SqlDiagnosticSpan(start, actualLength))))
 
         let rejectBackslashIfAmbiguous kind start current =
             match semantics.Backslash with
@@ -304,7 +315,7 @@ module internal RewriteLexer =
                             rejectBackslashIfAmbiguous (Identifier(String.Empty, true)) start i
                         buffer.Append(sql[i]) |> ignore
                         i <- i + 1
-                if not closed then invalidArg "sql" ("Unterminated quoted identifier at offset " + string start + ".")
+                if not closed then parseError "Unterminated quoted identifier." start (length - start)
                 add (Identifier(buffer.ToString(), true)) start i
             elif c = '`' then
                 let start = i
@@ -328,7 +339,7 @@ module internal RewriteLexer =
                             rejectBackslashIfAmbiguous (Identifier(String.Empty, true)) start i
                         buffer.Append(sql[i]) |> ignore
                         i <- i + 1
-                if not closed then invalidArg "sql" ("Unterminated quoted identifier at offset " + string start + ".")
+                if not closed then parseError "Unterminated quoted identifier." start (length - start)
                 add (Identifier(buffer.ToString(), true)) start i
             elif c = '[' then
                 let start = i
@@ -350,7 +361,7 @@ module internal RewriteLexer =
                     else
                         buffer.Append(sql[i]) |> ignore
                         i <- i + 1
-                if not closed then invalidArg "sql" ("Unterminated quoted identifier at offset " + string start + ".")
+                if not closed then parseError "Unterminated quoted identifier." start (length - start)
                 add (Identifier(buffer.ToString(), true)) start i
             elif i + 1 < length && c = '{' && sql[i + 1] = '{' then
                 let start = i
@@ -366,11 +377,11 @@ module internal RewriteLexer =
                     parseError "Invalid template parameter name." start (close + 2 - start)
                 i <- close + 2
                 let parameterText = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
+                parseError ("Unbound SQL parameter '" + parameterText + "'.") start (max 1 (i - start))
             elif c = '?' then
                 let start = i
                 i <- i + 1
-                invalidArg "sql" ("Unbound SQL parameter '?' at offset " + string start + ".")
+                parseError "Unbound SQL parameter '?'." start 1
             elif c = ':' && not (i + 1 < length && sql[i + 1] = ':') then
                 let start = i
                 i <- i + 1
@@ -378,7 +389,7 @@ module internal RewriteLexer =
                     parseError "Invalid parameter beginning with ':'." start 1
                 while i < length && isIdentifierPart sql[i] do i <- i + 1
                 let parameterText = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
+                parseError ("Unbound SQL parameter '" + parameterText + "'.") start (max 1 (i - start))
             elif c = '@' then
                 let start = i
                 i <- i + 1
@@ -386,7 +397,7 @@ module internal RewriteLexer =
                     parseError "Invalid parameter beginning with '@'." start 1
                 while i < length && isIdentifierPart sql[i] do i <- i + 1
                 let parameterText = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
+                parseError ("Unbound SQL parameter '" + parameterText + "'.") start (max 1 (i - start))
             elif c = char 36 then
                 let start = i
                 i <- i + 1
@@ -394,7 +405,7 @@ module internal RewriteLexer =
                     parseError "Invalid positional parameter. Expected dollar sign followed by digits." start 1
                 while i < length && Char.IsDigit(sql[i]) do i <- i + 1
                 let parameterText = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
+                parseError ("Unbound SQL parameter '" + parameterText + "'.") start (max 1 (i - start))
             elif Char.IsDigit(c) || (c = '.' && i + 1 < length && Char.IsDigit(sql[i + 1])) then
                 let start = i
                 let mutable hasDigits = false
@@ -457,13 +468,13 @@ module internal RewriteLexer =
                     match c with
                     | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
                     | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
-                    | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
+                    | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                     i <- i + 1
             else
                 match c with
                 | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
                 | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
-                | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
+                | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                 i <- i + 1
 
         tokens.Add({ Kind = End; Start = length; Length = 0 })
