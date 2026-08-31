@@ -12,7 +12,8 @@
     "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
     "expectedDiagnosticStage": "SourceValidation",
     "expectedDiagnosticCategory": "Capability",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlite-with-recursive-without-profile",
@@ -24,7 +25,8 @@
       "select.recursive_cte",
       "explicit source ServerVersion",
       "Sqlite"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "firebird-with-recursive-without-profile",
@@ -36,7 +38,8 @@
       "select.recursive_cte",
       "explicit source ServerVersion",
       "Firebird"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-recursive-anchor-self-reference",
@@ -47,7 +50,8 @@
     "messageContains": [
       "select.recursive_cte",
       "anchor"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-recursive-multiple-self-reference",
@@ -58,7 +62,8 @@
     "messageContains": [
       "select.recursive_cte",
       "exactly one direct self-reference"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-recursive-to-mysql",
@@ -70,7 +75,8 @@
     "messageContains": [
       "select.recursive_cte",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "mysql-lateral-derived-source",
@@ -81,7 +87,8 @@
     "messageContains": [
       "select.lateral_derived",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-lateral-to-mysql",
@@ -93,7 +100,8 @@
     "messageContains": [
       "select.lateral_derived",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-right-join-lateral",
@@ -103,7 +111,8 @@
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
       "RIGHT/FULL JOIN LATERAL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlserver-natural-join",
@@ -114,7 +123,8 @@
     "messageContains": [
       "join.natural",
       "MsSqlServer"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-natural-join-on",
@@ -125,7 +135,8 @@
     "messageContains": [
       "NATURAL JOIN",
       "ON or USING"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-natural-join-using",
@@ -136,7 +147,8 @@
     "messageContains": [
       "NATURAL JOIN",
       "ON or USING"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-fetch-with-ties-without-order",
@@ -147,7 +159,8 @@
     "messageContains": [
       "WITH TIES",
       "ORDER BY"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-fetch-with-ties-to-mysql",
@@ -159,7 +172,8 @@
     "messageContains": [
       "select.fetch_with_ties",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-cross-join-using",
@@ -173,7 +187,8 @@
     "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
     "expectedDiagnosticStage": "Parse",
     "expectedDiagnosticCategory": "Syntax",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "mysql-postgres-cast",
@@ -184,7 +199,8 @@
     "messageContains": [
       "::",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "mysql-nulls-first",
@@ -195,7 +211,8 @@
     "messageContains": [
       "NULLS FIRST",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlserver-limit",
@@ -206,7 +223,8 @@
     "messageContains": [
       "LIMIT",
       "MsSqlServer"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlserver-current-date",
@@ -220,7 +238,8 @@
     "expectedDiagnosticCode": "SQL_SOURCE_VALIDATION_REJECTED",
     "expectedDiagnosticStage": "SourceValidation",
     "expectedDiagnosticCategory": "Capability",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlite-typed-date",
@@ -231,7 +250,8 @@
     "messageContains": [
       "typed temporal literal",
       "Sqlite"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "oracle-limit",
@@ -242,7 +262,8 @@
     "messageContains": [
       "LIMIT",
       "Oracle"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "firebird-limit",
@@ -253,7 +274,8 @@
     "messageContains": [
       "LIMIT",
       "Firebird"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlserver-join-using",
@@ -264,7 +286,8 @@
     "messageContains": [
       "join.using",
       "MsSqlServer"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-unregistered-qualified-function",
@@ -278,7 +301,8 @@
     "expectedDiagnosticCode": "SQL_NORMALIZATION_REJECTED",
     "expectedDiagnosticStage": "SemanticValidation",
     "expectedDiagnosticCategory": "Semantic",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-intersect-all-to-mysql",
@@ -290,7 +314,8 @@
     "messageContains": [
       "set.intersect_all",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-except-all-to-sqlserver",
@@ -302,7 +327,8 @@
     "messageContains": [
       "set.except_all",
       "MsSqlServer"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-using-to-sqlserver",
@@ -314,7 +340,8 @@
     "messageContains": [
       "join.using",
       "MsSqlServer"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "mysql-date-to-postgres",
@@ -330,7 +357,8 @@
     "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
     "expectedDiagnosticStage": "SemanticValidation",
     "expectedDiagnosticCategory": "Semantic",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "pg-distinct-on-to-mysql",
@@ -346,7 +374,8 @@
     "expectedDiagnosticCode": "SQL_TARGET_CAPABILITY_REJECTED",
     "expectedDiagnosticStage": "TargetCapability",
     "expectedDiagnosticCategory": "Capability",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "mysql-recursive-old-source-version",
@@ -359,7 +388,8 @@
       "select.recursive_cte",
       "source ServerVersion",
       "8.0.1"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlite-recursive-old-source-version",
@@ -372,7 +402,8 @@
       "select.recursive_cte",
       "source ServerVersion",
       "3.8.3"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "firebird-recursive-old-source-version",
@@ -385,7 +416,8 @@
       "select.recursive_cte",
       "source ServerVersion",
       "2.1"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "mysql-recursive-old-target-version",
@@ -400,7 +432,8 @@
       "select.recursive_cte",
       "target ServerVersion",
       "8.0.1"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-fetch-percent",
@@ -411,7 +444,8 @@
     "messageContains": [
       "select.fetch_percent",
       "Postgres"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "oracle-fetch-percent-old-source-version",
@@ -424,7 +458,8 @@
       "select.fetch_percent",
       "source ServerVersion",
       "12.1"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "oracle-fetch-percent-old-target-version",
@@ -439,7 +474,8 @@
       "select.fetch_percent",
       "target ServerVersion",
       "12.1"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-natural-right-join-lateral",
@@ -449,7 +485,8 @@
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
       "RIGHT/FULL JOIN LATERAL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-natural-full-join-lateral",
@@ -459,7 +496,8 @@
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
       "RIGHT/FULL JOIN LATERAL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-insert-implicit-columns-cross-provider",
@@ -471,7 +509,8 @@
     "messageContains": [
       "dml.insert_implicit_columns",
       "native-only"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-insert-implicit-columns-row-width",
@@ -481,7 +520,8 @@
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
       "same width"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-insert-implicit-columns-conflict",
@@ -492,7 +532,8 @@
     "messageContains": [
       "conflict handling",
       "explicit target columns"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "mysql-update-from",
@@ -503,7 +544,8 @@
     "messageContains": [
       "dml.update.from",
       "MySQL"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "sqlserver-update-from-to-postgres",
@@ -517,7 +559,8 @@
       "native-only",
       "MsSqlServer",
       "Postgres"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-update-from-to-sqlserver",
@@ -531,7 +574,8 @@
       "native-only",
       "Postgres",
       "MsSqlServer"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "insert-select-implicit-columns-cross-provider",
@@ -543,7 +587,8 @@
     "messageContains": [
       "dml.insert_implicit_columns",
       "native-only"
-    ]
+    ],
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-unterminated-string",
@@ -557,7 +602,8 @@
     "expectedDiagnosticCode": "SQL_LEXICAL_ERROR",
     "expectedDiagnosticStage": "Lexical",
     "expectedDiagnosticCategory": "Syntax",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-unbound-named-parameter",
@@ -571,7 +617,8 @@
     "expectedDiagnosticCode": "SQL_LEXICAL_ERROR",
     "expectedDiagnosticStage": "Lexical",
     "expectedDiagnosticCategory": "Syntax",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   },
   {
     "name": "postgres-unknown-qualified-column",
@@ -585,6 +632,7 @@
     "expectedDiagnosticCode": "SQL_BINDING_ERROR",
     "expectedDiagnosticStage": "Binding",
     "expectedDiagnosticCategory": "Binding",
-    "requireDiagnosticSpan": true
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
   }
 ]

@@ -292,7 +292,12 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     foreach (var outcome in outcomes.Where(outcome => !outcome.Success))
     {
         Console.WriteLine(
-            $"  - {outcome.Name}: {outcome.ExceptionType}: {outcome.Message}");
+            $"  - {outcome.Name}: {outcome.ExceptionType}: {outcome.Message} " +
+            $"[diagnostic code={outcome.DiagnosticCode ?? "<none>"}, " +
+            $"stage={outcome.DiagnosticStage ?? "<none>"}, " +
+            $"category={outcome.DiagnosticCategory ?? "<none>"}, " +
+            $"span={outcome.DiagnosticSpanStart?.ToString() ?? "<none>"}+" +
+            $"{outcome.DiagnosticSpanLength?.ToString() ?? "<none>"}]");
     }
 
     var harnessFailures = outcomes
@@ -381,6 +386,40 @@ static int VerifyNegative(string assemblyPath, string corpusPath)
                     violations.Add(
                         $"{item.Name}: expected diagnostic containing '{fragment}', " +
                         $"actual '{outcome.Message}'");
+                }
+            }
+
+            if (item.RequireTypedDiagnostic)
+            {
+                var actualContract =
+                    $"actual code={outcome.DiagnosticCode ?? "<none>"}, " +
+                    $"stage={outcome.DiagnosticStage ?? "<none>"}, " +
+                    $"category={outcome.DiagnosticCategory ?? "<none>"}, " +
+                    $"span={outcome.DiagnosticSpanStart?.ToString() ?? "<none>"}+" +
+                    $"{outcome.DiagnosticSpanLength?.ToString() ?? "<none>"}";
+
+                if (string.IsNullOrWhiteSpace(item.ExpectedDiagnosticCode))
+                    violations.Add($"{item.Name}: typed diagnostic contract does not declare expectedDiagnosticCode; {actualContract}");
+
+                if (string.IsNullOrWhiteSpace(item.ExpectedDiagnosticStage))
+                    violations.Add($"{item.Name}: typed diagnostic contract does not declare expectedDiagnosticStage; {actualContract}");
+
+                if (string.IsNullOrWhiteSpace(item.ExpectedDiagnosticCategory))
+                    violations.Add($"{item.Name}: typed diagnostic contract does not declare expectedDiagnosticCategory; {actualContract}");
+
+                if (outcome.DiagnosticCode is null
+                    || outcome.DiagnosticStage is null
+                    || outcome.DiagnosticCategory is null)
+                {
+                    violations.Add($"{item.Name}: failure did not expose a complete typed diagnostic; {actualContract}");
+                }
+
+                if (outcome.DiagnosticSpanStart is null
+                    || outcome.DiagnosticSpanLength is null
+                    || outcome.DiagnosticSpanStart < 0
+                    || outcome.DiagnosticSpanLength < 0)
+                {
+                    violations.Add($"{item.Name}: failure did not expose a concrete typed diagnostic span; {actualContract}");
                 }
             }
 
@@ -721,7 +760,8 @@ sealed record CorpusCase(
     string? ExpectedDiagnosticCode = null,
     string? ExpectedDiagnosticStage = null,
     string? ExpectedDiagnosticCategory = null,
-    bool RequireDiagnosticSpan = false);
+    bool RequireDiagnosticSpan = false,
+    bool RequireTypedDiagnostic = false);
 sealed record Outcome(
     string Name,
     bool Success,
