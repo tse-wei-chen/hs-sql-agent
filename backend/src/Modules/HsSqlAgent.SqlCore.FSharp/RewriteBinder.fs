@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
@@ -248,6 +249,75 @@ module internal RewriteBinder =
         | Exists(query, _) ->
             countRecursiveReferencesQuery dialect cteKey query
 
+    and private hasRestrictedRecursiveExpr expression =
+        let recurse = hasRestrictedRecursiveExpr
+        match expression with
+        | Column _
+        | BoundColumn _
+        | Wildcard _
+        | OrderOrdinal _
+        | Literal _
+        | Interval _ -> false
+        | Unary(_, operand)
+        | Cast(operand, _)
+        | Extract(_, operand)
+        | IsNull(operand, _) -> recurse operand
+        | Binary(_, left, right)
+        | RegexMatch(left, right) -> recurse left || recurse right
+        | FilteredAggregate _ -> true
+        | Like(value, pattern, _, _, _) -> recurse value || recurse pattern
+        | RawRegexCall(arguments, _) -> arguments |> List.exists recurse
+        | FunctionCall call ->
+            let name = FunctionName.value call.Name
+            SqlCanonicalFunctionRegistry.IsAggregate(name)
+            || SqlCanonicalFunctionRegistry.IsWindow(name)
+            || (call.Arguments |> List.exists recurse)
+            || (call.AggregateOrderBy |> List.exists (fun item -> recurse item.Expression))
+        | Windowed _ -> true
+        | SimpleCase(input, branches, fallback) ->
+            recurse input
+            || (branches |> NonEmpty.toList |> List.exists (fun branch -> recurse branch.Match || recurse branch.Result))
+            || (fallback |> Option.exists recurse)
+        | SearchedCase(branches, fallback) ->
+            (branches |> NonEmpty.toList |> List.exists (fun branch -> recurse branch.Condition || recurse branch.Result))
+            || (fallback |> Option.exists recurse)
+        | InList(value, items, _) ->
+            recurse value || (items |> NonEmpty.toList |> List.exists recurse)
+        | InSubquery(value, query, _) ->
+            recurse value || hasRestrictedRecursiveQuery query
+        | Between(value, lower, upper, _) ->
+            recurse value || recurse lower || recurse upper
+        | ScalarSubquery query
+        | Exists(query, _) ->
+            hasRestrictedRecursiveQuery query
+
+    and private hasRestrictedRecursiveSource source =
+        match source with
+        | NamedTable _
+        | CteTable _ -> false
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) -> hasRestrictedRecursiveQuery query
+
+    and private hasRestrictedRecursiveSelect (select: Select) =
+        select.DistinctMode <> SelectDistinct.AllRows
+        || not select.GroupBy.IsEmpty
+        || select.Having.IsSome
+        || (select.Projection |> List.exists (fun item -> hasRestrictedRecursiveExpr item.Expression))
+        || (select.Where |> Option.exists hasRestrictedRecursiveExpr)
+        || (select.From |> Option.exists hasRestrictedRecursiveSource)
+        || (select.Joins
+            |> List.exists (fun join ->
+                hasRestrictedRecursiveSource join.Source
+                || (join.Predicate |> Option.exists hasRestrictedRecursiveExpr)))
+
+    and private hasRestrictedRecursiveQuery (query: Query) =
+        hasRestrictedRecursiveSelect query.Head
+        || not query.OrderBy.IsEmpty
+        || query.Limit.IsSome
+        || query.Offset.IsSome
+        || query.FetchWithTies
+        || (query.SetOperations |> List.exists (fun branch -> hasRestrictedRecursiveQuery branch.Query))
+
     and private countRecursiveReferencesSource dialect cteKey source =
         match source with
         | NamedTable(name, _)
@@ -303,6 +373,33 @@ module internal RewriteBinder =
                         invalidOp (
                             "SQL capability 'select.recursive_cte' requires exactly one direct self-reference in the recursive UNION term for CTE '"
                             + cte.Name.Value + "'.")
+                    if dialect = SqlAgentToolType.Firebird && branch.Operator <> SetOperator.UnionAll then
+                        invalidOp (
+                            "SQL capability 'select.recursive_cte' requires UNION ALL for Firebird recursive members.")
+                    if dialect <> SqlAgentToolType.Postgres && hasRestrictedRecursiveQuery branch.Query then
+                        invalidOp (
+                            "SQL capability 'select.recursive_cte' currently admits only the proven portable recursive-member subset for "
+                            + string dialect
+                            + ": no DISTINCT, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, aggregate, window, or filtered-aggregate constructs.")
+                    if dialect <> SqlAgentToolType.Postgres then
+                        let selfSource source =
+                            match source with
+                            | NamedTable(name, _)
+                            | CteTable(name, _) ->
+                                StringComparer.Ordinal.Equals(identifierKey dialect name, cteKey)
+                            | _ -> false
+                        let outerJoinTouchesSelf =
+                            branch.Query.Head.Joins
+                            |> List.exists (function
+                                | NaturalJoin((OnJoinKind.Left | OnJoinKind.Right | OnJoinKind.Full), source)
+                                | OnJoin((OnJoinKind.Left | OnJoinKind.Right | OnJoinKind.Full), source, _)
+                                | UsingJoin((OnJoinKind.Left | OnJoinKind.Right | OnJoinKind.Full), source, _) ->
+                                    selfSource source
+                                | _ -> false)
+                        if outerJoinTouchesSelf then
+                            invalidOp (
+                                "SQL capability 'select.recursive_cte' does not admit an outer-join recursive self-reference for "
+                                + string dialect + ".")
                 | _ ->
                     invalidOp (
                         "SQL capability 'select.recursive_cte' requires self-reference to use one anchor UNION or UNION ALL recursive term for CTE '"
