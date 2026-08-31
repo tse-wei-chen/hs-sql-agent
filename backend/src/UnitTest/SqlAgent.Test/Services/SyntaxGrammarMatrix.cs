@@ -9,6 +9,14 @@ internal static class SyntaxGrammarMatrix
     public static string CaseName(params string[] dimensions) =>
         string.Join("__", dimensions);
 
+    public static string ExpectedTables(params IEnumerable<string>[] groups) =>
+        string.Join(
+            ",",
+            groups
+                .SelectMany(group => group)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+
     public static int ProductCount<T1, T2, T3, T4>(
         IReadOnlyList<GrammarVariant<T1>> first,
         IReadOnlyList<GrammarVariant<T2>> second,

@@ -144,11 +144,9 @@ public sealed class PostgresGrammarMatrixTests
         {
             var cte = cteForm.Value(body.Value.Sql);
             var sql = cte + " " + root.Value.Sql + tail.Value.Sql;
-            var expectedTables = body.Value.PhysicalTables
-                .Concat(root.Value.PhysicalTables)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            var expectedTablesCsv = SyntaxGrammarMatrix.ExpectedTables(
+                body.Value.PhysicalTables,
+                root.Value.PhysicalTables);
 
             yield return
             [
@@ -161,7 +159,7 @@ public sealed class PostgresGrammarMatrixTests
                 body.Value.RenderedFragment,
                 root.Value.RenderedFragment,
                 tail.Value.RenderedFragment,
-                string.Join(",", expectedTables)
+                expectedTablesCsv
             ];
         }
     }

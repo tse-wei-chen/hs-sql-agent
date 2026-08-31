@@ -6,7 +6,7 @@ using Xunit;
 
 namespace SqlAgent.Test.Services;
 
-public sealed class MySqlGrammarMatrixTests
+public sealed class SqlServerGrammarMatrixTests
 {
     private sealed record BodyVariant(
         string Sql,
@@ -18,8 +18,8 @@ public sealed class MySqlGrammarMatrixTests
         string RenderedMarker,
         string[] PhysicalTables);
 
-    private sealed record TailVariant(
-        string Sql,
+    private sealed record PagingVariant(
+        Func<string, string> Apply,
         string? RenderedMarker);
 
     private static readonly GrammarVariant<Func<string, string>>[] CteForms =
@@ -46,7 +46,7 @@ public sealed class MySqlGrammarMatrixTests
         new(
             "where",
             new BodyVariant(
-                "SELECT id FROM orders WHERE active = TRUE",
+                "SELECT id FROM orders WHERE active = 1",
                 "WHERE",
                 ["orders"])),
         new(
@@ -55,12 +55,6 @@ public sealed class MySqlGrammarMatrixTests
                 "SELECT o.id AS id FROM orders o JOIN customers c ON o.customer_id = c.id",
                 "JOIN",
                 ["orders", "customers"])),
-        new(
-            "join-using",
-            new BodyVariant(
-                "SELECT id FROM orders JOIN archived_orders USING (id)",
-                "USING",
-                ["orders", "archived_orders"])),
         new(
             "group-having",
             new BodyVariant(
@@ -86,29 +80,29 @@ public sealed class MySqlGrammarMatrixTests
                 "UNION ALL",
                 ["orders", "archive_orders"])),
         new(
-            "nested-cte",
+            "bracket-identifiers",
             new BodyVariant(
-                "WITH nested AS (SELECT id FROM orders) SELECT id FROM nested",
-                "nested",
-                ["orders"])),
-        new(
-            "backtick-identifiers",
-            new BodyVariant(
-                "SELECT `id` AS id FROM `orders`",
+                "SELECT [id] AS id FROM [orders]",
                 "orders",
                 ["orders"])),
         new(
-            "mysql-expression-stack",
+            "dateadd",
             new BodyVariant(
-                "SELECT CAST(id AS SIGNED) AS id FROM orders WHERE DATE(created_at) = DATE(created_at)",
-                "CAST(",
+                "SELECT id FROM orders WHERE created_at < DATEADD(DAY, 1, created_at)",
+                "DATEADD",
                 ["orders"])),
         new(
-            "ordered-group-concat",
+            "datediff",
             new BodyVariant(
-                "SELECT GROUP_CONCAT(name ORDER BY created_at DESC SEPARATOR '|') AS id FROM users",
-                "GROUP_CONCAT(",
-                ["users"]))
+                "SELECT id FROM orders WHERE DATEDIFF(DAY, created_at, completed_at) >= 0",
+                "DATEDIFF",
+                ["orders"])),
+        new(
+            "nvarchar-max",
+            new BodyVariant(
+                "SELECT id FROM orders WHERE CAST(name AS NVARCHAR(MAX)) <> ''",
+                "NVARCHAR(MAX)",
+                ["orders"]))
     ];
 
     private static readonly GrammarVariant<RootVariant>[] Roots =
@@ -136,44 +130,40 @@ public sealed class MySqlGrammarMatrixTests
             new RootVariant(
                 "SELECT id FROM recent UNION ALL SELECT id FROM users",
                 "UNION ALL",
-                ["users"])),
-        new(
-            "root-join-using",
-            new RootVariant(
-                "SELECT id FROM recent JOIN users USING (id)",
-                "USING",
                 ["users"]))
     ];
 
-    private static readonly GrammarVariant<TailVariant>[] Tails =
+    private static readonly GrammarVariant<PagingVariant>[] Paging =
     [
         new(
             "none",
-            new TailVariant("", null)),
+            new PagingVariant(
+                query => query,
+                null)),
         new(
-            "order",
-            new TailVariant(" ORDER BY id", "ORDER BY")),
+            "top",
+            new PagingVariant(
+                query => $"SELECT TOP 5 id FROM ({query}) limited",
+                "TOP")),
         new(
-            "limit",
-            new TailVariant(" ORDER BY id LIMIT 10", "LIMIT")),
+            "offset",
+            new PagingVariant(
+                query => query + " ORDER BY id OFFSET 5 ROWS",
+                "OFFSET")),
         new(
-            "limit-offset",
-            new TailVariant(" ORDER BY id LIMIT 10 OFFSET 2", "OFFSET")),
-        new(
-            "comma-limit",
-            new TailVariant(" ORDER BY id LIMIT 2, 10", "LIMIT"))
+            "offset-fetch",
+            new PagingVariant(
+                query => query + " ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+                "FETCH NEXT"))
     ];
 
-    public static IEnumerable<object[]> MySqlCteGrammarMatrix()
+    public static IEnumerable<object[]> SqlServerCteGrammarMatrix()
     {
-        foreach (var (cteForm, body, root, tail) in
-                 SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Tails))
+        foreach (var (cteForm, body, root, paging) in
+                 SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Paging))
         {
-            var sql =
-                cteForm.Value(body.Value.Sql) +
-                " " +
-                root.Value.Sql +
-                tail.Value.Sql;
+            var rootSql = paging.Value.Apply(root.Value.Sql);
+            var sql = cteForm.Value(body.Value.Sql) + " " + rootSql;
             var expectedTablesCsv = SyntaxGrammarMatrix.ExpectedTables(
                 body.Value.PhysicalTables,
                 root.Value.PhysicalTables);
@@ -184,27 +174,27 @@ public sealed class MySqlGrammarMatrixTests
                     cteForm.Name,
                     body.Name,
                     root.Name,
-                    tail.Name),
+                    paging.Name),
                 sql,
                 body.Value.RenderedMarker,
                 root.Value.RenderedMarker,
-                tail.Value.RenderedMarker,
+                paging.Value.RenderedMarker,
                 expectedTablesCsv
             ];
         }
     }
 
     [Fact]
-    public void MySqlCteGrammarMatrix_IsCartesianAndCollisionFree()
+    public void SqlServerCteGrammarMatrix_IsCartesianAndCollisionFree()
     {
-        var cases = MySqlCteGrammarMatrix().ToArray();
+        var cases = SqlServerCteGrammarMatrix().ToArray();
         var expectedCount = SyntaxGrammarMatrix.ProductCount(
             CteForms,
             Bodies,
             Roots,
-            Tails);
+            Paging);
 
-        Assert.Equal(900, expectedCount);
+        Assert.Equal(528, expectedCount);
         Assert.Equal(expectedCount, cases.Length);
         Assert.Equal(
             expectedCount,
@@ -219,18 +209,18 @@ public sealed class MySqlGrammarMatrixTests
     }
 
     [Theory]
-    [MemberData(nameof(MySqlCteGrammarMatrix))]
-    public void MySqlCteGrammarMatrix_ParsesBindsValidatesCompilesAndRenders(
+    [MemberData(nameof(SqlServerCteGrammarMatrix))]
+    public void SqlServerCteGrammarMatrix_ParsesBindsValidatesCompilesAndRenders(
         string name,
         string sql,
         string bodyRenderedMarker,
         string rootRenderedMarker,
-        string? tailRenderedMarker,
+        string? pagingRenderedMarker,
         string expectedTablesCsv)
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             sql,
-            SqlAgentToolType.MySQL);
+            SqlAgentToolType.MsSqlServer);
         var facts = SqlCoreInspection.GetQueryFacts(parsed);
         var expectedTables = expectedTablesCsv.Split(
             ',',
@@ -250,10 +240,10 @@ public sealed class MySqlGrammarMatrixTests
 
         var command = SqlCoreFacade.CompileQuery(
             sql,
-            SqlAgentToolType.MySQL,
-            SqlAgentToolType.MySQL,
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
             new SqlPlanValidationContext(
-                "mysql-combinatorial-grammar-matrix-v1"),
+                "sqlserver-combinatorial-grammar-matrix-v1"),
             new SqlExecutionPlanPolicy());
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
@@ -268,10 +258,10 @@ public sealed class MySqlGrammarMatrixTests
             command.Sql,
             StringComparison.OrdinalIgnoreCase);
 
-        if (tailRenderedMarker is not null)
+        if (pagingRenderedMarker is not null)
         {
             Assert.Contains(
-                tailRenderedMarker,
+                pagingRenderedMarker,
                 command.Sql,
                 StringComparison.OrdinalIgnoreCase);
         }
@@ -284,32 +274,41 @@ public sealed class MySqlGrammarMatrixTests
                 StringComparison.OrdinalIgnoreCase);
         }
 
-        if (name.Contains("__backtick-identifiers__", StringComparison.Ordinal))
+        if (name.Contains("__bracket-identifiers__", StringComparison.Ordinal))
         {
-            Assert.Contains("`orders`", command.Sql, StringComparison.Ordinal);
+            Assert.Contains("[orders]", command.Sql, StringComparison.OrdinalIgnoreCase);
         }
 
-        if (name.Contains("__mysql-expression-stack__", StringComparison.Ordinal))
+        if (name.Contains("__dateadd__", StringComparison.Ordinal))
         {
-            Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("DATE(", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("DATEADD", command.Sql, StringComparison.OrdinalIgnoreCase);
         }
 
-        if (name.Contains("__ordered-group-concat__", StringComparison.Ordinal))
+        if (name.Contains("__datediff__", StringComparison.Ordinal))
         {
-            Assert.Contains("GROUP_CONCAT(", command.Sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("SEPARATOR '|'", command.Sql, StringComparison.Ordinal);
+            Assert.Contains("DATEDIFF", command.Sql, StringComparison.OrdinalIgnoreCase);
         }
 
-        if (name.EndsWith("__comma-limit", StringComparison.Ordinal))
+        if (name.Contains("__nvarchar-max__", StringComparison.Ordinal))
         {
+            Assert.Contains("NVARCHAR(MAX)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (name.EndsWith("__top", StringComparison.Ordinal))
+        {
+            Assert.Contains(
+                command.Parameters,
+                parameter => Convert.ToInt64(parameter.Value) == 5L);
+        }
+
+        if (name.EndsWith("__offset-fetch", StringComparison.Ordinal))
+        {
+            Assert.Contains(
+                command.Parameters,
+                parameter => Convert.ToInt64(parameter.Value) == 5L);
             Assert.Contains(
                 command.Parameters,
                 parameter => Convert.ToInt64(parameter.Value) == 10L);
-            Assert.Contains(
-                command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 2L);
         }
     }
 }
