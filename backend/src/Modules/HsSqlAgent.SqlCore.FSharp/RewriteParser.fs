@@ -638,29 +638,34 @@ module internal RewriteParser =
             Some(applyTypedCast cursor expression target)
 
     and private parseUnary cursor =
-        let parseSigned signMultiplier =
+        let parseSigned signMultiplier operator =
             let sign = cursor.Take()
-            let literal =
-                match cursor.Current.Kind with
-                | IntegerLiteral value ->
-                    cursor.Advance()
-                    Literal(ScalarValue.Integer(signMultiplier * value))
-                | DecimalLiteral value ->
-                    cursor.Advance()
-                    Literal(ScalarValue.Decimal(decimal signMultiplier * value))
-                | _ ->
-                    fail sign ("Unary '" + (if signMultiplier < 0L then "-" else "+") + "' is only supported for numeric literals")
-            let mutable expression = literal
-            let mutable scanning = true
-            while scanning do
-                match tryParsePostfixCast cursor expression with
-                | Some casted -> expression <- casted
-                | None -> scanning <- false
-            expression
+            match cursor.Current.Kind with
+            | IntegerLiteral value ->
+                cursor.Advance()
+                let mutable expression = Literal(ScalarValue.Integer(signMultiplier * value))
+                let mutable scanning = true
+                while scanning do
+                    match tryParsePostfixCast cursor expression with
+                    | Some casted -> expression <- casted
+                    | None -> scanning <- false
+                expression
+            | DecimalLiteral value ->
+                cursor.Advance()
+                let mutable expression = Literal(ScalarValue.Decimal(decimal signMultiplier * value))
+                let mutable scanning = true
+                while scanning do
+                    match tryParsePostfixCast cursor expression with
+                    | Some casted -> expression <- casted
+                    | None -> scanning <- false
+                expression
+            | _ ->
+                let operand = parseUnary cursor
+                markExpr sign.Start cursor (Unary(operator, operand))
 
         match cursor.Current.Kind with
-        | Operator "-" -> parseSigned -1L
-        | Operator "+" -> parseSigned 1L
+        | Operator "-" -> parseSigned -1L UnaryOperator.Negate
+        | Operator "+" -> parseSigned 1L UnaryOperator.Positive
         | _ -> parsePostfix cursor
 
     and private parsePostfix cursor =
