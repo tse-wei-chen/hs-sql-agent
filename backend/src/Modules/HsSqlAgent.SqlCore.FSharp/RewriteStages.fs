@@ -653,7 +653,6 @@ module internal RewriteStages =
         let sourceRegistryName =
             let postgresCatalogPrefix = "PG_CATALOG."
             if sourceTool = SqlAgentToolType.Postgres
-               && targetTool = SqlAgentToolType.Postgres
                && sourceName.StartsWith(postgresCatalogPrefix, StringComparison.Ordinal) then
                 sourceName.Substring(postgresCatalogPrefix.Length)
             else
@@ -819,8 +818,11 @@ module internal RewriteStages =
             if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
             FunctionCall { call with Name = FunctionName.create "COALESCE"; Arguments = arguments }
 
-        | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceName) ->
-            FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
+        | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceRegistryName) ->
+            let renderedName =
+                if sourceTool = targetTool then sourceName
+                else sourceRegistryName
+            FunctionCall { call with Name = FunctionName.create renderedName; Arguments = arguments }
 
         | None ->
             let sourceDefinition =

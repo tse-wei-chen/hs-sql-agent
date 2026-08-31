@@ -360,7 +360,6 @@ module internal RewriteFacadeAdapter =
         message.StartsWith("INSERT ", StringComparison.Ordinal)
         || message.StartsWith("CTE ", StringComparison.Ordinal)
         || message.StartsWith("Column reference", StringComparison.Ordinal)
-        || message.Contains("references unknown table/alias qualifier", StringComparison.Ordinal)
         || message.StartsWith("COUNT(DISTINCT *)", StringComparison.Ordinal)
         || message.StartsWith("ORDER BY projection alias", StringComparison.Ordinal)
         || message.StartsWith("ORDER BY alias", StringComparison.Ordinal)
@@ -370,6 +369,9 @@ module internal RewriteFacadeAdapter =
         || message.Contains("cannot be safely lowered", StringComparison.Ordinal)
         || message.Contains("Pagination requires", StringComparison.Ordinal)
         || message.Contains("OFFSET pagination", StringComparison.Ordinal)
+
+    let private unknownQualifierError (message: string) =
+        message.Contains("references unknown table/alias qualifier", StringComparison.Ordinal)
 
     let private run (options: RewritePipeline.CompileOptions) (sql: string) =
         try
@@ -422,7 +424,12 @@ module internal RewriteFacadeAdapter =
     let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
+        let command =
+            try
+                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
+            with
+            | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
+                raise (SqlCompilationException(ex.Message, ex))
         if command.Kind = SqlStatementKind.Query then
             raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
         command
@@ -503,14 +510,18 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command =
-            compileParsed
-                parsed
-                target
-                targetProfile
-                conflictTargetAssurance
-                validationContext.PolicyVersion
-                (dmlPolicy policy)
-                (allowedTables validationContext.AllowedTables)
+            try
+                compileParsed
+                    parsed
+                    target
+                    targetProfile
+                    conflictTargetAssurance
+                    validationContext.PolicyVersion
+                    (dmlPolicy policy)
+                    (allowedTables validationContext.AllowedTables)
+            with
+            | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
+                raise (SqlCompilationException(ex.Message, ex))
         if command.Kind = SqlStatementKind.Query then
             raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
         command
