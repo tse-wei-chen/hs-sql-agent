@@ -178,6 +178,14 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "INSERT INTO users (id, name) VALUES (1, 'Alice'), (2)",
             "columns were declared");
         yield return Reject(
+            "invalid-date-assignment",
+            "UPDATE orders SET order_date = DATE '2026-02-30' WHERE id = 1",
+            "Invalid DATE literal");
+        yield return Reject(
+            "date-without-string-literal",
+            "UPDATE orders SET order_date = DATE 20260821 WHERE id = 1",
+            "DATE requires a string literal");
+        yield return Reject(
             "dml-unbound-parameter",
             "UPDATE users SET name = :name WHERE id = 1",
             "Unbound SQL parameter");

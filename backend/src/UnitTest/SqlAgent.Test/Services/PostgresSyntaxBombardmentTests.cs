@@ -147,6 +147,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "%",
             "products");
         yield return Case(
+            "comparison-gte",
+            "SELECT price >= 10 FROM products",
+            ">=",
+            "products");
+        yield return Case(
             "boolean-and",
             "SELECT active = TRUE AND deleted = FALSE FROM products",
             "AND",
@@ -247,6 +252,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "CURRENT_TIMESTAMP",
             "orders");
         yield return Case(
+            "current-timestamp-call",
+            "SELECT CURRENT_TIMESTAMP() AS value FROM orders",
+            "CURRENT_TIMESTAMP",
+            "orders");
+        yield return Case(
             "standard-cast",
             "SELECT CAST(amount AS DECIMAL(12,2)) FROM orders",
             "CAST",
@@ -291,6 +301,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 5",
             "OFFSET",
             "users");
+        yield return Case(
+            "multi-column-order-limit",
+            "SELECT order_id, order_date FROM orders ORDER BY order_date DESC, order_id DESC LIMIT 5",
+            "ORDER BY",
+            "orders");
         yield return Case(
             "limit-offset-rows",
             "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 5 ROWS",
@@ -777,6 +792,18 @@ public sealed class PostgresSyntaxBombardmentTests
             "unterminated-block-comment",
             "SELECT * FROM users /* unterminated",
             "Unterminated block comment");
+        yield return RejectWithMessage(
+            "unexpected-hash-character",
+            "SELECT # FROM users",
+            "Unexpected character");
+        yield return RejectWithMessage(
+            "trailing-unconsumed-tokens",
+            "SELECT id FROM users garbage extra",
+            "Unexpected trailing token");
+        yield return RejectWithMessage(
+            "invalid-date-literal",
+            "SELECT DATE '2026-02-30' FROM users",
+            "Invalid DATE literal");
         yield return RejectWithMessage(
             "invalid-numeric-literal",
             "SELECT 1.2.3 FROM users",
