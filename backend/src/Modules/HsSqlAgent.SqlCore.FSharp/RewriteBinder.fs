@@ -220,6 +220,7 @@ module internal RewriteBinder =
             match join with
             | CrossJoin _ -> CrossJoin source
             | OnJoin(kind, _, predicate) -> OnJoin(kind, source, bindExpr extended predicate)
+            | UsingJoin(kind, _, columns) -> UsingJoin(kind, source, columns)
         boundJoin, extended
 
     and private bindSelect dialect parentScope inheritedCtes (select: Select) : Select * Scope * string list =

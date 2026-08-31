@@ -682,7 +682,18 @@ module internal RewriteRenderer =
             match ctx.Provider with Oracle -> sql <- sql + " FROM DUAL" | Firebird -> sql <- sql + " FROM RDB$DATABASE" | _ -> ()
         for join in select.Joins do
             sql <- sql + " " + joinText join.Kind + " " + renderSource ctx join.Source
-            join.Predicate |> Option.iter (fun predicate -> sql <- sql + " ON " + renderPredicate ctx predicate)
+            match join with
+            | CrossJoin _ -> ()
+            | OnJoin(_, _, predicate) ->
+                sql <- sql + " ON " + renderPredicate ctx predicate
+            | UsingJoin(_, _, columns) ->
+                if ctx.Provider <> PostgreSql then
+                    invalidOp "JOIN USING is not supported by the target provider."
+                sql <-
+                    sql
+                    + " USING ("
+                    + (columns |> NonEmpty.toList |> List.map (renderAlias ctx.Provider) |> String.concat ", ")
+                    + ")"
         select.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         if not select.GroupBy.IsEmpty then
             let grouped =
@@ -814,7 +825,12 @@ module internal RewriteRenderer =
         query.Head.From |> Option.iter (fun source -> baseSql <- baseSql + " FROM " + renderSource ctx source)
         for join in query.Head.Joins do
             baseSql <- baseSql + " " + joinText join.Kind + " " + renderSource ctx join.Source
-            join.Predicate |> Option.iter (fun predicate -> baseSql <- baseSql + " ON " + renderPredicate ctx predicate)
+            match join with
+            | CrossJoin _ -> ()
+            | OnJoin(_, _, predicate) ->
+                baseSql <- baseSql + " ON " + renderPredicate ctx predicate
+            | UsingJoin(_, _, _) ->
+                invalidOp "JOIN USING cannot enter SQL Server pagination lowering without an explicit target capability."
         query.Head.Where |> Option.iter (fun predicate -> baseSql <- baseSql + " WHERE " + renderPredicate ctx predicate)
         if not query.Head.GroupBy.IsEmpty then
             baseSql <- baseSql + " GROUP BY " + (query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")

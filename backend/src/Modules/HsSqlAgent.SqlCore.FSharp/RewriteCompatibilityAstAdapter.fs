@@ -336,6 +336,28 @@ module internal RewriteCompatibilityAstAdapter =
                 tableSourceOf source,
                 exprOf predicate,
                 unknown)
+        | Join.UsingJoin(kind, source, columns) ->
+            let text =
+                match kind with
+                | OnJoinKind.Inner -> "INNER"
+                | OnJoinKind.Left -> "LEFT"
+                | OnJoinKind.Right -> "RIGHT"
+                | OnJoinKind.Full -> "FULL"
+            let result =
+                HsSqlAgent.SqlCore.Core.Ast.JoinSource(
+                    text,
+                    tableSourceOf source,
+                    Unchecked.defaultof<_>,
+                    unknown)
+            result.UsingColumns <-
+                columns
+                |> NonEmpty.toList
+                |> List.map (fun column ->
+                    HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
+                        ImmutableArray.Create(partOf column),
+                        unknown))
+                |> ImmutableArray.CreateRange
+            result
 
     and private selectItemOf (item: SelectItem) =
         HsSqlAgent.SqlCore.Core.Ast.SelectItem(

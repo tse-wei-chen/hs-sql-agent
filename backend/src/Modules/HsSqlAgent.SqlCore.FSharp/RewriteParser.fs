@@ -1158,9 +1158,24 @@ module internal RewriteParser =
             | OnJoinKind.Inner | OnJoinKind.Left -> ()
 
             let source = parseTableSource cursor
-            if acceptKeyword "USING" cursor then fail cursor.Current "JOIN ... USING is not represented by the portable DU"
-            expectKeyword "ON" cursor
-            OnJoin(kind, source, parseExpression cursor)
+            if acceptKeyword "USING" cursor then
+                if cursor.Dialect <> SourceDialect.PostgreSql then
+                    fail cursor.Current "JOIN ... USING is currently represented only for the PostgreSQL source dialect"
+                expectSymbol '(' cursor
+                let columns = ResizeArray<IdentifierPart>()
+                let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                let parseColumn () =
+                    let part = identifierPart cursor
+                    if not (seen.Add part.Value) then
+                        fail cursor.Current ("JOIN USING column '" + part.Value + "' is declared more than once")
+                    part
+                columns.Add(parseColumn())
+                while acceptSymbol ',' cursor do columns.Add(parseColumn())
+                expectSymbol ')' cursor
+                UsingJoin(kind, source, columns |> Seq.toList |> NonEmpty.ofList "JOIN USING columns")
+            else
+                expectKeyword "ON" cursor
+                OnJoin(kind, source, parseExpression cursor)
 
     and private startsJoin (cursor: Cursor) =
         [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS"; "NATURAL" ]
