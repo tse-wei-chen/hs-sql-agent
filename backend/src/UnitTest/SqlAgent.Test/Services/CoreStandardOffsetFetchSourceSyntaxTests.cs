@@ -160,15 +160,16 @@ public sealed class CoreStandardOffsetFetchSourceSyntaxTests
     }
 
     [Fact]
-    public void ParseQuery_FetchWithTies_RemainsFailClosed()
+    public void ParseQuery_PostgresFetchWithTies_IsPreservedStructurally()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(
-                "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
-                SqlAgentToolType.Postgres));
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
+            SqlAgentToolType.Postgres);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
 
-        Assert.Contains("WITH TIES", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("not represented", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(select.FetchWithTies);
+        Assert.Equal(10, select.Limit);
+        Assert.Single(select.OrderBy);
     }
 
     [Fact]
