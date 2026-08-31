@@ -41,7 +41,7 @@ public sealed class PostgresSyntaxBoundaryTests
     }
 
     [Fact]
-    public void TypedQueryRuntime_LateralSourceFailsWithExplicitGrammarDiagnostic()
+    public void TypedQueryRuntime_CompilesPostgresLateralThroughTheRealFSharpBoundary()
     {
         var runtime = new TypedQueryRuntime();
         var provider = new Mock<ISqlProvider>();
@@ -61,15 +61,15 @@ public sealed class PostgresSyntaxBoundaryTests
         const string sql =
             "SELECT q.id FROM LATERAL (SELECT id FROM public.users) q";
 
-        var error = Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
-            runtime.Compile(
-                provider.Object,
-                sql,
-                SqlAgentToolType.Postgres,
-                policy,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }));
+        var command = runtime.Compile(
+            provider.Object,
+            sql,
+            SqlAgentToolType.Postgres,
+            policy,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
 
-        Assert.Contains("LATERAL", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LATERAL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("public", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
