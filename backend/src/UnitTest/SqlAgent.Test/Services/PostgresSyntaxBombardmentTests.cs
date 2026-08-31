@@ -302,6 +302,96 @@ public sealed class PostgresSyntaxBombardmentTests
             "EXTRACT",
             "events");
         yield return Case(
+            "extract-hour",
+            "SELECT EXTRACT(HOUR FROM TIMESTAMP '2026-08-21 09:30:15') FROM events",
+            "EXTRACT(HOUR",
+            "events");
+        yield return Case(
+            "extract-minute",
+            "SELECT EXTRACT(MINUTE FROM TIMESTAMP '2026-08-21 09:30:15') FROM events",
+            "EXTRACT(MINUTE",
+            "events");
+        yield return Case(
+            "extract-second",
+            "SELECT EXTRACT(SECOND FROM TIMESTAMP '2026-08-21 09:30:15.125') FROM events",
+            "EXTRACT(SECOND",
+            "events");
+        yield return Case(
+            "extract-dow",
+            "SELECT EXTRACT(DOW FROM DATE '2026-08-21') FROM events",
+            "EXTRACT(DOW",
+            "events");
+        yield return Case(
+            "extract-doy",
+            "SELECT EXTRACT(DOY FROM DATE '2026-08-21') FROM events",
+            "EXTRACT(DOY",
+            "events");
+        yield return Case(
+            "extract-isodow",
+            "SELECT EXTRACT(ISODOW FROM DATE '2026-08-23') FROM events",
+            "EXTRACT(ISODOW",
+            "events");
+        yield return Case(
+            "extract-isoyear",
+            "SELECT EXTRACT(ISOYEAR FROM DATE '2026-01-01') FROM events",
+            "EXTRACT(ISOYEAR",
+            "events");
+        yield return Case(
+            "extract-week",
+            "SELECT EXTRACT(WEEK FROM DATE '2026-08-21') FROM events",
+            "EXTRACT(WEEK",
+            "events");
+        yield return Case(
+            "extract-epoch",
+            "SELECT EXTRACT(EPOCH FROM INTERVAL '5 days 3 hours') FROM events",
+            "EXTRACT(EPOCH",
+            "events");
+        yield return Case(
+            "extract-century",
+            "SELECT EXTRACT(CENTURY FROM DATE '2026-08-21') FROM events",
+            "EXTRACT(CENTURY",
+            "events");
+        yield return Case(
+            "extract-decade",
+            "SELECT EXTRACT(DECADE FROM DATE '2026-08-21') FROM events",
+            "EXTRACT(DECADE",
+            "events");
+        yield return Case(
+            "extract-millennium",
+            "SELECT EXTRACT(MILLENNIUM FROM DATE '2026-08-21') FROM events",
+            "EXTRACT(MILLENNIUM",
+            "events");
+        yield return Case(
+            "extract-julian",
+            "SELECT EXTRACT(JULIAN FROM TIMESTAMP '2026-08-21 12:00') FROM events",
+            "EXTRACT(JULIAN",
+            "events");
+        yield return Case(
+            "extract-milliseconds",
+            "SELECT EXTRACT(MILLISECONDS FROM TIME '17:12:28.5') FROM events",
+            "EXTRACT(MILLISECONDS",
+            "events");
+        yield return Case(
+            "extract-microseconds",
+            "SELECT EXTRACT(MICROSECONDS FROM TIME '17:12:28.5') FROM events",
+            "EXTRACT(MICROSECONDS",
+            "events");
+        yield return Case(
+            "extract-timezone",
+            "SELECT EXTRACT(TIMEZONE FROM TIMESTAMP WITH TIME ZONE '2026-08-21T09:30:00+08:00') FROM events",
+            "EXTRACT(TIMEZONE",
+            "events");
+        yield return Case(
+            "extract-timezone-hour",
+            "SELECT EXTRACT(TIMEZONE_HOUR FROM TIMESTAMP WITH TIME ZONE '2026-08-21T09:30:00+08:00') FROM events",
+            "EXTRACT(TIMEZONE_HOUR",
+            "events");
+        yield return Case(
+            "extract-timezone-minute",
+            "SELECT EXTRACT(TIMEZONE_MINUTE FROM TIMESTAMP WITH TIME ZONE '2026-08-21T09:30:00+08:00') FROM events",
+            "EXTRACT(TIMEZONE_MINUTE",
+            "events");
+        yield return Case(
             "nulls-last",
             "SELECT amount FROM orders ORDER BY amount DESC NULLS LAST",
             "NULLS LAST",
