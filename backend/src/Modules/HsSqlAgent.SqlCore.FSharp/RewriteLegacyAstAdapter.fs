@@ -440,6 +440,10 @@ module internal RewriteLegacyAstAdapter =
         if value.HasValue then Some(NonNegativeRowCount.create value.Value)
         else None
 
+    and private percentage argumentName (value: decimal Nullable) =
+        if value.HasValue then Some(NonNegativePercentage.create value.Value)
+        else None
+
     and private queryOfStatement (statement: HsSqlAgent.SqlCore.Core.Ast.SqlStatement) : Query =
         match statement with
         | :? HsSqlAgent.SqlCore.Core.Ast.SelectStatement as select ->
@@ -448,6 +452,7 @@ module internal RewriteLegacyAstAdapter =
               OrderBy = select.OrderBy |> Seq.map orderByOf |> Seq.toList
               Limit = rowCount "limit" select.Limit
               Offset = rowCount "offset" select.Offset
+              FetchPercent = percentage "fetchPercent" select.FetchPercent
               FetchWithTies = select.FetchWithTies }
         | :? HsSqlAgent.SqlCore.Core.Ast.QueryStatement as query ->
             { Query.Head = selectOf query.Head
@@ -460,6 +465,7 @@ module internal RewriteLegacyAstAdapter =
               OrderBy = query.OrderBy |> Seq.map orderByOf |> Seq.toList
               Limit = rowCount "limit" query.Limit
               Offset = rowCount "offset" query.Offset
+              FetchPercent = percentage "fetchPercent" query.FetchPercent
               FetchWithTies = query.FetchWithTies }
         | _ -> failClosed "query statement" statement
 

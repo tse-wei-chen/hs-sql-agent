@@ -285,6 +285,7 @@ type SelectStatement(
     member _.OrderBy = orderBy
     member _.Limit = limit
     member _.Offset = offset
+    member val FetchPercent = Nullable<decimal>() with get, set
     member val FetchWithTies = false with get, set
 
 [<Sealed>]
@@ -407,6 +408,7 @@ type QueryStatement(
     member _.OrderBy = orderBy
     member _.Limit = limit
     member _.Offset = offset
+    member val FetchPercent = Nullable<decimal>() with get, set
     member val FetchWithTies = false with get, set
 
 [<AbstractClass; Sealed>]

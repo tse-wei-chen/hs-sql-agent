@@ -405,7 +405,7 @@ module internal RewriteCompatibilityAstAdapter =
         result.RecursiveScope <- cte.RecursiveScope
         result
 
-    and private selectOf (select: Select) orderBy limit offset fetchWithTies selectSpan =
+    and private selectOf (select: Select) orderBy limit offset fetchPercent fetchWithTies selectSpan =
         let result =
             HsSqlAgent.SqlCore.Core.Ast.SelectStatement(
                 select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
@@ -424,6 +424,10 @@ module internal RewriteCompatibilityAstAdapter =
             select.DistinctOn
             |> Option.map (List.map exprOf >> ImmutableArray.CreateRange)
             |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlExpr>.Empty
+        result.FetchPercent <-
+            fetchPercent
+            |> Option.map (NonNegativePercentage.value >> Nullable)
+            |> Option.defaultValue (Nullable())
         result.FetchWithTies <- fetchWithTies
         result
 
@@ -438,9 +442,9 @@ module internal RewriteCompatibilityAstAdapter =
     and private queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
         match query.SetOperations with
         | [] ->
-            selectOf query.Head query.OrderBy query.Limit query.Offset query.FetchWithTies (nodeSpan (box query))
+            selectOf query.Head query.OrderBy query.Limit query.Offset query.FetchPercent query.FetchWithTies (nodeSpan (box query))
         | operations ->
-            let head = selectOf query.Head [] None None false (nodeSpan (box query.Head))
+            let head = selectOf query.Head [] None None None false (nodeSpan (box query.Head))
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
                 head,
@@ -455,6 +459,10 @@ module internal RewriteCompatibilityAstAdapter =
                 query.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
                 query.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
                 nodeSpan (box query))
+            result.FetchPercent <-
+                query.FetchPercent
+                |> Option.map (NonNegativePercentage.value >> Nullable)
+                |> Option.defaultValue (Nullable())
             result.FetchWithTies <- query.FetchWithTies
             result
 

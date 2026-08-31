@@ -63,6 +63,14 @@ module internal CoreModel =
             NonNegativeRowCount value
         let value (NonNegativeRowCount value) = value
 
+    type NonNegativePercentage = private NonNegativePercentage of decimal
+
+    module NonNegativePercentage =
+        let create value =
+            if value < 0M then invalidArg (nameof value) "Percentage cannot be negative."
+            NonNegativePercentage value
+        let value (NonNegativePercentage value) = value
+
     type PositiveRowCount = private PositiveRowCount of int
 
     module PositiveRowCount =
@@ -322,6 +330,7 @@ module internal CoreModel =
           OrderBy: OrderBy list
           Limit: NonNegativeRowCount option
           Offset: NonNegativeRowCount option
+          FetchPercent: NonNegativePercentage option
           FetchWithTies: bool }
 
     type ReturningItem =
