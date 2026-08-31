@@ -36,6 +36,21 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "DO NOTHING",
             false);
         yield return Case(
+            "multi-row-values-null-decimal",
+            "INSERT INTO users (id, name, score) VALUES (1, 'A', NULL), (2, 'B', 9.5)",
+            "INSERT",
+            false);
+        yield return Case(
+            "update-date-literal",
+            "UPDATE orders SET order_date = DATE '2026-08-21', required_date = DATE '2026-08-21' WHERE id = 1",
+            "UPDATE",
+            false);
+        yield return Case(
+            "update-time-literal",
+            "UPDATE schedules SET starts_at = TIME '09:30:00' WHERE id = 1",
+            "UPDATE",
+            false);
+        yield return Case(
             "update-returning",
             "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id",
             "RETURNING",
@@ -162,6 +177,18 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "insert-multi-row-width-mismatch",
             "INSERT INTO users (id, name) VALUES (1, 'Alice'), (2)",
             "columns were declared");
+        yield return Reject(
+            "dml-unbound-parameter",
+            "UPDATE users SET name = :name WHERE id = 1",
+            "Unbound SQL parameter");
+        yield return Reject(
+            "dml-unterminated-string",
+            "UPDATE users SET name = 'unterminated WHERE id = 1",
+            "Unterminated string");
+        yield return Reject(
+            "dml-multiple-statements",
+            "DELETE FROM users; DELETE FROM audit",
+            "Unexpected trailing token");
     }
 
     [Fact]

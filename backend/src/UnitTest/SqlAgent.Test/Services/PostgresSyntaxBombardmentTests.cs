@@ -758,6 +758,18 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT {{bad FROM users",
             "Unterminated template parameter");
         yield return RejectWithMessage(
+            "unterminated-dollar-quote",
+            "SELECT $tag$unterminated",
+            "Unterminated PostgreSQL dollar-quoted string");
+        yield return RejectWithMessage(
+            "postgres-backtick-identifier",
+            "SELECT `name` FROM users",
+            "Backtick-quoted identifiers");
+        yield return RejectWithMessage(
+            "postgres-bracket-identifier",
+            "SELECT [name] FROM users",
+            "Bracket-quoted identifiers");
+        yield return RejectWithMessage(
             "unterminated-quoted-identifier",
             "SELECT \"unterminated FROM users",
             "Unterminated quoted identifier");
