@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.55"
+    static member Version = "2026-08-31.56"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -276,6 +276,13 @@ type SqlCapabilityMatrix private () =
                     if provider = SqlAgentToolType.Sqlite && rightJoinStatus = translated then "SQLite 3.39+ RIGHT JOIN runtime contract is satisfied." else "RIGHT JOIN follows provider capability rules.")
                 cap("join.full","query",fullJoinStatus,
                     if provider = SqlAgentToolType.Sqlite && fullJoinStatus = translated then "SQLite 3.39+ FULL OUTER JOIN runtime contract is satisfied." else "FULL JOIN follows provider capability rules.")
+                cap("join.natural","query",(if SqlNaturalJoinCapabilityRules.SupportsNative(provider) then translated else rejected),
+                    if SqlNaturalJoinCapabilityRules.SupportsNative(provider) then
+                        "NATURAL JOIN implicit common-column semantics are preserved natively; Core does not invent or expand the schema-dependent predicate."
+                    elif provider = SqlAgentToolType.Firebird then
+                        "Firebird NATURAL JOIN remains fail-closed until the capability profile proves the database SQL dialect is not Dialect 1."
+                    else
+                        "SQL Server has no native NATURAL JOIN syntax and Core does not expand schema-dependent common columns without metadata proof.")
                 cap("join.using","query",(if SqlUsingJoinCapabilityRules.Supports(provider) then translated else rejected),
                     if SqlUsingJoinCapabilityRules.Supports(provider) then
                         "Named-column JOIN ... USING is represented explicitly in the Core AST and emitted natively for PostgreSQL, MySQL, SQLite, Oracle, and Firebird."

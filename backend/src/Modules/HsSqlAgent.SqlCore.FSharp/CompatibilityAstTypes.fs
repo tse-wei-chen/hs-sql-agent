@@ -248,6 +248,7 @@ type JoinSource(kind: string, source: TableSource, predicate: SqlExpr, span: Sou
     member _.Source = source
     member _.Predicate = predicate
     member val UsingColumns = ImmutableArray<SqlIdentifier>.Empty with get, set
+    member val IsNatural = false with get, set
 
 [<Sealed>]
 type CteDefinition(name: SqlIdentifier, columnAliases: ImmutableArray<SqlIdentifier>, query: SqlStatement, span: SourceSpan) =

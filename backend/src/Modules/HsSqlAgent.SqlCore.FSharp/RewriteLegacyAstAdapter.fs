@@ -363,17 +363,26 @@ module internal RewriteLegacyAstAdapter =
         let usingColumns =
             if join.UsingColumns.IsDefaultOrEmpty then []
             else join.UsingColumns |> Seq.map (singlePart "JOIN USING column") |> Seq.toList
-        match joinKind join.Kind, Option.ofObj join.Predicate, usingColumns with
-        | Choice2Of2 (), None, [] -> CrossJoin source
-        | Choice2Of2 (), _, _ ->
-            raise (SqlCompilationException("CROSS JOIN cannot carry ON or USING predicates."))
-        | Choice1Of2 kind, Some predicate, [] -> OnJoin(kind, source, exprOf predicate)
-        | Choice1Of2 kind, None, head :: tail ->
-            UsingJoin(kind, source, NonEmpty.create head tail)
-        | Choice1Of2 _, Some _, _ :: _ ->
-            raise (SqlCompilationException(join.Kind + " JOIN cannot carry both ON and USING predicates."))
-        | Choice1Of2 _, None, [] ->
-            raise (SqlCompilationException(join.Kind + " JOIN requires an ON or USING predicate."))
+        let parsedKind = joinKind join.Kind
+        if join.IsNatural then
+            match parsedKind, Option.ofObj join.Predicate, usingColumns with
+            | Choice1Of2 kind, None, [] -> NaturalJoin(kind, source)
+            | Choice2Of2 (), _, _ ->
+                raise (SqlCompilationException("NATURAL CROSS JOIN is not represented by the Core join model."))
+            | _, _, _ ->
+                raise (SqlCompilationException("NATURAL JOIN cannot carry ON or USING predicates."))
+        else
+            match parsedKind, Option.ofObj join.Predicate, usingColumns with
+            | Choice2Of2 (), None, [] -> CrossJoin source
+            | Choice2Of2 (), _, _ ->
+                raise (SqlCompilationException("CROSS JOIN cannot carry ON or USING predicates."))
+            | Choice1Of2 kind, Some predicate, [] -> OnJoin(kind, source, exprOf predicate)
+            | Choice1Of2 kind, None, head :: tail ->
+                UsingJoin(kind, source, NonEmpty.create head tail)
+            | Choice1Of2 _, Some _, _ :: _ ->
+                raise (SqlCompilationException(join.Kind + " JOIN cannot carry both ON and USING predicates."))
+            | Choice1Of2 _, None, [] ->
+                raise (SqlCompilationException(join.Kind + " JOIN requires an ON or USING predicate."))
 
     and private selectItemOf (item: HsSqlAgent.SqlCore.Core.Ast.SelectItem) =
         { SelectItem.Expression = exprOf item.Expression

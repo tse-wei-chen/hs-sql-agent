@@ -332,6 +332,21 @@ module internal RewriteCompatibilityAstAdapter =
                 tableSourceOf source,
                 Unchecked.defaultof<_>,
                 unknown)
+        | Join.NaturalJoin(kind, source) ->
+            let text =
+                match kind with
+                | OnJoinKind.Inner -> "INNER"
+                | OnJoinKind.Left -> "LEFT"
+                | OnJoinKind.Right -> "RIGHT"
+                | OnJoinKind.Full -> "FULL"
+            let result =
+                HsSqlAgent.SqlCore.Core.Ast.JoinSource(
+                    text,
+                    tableSourceOf source,
+                    Unchecked.defaultof<_>,
+                    unknown)
+            result.IsNatural <- true
+            result
         | Join.OnJoin(kind, source, predicate) ->
             let text =
                 match kind with
