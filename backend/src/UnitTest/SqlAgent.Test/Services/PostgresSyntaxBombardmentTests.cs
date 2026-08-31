@@ -900,6 +900,15 @@ public sealed class PostgresSyntaxBombardmentTests
             "filter-on-non-function",
             "SELECT 1 FILTER (WHERE TRUE) FROM orders");
         yield return Reject(
+            "filter-on-parenthesized-function",
+            "SELECT (SUM(amount)) FILTER (WHERE status = 'open') FROM orders");
+        yield return Reject(
+            "over-on-parenthesized-function",
+            "SELECT (SUM(amount)) OVER (ORDER BY created_at) FROM orders");
+        yield return Reject(
+            "within-group-on-parenthesized-function",
+            "SELECT (STRING_AGG(name, ',')) WITHIN GROUP (ORDER BY name) FROM users");
+        yield return Reject(
             "over-on-column",
             "SELECT id OVER (ORDER BY created_at) FROM orders");
         yield return Reject(
