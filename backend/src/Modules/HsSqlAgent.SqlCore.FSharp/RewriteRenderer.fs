@@ -660,9 +660,11 @@ module internal RewriteRenderer =
         else
             let recursiveScope = ctes |> List.exists (fun cte -> cte.RecursiveScope)
             if recursiveScope then
-                match SqlRecursiveCteCapabilityRules.TargetValidationError(providerTool ctx.Provider, null) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
+                let provider = providerTool ctx.Provider
+                if not (SqlRecursiveCteCapabilityRules.SupportsWithRecursiveSyntax(provider)) then
+                    raise (SqlCompilationException(
+                        "SQL capability 'select.recursive_cte' is not supported by target provider "
+                        + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
             "WITH "
             + (if recursiveScope then "RECURSIVE " else "")
             + (ctes

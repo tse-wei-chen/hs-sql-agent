@@ -539,6 +539,10 @@ module internal RewriteStages =
                 match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
+            if source <> target then
+                raise (SqlCompilationException(
+                    "SQL capability 'select.recursive_cte' is currently native-only; cross-provider recursive evaluation semantics are not proven. Source provider "
+                    + string source + ", target provider " + string target + "."))
             match SqlRecursiveCteCapabilityRules.TargetValidationError(target, targetProfile) with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
@@ -1563,9 +1567,11 @@ module internal RewriteStages =
 
     and private proveTargetSelect targetRuntime expressionProofs select =
         if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
-            match SqlRecursiveCteCapabilityRules.TargetValidationError(targetProvider targetRuntime, null) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
+            let provider = targetProvider targetRuntime
+            if not (SqlRecursiveCteCapabilityRules.SupportsWithRecursiveSyntax(provider)) then
+                raise (SqlCompilationException(
+                    "SQL capability 'select.recursive_cte' is not supported by target provider "
+                    + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
         select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
         match select.DistinctMode with
         | SelectDistinct.DistinctOn expressions ->

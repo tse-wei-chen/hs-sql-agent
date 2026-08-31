@@ -394,22 +394,48 @@ module internal SqlJoinCapabilityRules =
 
 module internal SqlRecursiveCteCapabilityRules =
     let PostgresMinimumVersion = Version(8,4)
+    let MySqlMinimumVersion = Version(8,0,1)
+    let SqliteMinimumVersion = Version(3,8,3)
+    let FirebirdMinimumVersion = Version(2,1)
+
+    let SupportsWithRecursiveSyntax(provider: SqlAgentToolType) =
+        provider = SqlAgentToolType.Postgres
+        || provider = SqlAgentToolType.MySQL
+        || provider = SqlAgentToolType.Sqlite
+        || provider = SqlAgentToolType.Firebird
+
+    let private minimumVersion = function
+        | SqlAgentToolType.Postgres -> Some PostgresMinimumVersion
+        | SqlAgentToolType.MySQL -> Some MySqlMinimumVersion
+        | SqlAgentToolType.Sqlite -> Some SqliteMinimumVersion
+        | SqlAgentToolType.Firebird -> Some FirebirdMinimumVersion
+        | _ -> None
+
+    let private requiresExplicitVersion provider =
+        provider = SqlAgentToolType.MySQL
+        || provider = SqlAgentToolType.Sqlite
+        || provider = SqlAgentToolType.Firebird
 
     let private validationError
         (provider: SqlAgentToolType)
         (profile: SqlProviderCapabilityProfile | null)
         (side: string) : string | null =
-        if provider <> SqlAgentToolType.Postgres then
+        match minimumVersion provider with
+        | None ->
             "SQL capability 'select.recursive_cte' is not supported by " + side
             + " provider " + string provider
-            + "; Core currently proves WITH RECURSIVE semantics only for PostgreSQL."
-        elif isNull profile || isNull profile.ServerVersion then
+            + "; this provider does not use the modeled WITH RECURSIVE syntax contract."
+        | Some minimum when (isNull profile || isNull profile.ServerVersion) && requiresExplicitVersion provider ->
+            "SQL capability 'select.recursive_cte' requires an explicit " + side
+            + " ServerVersion for provider " + string provider
+            + "; minimum proven version is " + minimum.ToString() + "."
+        | Some _ when isNull profile || isNull profile.ServerVersion ->
             null
-        elif profile.ServerVersion.CompareTo(PostgresMinimumVersion) >= 0 then
+        | Some minimum when profile.ServerVersion.CompareTo(minimum) >= 0 ->
             null
-        else
-            "SQL capability 'select.recursive_cte' requires PostgreSQL " + side
-            + " ServerVersion 8.4+; declared version is "
+        | Some minimum ->
+            "SQL capability 'select.recursive_cte' requires " + string provider + " " + side
+            + " ServerVersion " + minimum.ToString() + "+; declared version is "
             + profile.ServerVersion.ToString() + "."
 
     let SourceValidationError(

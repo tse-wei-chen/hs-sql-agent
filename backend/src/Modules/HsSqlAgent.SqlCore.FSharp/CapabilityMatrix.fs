@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.57"
+    static member Version = "2026-08-31.58"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -242,6 +242,19 @@ type SqlCapabilityMatrix private () =
                 + string provider + "."
 
         let recursiveCteStatus, recursiveCteDetail =
+            let versioned minimum =
+                match profileServerVersion with
+                | Some version when version.CompareTo(minimum) >= 0 ->
+                    supported,
+                    "WITH RECURSIVE is enabled by the declared target ServerVersion. Core preserves one direct self-reference in a single anchor UNION/UNION ALL recursive term."
+                | Some version ->
+                    rejected,
+                    "WITH RECURSIVE requires target ServerVersion " + minimum.ToString()
+                    + "+; declared version is " + version.ToString() + "."
+                | None ->
+                    rejected,
+                    "WITH RECURSIVE requires an explicit target ServerVersion; minimum proven version is "
+                    + minimum.ToString() + "."
             match provider with
             | SqlAgentToolType.Postgres ->
                 match profileServerVersion with
@@ -252,10 +265,13 @@ type SqlCapabilityMatrix private () =
                 | _ ->
                     supported,
                     "PostgreSQL 8.4+ WITH RECURSIVE scope is represented explicitly. Self-reference is admitted only as one direct source in a single anchor UNION/UNION ALL recursive term."
+            | SqlAgentToolType.MySQL -> versioned SqlRecursiveCteCapabilityRules.MySqlMinimumVersion
+            | SqlAgentToolType.Sqlite -> versioned SqlRecursiveCteCapabilityRules.SqliteMinimumVersion
+            | SqlAgentToolType.Firebird -> versioned SqlRecursiveCteCapabilityRules.FirebirdMinimumVersion
             | _ ->
                 rejected,
                 "SQL capability 'select.recursive_cte' remains fail-closed for " + string provider
-                + " until provider-specific recursive evaluation semantics are proven."
+                + " because its recursive CTE syntax is not the modeled WITH RECURSIVE contract."
 
         let lateralStatus, lateralDetail =
             match provider with
