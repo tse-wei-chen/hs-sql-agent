@@ -1003,9 +1003,6 @@ public sealed class PostgresSyntaxBombardmentTests
     {
         // These were explicit fail-closed boundaries before the F# rewrite and must stay rejected.
         yield return Reject(
-            "recursive-cte",
-            "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x");
-        yield return Reject(
             "postgres-comma-limit",
             "SELECT id FROM users LIMIT 5, 10");
         yield return Reject(

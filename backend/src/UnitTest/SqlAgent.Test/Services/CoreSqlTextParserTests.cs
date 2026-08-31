@@ -248,13 +248,14 @@ public class CoreSqlTextParserTests
     }
 
     [Fact]
-    public void ParseQuery_RecursiveCte_FailsClosedUntilRecursiveSemanticsAreModeled()
+    public void ParseQuery_RecursiveCte_PreservesRecursiveScope()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(
-                "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
-                SqlAgentToolType.Postgres));
-        Assert.Contains("RECURSIVE", error.Message, StringComparison.OrdinalIgnoreCase);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+            SqlAgentToolType.Postgres);
+        var cte = Assert.Single(Assert.IsType<SelectStatement>(parsed.Statement).Ctes);
+
+        Assert.True(cte.RecursiveScope);
     }
 
     [Fact]
