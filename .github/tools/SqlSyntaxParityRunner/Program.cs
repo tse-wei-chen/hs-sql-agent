@@ -29,6 +29,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     var dialectType = RequiredType(assembly, "HsSqlAgent.SqlCore.Enums.SqlAgentToolType");
     var parserType = RequiredType(assembly, "HsSqlAgent.SqlCore.SqlParsing.CoreSqlTextParser");
     var compilerType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.CoreSqlCompiler");
+    var dmlCompilerType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.CoreDmlCompiler");
     var validationType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlPlanValidationContext");
     var policyType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlExecutionPlanPolicy");
     var profileType = RequiredType(assembly, "HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile");
@@ -49,6 +50,10 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
         .Where(method => method.Name == "ParseQuery")
         .Where(method => method.GetParameters().Length is 2 or 3)
         .ToArray();
+    var parseDmlMethods = parserType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+        .Where(method => method.Name == "ParseDml")
+        .Where(method => method.GetParameters().Length is 2 or 3)
+        .ToArray();
 
     var createCompiler = compilerType.GetMethod(
         "CreateDefault",
@@ -57,6 +62,13 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
 
     var compiler = createCompiler.Invoke(null, null)
         ?? throw new InvalidOperationException("CoreSqlCompiler.CreateDefault returned null.");
+
+    var createDmlCompiler = dmlCompilerType.GetMethod(
+        "CreateDefault",
+        BindingFlags.Public | BindingFlags.Static)
+        ?? throw new MissingMethodException(dmlCompilerType.FullName, "CreateDefault");
+    var dmlCompiler = createDmlCompiler.Invoke(null, null)
+        ?? throw new InvalidOperationException("CoreDmlCompiler.CreateDefault returned null.");
 
     var outcomes = new List<Outcome>(corpus.Count);
     foreach (var item in corpus)
@@ -67,6 +79,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
             sourceDialect,
             item.SourceVersion);
         object parsed;
+        var parsedAsDml = false;
         try
         {
             var parse = sourceProfile is null
@@ -94,11 +107,55 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                         : "ParseQuery(sql, dialect, sourceProfile)");
             }
 
-            parsed = sourceProfile is null
-                ? InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect)
-                    ?? throw new InvalidOperationException("ParseQuery returned null.")
-                : InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect, sourceProfile)
-                    ?? throw new InvalidOperationException("ParseQuery returned null.");
+            try
+            {
+                parsed = sourceProfile is null
+                    ? InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect)
+                        ?? throw new InvalidOperationException("ParseQuery returned null.")
+                    : InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect, sourceProfile)
+                        ?? throw new InvalidOperationException("ParseQuery returned null.");
+            }
+            catch (Exception queryException)
+            {
+                var queryActual = Unwrap(queryException);
+                if (!queryActual.Message.Contains(
+                        "ParseQuery requires a SELECT statement",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw;
+                }
+
+                var parseDml = sourceProfile is null
+                    ? parseDmlMethods
+                        .Where(method => LeadingArgumentsFit(
+                            method.GetParameters(),
+                            [item.Sql, sourceDialect]))
+                        .OrderBy(method => method.GetParameters().Length)
+                        .FirstOrDefault()
+                    : parseDmlMethods
+                        .Where(method => method.GetParameters().Length >= 3)
+                        .Where(method => LeadingArgumentsFit(
+                            method.GetParameters(),
+                            [item.Sql, sourceDialect, sourceProfile]))
+                        .OrderBy(method => method.GetParameters().Length)
+                        .FirstOrDefault();
+
+                if (parseDml is null)
+                {
+                    throw new MissingMethodException(
+                        parserType.FullName,
+                        sourceProfile is null
+                            ? "ParseDml(sql, dialect[, sourceProfile])"
+                            : "ParseDml(sql, dialect, sourceProfile)");
+                }
+
+                parsed = sourceProfile is null
+                    ? InvokeWithOptionalTail(parseDml, null, item.Sql, sourceDialect)
+                        ?? throw new InvalidOperationException("ParseDml returned null.")
+                    : InvokeWithOptionalTail(parseDml, null, item.Sql, sourceDialect, sourceProfile)
+                        ?? throw new InvalidOperationException("ParseDml returned null.");
+                parsedAsDml = true;
+            }
         }
         catch (Exception exception)
         {
@@ -123,51 +180,100 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                 targetDialect,
                 item.TargetVersion);
 
-            var compileMethods = compilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(method => method.Name == "Compile")
-                .Where(method => method.GetParameters().Length is 4 or 5)
-                .Where(method => method.GetParameters()[0].ParameterType.IsInstanceOfType(parsed));
-
-            var compile = targetProfile is null
-                ? compileMethods
-                    .Where(method => LeadingArgumentsFit(
-                        method.GetParameters(),
-                        [parsed, targetDialect, validation, policy]))
-                    .OrderBy(method => method.GetParameters().Length)
-                    .FirstOrDefault()
-                : compileMethods
-                    .Where(method => method.GetParameters().Length >= 5)
-                    .Where(method => LeadingArgumentsFit(
-                        method.GetParameters(),
-                        [parsed, targetDialect, validation, policy, targetProfile]))
-                    .OrderBy(method => method.GetParameters().Length)
-                    .FirstOrDefault();
-
-            if (compile is null)
+            if (parsedAsDml)
             {
-                throw new MissingMethodException(
-                    compilerType.FullName,
-                    targetProfile is null
-                        ? "Compile(parsed, target, validation, policy[, targetProfile])"
-                        : "Compile(parsed, target, validation, policy, targetProfile)");
-            }
+                var compileMethods = dmlCompilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(method => method.Name == "Compile")
+                    .Where(method => method.GetParameters().Length >= 3)
+                    .Where(method => method.GetParameters()[0].ParameterType.IsInstanceOfType(parsed));
 
-            _ = targetProfile is null
-                ? InvokeWithOptionalTail(
-                    compile,
-                    compiler,
-                    parsed,
-                    targetDialect,
-                    validation,
-                    policy)
-                : InvokeWithOptionalTail(
-                    compile,
-                    compiler,
-                    parsed,
-                    targetDialect,
-                    validation,
-                    policy,
-                    targetProfile);
+                var compile = targetProfile is null
+                    ? compileMethods
+                        .Where(method => LeadingArgumentsFit(
+                            method.GetParameters(),
+                            [parsed, targetDialect, validation]))
+                        .OrderBy(method => method.GetParameters().Length)
+                        .FirstOrDefault()
+                    : compileMethods
+                        .Where(method => method.GetParameters().Length >= 4)
+                        .Where(method => LeadingArgumentsFit(
+                            method.GetParameters(),
+                            [parsed, targetDialect, validation, targetProfile]))
+                        .OrderBy(method => method.GetParameters().Length)
+                        .FirstOrDefault();
+
+                if (compile is null)
+                {
+                    throw new MissingMethodException(
+                        dmlCompilerType.FullName,
+                        targetProfile is null
+                            ? "Compile(parsed, target, validation[, optional...])"
+                            : "Compile(parsed, target, validation, targetProfile[, optional...])");
+                }
+
+                _ = targetProfile is null
+                    ? InvokeWithOptionalTail(
+                        compile,
+                        dmlCompiler,
+                        parsed,
+                        targetDialect,
+                        validation)
+                    : InvokeWithOptionalTail(
+                        compile,
+                        dmlCompiler,
+                        parsed,
+                        targetDialect,
+                        validation,
+                        targetProfile);
+            }
+            else
+            {
+                var compileMethods = compilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(method => method.Name == "Compile")
+                    .Where(method => method.GetParameters().Length is 4 or 5)
+                    .Where(method => method.GetParameters()[0].ParameterType.IsInstanceOfType(parsed));
+
+                var compile = targetProfile is null
+                    ? compileMethods
+                        .Where(method => LeadingArgumentsFit(
+                            method.GetParameters(),
+                            [parsed, targetDialect, validation, policy]))
+                        .OrderBy(method => method.GetParameters().Length)
+                        .FirstOrDefault()
+                    : compileMethods
+                        .Where(method => method.GetParameters().Length >= 5)
+                        .Where(method => LeadingArgumentsFit(
+                            method.GetParameters(),
+                            [parsed, targetDialect, validation, policy, targetProfile]))
+                        .OrderBy(method => method.GetParameters().Length)
+                        .FirstOrDefault();
+
+                if (compile is null)
+                {
+                    throw new MissingMethodException(
+                        compilerType.FullName,
+                        targetProfile is null
+                            ? "Compile(parsed, target, validation, policy[, targetProfile])"
+                            : "Compile(parsed, target, validation, policy, targetProfile)");
+                }
+
+                _ = targetProfile is null
+                    ? InvokeWithOptionalTail(
+                        compile,
+                        compiler,
+                        parsed,
+                        targetDialect,
+                        validation,
+                        policy)
+                    : InvokeWithOptionalTail(
+                        compile,
+                        compiler,
+                        parsed,
+                        targetDialect,
+                        validation,
+                        policy,
+                        targetProfile);
+            }
 
             outcomes.Add(new Outcome(item.Name, true, "success", null, null));
         }
