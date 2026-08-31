@@ -142,6 +142,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "COALESCE",
             "orders");
         yield return Case(
+            "schema-qualified-function",
+            "SELECT pg_catalog.lower(name) FROM users",
+            "PG_CATALOG.LOWER",
+            "users");
+        yield return Case(
+            "schema-qualified-function-in-predicate",
+            "SELECT id FROM users WHERE pg_catalog.lower(name) = 'alice'",
+            "PG_CATALOG.LOWER",
+            "users");
+        yield return Case(
             "modulo",
             "SELECT price % 10 FROM products",
             "%",
