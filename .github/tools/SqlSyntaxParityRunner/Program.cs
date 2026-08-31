@@ -160,12 +160,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
         catch (Exception exception)
         {
             var actual = Unwrap(exception);
-            outcomes.Add(new Outcome(
-                item.Name,
-                false,
-                "parse",
-                actual.GetType().FullName,
-                actual.Message));
+            outcomes.Add(FailureOutcome(item.Name, "parse", actual));
             continue;
         }
 
@@ -280,12 +275,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
         catch (Exception exception)
         {
             var actual = Unwrap(exception);
-            outcomes.Add(new Outcome(
-                item.Name,
-                false,
-                "compile",
-                actual.GetType().FullName,
-                actual.Message));
+            outcomes.Add(FailureOutcome(item.Name, "compile", actual));
         }
     }
 
@@ -392,6 +382,42 @@ static int VerifyNegative(string assemblyPath, string corpusPath)
                         $"{item.Name}: expected diagnostic containing '{fragment}', " +
                         $"actual '{outcome.Message}'");
                 }
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.ExpectedDiagnosticCode)
+                && !string.Equals(outcome.DiagnosticCode, item.ExpectedDiagnosticCode, StringComparison.OrdinalIgnoreCase))
+            {
+                violations.Add(
+                    $"{item.Name}: expected diagnostic code '{item.ExpectedDiagnosticCode}', " +
+                    $"actual '{outcome.DiagnosticCode ?? "<none>"}'");
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.ExpectedDiagnosticStage)
+                && !string.Equals(outcome.DiagnosticStage, item.ExpectedDiagnosticStage, StringComparison.OrdinalIgnoreCase))
+            {
+                violations.Add(
+                    $"{item.Name}: expected diagnostic stage '{item.ExpectedDiagnosticStage}', " +
+                    $"actual '{outcome.DiagnosticStage ?? "<none>"}'");
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.ExpectedDiagnosticCategory)
+                && !string.Equals(outcome.DiagnosticCategory, item.ExpectedDiagnosticCategory, StringComparison.OrdinalIgnoreCase))
+            {
+                violations.Add(
+                    $"{item.Name}: expected diagnostic category '{item.ExpectedDiagnosticCategory}', " +
+                    $"actual '{outcome.DiagnosticCategory ?? "<none>"}'");
+            }
+
+            if (item.RequireDiagnosticSpan
+                && (outcome.DiagnosticSpanStart is null
+                    || outcome.DiagnosticSpanLength is null
+                    || outcome.DiagnosticSpanStart < 0
+                    || outcome.DiagnosticSpanLength < 0))
+            {
+                violations.Add(
+                    $"{item.Name}: expected a concrete typed diagnostic source span, " +
+                    $"actual start={outcome.DiagnosticSpanStart?.ToString() ?? "<none>"}, " +
+                    $"length={outcome.DiagnosticSpanLength?.ToString() ?? "<none>"}");
             }
         }
 
@@ -611,6 +637,47 @@ static Type RequiredType(Assembly assembly, string name) =>
     assembly.GetType(name, throwOnError: true)
     ?? throw new TypeLoadException(name);
 
+static Outcome FailureOutcome(string name, string stage, Exception exception)
+{
+    var diagnostic = exception.GetType()
+        .GetProperty("Diagnostic", BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(exception);
+
+    string? code = null;
+    string? diagnosticStage = null;
+    string? category = null;
+    int? spanStart = null;
+    int? spanLength = null;
+
+    if (diagnostic is not null)
+    {
+        var diagnosticType = diagnostic.GetType();
+        code = diagnosticType.GetProperty("Code")?.GetValue(diagnostic)?.ToString();
+        diagnosticStage = diagnosticType.GetProperty("Stage")?.GetValue(diagnostic)?.ToString();
+        category = diagnosticType.GetProperty("Category")?.GetValue(diagnostic)?.ToString();
+
+        var span = diagnosticType.GetProperty("Span")?.GetValue(diagnostic);
+        if (span is not null)
+        {
+            var spanType = span.GetType();
+            spanStart = spanType.GetProperty("Start")?.GetValue(span) as int?;
+            spanLength = spanType.GetProperty("Length")?.GetValue(span) as int?;
+        }
+    }
+
+    return new Outcome(
+        name,
+        false,
+        stage,
+        exception.GetType().FullName,
+        exception.Message,
+        code,
+        diagnosticStage,
+        category,
+        spanStart,
+        spanLength);
+}
+
 static Exception Unwrap(Exception exception)
 {
     while (exception is TargetInvocationException invocation
@@ -649,13 +716,22 @@ sealed record CorpusCase(
     string? TargetVersion = null,
     string? ExpectedStage = null,
     string? ExceptionTypeContains = null,
-    string[]? MessageContains = null);
+    string[]? MessageContains = null,
+    string? ExpectedDiagnosticCode = null,
+    string? ExpectedDiagnosticStage = null,
+    string? ExpectedDiagnosticCategory = null,
+    bool RequireDiagnosticSpan = false);
 sealed record Outcome(
     string Name,
     bool Success,
     string Stage,
     string? ExceptionType,
-    string? Message);
+    string? Message,
+    string? DiagnosticCode = null,
+    string? DiagnosticStage = null,
+    string? DiagnosticCategory = null,
+    int? DiagnosticSpanStart = null,
+    int? DiagnosticSpanLength = null);
 
 sealed class SqlCoreLoadContext(string assemblyPath) : AssemblyLoadContext(isCollectible: true)
 {

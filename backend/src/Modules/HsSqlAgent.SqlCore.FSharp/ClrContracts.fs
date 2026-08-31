@@ -78,6 +78,50 @@ type SqlStatementKind =
     | Update = 2
     | Delete = 3
 
+type SqlDiagnosticStage =
+    | Lexical = 0
+    | Parse = 1
+    | Binding = 2
+    | SourceValidation = 3
+    | SemanticValidation = 4
+    | TargetCapability = 5
+    | Policy = 6
+    | RenderingInvariant = 7
+
+type SqlDiagnosticCategory =
+    | Syntax = 0
+    | DialectSyntax = 1
+    | Binding = 2
+    | Capability = 3
+    | Semantic = 4
+    | Policy = 5
+    | Invariant = 6
+
+[<Sealed; AllowNullLiteral>]
+type SqlDiagnosticSpan(start: int, length: int) =
+    do
+        if start < 0 then invalidArg (nameof start) "Diagnostic span start must be non-negative."
+        if length < 0 then invalidArg (nameof length) "Diagnostic span length must be non-negative."
+    member _.Start = start
+    member _.Length = length
+    member _.End = start + length
+
+[<Sealed; AllowNullLiteral>]
+type SqlDiagnostic(
+    code: string,
+    stage: SqlDiagnosticStage,
+    category: SqlDiagnosticCategory,
+    message: string,
+    span: SqlDiagnosticSpan) =
+    do
+        if String.IsNullOrWhiteSpace(code) then invalidArg (nameof code) "Diagnostic code cannot be empty."
+        if String.IsNullOrWhiteSpace(message) then invalidArg (nameof message) "Diagnostic message cannot be empty."
+    member _.Code = code
+    member _.Stage = stage
+    member _.Category = category
+    member _.Message = message
+    member _.Span = span
+
 [<Sealed>]
 type SqlParameterValue(name: string, value: obj) =
     member _.Name = name
@@ -128,19 +172,31 @@ type CompiledSqlCommand private (
             targetProvider,
             returnsRows)
 
-type SqlCompilationException =
-    inherit InvalidOperationException
-    new(message: string) = { inherit InvalidOperationException(message) }
-    new(message: string, innerException: Exception) = { inherit InvalidOperationException(message, innerException) }
+type SqlCompilationException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) =
+    inherit InvalidOperationException(message, innerException)
+    new(message: string) = SqlCompilationException(message, null, null)
+    new(message: string, innerException: Exception) = SqlCompilationException(message, innerException, null)
+    new(message: string, diagnostic: SqlDiagnostic) = SqlCompilationException(message, null, diagnostic)
+    member _.Diagnostic = diagnostic
+
+type SqlPolicyException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) =
+    inherit UnauthorizedAccessException(message, innerException)
+    new(message: string) = SqlPolicyException(message, null, null)
+    new(message: string, innerException: Exception) = SqlPolicyException(message, innerException, null)
+    new(message: string, diagnostic: SqlDiagnostic) = SqlPolicyException(message, null, diagnostic)
+    member _.Diagnostic = diagnostic
 
 namespace HsSqlAgent.SqlCore.SqlParsing
 
 open System
+open HsSqlAgent.SqlCore.Core.Compilation
 
-type SqlParseException =
-    inherit Exception
-    new(message: string) = { inherit Exception(message) }
-    new(message: string, innerException: Exception) = { inherit Exception(message, innerException) }
+type SqlParseException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) =
+    inherit Exception(message, innerException)
+    new(message: string) = SqlParseException(message, null, null)
+    new(message: string, innerException: Exception) = SqlParseException(message, innerException, null)
+    new(message: string, diagnostic: SqlDiagnostic) = SqlParseException(message, null, diagnostic)
+    member _.Diagnostic = diagnostic
 
 namespace HsSqlAgent.SqlCore.Models
 

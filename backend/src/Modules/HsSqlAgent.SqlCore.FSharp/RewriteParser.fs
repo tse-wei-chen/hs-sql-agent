@@ -147,18 +147,40 @@ module internal RewriteParser =
     let private sourceRowLimitGrammar (cursor: Cursor) =
         (SqlSourceDialectGrammarRules.For(sourceDialectToolType cursor.Dialect)).RowLimit
 
+    let private tokenDiagnostic code stage category (token: Token) message =
+        let span = SqlDiagnosticSpan(token.Start, max token.Length 1)
+        SqlDiagnostic(code, stage, category, message, span)
+
     let private typedTemporalSourceError (cursor: Cursor) spelling : 'T =
         let token = cursor.Current
         let finish = token.Start + max token.Length 1
-        raise (SqlParseException(
+        let message =
             "Typed temporal literal " + spelling
             + " is not valid for source dialect " + sourceDialectName cursor.Dialect
             + " in the Core source profile. Position "
             + string token.Start + ", span ["
-            + string token.Start + ".." + string finish + ")."))
+            + string token.Start + ".." + string finish + ")."
+        raise (
+            SqlParseException(
+                message,
+                tokenDiagnostic
+                    "SQL_SOURCE_DIALECT_SYNTAX"
+                    SqlDiagnosticStage.SourceValidation
+                    SqlDiagnosticCategory.DialectSyntax
+                    token
+                    message))
 
     let private fail (token: Token) (message: string) : 'T =
-        invalidArg "sql" (message + " at offset " + string token.Start + ".")
+        let detail = message + " at offset " + string token.Start + "."
+        raise (
+            SqlParseException(
+                detail,
+                tokenDiagnostic
+                    "SQL_PARSE_GRAMMAR"
+                    SqlDiagnosticStage.Parse
+                    SqlDiagnosticCategory.Syntax
+                    token
+                    detail))
 
     let private requireSourceCapability = function
         | ProvenCapability -> ()
@@ -168,7 +190,7 @@ module internal RewriteParser =
         | ProvenCapability -> ()
         | RejectedCapability message ->
             let finish = token.Start + max token.Length 1
-            raise (SqlParseException(
+            let detail =
                 message
                 + " Position "
                 + string token.Start
@@ -176,7 +198,16 @@ module internal RewriteParser =
                 + string token.Start
                 + ".."
                 + string finish
-                + ")."))
+                + ")."
+            raise (
+                SqlParseException(
+                    detail,
+                    tokenDiagnostic
+                        "SQL_SOURCE_CAPABILITY_REJECTED"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.Capability
+                        token
+                        detail))
 
     let private isKeyword keyword (token: Token) =
         match token.Kind with Keyword value -> value = keyword | _ -> false

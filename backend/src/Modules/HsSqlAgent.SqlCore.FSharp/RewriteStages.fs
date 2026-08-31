@@ -42,6 +42,20 @@ module internal RewriteStages =
     let private compilationError message =
         raise (SqlCompilationException(message))
 
+    let private withCompilationDiagnostic code stage category (span: Span) (action: unit -> 'T) =
+        try
+            action()
+        with
+        | :? SqlCompilationException as ex when isNull ex.Diagnostic ->
+            let diagnostic =
+                SqlDiagnostic(
+                    code,
+                    stage,
+                    category,
+                    ex.Message,
+                    SqlDiagnosticSpan(span.Start, span.Length))
+            raise (SqlCompilationException(ex.Message, ex, diagnostic))
+
     let private iterDistinctOn action (select: Select) =
         match select.DistinctMode with
         | SelectDistinct.DistinctOn expressions -> expressions |> NonEmpty.iter action
@@ -3400,17 +3414,46 @@ module internal RewriteStages =
 
     let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
         let document = Canonical.value canonical
-        validateNestedCteDocument targetRuntime document
-        validateNoFromDocument targetRuntime document
-        proveSourceFilterDocument sourceExpressions document
-        proveSourceFilterDocument targetExpressions document
-        validateSemanticDocument targetRuntime document
-        let validated = validateDocument allowedTables document
-        proveTargetDocument targetRuntime targetExpressions validated |> ignore
-        proveTargetJoins sourceJoins validated
-        proveTargetJoins targetJoins validated
-        proveOrderingAndPaging targetRuntime targetOrdering validated
-        proveTargetDml sourceDml validated
-        proveTargetDml targetDml validated
-        proveConflicts targetRuntime conflictProofs validated
+
+        let sourceCheck action =
+            withCompilationDiagnostic
+                "SQL_SOURCE_VALIDATION_REJECTED"
+                SqlDiagnosticStage.SourceValidation
+                SqlDiagnosticCategory.Capability
+                document.Span
+                action
+
+        let semanticCheck action =
+            withCompilationDiagnostic
+                "SQL_SEMANTIC_VALIDATION_FAILED"
+                SqlDiagnosticStage.SemanticValidation
+                SqlDiagnosticCategory.Semantic
+                document.Span
+                action
+
+        let targetCheck action =
+            withCompilationDiagnostic
+                "SQL_TARGET_CAPABILITY_REJECTED"
+                SqlDiagnosticStage.TargetCapability
+                SqlDiagnosticCategory.Capability
+                document.Span
+                action
+
+        targetCheck (fun () -> validateNestedCteDocument targetRuntime document)
+        targetCheck (fun () -> validateNoFromDocument targetRuntime document)
+        sourceCheck (fun () -> proveSourceFilterDocument sourceExpressions document)
+        targetCheck (fun () -> proveSourceFilterDocument targetExpressions document)
+
+        let validated =
+            semanticCheck (fun () ->
+                validateSemanticDocument targetRuntime document
+                validateDocument allowedTables document)
+
+        targetCheck (fun () -> proveTargetDocument targetRuntime targetExpressions validated |> ignore)
+        sourceCheck (fun () -> proveTargetJoins sourceJoins validated)
+        targetCheck (fun () -> proveTargetJoins targetJoins validated)
+        targetCheck (fun () -> proveOrderingAndPaging targetRuntime targetOrdering validated)
+        sourceCheck (fun () -> proveTargetDml sourceDml validated)
+        targetCheck (fun () -> proveTargetDml targetDml validated)
+        targetCheck (fun () -> proveConflicts targetRuntime conflictProofs validated)
         ValidatedSql(validated, targetRuntime)

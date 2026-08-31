@@ -10,16 +10,41 @@ open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite
 
 [<Sealed>]
-type SqlCoreTryResult<'T>(success: bool, value: 'T, errorCode: string, errorMessage: string, diagnostics: IReadOnlyList<string>) =
+type SqlCoreTryResult<'T>(
+    success: bool,
+    value: 'T,
+    errorCode: string,
+    errorMessage: string,
+    diagnostics: IReadOnlyList<string>,
+    typedDiagnostics: IReadOnlyList<SqlDiagnostic>) =
+
+    new(
+        success: bool,
+        value: 'T,
+        errorCode: string,
+        errorMessage: string,
+        diagnostics: IReadOnlyList<string>) =
+        SqlCoreTryResult<'T>(
+            success,
+            value,
+            errorCode,
+            errorMessage,
+            diagnostics,
+            Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>)
+
     member _.Success = success
     member _.Value = value
     member _.ErrorCode = errorCode
     member _.ErrorMessage = errorMessage
     member _.Diagnostics = diagnostics
+    member _.TypedDiagnostics = typedDiagnostics
 
 module private FacadeResult =
     let private noDiagnostics : IReadOnlyList<string> =
         Array.Empty<string>() :> IReadOnlyList<string>
+
+    let private noTypedDiagnostics : IReadOnlyList<SqlDiagnostic> =
+        Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>
 
     let private codeFor (ex: exn) =
         match ex with
@@ -29,6 +54,43 @@ module private FacadeResult =
         | :? ArgumentException -> "INVALID_ARGUMENT"
         | _ -> "SQLCORE_ERROR"
 
+    let private singletonDiagnostic diagnostic : IReadOnlyList<SqlDiagnostic> =
+        [| diagnostic |] :> IReadOnlyList<SqlDiagnostic>
+
+    let private typedDiagnosticsFor (ex: exn) =
+        match ex with
+        | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
+            singletonDiagnostic parseError.Diagnostic
+        | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
+            singletonDiagnostic compilationError.Diagnostic
+        | :? SqlPolicyException as policyError when not (isNull policyError.Diagnostic) ->
+            singletonDiagnostic policyError.Diagnostic
+        | :? SqlParseException ->
+            singletonDiagnostic (
+                SqlDiagnostic(
+                    "SQL_PARSE_ERROR",
+                    SqlDiagnosticStage.Parse,
+                    SqlDiagnosticCategory.Syntax,
+                    ex.Message,
+                    null))
+        | :? SqlCompilationException ->
+            singletonDiagnostic (
+                SqlDiagnostic(
+                    "SQL_COMPILATION_ERROR",
+                    SqlDiagnosticStage.SemanticValidation,
+                    SqlDiagnosticCategory.Semantic,
+                    ex.Message,
+                    null))
+        | :? UnauthorizedAccessException ->
+            singletonDiagnostic (
+                SqlDiagnostic(
+                    "SQL_POLICY_DENIED",
+                    SqlDiagnosticStage.Policy,
+                    SqlDiagnosticCategory.Policy,
+                    ex.Message,
+                    null))
+        | _ -> noTypedDiagnostics
+
     let capture<'T> (action: unit -> 'T) : SqlCoreTryResult<'T> =
         try
             SqlCoreTryResult<'T>(
@@ -36,14 +98,16 @@ module private FacadeResult =
                 action(),
                 Unchecked.defaultof<string>,
                 Unchecked.defaultof<string>,
-                noDiagnostics)
+                noDiagnostics,
+                noTypedDiagnostics)
         with ex ->
             SqlCoreTryResult<'T>(
                 false,
                 Unchecked.defaultof<'T>,
                 codeFor ex,
                 ex.Message,
-                noDiagnostics)
+                noDiagnostics,
+                typedDiagnosticsFor ex)
 
 module private FacadeCompile =
     let validateProfile provider argumentName (profile: SqlProviderCapabilityProfile) =

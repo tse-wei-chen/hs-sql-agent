@@ -1,5 +1,6 @@
 using System.Reflection;
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.SqlParsing;
@@ -116,6 +117,34 @@ public sealed class SqlCoreFSharpFacadeInteropTests
 
         Assert.False(result.Success);
         Assert.Equal("SQL_PARSE_ERROR", result.ErrorCode);
+
+        var diagnostic = Assert.Single(result.TypedDiagnostics);
+        Assert.Equal("SQL_PARSE_GRAMMAR", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Parse, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Syntax, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.True(diagnostic.Span.Length > 0);
+    }
+
+    [Fact]
+    public void Facade_TryCompileDml_ReportsPolicyDenialAsTypedPolicyDiagnostic()
+    {
+        var result = SqlCoreFacade.TryCompileDml(
+            "UPDATE users SET name = 'Ada'",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("fsharp-policy-diagnostic-v1"));
+
+        Assert.False(result.Success);
+        Assert.Equal("SQL_POLICY_DENIED", result.ErrorCode);
+
+        var diagnostic = Assert.Single(result.TypedDiagnostics);
+        Assert.Equal("SQL_POLICY_UPDATE_REQUIRES_WHERE", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Policy, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.Equal(0, diagnostic.Span.Start);
+        Assert.True(diagnostic.Span.Length > 0);
     }
 
     [Fact]

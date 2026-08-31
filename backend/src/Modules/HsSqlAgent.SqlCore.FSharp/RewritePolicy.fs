@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
@@ -25,17 +26,31 @@ module internal RewritePolicy =
 
     let safeDefaults = { UpdateSafety = RequirePredicate; DeleteSafety = RequirePredicate; QueryRows = Unlimited }
 
-    let private clampQueryLimit (rowCap: RowCap) (query: Query) =
+    let private deny code (span: Span) message : 'T =
+        let diagnostic =
+            SqlDiagnostic(
+                code,
+                SqlDiagnosticStage.Policy,
+                SqlDiagnosticCategory.Policy,
+                message,
+                SqlDiagnosticSpan(span.Start, span.Length))
+        raise (SqlPolicyException(message, diagnostic))
+
+    let private clampQueryLimit span (rowCap: RowCap) (query: Query) =
         match rowCap with
         | Unlimited -> query
         | MaxRows _ when query.FetchPercent.IsSome ->
-            raise (UnauthorizedAccessException(
-                "Security policy QueryMaxRows is a hard row cap, but FETCH ... PERCENT is relative to the query result cardinality. "
-                + "SQL capability 'select.fetch_percent' therefore remains policy-denied when QueryMaxRows is enabled."))
+            deny
+                "SQL_POLICY_QUERY_MAX_ROWS_UNPROVABLE"
+                span
+                ("Security policy QueryMaxRows is a hard row cap, but FETCH ... PERCENT is relative to the query result cardinality. "
+                 + "SQL capability 'select.fetch_percent' therefore remains policy-denied when QueryMaxRows is enabled.")
         | MaxRows _ when query.FetchWithTies ->
-            raise (UnauthorizedAccessException(
-                "Security policy QueryMaxRows is a hard row cap, but FETCH ... WITH TIES can return more rows than its FETCH count. "
-                + "SQL capability 'select.fetch_with_ties' therefore remains policy-denied when QueryMaxRows is enabled."))
+            deny
+                "SQL_POLICY_QUERY_MAX_ROWS_UNPROVABLE"
+                span
+                ("Security policy QueryMaxRows is a hard row cap, but FETCH ... WITH TIES can return more rows than its FETCH count. "
+                 + "SQL capability 'select.fetch_with_ties' therefore remains policy-denied when QueryMaxRows is enabled.")
         | MaxRows maxRows ->
             let maxValue = PositiveRowCount.value maxRows
             let limit =
@@ -47,9 +62,11 @@ module internal RewritePolicy =
     let private authorizeDocument policy document =
         let statement =
             match document.Statement with
-            | QueryStatement query -> QueryStatement(clampQueryLimit policy.QueryRows query)
-            | UpdateStatement update when update.Where.IsNone && policy.UpdateSafety = RequirePredicate -> raise (UnauthorizedAccessException("Security policy denies UPDATE without WHERE."))
-            | DeleteStatement delete when delete.Where.IsNone && policy.DeleteSafety = RequirePredicate -> raise (UnauthorizedAccessException("Security policy denies DELETE without WHERE."))
+            | QueryStatement query -> QueryStatement(clampQueryLimit document.Span policy.QueryRows query)
+            | UpdateStatement update when update.Where.IsNone && policy.UpdateSafety = RequirePredicate ->
+                deny "SQL_POLICY_UPDATE_REQUIRES_WHERE" document.Span "Security policy denies UPDATE without WHERE."
+            | DeleteStatement delete when delete.Where.IsNone && policy.DeleteSafety = RequirePredicate ->
+                deny "SQL_POLICY_DELETE_REQUIRES_WHERE" document.Span "Security policy denies DELETE without WHERE."
             | statement -> statement
         { document with Statement = statement }
 

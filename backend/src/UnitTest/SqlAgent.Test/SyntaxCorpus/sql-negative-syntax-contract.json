@@ -8,7 +8,11 @@
     "messageContains": [
       "select.recursive_cte",
       "MySQL"
-    ]
+    ],
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
   },
   {
     "name": "sqlite-with-recursive-without-profile",
@@ -165,7 +169,11 @@
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
       "ON/USING"
-    ]
+    ],
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
   },
   {
     "name": "mysql-postgres-cast",
@@ -322,7 +330,11 @@
     "messageContains": [
       "select.distinct_on",
       "MySQL"
-    ]
+    ],
+    "expectedDiagnosticCode": "SQL_TARGET_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "TargetCapability",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
   },
   {
     "name": "mysql-recursive-old-source-version",
