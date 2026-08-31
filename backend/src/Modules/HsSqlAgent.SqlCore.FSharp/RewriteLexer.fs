@@ -365,8 +365,8 @@ module internal RewriteLexer =
                 if not validName then
                     parseError "Invalid template parameter name." start (close + 2 - start)
                 i <- close + 2
-                let parameter = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
+                let parameterText = sql.Substring(start, i - start)
+                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
             elif c = '?' then
                 let start = i
                 i <- i + 1
@@ -377,24 +377,24 @@ module internal RewriteLexer =
                 if i >= length || not (isIdentifierStart sql[i]) then
                     parseError "Invalid parameter beginning with ':'." start 1
                 while i < length && isIdentifierPart sql[i] do i <- i + 1
-                let parameter = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
+                let parameterText = sql.Substring(start, i - start)
+                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
             elif c = '@' then
                 let start = i
                 i <- i + 1
                 if i >= length || not (isIdentifierStart sql[i]) then
                     parseError "Invalid parameter beginning with '@'." start 1
                 while i < length && isIdentifierPart sql[i] do i <- i + 1
-                let parameter = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
-            elif c = '$' then
+                let parameterText = sql.Substring(start, i - start)
+                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
+            elif c = char 36 then
                 let start = i
                 i <- i + 1
                 if i >= length || not (Char.IsDigit(sql[i])) then
-                    parseError "Invalid positional parameter. Expected '$' followed by digits." start 1
+                    parseError "Invalid positional parameter. Expected dollar sign followed by digits." start 1
                 while i < length && Char.IsDigit(sql[i]) do i <- i + 1
-                let parameter = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
+                let parameterText = sql.Substring(start, i - start)
+                invalidArg "sql" ("Unbound SQL parameter '" + parameterText + "' at offset " + string start + ".")
             elif Char.IsDigit(c) || (c = '.' && i + 1 < length && Char.IsDigit(sql[i + 1])) then
                 let start = i
                 let mutable hasDigits = false
@@ -455,178 +455,6 @@ module internal RewriteLexer =
                     i <- i + 2
                 | _ ->
                     match c with
-                    | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
-                    | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
-                    | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
-                    i <- i + 1
-            else
-                match c with
-                | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
-                | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
-                | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
-                i <- i + 1
-
-        tokens.Add({ Kind = End; Start = length; Length = 0 })
-        tokens |> Seq.toList
-
-
-    let tokenize (sql: string) = tokenizeWith LexicalSemantics.standard sql
- then
-                let start = i
-                i <- i + 1
-                if i >= length || not (Char.IsDigit(sql[i])) then
-                    parseError "Invalid positional parameter. Expected '
-                let start = i
-                let mutable hasDigits = false
-                let mutable hasDot = false
-                let mutable hasExponent = false
-
-                while i < length && Char.IsDigit(sql[i]) do
-                    hasDigits <- true
-                    i <- i + 1
-
-                if i < length && sql[i] = '.' then
-                    hasDot <- true
-                    i <- i + 1
-                    while i < length && Char.IsDigit(sql[i]) do
-                        hasDigits <- true
-                        i <- i + 1
-
-                if not hasDigits then
-                    parseError "Invalid numeric literal." start (max 1 (i - start))
-
-                if i < length && (sql[i] = 'e' || sql[i] = 'E') then
-                    hasExponent <- true
-                    i <- i + 1
-                    if i < length && (sql[i] = '+' || sql[i] = '-') then
-                        i <- i + 1
-                    let exponentStart = i
-                    while i < length && Char.IsDigit(sql[i]) do
-                        i <- i + 1
-                    if i = exponentStart then
-                        parseError "Invalid numeric exponent." start (max 1 (i - start))
-
-                if i < length && (sql[i] = '.' || isConfiguredIdentifierStart sql[i]) then
-                    let invalidStart = i
-                    while i < length && (sql[i] = '.' || isConfiguredIdentifierPart sql[i]) do
-                        i <- i + 1
-                    parseError "Invalid numeric literal." start (max 1 (i - start))
-
-                let text = sql.Substring(start, i - start)
-                if not hasDot && not hasExponent then
-                    match Int64.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
-                    | true, value -> add (IntegerLiteral value) start i
-                    | _ -> add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
-                else
-                    add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
-            elif isConfiguredIdentifierStart c then
-                let start = i
-                i <- i + 1
-                while i < length && isConfiguredIdentifierPart sql[i] do i <- i + 1
-                let text = sql.Substring(start, i - start)
-                let upper = text.ToUpperInvariant()
-                if keywords.Contains upper then add (Keyword upper) start i
-                else add (Identifier(text, false)) start i
-            elif i + 1 < length then
-                let pair = sql.Substring(i, 2)
-                match pair with
-                | "<>" | "!=" | ">=" | "<=" | "||" | "::" ->
-                    add (Operator pair) i (i + 2)
-                    i <- i + 2
-                | _ ->
-                    match c with
-                    | ':' when isIdentifierStart sql[i + 1] ->
-                        let start = i
-                        i <- i + 1
-                        while i < length && isIdentifierPart sql[i] do i <- i + 1
-                        let parameter = sql.Substring(start, i - start)
-                        invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
-                    | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
-                    | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
-                    | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
-                    i <- i + 1
-            else
-                match c with
-                | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
-                | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
-                | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
-                i <- i + 1
-
-        tokens.Add({ Kind = End; Start = length; Length = 0 })
-        tokens |> Seq.toList
-
-
-    let tokenize (sql: string) = tokenizeWith LexicalSemantics.standard sql
- followed by digits." start 1
-                while i < length && Char.IsDigit(sql[i]) do i <- i + 1
-                let parameter = sql.Substring(start, i - start)
-                invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
-            elif Char.IsDigit(c) || (c = '.' && i + 1 < length && Char.IsDigit(sql[i + 1])) then
-                let start = i
-                let mutable hasDigits = false
-                let mutable hasDot = false
-                let mutable hasExponent = false
-
-                while i < length && Char.IsDigit(sql[i]) do
-                    hasDigits <- true
-                    i <- i + 1
-
-                if i < length && sql[i] = '.' then
-                    hasDot <- true
-                    i <- i + 1
-                    while i < length && Char.IsDigit(sql[i]) do
-                        hasDigits <- true
-                        i <- i + 1
-
-                if not hasDigits then
-                    parseError "Invalid numeric literal." start (max 1 (i - start))
-
-                if i < length && (sql[i] = 'e' || sql[i] = 'E') then
-                    hasExponent <- true
-                    i <- i + 1
-                    if i < length && (sql[i] = '+' || sql[i] = '-') then
-                        i <- i + 1
-                    let exponentStart = i
-                    while i < length && Char.IsDigit(sql[i]) do
-                        i <- i + 1
-                    if i = exponentStart then
-                        parseError "Invalid numeric exponent." start (max 1 (i - start))
-
-                if i < length && (sql[i] = '.' || isConfiguredIdentifierStart sql[i]) then
-                    let invalidStart = i
-                    while i < length && (sql[i] = '.' || isConfiguredIdentifierPart sql[i]) do
-                        i <- i + 1
-                    parseError "Invalid numeric literal." start (max 1 (i - start))
-
-                let text = sql.Substring(start, i - start)
-                if not hasDot && not hasExponent then
-                    match Int64.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
-                    | true, value -> add (IntegerLiteral value) start i
-                    | _ -> add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
-                else
-                    add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
-            elif isConfiguredIdentifierStart c then
-                let start = i
-                i <- i + 1
-                while i < length && isConfiguredIdentifierPart sql[i] do i <- i + 1
-                let text = sql.Substring(start, i - start)
-                let upper = text.ToUpperInvariant()
-                if keywords.Contains upper then add (Keyword upper) start i
-                else add (Identifier(text, false)) start i
-            elif i + 1 < length then
-                let pair = sql.Substring(i, 2)
-                match pair with
-                | "<>" | "!=" | ">=" | "<=" | "||" | "::" ->
-                    add (Operator pair) i (i + 2)
-                    i <- i + 2
-                | _ ->
-                    match c with
-                    | ':' when isIdentifierStart sql[i + 1] ->
-                        let start = i
-                        i <- i + 1
-                        while i < length && isIdentifierPart sql[i] do i <- i + 1
-                        let parameter = sql.Substring(start, i - start)
-                        invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
                     | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
                     | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
                     | _ -> invalidArg "sql" ("Unexpected character '" + string c + "' at offset " + string i + ".")
