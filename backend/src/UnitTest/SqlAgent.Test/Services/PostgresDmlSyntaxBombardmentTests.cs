@@ -123,6 +123,18 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "duplicate-returning-column",
             "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id, id",
             "more than once");
+        yield return Reject(
+            "insert-missing-column-list",
+            "INSERT INTO users VALUES (1, 'Alice')",
+            "INSERT column list");
+        yield return Reject(
+            "insert-row-width-mismatch",
+            "INSERT INTO users (id, name) VALUES (1)",
+            "columns were declared");
+        yield return Reject(
+            "insert-multi-row-width-mismatch",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice'), (2)",
+            "columns were declared");
     }
 
     [Fact]
