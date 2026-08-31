@@ -42,22 +42,26 @@ module internal RewriteStages =
     let private compilationError message =
         raise (SqlCompilationException(message))
 
+    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
+
+    let private stageDiagnostic code stage category (span: Span) message =
+        let diagnosticSpan =
+            if span.Start < 0 || span.Length < 0 then null
+            else SqlDiagnosticSpan(span.Start, span.Length)
+        SqlDiagnostic(code, stage, category, message, diagnosticSpan)
+
     let private withCompilationDiagnostic code stage category (span: Span) (action: unit -> 'T) =
         try
             action()
         with
         | :? SqlCompilationException as ex when isNull ex.Diagnostic ->
-            let diagnosticSpan =
-                if span.Start < 0 || span.Length < 0 then null
-                else SqlDiagnosticSpan(span.Start, span.Length)
-            let diagnostic =
-                SqlDiagnostic(
-                    code,
-                    stage,
-                    category,
-                    ex.Message,
-                    diagnosticSpan)
+            let diagnostic = stageDiagnostic code stage category span ex.Message
             raise (SqlCompilationException(ex.Message, ex, diagnostic))
+        | :? SqlCompilationException ->
+            reraise()
+        | :? InvalidOperationException as ex ->
+            ex.Data[diagnosticDataKey] <- stageDiagnostic code stage category span ex.Message
+            reraise()
 
     let private iterDistinctOn action (select: Select) =
         match select.DistinctMode with
@@ -1158,7 +1162,6 @@ module internal RewriteStages =
             bound
 
     let private identifierText = Identifier.text
-    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
 
     let private identifierDiagnosticSpan identifier =
         let parts = Identifier.parts identifier

@@ -182,9 +182,18 @@ module internal RewriteParser =
                     token
                     detail))
 
-    let private requireSourceCapability = function
+    let private requireSourceCapability (token: Token) = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
+        | RejectedCapability message ->
+            raise (
+                SqlCompilationException(
+                    message,
+                    tokenDiagnostic
+                        "SQL_SOURCE_CAPABILITY_REJECTED"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.Capability
+                        token
+                        message))
 
     let private requireSourceParseCapability (token: Token) = function
         | ProvenCapability -> ()
@@ -551,7 +560,7 @@ module internal RewriteParser =
             | Operator "<=" -> cursor.Advance(); Binary(BinaryOperator.LessThanOrEqual, left, parseAdd cursor)
             | Keyword "LIKE" -> cursor.Advance(); parseLikeTail cursor left false false
             | Keyword "ILIKE" ->
-                requireSourceCapability cursor.SourceExpressions.ILike
+                requireSourceCapability cursor.Current cursor.SourceExpressions.ILike
                 cursor.Advance()
                 parseLikeTail cursor left false true
             | Keyword "IS" ->
@@ -565,7 +574,7 @@ module internal RewriteParser =
             | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseBetweenTail cursor left true
             | Keyword "NOT" when isKeyword "LIKE" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseLikeTail cursor left true false
             | Keyword "NOT" when isKeyword "ILIKE" (cursor.Peek 1) ->
-                requireSourceCapability cursor.SourceExpressions.ILike
+                requireSourceCapability cursor.Current cursor.SourceExpressions.ILike
                 cursor.Advance()
                 cursor.Advance()
                 parseLikeTail cursor left true true
@@ -658,12 +667,21 @@ module internal RewriteParser =
             let token = cursor.Current
             if cursor.Dialect <> SourceDialect.PostgreSql then
                 let finish = token.Start + max token.Length 1
-                raise (SqlParseException(
+                let message =
                     "PostgreSQL '::' CAST shorthand is not valid for source dialect "
                     + sourceDialectName cursor.Dialect
                     + "; use CAST(... AS ...). Position "
                     + string token.Start + ", span ["
-                    + string token.Start + ".." + string finish + ")."))
+                    + string token.Start + ".." + string finish + ")."
+                raise (
+                    SqlParseException(
+                        message,
+                        tokenDiagnostic
+                            "SQL_SOURCE_DIALECT_SYNTAX"
+                            SqlDiagnosticStage.SourceValidation
+                            SqlDiagnosticCategory.DialectSyntax
+                            token
+                            message))
             cursor.Advance()
             let target = parsePostfixCastType cursor
             Some(applyTypedCast cursor expression target)
@@ -1075,7 +1093,7 @@ module internal RewriteParser =
                   AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
                   AggregateSeparator = None }
         | Keyword "INTERVAL" ->
-            requireSourceCapability cursor.SourceExpressions.IntervalLiteral
+            requireSourceCapability cursor.Current cursor.SourceExpressions.IntervalLiteral
             cursor.Advance()
             match cursor.Take().Kind with
             | StringLiteral text -> Interval(IntervalLiteral.create text)
@@ -1149,7 +1167,7 @@ module internal RewriteParser =
                 | Column identifier, None when Identifier.parts identifier |> List.length = 1 ->
                     ReturningColumn(identifier, None)
                 | expression, alias ->
-                    requireSourceCapability cursor.SourceDml.ReturningExpression
+                    requireSourceCapability cursor.Current cursor.SourceDml.ReturningExpression
                     ReturningExpression(expression, alias)
 
             let items = ResizeArray<ReturningItem>()
@@ -1401,11 +1419,12 @@ module internal RewriteParser =
         let descending = if acceptKeyword "DESC" cursor then true else acceptKeyword "ASC" cursor |> ignore; false
         let nullOrdering =
             if acceptKeyword "NULLS" cursor then
+                let modifierToken = cursor.Current
                 if acceptKeyword "FIRST" cursor then
-                    requireSourceCapability cursor.SourceOrdering.NullsFirst
+                    requireSourceCapability modifierToken cursor.SourceOrdering.NullsFirst
                     NullOrdering.NullsFirst
                 elif acceptKeyword "LAST" cursor then
-                    requireSourceCapability cursor.SourceOrdering.NullsLast
+                    requireSourceCapability modifierToken cursor.SourceOrdering.NullsLast
                     NullOrdering.NullsLast
                 else fail cursor.Current "Expected FIRST or LAST after NULLS"
             else NullOrdering.Default
