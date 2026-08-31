@@ -118,6 +118,17 @@ module internal RewriteParser =
         | SourceDialect.Oracle -> "Oracle"
         | SourceDialect.Firebird -> "Firebird"
 
+    let private sourceDialectToolType = function
+        | SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
+        | SourceDialect.MySql -> SqlAgentToolType.MySQL
+        | SourceDialect.SqlServer -> SqlAgentToolType.MsSqlServer
+        | SourceDialect.SQLite -> SqlAgentToolType.Sqlite
+        | SourceDialect.Oracle -> SqlAgentToolType.Oracle
+        | SourceDialect.Firebird -> SqlAgentToolType.Firebird
+
+    let private sourceRowLimitGrammar (cursor: Cursor) =
+        (SqlSourceDialectGrammarRules.For(sourceDialectToolType cursor.Dialect)).RowLimit
+
     let private typedTemporalSourceError (cursor: Cursor) spelling : 'T =
         let token = cursor.Current
         let finish = token.Start + max token.Length 1
@@ -1243,21 +1254,42 @@ module internal RewriteParser =
             Some SetOperator.Except
         else None
 
-    and private parseQueryTail cursor =
+    and private parseQueryTail (cursor: Cursor) =
         let orderBy = parseOrderBy true cursor
         let mutable limit = None
         let mutable offset = None
+        let grammar = sourceRowLimitGrammar cursor
+
+        let parseOffsetRowKeyword () =
+            if grammar.UsesStandardOffsetFetch then
+                if grammar.OffsetRowKeywordOptional then
+                    if not (acceptKeyword "ROW" cursor) then
+                        acceptKeyword "ROWS" cursor |> ignore
+                elif not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then
+                    fail cursor.Current (
+                        sourceDialectName cursor.Dialect
+                        + " OFFSET requires ROW or ROWS after the offset count")
 
         let parseFetch () =
-            if cursor.Dialect = SourceDialect.MySql || cursor.Dialect = SourceDialect.SQLite then
-                fail cursor.Current ("FETCH FIRST/NEXT is not valid for source dialect " + sourceDialectName cursor.Dialect)
-            if cursor.Dialect = SourceDialect.SqlServer && offset.IsNone then
+            if not grammar.SupportsFetch then
+                fail cursor.Current (
+                    "FETCH FIRST/NEXT is not valid for source dialect "
+                    + sourceDialectName cursor.Dialect)
+            if grammar.FetchRequiresPrecedingOffset && offset.IsNone then
                 fail cursor.Current "SQL Server FETCH requires a preceding OFFSET"
             if not (acceptKeyword "FIRST" cursor || acceptKeyword "NEXT" cursor) then
                 fail cursor.Current "Expected FIRST or NEXT after FETCH"
+
             let count =
-                if isKeyword "ROW" cursor.Current || isKeyword "ROWS" cursor.Current then 1
-                else parsePositiveRowCount "FETCH row count" cursor |> PositiveRowCount.value
+                if isKeyword "ROW" cursor.Current || isKeyword "ROWS" cursor.Current then
+                    if not grammar.FetchCountOptional then
+                        fail cursor.Current "SQL Server FETCH requires an explicit positive integer row count"
+                    1
+                elif grammar.FetchCountMustBePositive then
+                    parsePositiveRowCount "FETCH row count" cursor |> PositiveRowCount.value
+                else
+                    parseNonNegativeRowCount "FETCH row count" cursor |> NonNegativeRowCount.value
+
             if acceptKeyword "PERCENT" cursor then
                 fail cursor.Current "FETCH ... PERCENT is not represented by the portable compiler"
             if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then
@@ -1269,45 +1301,46 @@ module internal RewriteParser =
             limit <- Some(NonNegativeRowCount.create count)
 
         if acceptKeyword "LIMIT" cursor then
-            if cursor.Dialect = SourceDialect.SqlServer || cursor.Dialect = SourceDialect.Oracle || cursor.Dialect = SourceDialect.Firebird then
+            if not grammar.SupportsLimitKeyword then
                 fail cursor.Current (
                     "LIMIT is not valid in source dialect " + sourceDialectName cursor.Dialect
                     + "; use the dialect's native row-limiting syntax")
+
             if acceptKeyword "ALL" cursor then
-                if cursor.Dialect <> SourceDialect.PostgreSql then
+                if not grammar.SupportsLimitAll then
                     fail cursor.Current (
                         "LIMIT ALL is valid only for PostgreSQL; source dialect "
                         + sourceDialectName cursor.Dialect + " remains fail-closed")
-                if acceptKeyword "OFFSET" cursor then
-                    offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
-                    acceptKeyword "ROW" cursor |> ignore
-                    acceptKeyword "ROWS" cursor |> ignore
-                if isKeyword "FETCH" cursor.Current then
-                    fail cursor.Current "LIMIT and FETCH cannot be combined"
             else
                 let first = parseNonNegativeRowCount "LIMIT" cursor
                 if acceptSymbol ',' cursor then
-                    if cursor.Dialect <> SourceDialect.MySql && cursor.Dialect <> SourceDialect.SQLite then
+                    if not grammar.SupportsCommaLimit then
                         fail cursor.Current "LIMIT offset,row_count is only valid in MySQL and SQLite"
                     offset <- Some first
                     limit <- Some(parseNonNegativeRowCount "LIMIT count" cursor)
-                    if isKeyword "OFFSET" cursor.Current then
-                        fail cursor.Current "LIMIT offset,row_count cannot be combined with a separate OFFSET clause"
                 else
                     limit <- Some first
-                    if acceptKeyword "OFFSET" cursor then
-                        offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
+
+            if acceptKeyword "OFFSET" cursor then
+                if grammar.OffsetRequiresOrderBy && orderBy.IsEmpty then
+                    fail cursor.Current (
+                        sourceDialectName cursor.Dialect + " OFFSET/FETCH requires ORDER BY")
+                offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
+                parseOffsetRowKeyword ()
+
+            if isKeyword "FETCH" cursor.Current then
+                fail cursor.Current "LIMIT and FETCH cannot be combined"
         elif acceptKeyword "OFFSET" cursor then
-            if cursor.Dialect = SourceDialect.MySql || cursor.Dialect = SourceDialect.SQLite then
+            if grammar.OffsetRequiresLimit then
                 fail cursor.Current (
                     "OFFSET requires a preceding LIMIT for source dialect "
                     + sourceDialectName cursor.Dialect)
+            if grammar.OffsetRequiresOrderBy && orderBy.IsEmpty then
+                fail cursor.Current (
+                    sourceDialectName cursor.Dialect + " OFFSET/FETCH requires ORDER BY")
             offset <- Some(parseNonNegativeRowCount "OFFSET" cursor)
-            acceptKeyword "ROW" cursor |> ignore
-            acceptKeyword "ROWS" cursor |> ignore
+            parseOffsetRowKeyword ()
             if acceptKeyword "FETCH" cursor then parseFetch ()
-            elif cursor.Dialect = SourceDialect.SqlServer && orderBy.IsEmpty then
-                fail cursor.Current "SQL Server OFFSET/FETCH requires ORDER BY"
         elif acceptKeyword "FETCH" cursor then
             parseFetch ()
 

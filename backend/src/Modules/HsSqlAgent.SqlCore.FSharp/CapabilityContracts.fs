@@ -38,32 +38,123 @@ type internal SqlSourceLexicalFeatures =
     | HashPrefixedIdentifier = 256
     | BackslashSensitiveQuotedText = 512
 
+type internal SqlSourceRowLimitGrammar =
+    { SupportsLimitKeyword: bool
+      SupportsLimitAll: bool
+      SupportsCommaLimit: bool
+      OffsetRequiresLimit: bool
+      UsesStandardOffsetFetch: bool
+      OffsetRowKeywordOptional: bool
+      OffsetRequiresOrderBy: bool
+      SupportsFetch: bool
+      FetchRequiresPrecedingOffset: bool
+      FetchCountOptional: bool
+      FetchCountMustBePositive: bool
+      SupportsTop: bool }
+
 [<Sealed>]
-type internal SqlSourceDialectGrammarContract(lexicalFeatures: SqlSourceLexicalFeatures) =
+type internal SqlSourceDialectGrammarContract(
+    lexicalFeatures: SqlSourceLexicalFeatures,
+    rowLimit: SqlSourceRowLimitGrammar) =
     member _.LexicalFeatures = lexicalFeatures
+    member _.RowLimit = rowLimit
     member _.SupportsLexicalFeature(feature: SqlSourceLexicalFeatures) =
         (int lexicalFeatures &&& int feature) <> 0
 
 module internal SqlSourceDialectGrammarRules =
     let For(sourceDialect: SqlAgentToolType) =
-        let flags =
+        let flags, rowLimit =
             match sourceDialect with
             | SqlAgentToolType.Postgres ->
-                SqlSourceLexicalFeatures.PostgresEscapeString ||| SqlSourceLexicalFeatures.PostgresDollarQuotedString
+                (SqlSourceLexicalFeatures.PostgresEscapeString ||| SqlSourceLexicalFeatures.PostgresDollarQuotedString),
+                { SupportsLimitKeyword = true
+                  SupportsLimitAll = true
+                  SupportsCommaLimit = false
+                  OffsetRequiresLimit = false
+                  UsesStandardOffsetFetch = true
+                  OffsetRowKeywordOptional = true
+                  OffsetRequiresOrderBy = false
+                  SupportsFetch = true
+                  FetchRequiresPrecedingOffset = false
+                  FetchCountOptional = true
+                  FetchCountMustBePositive = false
+                  SupportsTop = false }
             | SqlAgentToolType.MySQL ->
-                SqlSourceLexicalFeatures.HashLineComment
-                ||| SqlSourceLexicalFeatures.DashDashCommentRequiresSeparator
-                ||| SqlSourceLexicalFeatures.DoubleQuotedIdentifierRequiresAnsiMode
-                ||| SqlSourceLexicalFeatures.BacktickQuotedIdentifier
-                ||| SqlSourceLexicalFeatures.BackslashSensitiveQuotedText
+                (SqlSourceLexicalFeatures.HashLineComment
+                 ||| SqlSourceLexicalFeatures.DashDashCommentRequiresSeparator
+                 ||| SqlSourceLexicalFeatures.DoubleQuotedIdentifierRequiresAnsiMode
+                 ||| SqlSourceLexicalFeatures.BacktickQuotedIdentifier
+                 ||| SqlSourceLexicalFeatures.BackslashSensitiveQuotedText),
+                { SupportsLimitKeyword = true
+                  SupportsLimitAll = false
+                  SupportsCommaLimit = true
+                  OffsetRequiresLimit = true
+                  UsesStandardOffsetFetch = false
+                  OffsetRowKeywordOptional = false
+                  OffsetRequiresOrderBy = false
+                  SupportsFetch = false
+                  FetchRequiresPrecedingOffset = false
+                  FetchCountOptional = false
+                  FetchCountMustBePositive = false
+                  SupportsTop = false }
             | SqlAgentToolType.MsSqlServer ->
-                SqlSourceLexicalFeatures.BracketQuotedIdentifier ||| SqlSourceLexicalFeatures.HashPrefixedIdentifier
+                (SqlSourceLexicalFeatures.BracketQuotedIdentifier ||| SqlSourceLexicalFeatures.HashPrefixedIdentifier),
+                { SupportsLimitKeyword = false
+                  SupportsLimitAll = false
+                  SupportsCommaLimit = false
+                  OffsetRequiresLimit = false
+                  UsesStandardOffsetFetch = true
+                  OffsetRowKeywordOptional = false
+                  OffsetRequiresOrderBy = true
+                  SupportsFetch = true
+                  FetchRequiresPrecedingOffset = true
+                  FetchCountOptional = false
+                  FetchCountMustBePositive = true
+                  SupportsTop = true }
             | SqlAgentToolType.Sqlite ->
-                SqlSourceLexicalFeatures.BacktickQuotedIdentifier ||| SqlSourceLexicalFeatures.BracketQuotedIdentifier
-            | SqlAgentToolType.Oracle -> SqlSourceLexicalFeatures.OracleQuotedString
-            | SqlAgentToolType.Firebird -> SqlSourceLexicalFeatures.None
+                (SqlSourceLexicalFeatures.BacktickQuotedIdentifier ||| SqlSourceLexicalFeatures.BracketQuotedIdentifier),
+                { SupportsLimitKeyword = true
+                  SupportsLimitAll = false
+                  SupportsCommaLimit = true
+                  OffsetRequiresLimit = true
+                  UsesStandardOffsetFetch = false
+                  OffsetRowKeywordOptional = false
+                  OffsetRequiresOrderBy = false
+                  SupportsFetch = false
+                  FetchRequiresPrecedingOffset = false
+                  FetchCountOptional = false
+                  FetchCountMustBePositive = false
+                  SupportsTop = false }
+            | SqlAgentToolType.Oracle ->
+                SqlSourceLexicalFeatures.OracleQuotedString,
+                { SupportsLimitKeyword = false
+                  SupportsLimitAll = false
+                  SupportsCommaLimit = false
+                  OffsetRequiresLimit = false
+                  UsesStandardOffsetFetch = true
+                  OffsetRowKeywordOptional = false
+                  OffsetRequiresOrderBy = false
+                  SupportsFetch = true
+                  FetchRequiresPrecedingOffset = false
+                  FetchCountOptional = true
+                  FetchCountMustBePositive = false
+                  SupportsTop = false }
+            | SqlAgentToolType.Firebird ->
+                SqlSourceLexicalFeatures.None,
+                { SupportsLimitKeyword = false
+                  SupportsLimitAll = false
+                  SupportsCommaLimit = false
+                  OffsetRequiresLimit = false
+                  UsesStandardOffsetFetch = true
+                  OffsetRowKeywordOptional = false
+                  OffsetRequiresOrderBy = false
+                  SupportsFetch = true
+                  FetchRequiresPrecedingOffset = false
+                  FetchCountOptional = true
+                  FetchCountMustBePositive = false
+                  SupportsTop = false }
             | value -> raise (ArgumentOutOfRangeException("sourceDialect", value, "No source grammar contract."))
-        SqlSourceDialectGrammarContract(flags)
+        SqlSourceDialectGrammarContract(flags, rowLimit)
 
     let UsesMySqlAnsiQuotedIdentifiers(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
         sourceDialect = SqlAgentToolType.MySQL
