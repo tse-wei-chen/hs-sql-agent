@@ -165,4 +165,61 @@ public sealed class PostgresSyntaxBoundaryTests
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("public", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void TypedQueryRuntime_CompilesRealisticPostgresCteJoinHavingQuery()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+
+        var policy = new SecurityPolicyModel
+        {
+            QueryMaxRows = 100,
+            QueryTimeoutSeconds = 30,
+            RequireWhereForUpdate = true,
+            RequireWhereForDelete = true,
+            AllowFullTableUpdate = false,
+            AllowFullTableDelete = false,
+            DmlMaxAffectedRows = 100
+        };
+
+        const string sql = """
+            WITH SystemMax AS (
+                SELECT MAX(order_date) AS max_system_date
+                FROM public.orders
+            )
+            SELECT
+                c.customer_id,
+                sm.max_system_date,
+                MAX(o.order_date) AS last_order_date,
+                (sm.max_system_date::date - MAX(o.order_date)::date) AS days_since_last_order
+            FROM public.customers c
+            LEFT JOIN public.orders o ON c.customer_id = o.customer_id
+            CROSS JOIN SystemMax sm
+            GROUP BY c.customer_id, sm.max_system_date
+            HAVING
+                (sm.max_system_date::date - MAX(o.order_date)::date) > 180
+                OR MAX(o.order_date) IS NULL
+            ORDER BY days_since_last_order DESC;
+            """;
+
+        var command = runtime.Compile(
+            provider.Object,
+            sql,
+            SqlAgentToolType.Postgres,
+            policy,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "public.customers",
+                "public.orders"
+            });
+
+        Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LEFT JOIN", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("HAVING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CAST", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 180));
+    }
+
 }
