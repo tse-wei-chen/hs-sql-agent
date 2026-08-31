@@ -7,7 +7,7 @@ public sealed class CoreCapabilityMatrixVersionContractTests
     [Fact]
     public void MatrixVersion_IsCurrentCapabilityContract()
     {
-        Assert.Equal("2026-08-31.61", SqlCapabilityMatrix.Version);
+        Assert.Equal("2026-08-31.62", SqlCapabilityMatrix.Version);
     }
 
     [Fact]

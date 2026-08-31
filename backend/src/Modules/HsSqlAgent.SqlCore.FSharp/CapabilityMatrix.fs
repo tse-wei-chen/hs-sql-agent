@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.61"
+    static member Version = "2026-08-31.62"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -375,6 +375,8 @@ type SqlCapabilityMatrix private () =
                 cap("select.cte_scope","query",rejected,
                     "For PostgreSQL, MySQL, and SQLite scalar/EXISTS root CTE set queries, Core preserves correlated outer scope for outer ORDER BY/LIMIT/OFFSET when ORDER BY references only combined output names or output ordinals. Richer set-result ORDER BY expressions remain fail-closed because removing the generated _set wrapper is not yet proven scope- and ordering-equivalent for those expressions. Provider-specific nested-WITH support is declared separately by select.cte_derived, select.cte_set_branch, select.cte_scalar_root, and select.cte_definition_local.")
                 cap("expression.arithmetic","expression",translated,"Arithmetic operators are preserved structurally.")
+                cap("expression.unary_numeric","expression",translated,
+                    "Unary numeric +expr and -expr are represented structurally for non-literal operands across all providers; signed numeric literals preserve their existing literal representation. Unary plus is normalized as an identity operation and unary minus is emitted natively.")
                 cap("numeric.decimal_extended","numeric",decimalStatus,decimalDetail)
                 cap("expression.modulo","expression",modulo, if modulo=translated then "MOD(left, right) lowering preserves modulo semantics." else "Native modulo operator is supported.")
                 cap("expression.concat","expression",concatStatus,
