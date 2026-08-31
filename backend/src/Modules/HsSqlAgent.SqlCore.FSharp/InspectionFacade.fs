@@ -117,7 +117,8 @@ module private Inspection =
             registerAlias state scope target alias
         | CteTable(name, alias) ->
             registerAlias state scope (identifierText name) alias
-        | DerivedTable(query, alias) ->
+        | DerivedTable(query, alias)
+        | LateralDerivedTable(query, alias) ->
             state.ContainsSubquery <- true
             registerAlias state scope "<subquery>" (Some alias)
             inspectQuery state query
