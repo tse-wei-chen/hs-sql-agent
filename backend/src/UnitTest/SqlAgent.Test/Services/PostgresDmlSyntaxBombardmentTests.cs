@@ -16,6 +16,11 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "RETURNING",
             true);
         yield return Case(
+            "insert-implicit-column-list",
+            "INSERT INTO users VALUES (1, 'Alice')",
+            "INSERT",
+            false);
+        yield return Case(
             "insert-on-conflict-do-nothing",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO NOTHING",
             "ON CONFLICT",
@@ -219,10 +224,6 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "returning-wildcard-alias",
             "DELETE FROM users WHERE id = 1 RETURNING * AS everything",
             "wildcard");
-        yield return Reject(
-            "insert-missing-column-list",
-            "INSERT INTO users VALUES (1, 'Alice')",
-            "INSERT column list");
         yield return Reject(
             "insert-row-width-mismatch",
             "INSERT INTO users (id, name) VALUES (1)",
