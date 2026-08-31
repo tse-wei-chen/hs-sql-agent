@@ -600,6 +600,10 @@ module internal RewriteStages =
                         + string source + ", target provider " + string target + "."))
                 rows |> NonEmpty.iter (NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
             | QuerySource query ->
+                if insert.Columns.IsEmpty && source <> target then
+                    raise (SqlCompilationException(
+                        "SQL capability 'dml.insert_implicit_columns' is native-only because omitted INSERT target columns depend on provider table-column order. Source provider "
+                        + string source + ", target provider " + string target + "."))
                 validateAggregateQuery enforceSource source sourceProfile target targetProfile query
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
@@ -1268,12 +1272,14 @@ module internal RewriteStages =
                 | _ -> ()
                 row |> NonEmpty.iter validateInsertValueScope)
         | QuerySource query ->
-            if insert.Columns.IsEmpty then invalidOp "INSERT ... SELECT requires explicit target columns."
-            match projectionWidth query with
-            | None -> invalidOp "INSERT ... SELECT requires a statically known source projection width; wildcard projections are rejected at the Core validation boundary."
-            | Some width when width <> insert.Columns.Length ->
-                invalidOp ("INSERT ... SELECT projection width " + string width + " does not match target column count " + string insert.Columns.Length + ".")
-            | _ -> ()
+            if insert.Columns.IsEmpty then
+                ()
+            else
+                match projectionWidth query with
+                | None -> invalidOp "INSERT ... SELECT requires a statically known source projection width; wildcard projections are rejected at the Core validation boundary."
+                | Some width when width <> insert.Columns.Length ->
+                    invalidOp ("INSERT ... SELECT projection width " + string width + " does not match target column count " + string insert.Columns.Length + ".")
+                | _ -> ()
 
     let private validateReturning allowedTables (items: ReturningItem list) =
         items |> List.iter (fun (item: ReturningItem) -> validateExpr allowedTables item.Expression)

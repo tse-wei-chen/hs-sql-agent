@@ -73,16 +73,49 @@ public sealed class CoreImplicitInsertColumnsCapabilityTests
         Assert.Contains("same width", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Parse_InsertSelectWithoutColumns_RemainsFailClosed()
+    [Theory]
+    [MemberData(nameof(NativeProviders))]
+    public void Compile_ImplicitColumnInsertSelect_SameProviderPreservesNativeShape(
+        SqlAgentToolType provider)
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseDml(
-                "INSERT INTO users SELECT id, name FROM staged_users",
-                SqlAgentToolType.Postgres));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO users SELECT id, name FROM staged_users",
+            provider);
+        var insert = Assert.IsType<InsertStatement>(parsed.Statement);
 
-        Assert.Contains("INSERT ... SELECT", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("explicit", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(insert.Columns);
+        Assert.IsType<InsertQuerySource>(insert.Source);
+
+        var command = Compile(parsed, provider);
+        Assert.Contains("INSERT INTO", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("users (", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_ImplicitColumnInsertSelectAcrossProviders_FailsInsteadOfGuessingColumnOrder()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO users SELECT id, name FROM staged_users",
+            SqlAgentToolType.Postgres);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(parsed, SqlAgentToolType.MySQL));
+
+        Assert.Contains("dml.insert_implicit_columns", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("native-only", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_ImplicitColumnInsertSelectWildcard_SameProviderRemainsNative()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO users SELECT * FROM staged_users",
+            SqlAgentToolType.Postgres);
+
+        var command = Compile(parsed, SqlAgentToolType.Postgres);
+
+        Assert.Contains("SELECT *", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

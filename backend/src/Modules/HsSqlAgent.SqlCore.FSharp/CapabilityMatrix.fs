@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.65"
+    static member Version = "2026-08-31.66"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -454,7 +454,7 @@ type SqlCapabilityMatrix private () =
                 cap("parameter.unbound","parameter",rejected,"Unbound SQL parameters are rejected.")
                 cap("dml.basic","dml",translated,"INSERT VALUES, UPDATE, and DELETE use the structured DML path.")
                 cap("dml.insert_implicit_columns","dml",supported,
-                    "INSERT INTO table VALUES (...) without an explicit target-column list is preserved only for same-provider native compilation. Core validates uniform VALUES row width but does not guess table column order, does not translate the statement across providers, and still requires explicit target columns for INSERT ... SELECT and conflict handling.")
+                    "INSERT INTO table VALUES (...) and INSERT INTO table SELECT ... without an explicit target-column list are preserved only for same-provider native compilation. Core validates uniform implicit VALUES row width but does not guess target-table column order or source/target width for implicit INSERT ... SELECT, leaving the native provider to validate its own schema contract. Cross-provider translation and conflict handling without explicit target columns remain fail-closed.")
                 cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
                 cap("dml.target_alias","dml",(if provider=SqlAgentToolType.Postgres then supported else rejected),
                     if provider=SqlAgentToolType.Postgres then

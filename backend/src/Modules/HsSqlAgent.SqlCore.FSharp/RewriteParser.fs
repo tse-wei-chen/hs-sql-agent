@@ -1693,11 +1693,6 @@ module internal RewriteParser =
             while acceptSymbol ',' cursor do columns.Add(identifierPart cursor)
             expectSymbol ')' cursor
         ensureUniqueInsertColumns cursor (columns |> Seq.toList)
-        let requiresExplicitColumns =
-            isKeyword "SELECT" cursor.Current
-            || isKeyword "WITH" cursor.Current
-        if columns.Count = 0 && requiresExplicitColumns then
-            fail cursor.Current "INSERT ... SELECT requires an explicit INSERT column list"
         let input =
             if acceptKeyword "VALUES" cursor then
                 let rows = ResizeArray<NonEmpty<Expr>>()

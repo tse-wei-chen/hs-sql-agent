@@ -508,5 +508,17 @@
       "Postgres",
       "MsSqlServer"
     ]
+  },
+  {
+    "name": "insert-select-implicit-columns-cross-provider",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO archive SELECT id, name FROM staged_users",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.insert_implicit_columns",
+      "native-only"
+    ]
   }
 ]

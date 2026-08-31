@@ -726,5 +726,10 @@
     "dialect": "MsSqlServer",
     "targetDialect": "MsSqlServer",
     "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id"
+  },
+  {
+    "name": "insert-select-implicit-columns",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO archive SELECT id, name FROM staged_users"
   }
 ]
