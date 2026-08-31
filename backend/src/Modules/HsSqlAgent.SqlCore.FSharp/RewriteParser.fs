@@ -1539,19 +1539,9 @@ module internal RewriteParser =
           Returning = parseReturning cursor }
 
     and private parseNamedDmlSources cursor =
-        let parseOne () =
-            match parseTableSource cursor with
-            | NamedTable(_, None) as source -> source
-            | NamedTable(_, Some _) ->
-                fail cursor.Current "UPDATE FROM / DELETE USING source aliases are not supported by the portable grammar"
-            | CteTable _ ->
-                fail cursor.Current "UPDATE FROM / DELETE USING CTE sources are not supported by the portable grammar"
-            | DerivedTable _ ->
-                fail cursor.Current "UPDATE FROM / DELETE USING derived sources and aliases are not supported by the portable grammar"
-
         let values = ResizeArray<TableSource>()
-        values.Add(parseOne())
-        while acceptSymbol ',' cursor do values.Add(parseOne())
+        values.Add(parseTableSource cursor)
+        while acceptSymbol ',' cursor do values.Add(parseTableSource cursor)
         values |> Seq.toList
 
     and private parseUpdate cursor =
