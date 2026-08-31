@@ -1021,24 +1021,39 @@ module internal RewriteParser =
 
             let seenColumns = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
-            let classify (item: SelectItem) =
-                match item.Expression with
-                | Column identifier when Identifier.parts identifier |> List.length = 1 ->
+            let parseItem () =
+                let expression = parseExpression cursor
+                let alias =
+                    if acceptKeyword "AS" cursor then Some(aliasIdentifierPart cursor)
+                    else None
+
+                if alias.IsNone then
+                    match cursor.Current.Kind with
+                    | Identifier _ ->
+                        fail cursor.Current "RETURNING aliases require AS"
+                    | Keyword value when isAliasKeyword value ->
+                        fail cursor.Current "RETURNING aliases require AS"
+                    | _ -> ()
+
+                match expression, alias with
+                | Wildcard None, Some _ ->
+                    fail cursor.Current "RETURNING wildcard cannot be aliased"
+                | Wildcard None, None ->
+                    ReturningWildcard None
+                | Column identifier, None when Identifier.parts identifier |> List.length = 1 ->
                     let name = (Identifier.parts identifier).Head.Value
-                    if item.Alias.IsNone && not (seenColumns.Add name) then
+                    if not (seenColumns.Add name) then
                         fail cursor.Current ("RETURNING column '" + name + "' is declared more than once")
-                    ReturningColumn(identifier, item.Alias)
-                | Column _ ->
+                    ReturningColumn(identifier, None)
+                | Column identifier, None ->
                     fail cursor.Current "RETURNING column references must be unqualified in the portable Core grammar"
-                | Wildcard None ->
-                    ReturningWildcard item.Alias
-                | expression ->
+                | expression, alias ->
                     requireSourceCapability cursor.SourceDml.ReturningExpression
-                    ReturningExpression(expression, item.Alias)
+                    ReturningExpression(expression, alias)
 
             let items = ResizeArray<ReturningItem>()
-            items.Add(parseSelectItem cursor |> classify)
-            while acceptSymbol ',' cursor do items.Add(parseSelectItem cursor |> classify)
+            items.Add(parseItem())
+            while acceptSymbol ',' cursor do items.Add(parseItem())
             let values = items |> Seq.toList
             if values.Length > 1
                && values |> List.exists (function ReturningWildcard _ -> true | _ -> false) then
