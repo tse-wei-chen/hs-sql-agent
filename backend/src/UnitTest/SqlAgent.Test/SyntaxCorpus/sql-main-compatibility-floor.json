@@ -578,5 +578,29 @@
     "name": "firebird-coalesce",
     "dialect": "Firebird",
     "sql": "SELECT COALESCE(name, 'n/a') FROM users"
+  },
+  {
+    "name": "mysql-recursive-cte-versioned",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "sqlite-recursive-cte-versioned",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "firebird-recursive-cte-versioned",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
   }
 ]

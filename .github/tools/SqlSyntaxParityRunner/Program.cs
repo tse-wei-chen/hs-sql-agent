@@ -31,6 +31,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     var compilerType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.CoreSqlCompiler");
     var validationType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlPlanValidationContext");
     var policyType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlExecutionPlanPolicy");
+    var profileType = RequiredType(assembly, "HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile");
 
     var sourceDialects = corpus.ToDictionary(
         item => item.Name,
@@ -44,12 +45,10 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
             ignoreCase: true),
         StringComparer.Ordinal);
 
-    var parse = parserType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+    var parseMethods = parserType.GetMethods(BindingFlags.Public | BindingFlags.Static)
         .Where(method => method.Name == "ParseQuery")
         .Where(method => method.GetParameters().Length is 2 or 3)
-        .OrderBy(method => method.GetParameters().Length)
-        .FirstOrDefault()
-        ?? throw new MissingMethodException(parserType.FullName, "ParseQuery");
+        .ToArray();
 
     var createCompiler = compilerType.GetMethod(
         "CreateDefault",
@@ -63,11 +62,25 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     foreach (var item in corpus)
     {
         var sourceDialect = sourceDialects[item.Name];
+        var sourceProfile = CreateProviderProfile(
+            profileType,
+            sourceDialect,
+            item.SourceVersion);
         object parsed;
         try
         {
-            parsed = InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect)
-                ?? throw new InvalidOperationException("ParseQuery returned null.");
+            var parse = parseMethods
+                .Where(method => method.GetParameters().Length == (sourceProfile is null ? 2 : 3))
+                .FirstOrDefault()
+                ?? throw new MissingMethodException(
+                    parserType.FullName,
+                    sourceProfile is null ? "ParseQuery(sql, dialect)" : "ParseQuery(sql, dialect, sourceProfile)");
+
+            parsed = sourceProfile is null
+                ? InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect)
+                    ?? throw new InvalidOperationException("ParseQuery returned null.")
+                : InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect, sourceProfile)
+                    ?? throw new InvalidOperationException("ParseQuery returned null.");
         }
         catch (Exception exception)
         {
@@ -86,21 +99,37 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
             var validation = CreateWithOptionalTail(validationType, "syntax-parity-main-floor-v3");
             var policy = CreateWithOptionalTail(policyType);
 
+            var targetDialect = targetDialects[item.Name];
+            var targetProfile = CreateProviderProfile(
+                profileType,
+                targetDialect,
+                item.TargetVersion);
+
             var compile = compilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(method => method.Name == "Compile")
-                .Where(method => method.GetParameters().Length is 4 or 5)
+                .Where(method => method.GetParameters().Length == (targetProfile is null ? 4 : 5))
                 .Where(method => method.GetParameters()[0].ParameterType.IsInstanceOfType(parsed))
-                .OrderBy(method => method.GetParameters().Length)
                 .FirstOrDefault()
-                ?? throw new MissingMethodException(compilerType.FullName, "Compile");
+                ?? throw new MissingMethodException(
+                    compilerType.FullName,
+                    targetProfile is null ? "Compile(parsed, target, validation, policy)" : "Compile(parsed, target, validation, policy, targetProfile)");
 
-            _ = InvokeWithOptionalTail(
-                compile,
-                compiler,
-                parsed,
-                targetDialects[item.Name],
-                validation,
-                policy);
+            _ = targetProfile is null
+                ? InvokeWithOptionalTail(
+                    compile,
+                    compiler,
+                    parsed,
+                    targetDialect,
+                    validation,
+                    policy)
+                : InvokeWithOptionalTail(
+                    compile,
+                    compiler,
+                    parsed,
+                    targetDialect,
+                    validation,
+                    policy,
+                    targetProfile);
 
             outcomes.Add(new Outcome(item.Name, true, "success", null, null));
         }
@@ -307,6 +336,29 @@ static Dictionary<string, Outcome> ReadOutcomes(string path)
     return values.ToDictionary(value => value.Name, StringComparer.Ordinal);
 }
 
+static object? CreateProviderProfile(
+    Type profileType,
+    object provider,
+    string? versionText)
+{
+    if (string.IsNullOrWhiteSpace(versionText))
+        return null;
+
+    Version version;
+    try
+    {
+        version = Version.Parse(versionText);
+    }
+    catch (Exception exception)
+    {
+        throw new InvalidOperationException(
+            $"Invalid capability profile version '{versionText}'.",
+            exception);
+    }
+
+    return CreateWithOptionalTail(profileType, provider, version);
+}
+
 static object CreateWithOptionalTail(Type type, params object?[] leading)
 {
     foreach (var constructor in type.GetConstructors().OrderBy(value => value.GetParameters().Length))
@@ -417,6 +469,8 @@ sealed record CorpusCase(
     string Sql,
     string? Dialect = null,
     string? TargetDialect = null,
+    string? SourceVersion = null,
+    string? TargetVersion = null,
     string? ExpectedStage = null,
     string? ExceptionTypeContains = null,
     string[]? MessageContains = null);
