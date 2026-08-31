@@ -802,6 +802,18 @@ public sealed class PostgresSyntaxBombardmentTests
             "unsupported-extract-unit",
             "SELECT EXTRACT(HOUR FROM created_at) FROM events");
         yield return Reject(
+            "cast-arbitrary-qualifier",
+            "SELECT CAST(amount AS NUMERIC GARBAGE) FROM orders");
+        yield return Reject(
+            "cast-too-many-precision-components",
+            "SELECT CAST(amount AS DECIMAL(10,2,3)) FROM orders");
+        yield return Reject(
+            "postfix-cast-arbitrary-qualifier",
+            "SELECT amount::NUMERIC GARBAGE FROM orders");
+        yield return Reject(
+            "postfix-cast-too-many-precision-components",
+            "SELECT amount::DECIMAL(10,2,3) FROM orders");
+        yield return Reject(
             "empty-cte-column-alias-list",
             "WITH x() AS (SELECT id FROM users) SELECT id FROM x");
         yield return Reject(
