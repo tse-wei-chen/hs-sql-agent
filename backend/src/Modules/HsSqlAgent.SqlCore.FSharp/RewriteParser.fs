@@ -1030,9 +1030,9 @@ module internal RewriteParser =
                 if alias.IsNone then
                     match cursor.Current.Kind with
                     | Identifier _ ->
-                        fail cursor.Current "RETURNING aliases require AS"
+                        fail cursor.Current "RETURNING alias requires AS"
                     | Keyword value when isAliasKeyword value ->
-                        fail cursor.Current "RETURNING aliases require AS"
+                        fail cursor.Current "RETURNING alias requires AS"
                     | _ -> ()
 
                 match expression, alias with
