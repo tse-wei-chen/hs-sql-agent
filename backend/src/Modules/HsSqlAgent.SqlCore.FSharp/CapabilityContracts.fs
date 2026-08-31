@@ -392,6 +392,28 @@ module internal SqlJoinCapabilityRules =
         elif provider = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind targetProfile "target"
         else null
 
+module internal SqlNaturalJoinCapabilityRules =
+    let SupportsNative(provider: SqlAgentToolType) =
+        provider = SqlAgentToolType.Postgres
+        || provider = SqlAgentToolType.MySQL
+        || provider = SqlAgentToolType.Sqlite
+        || provider = SqlAgentToolType.Oracle
+
+    let SourceValidationError(provider: SqlAgentToolType) : string | null =
+        if SupportsNative(provider) then null
+        elif provider = SqlAgentToolType.Firebird then
+            "SQL capability 'join.natural' remains fail-closed for Firebird source SQL until the source profile proves a database SQL dialect that supports NATURAL JOIN."
+        else
+            "NATURAL JOIN is not valid Transact-SQL source syntax. SQL capability 'join.natural' is not supported by source provider "
+            + string provider + "."
+
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+        if SupportsNative(provider) then null
+        elif provider = SqlAgentToolType.Firebird then
+            "SQL capability 'join.natural' remains fail-closed for Firebird targets until the target profile proves a database SQL dialect that supports NATURAL JOIN."
+        else
+            "SQL capability 'join.natural' is not supported by target provider " + string provider + "."
+
 module internal SqlUsingJoinCapabilityRules =
     let Supports(provider: SqlAgentToolType) =
         provider <> SqlAgentToolType.MsSqlServer

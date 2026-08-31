@@ -1141,8 +1141,43 @@ module internal RewriteParser =
             | ProvenCapability -> ()
             | RejectedCapability message -> raise (SqlCompilationException(message))
 
-        if isKeyword "NATURAL" cursor.Current then
-            fail cursor.Current "NATURAL JOIN is rejected because its schema-dependent implicit predicate is not represented by the portable Core grammar"
+        if acceptKeyword "NATURAL" cursor then
+            match SqlNaturalJoinCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with
+            | null -> ()
+            | message -> fail cursor.Current message
+
+            let kind =
+                if acceptKeyword "INNER" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Inner
+                elif acceptKeyword "LEFT" cursor then
+                    acceptKeyword "OUTER" cursor |> ignore
+                    expectKeyword "JOIN" cursor
+                    OnJoinKind.Left
+                elif acceptKeyword "RIGHT" cursor then
+                    acceptKeyword "OUTER" cursor |> ignore
+                    expectKeyword "JOIN" cursor
+                    OnJoinKind.Right
+                elif acceptKeyword "FULL" cursor then
+                    acceptKeyword "OUTER" cursor |> ignore
+                    expectKeyword "JOIN" cursor
+                    OnJoinKind.Full
+                elif acceptKeyword "JOIN" cursor then OnJoinKind.Inner
+                else fail cursor.Current "Expected JOIN after NATURAL"
+
+            match kind with
+            | OnJoinKind.Right -> requireJoinProof cursor.SourceJoins.RightJoin
+            | OnJoinKind.Full -> requireJoinProof cursor.SourceJoins.FullJoin
+            | OnJoinKind.Inner | OnJoinKind.Left -> ()
+
+            let source = parseTableSource cursor
+            match source with
+            | LateralDerivedTable _ ->
+                fail cursor.Current "NATURAL JOIN LATERAL is not admitted because implicit common-column matching plus left-side correlation is not represented by one proven Core contract"
+            | _ -> ()
+
+            if isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current then
+                fail cursor.Current "NATURAL JOIN must not carry ON or USING predicates"
+
+            NaturalJoin(kind, source)
         elif acceptKeyword "CROSS" cursor then
             expectKeyword "JOIN" cursor
             let source = parseTableSource cursor

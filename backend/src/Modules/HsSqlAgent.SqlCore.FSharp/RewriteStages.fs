@@ -964,6 +964,7 @@ module internal RewriteStages =
     and private normalizeJoin sourceDialect target (join: Join) =
         match join with
         | CrossJoin source -> CrossJoin(normalizeSource sourceDialect target source)
+        | NaturalJoin(kind, source) -> NaturalJoin(kind, normalizeSource sourceDialect target source)
         | OnJoin(kind, source, predicate) ->
             OnJoin(
                 kind,
@@ -1138,6 +1139,7 @@ module internal RewriteStages =
         select.Joins
         |> List.iter (function
             | CrossJoin source
+            | NaturalJoin(_, source)
             | UsingJoin(_, source, _) ->
                 validateSource allowedTables source
             | OnJoin(_, source, predicate) ->
@@ -1566,6 +1568,11 @@ module internal RewriteStages =
         select.Joins
         |> List.iter (function
             | CrossJoin source ->
+                proveTargetSource targetRuntime expressionProofs source
+            | NaturalJoin(_, source) ->
+                match SqlNaturalJoinCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
                 proveTargetSource targetRuntime expressionProofs source
             | OnJoin(_, source, predicate) ->
                 proveTargetSource targetRuntime expressionProofs source

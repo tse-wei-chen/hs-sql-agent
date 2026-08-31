@@ -164,6 +164,12 @@ module internal RewriteRenderer =
         | JoinKind.Inner -> "INNER JOIN" | JoinKind.Left -> "LEFT JOIN" | JoinKind.Right -> "RIGHT JOIN"
         | JoinKind.Full -> "FULL OUTER JOIN" | JoinKind.Cross -> "CROSS JOIN"
 
+    let private naturalJoinText = function
+        | OnJoinKind.Inner -> "NATURAL JOIN"
+        | OnJoinKind.Left -> "NATURAL LEFT JOIN"
+        | OnJoinKind.Right -> "NATURAL RIGHT JOIN"
+        | OnJoinKind.Full -> "NATURAL FULL OUTER JOIN"
+
     let private setText = function
         | SetOperator.Union -> "UNION" | SetOperator.UnionAll -> "UNION ALL"
         | SetOperator.Intersect -> "INTERSECT" | SetOperator.IntersectAll -> "INTERSECT ALL"
@@ -710,9 +716,17 @@ module internal RewriteRenderer =
         if select.From.IsNone then
             match ctx.Provider with Oracle -> sql <- sql + " FROM DUAL" | Firebird -> sql <- sql + " FROM RDB$DATABASE" | _ -> ()
         for join in select.Joins do
-            sql <- sql + " " + joinText join.Kind + " " + renderSource ctx join.Source
+            let joinSql =
+                match join with
+                | NaturalJoin(kind, _) ->
+                    match SqlNaturalJoinCapabilityRules.TargetValidationError(providerTool ctx.Provider) with
+                    | null -> naturalJoinText kind
+                    | message -> raise (SqlCompilationException(message))
+                | _ -> joinText join.Kind
+            sql <- sql + " " + joinSql + " " + renderSource ctx join.Source
             match join with
-            | CrossJoin _ -> ()
+            | CrossJoin _
+            | NaturalJoin _ -> ()
             | OnJoin(_, _, predicate) ->
                 sql <- sql + " ON " + renderPredicate ctx predicate
             | UsingJoin(_, _, columns) ->
@@ -884,6 +898,8 @@ module internal RewriteRenderer =
             baseSql <- baseSql + " " + joinText join.Kind + " " + renderSource ctx join.Source
             match join with
             | CrossJoin _ -> ()
+            | NaturalJoin _ ->
+                invalidOp "NATURAL JOIN cannot enter SQL Server pagination lowering without an explicit target capability."
             | OnJoin(_, _, predicate) ->
                 baseSql <- baseSql + " ON " + renderPredicate ctx predicate
             | UsingJoin(_, _, _) ->

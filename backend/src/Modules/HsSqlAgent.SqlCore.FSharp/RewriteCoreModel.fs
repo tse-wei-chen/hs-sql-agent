@@ -250,27 +250,42 @@ module internal CoreModel =
 
     and Join =
         | CrossJoin of TableSource
+        | NaturalJoin of OnJoinKind * TableSource
         | OnJoin of OnJoinKind * TableSource * Expr
         | UsingJoin of OnJoinKind * TableSource * NonEmpty<IdentifierPart>
         member this.Kind =
             match this with
             | CrossJoin _ -> JoinKind.Cross
+            | NaturalJoin(OnJoinKind.Inner, _)
             | OnJoin(OnJoinKind.Inner, _, _)
             | UsingJoin(OnJoinKind.Inner, _, _) -> JoinKind.Inner
+            | NaturalJoin(OnJoinKind.Left, _)
             | OnJoin(OnJoinKind.Left, _, _)
             | UsingJoin(OnJoinKind.Left, _, _) -> JoinKind.Left
+            | NaturalJoin(OnJoinKind.Right, _)
             | OnJoin(OnJoinKind.Right, _, _)
             | UsingJoin(OnJoinKind.Right, _, _) -> JoinKind.Right
+            | NaturalJoin(OnJoinKind.Full, _)
             | OnJoin(OnJoinKind.Full, _, _)
             | UsingJoin(OnJoinKind.Full, _, _) -> JoinKind.Full
         member this.Source =
-            match this with CrossJoin source | OnJoin(_, source, _) | UsingJoin(_, source, _) -> source
+            match this with
+            | CrossJoin source
+            | NaturalJoin(_, source)
+            | OnJoin(_, source, _)
+            | UsingJoin(_, source, _) -> source
         member this.Predicate =
-            match this with CrossJoin _ | UsingJoin _ -> None | OnJoin(_, _, predicate) -> Some predicate
+            match this with
+            | CrossJoin _
+            | NaturalJoin _
+            | UsingJoin _ -> None
+            | OnJoin(_, _, predicate) -> Some predicate
         member this.UsingColumns =
             match this with
             | UsingJoin(_, _, columns) -> Some(NonEmpty.toList columns)
-            | CrossJoin _ | OnJoin _ -> None
+            | CrossJoin _
+            | NaturalJoin _
+            | OnJoin _ -> None
 
     and SelectDistinct =
         | AllRows
