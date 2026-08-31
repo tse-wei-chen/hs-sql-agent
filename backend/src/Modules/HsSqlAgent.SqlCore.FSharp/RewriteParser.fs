@@ -44,6 +44,7 @@ module internal RewriteParser =
               IntervalLiteral = ProvenCapability
               RegexMatch = ProvenCapability
               AggregateFilter = ProvenCapability
+              QualifiedFunction = ProvenCapability
               OffsetTimestamp = ProvenCapability
               FirebirdTimeZoneType = ProvenCapability
               FirebirdExtendedDecimal = ProvenCapability
@@ -812,8 +813,10 @@ module internal RewriteParser =
 
     and private parseFunctionExpression (name: Identifier) (cursor: Cursor) =
         let nameParts = Identifier.parts name
-        if nameParts.Length <> 1 || nameParts.Head.WasQuoted then
-            fail cursor.Current "Quoted or qualified function identifiers are not supported by the portable Core grammar"
+        if nameParts |> List.exists (fun part -> part.WasQuoted) then
+            fail cursor.Current "Quoted function identifiers are not yet represented with lossless identifier quoting"
+        if nameParts.Length > 1 then
+            requireSourceParseCapability cursor.Current cursor.SourceExpressions.QualifiedFunction
         expectSymbol '(' cursor
         let distinct = acceptKeyword "DISTINCT" cursor
         if not distinct then

@@ -224,6 +224,16 @@ module internal SqlIntervalLiteralCapabilityRules =
             "INTERVAL 'literal' is not valid for declared source dialect " + string sourceDialect
             + " in the Core source capability profile. Core models this interval-literal shape as PostgreSQL source syntax; other dialect interval forms require their own structured translation contract."
 
+module internal SqlQualifiedFunctionCapabilityRules =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        if sourceDialect = SqlAgentToolType.Postgres then null
+        else "SQL capability 'function.qualified' is currently declared only for the PostgreSQL source dialect; source dialect "
+             + string sourceDialect + " remains fail-closed."
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+        if provider = SqlAgentToolType.Postgres then null
+        else "SQL capability 'function.qualified' currently has a declared lossless lowering only for PostgreSQL targets; target provider "
+             + string provider + " remains fail-closed."
+
 module internal SqlModuloCapabilityRules =
     let private usesFunction provider = provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird
     let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =

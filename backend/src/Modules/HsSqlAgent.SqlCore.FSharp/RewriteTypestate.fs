@@ -33,6 +33,7 @@ module internal Typestate =
           IntervalLiteral: CapabilityProof
           RegexMatch: CapabilityProof
           AggregateFilter: CapabilityProof
+          QualifiedFunction: CapabilityProof
           OffsetTimestamp: CapabilityProof
           FirebirdTimeZoneType: CapabilityProof
           FirebirdExtendedDecimal: CapabilityProof

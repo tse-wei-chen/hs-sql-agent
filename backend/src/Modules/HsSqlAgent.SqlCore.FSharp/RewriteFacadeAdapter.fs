@@ -106,6 +106,9 @@ module internal RewriteFacadeAdapter =
             |> capabilityProof
           RegexMatch = sourceRegexProof source
           AggregateFilter = filterError |> capabilityProof
+          QualifiedFunction =
+            SqlQualifiedFunctionCapabilityRules.SourceValidationError(source)
+            |> capabilityProof
           OffsetTimestamp = CapabilityProof.ProvenCapability
           FirebirdTimeZoneType = CapabilityProof.ProvenCapability
           FirebirdExtendedDecimal = CapabilityProof.ProvenCapability
@@ -143,6 +146,9 @@ module internal RewriteFacadeAdapter =
             |> capabilityProof
           AggregateFilter =
             SqlAggregateFilterCapabilityRules.ValidationError(target, targetProfile, "target")
+            |> capabilityProof
+          QualifiedFunction =
+            SqlQualifiedFunctionCapabilityRules.TargetValidationError(target)
             |> capabilityProof
           OffsetTimestamp =
             SqlOffsetTimestampCapabilityRules.TargetValidationError(target, targetProfile)

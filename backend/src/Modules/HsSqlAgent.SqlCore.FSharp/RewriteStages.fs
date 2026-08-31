@@ -1289,6 +1289,8 @@ module internal RewriteStages =
             proveSourceFilterExpr expressionProofs value
             proveSourceFilterExpr expressionProofs pattern
         | FunctionCall call ->
+            if FunctionName.value call.Name |> fun value -> value.Contains(".", StringComparison.Ordinal) then
+                requireFilterCapability expressionProofs.QualifiedFunction
             call.Arguments |> List.iter (proveSourceFilterExpr expressionProofs)
             call.AggregateOrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
         | FilteredAggregate(value, predicate) ->
@@ -1397,6 +1399,8 @@ module internal RewriteStages =
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs pattern
         | FunctionCall call ->
+            if FunctionName.value call.Name |> fun value -> value.Contains(".", StringComparison.Ordinal) then
+                requireExpressionCapability expressionProofs.QualifiedFunction
             call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
             call.AggregateOrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
         | FilteredAggregate(value, predicate) ->

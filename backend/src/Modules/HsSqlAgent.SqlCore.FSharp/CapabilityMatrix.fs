@@ -269,6 +269,11 @@ type SqlCapabilityMatrix private () =
                 cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
                 cap("expression.boolean_literal_source","expression",translated,
                     "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available.")
+                cap("function.qualified","function",(if provider=SqlAgentToolType.Postgres then supported else rejected),
+                    if provider=SqlAgentToolType.Postgres then
+                        "Unquoted schema-qualified PostgreSQL function names are preserved structurally across the CLR compatibility AST and emitted natively. Quoted function identifier parts remain fail-closed until FunctionName carries identifier quoting metadata."
+                    else
+                        "Schema-qualified source function names remain target-gated until an equivalent provider-specific namespace contract is declared.")
                 cap("expression.cast","expression",translated,
                     "Standard CAST input is normalized through a source-aware Core type model before provider-specific CAST spelling is emitted. Raw PostgreSQL :: cast spelling is accepted only when the declared source dialect is PostgreSQL; non-PostgreSQL raw sources fail before AST canonicalization. Unknown cross-dialect vendor types fail closed.")
                 cap("expression.interval","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),
