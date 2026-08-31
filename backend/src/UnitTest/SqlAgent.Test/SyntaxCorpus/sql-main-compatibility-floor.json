@@ -623,5 +623,40 @@
     "sourceVersion": "12.1",
     "targetVersion": "12.1",
     "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-unary-minus-column",
+    "dialect": "Postgres",
+    "sql": "SELECT -amount FROM orders"
+  },
+  {
+    "name": "postgres-unary-plus-expression",
+    "dialect": "Postgres",
+    "sql": "SELECT +(amount * 2) FROM orders"
+  },
+  {
+    "name": "mysql-unary-minus-column",
+    "dialect": "MySQL",
+    "sql": "SELECT -amount FROM orders"
+  },
+  {
+    "name": "sqlserver-unary-minus-column",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT -amount FROM orders"
+  },
+  {
+    "name": "sqlite-unary-minus-column",
+    "dialect": "Sqlite",
+    "sql": "SELECT -amount FROM orders"
+  },
+  {
+    "name": "oracle-unary-minus-column",
+    "dialect": "Oracle",
+    "sql": "SELECT -amount FROM orders"
+  },
+  {
+    "name": "firebird-unary-minus-column",
+    "dialect": "Firebird",
+    "sql": "SELECT -amount FROM orders"
   }
 ]
