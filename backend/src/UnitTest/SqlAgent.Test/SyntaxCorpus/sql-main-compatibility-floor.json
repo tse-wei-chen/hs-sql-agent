@@ -1,0 +1,582 @@
+[
+  {
+    "name": "select-basic",
+    "sql": "SELECT id FROM users",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-simple",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-column-alias",
+    "sql": "WITH x(id) AS (SELECT id FROM users) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-multiple",
+    "sql": "WITH x AS (SELECT id FROM users), y AS (SELECT id FROM x) SELECT id FROM y",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-where-ilike",
+    "sql": "WITH x AS (SELECT id FROM users WHERE name ILIKE 'a%') SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-join-on",
+    "sql": "WITH x AS (SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-join-using",
+    "sql": "WITH x AS (SELECT id FROM users JOIN accounts USING (id)) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-group-having",
+    "sql": "WITH x AS (SELECT user_id AS id FROM orders GROUP BY user_id HAVING COUNT(*) > 0) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-window",
+    "sql": "WITH x AS (SELECT id, LAG(id) OVER (ORDER BY id) AS previous_id FROM users) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-filter",
+    "sql": "WITH x AS (SELECT user_id AS id, SUM(amount) FILTER (WHERE status = 'open') AS total FROM orders GROUP BY user_id) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-subquery",
+    "sql": "WITH x AS (SELECT id FROM users WHERE id IN (SELECT user_id FROM orders)) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-set-body",
+    "sql": "WITH x AS (SELECT id FROM users UNION SELECT user_id AS id FROM orders) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-root-union",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT id FROM x UNION ALL SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-order-limit-offset",
+    "sql": "WITH x AS (SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 1) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-nested-nonrecursive",
+    "sql": "WITH x AS (WITH y AS (SELECT id FROM users) SELECT id FROM y) SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-subquery-reference",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT q.id FROM (SELECT id FROM x) q",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-physical-join",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT x.id FROM x JOIN audit_log a ON a.id = x.id",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-quoted-identifier",
+    "sql": "WITH \"CaseCte\" AS (SELECT id FROM users) SELECT id FROM \"CaseCte\"",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-postfix-cast",
+    "sql": "WITH x AS (SELECT id FROM events WHERE created_at::date >= DATE '2026-01-01') SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "cte-interval",
+    "sql": "WITH x AS (SELECT id FROM events WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '1 day') SELECT id FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "root-intersect",
+    "sql": "SELECT id FROM alpha INTERSECT SELECT id FROM beta",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "root-except",
+    "sql": "SELECT id FROM alpha EXCEPT SELECT id FROM beta",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "root-intersect-all",
+    "sql": "SELECT id FROM alpha INTERSECT ALL SELECT id FROM beta",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "root-except-all",
+    "sql": "SELECT id FROM alpha EXCEPT ALL SELECT id FROM beta",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "join-using",
+    "sql": "SELECT id FROM alpha JOIN beta USING (id)",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "join-using-multiple",
+    "sql": "SELECT tenant_id, id FROM alpha JOIN beta USING (tenant_id, id)",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "recursive-cte",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "lateral-derived-source",
+    "sql": "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "natural-join",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "fetch-first-only",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS ONLY",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "fetch-first-with-ties",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "distinct-on",
+    "sql": "SELECT DISTINCT ON (customer_id) customer_id, created_at FROM orders ORDER BY customer_id, created_at DESC",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "nulls-last",
+    "sql": "SELECT id FROM users ORDER BY id NULLS LAST",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "aggregate-filter",
+    "sql": "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "window-frame",
+    "sql": "SELECT LAG(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "dollar-quoted-string",
+    "sql": "SELECT $$O'Brien$$ AS value FROM users",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "tagged-dollar-quoted-string",
+    "sql": "SELECT $tag$line 1 '2'$tag$ AS value FROM users",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "typed-date",
+    "sql": "SELECT DATE '2026-08-21' FROM events",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "typed-timestamp-zone",
+    "sql": "SELECT TIMESTAMP WITH TIME ZONE '2026-08-21T09:30:00+08:00' FROM events",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "postfix-cast",
+    "sql": "SELECT created_at::date FROM events",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "interval-arithmetic",
+    "sql": "SELECT created_at + INTERVAL '1 day' FROM events",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "expression-in-list",
+    "sql": "SELECT id FROM users WHERE id IN (other_id, ABS(1))",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "root-limit-offset",
+    "sql": "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 5",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "schema-qualified-function",
+    "sql": "SELECT pg_catalog.lower(name) FROM users",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "quoted-identifier",
+    "sql": "SELECT \"MixedCase\" FROM users",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "comma-from",
+    "sql": "SELECT a.id FROM alpha a, beta b WHERE a.id = b.id",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "correlated-exists",
+    "sql": "SELECT u.id FROM users u WHERE EXISTS (SELECT o.id FROM orders o WHERE o.user_id = u.id)",
+    "dialect": "Postgres"
+  },
+  {
+    "name": "mysql-select-basic",
+    "dialect": "MySQL",
+    "sql": "SELECT id FROM users"
+  },
+  {
+    "name": "mysql-backtick-identifiers",
+    "dialect": "MySQL",
+    "sql": "SELECT `UserId` FROM `Users`"
+  },
+  {
+    "name": "mysql-limit",
+    "dialect": "MySQL",
+    "sql": "SELECT id FROM users LIMIT 5"
+  },
+  {
+    "name": "mysql-limit-offset",
+    "dialect": "MySQL",
+    "sql": "SELECT id FROM users LIMIT 10 OFFSET 5"
+  },
+  {
+    "name": "mysql-limit-comma",
+    "dialect": "MySQL",
+    "sql": "SELECT id FROM users LIMIT 5, 10"
+  },
+  {
+    "name": "mysql-cte",
+    "dialect": "MySQL",
+    "sql": "WITH recent AS (SELECT id FROM orders WHERE status = 'open') SELECT id FROM recent"
+  },
+  {
+    "name": "mysql-join-on",
+    "dialect": "MySQL",
+    "sql": "SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id"
+  },
+  {
+    "name": "mysql-join-using",
+    "dialect": "MySQL",
+    "sql": "SELECT id FROM users JOIN orders USING (id)"
+  },
+  {
+    "name": "mysql-union",
+    "dialect": "MySQL",
+    "sql": "SELECT id FROM users UNION SELECT id FROM admins"
+  },
+  {
+    "name": "mysql-window",
+    "dialect": "MySQL",
+    "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) FROM orders"
+  },
+  {
+    "name": "mysql-case",
+    "dialect": "MySQL",
+    "sql": "SELECT CASE WHEN amount > 0 THEN amount ELSE 0 END FROM orders"
+  },
+  {
+    "name": "mysql-cast-signed",
+    "dialect": "MySQL",
+    "sql": "SELECT CAST(1 AS SIGNED)"
+  },
+  {
+    "name": "mysql-typed-date",
+    "dialect": "MySQL",
+    "sql": "SELECT DATE '2026-08-24'"
+  },
+  {
+    "name": "mysql-group-concat",
+    "dialect": "MySQL",
+    "sql": "SELECT GROUP_CONCAT(name) FROM users"
+  },
+  {
+    "name": "mysql-date-function",
+    "dialect": "MySQL",
+    "sql": "SELECT DATE(created_at) FROM events"
+  },
+  {
+    "name": "sqlserver-select-basic",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users"
+  },
+  {
+    "name": "sqlserver-bracket-identifiers",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT [UserId] FROM [Users]"
+  },
+  {
+    "name": "sqlserver-top",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT TOP 5 id FROM users"
+  },
+  {
+    "name": "sqlserver-offset",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users ORDER BY id OFFSET 5 ROWS"
+  },
+  {
+    "name": "sqlserver-offset-fetch",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY"
+  },
+  {
+    "name": "sqlserver-cte",
+    "dialect": "MsSqlServer",
+    "sql": "WITH recent AS (SELECT id FROM orders WHERE status = 'open') SELECT id FROM recent"
+  },
+  {
+    "name": "sqlserver-join-on",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id"
+  },
+  {
+    "name": "sqlserver-union",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users UNION SELECT id FROM admins"
+  },
+  {
+    "name": "sqlserver-window",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) FROM orders"
+  },
+  {
+    "name": "sqlserver-case",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT CASE WHEN amount > 0 THEN amount ELSE 0 END FROM orders"
+  },
+  {
+    "name": "sqlserver-cast-nvarchar-max",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT CAST('abc' AS NVARCHAR(MAX))"
+  },
+  {
+    "name": "sqlserver-coalesce",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT COALESCE(name, 'n/a') FROM users"
+  },
+  {
+    "name": "sqlserver-subquery",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders)"
+  },
+  {
+    "name": "sqlite-select-basic",
+    "dialect": "Sqlite",
+    "sql": "SELECT id FROM users"
+  },
+  {
+    "name": "sqlite-quoted-identifiers",
+    "dialect": "Sqlite",
+    "sql": "SELECT \"UserId\" FROM \"Users\""
+  },
+  {
+    "name": "sqlite-limit",
+    "dialect": "Sqlite",
+    "sql": "SELECT id FROM users LIMIT 5"
+  },
+  {
+    "name": "sqlite-limit-offset",
+    "dialect": "Sqlite",
+    "sql": "SELECT id FROM users LIMIT 10 OFFSET 5"
+  },
+  {
+    "name": "sqlite-limit-comma",
+    "dialect": "Sqlite",
+    "sql": "SELECT id FROM users LIMIT 5, 10"
+  },
+  {
+    "name": "sqlite-cte",
+    "dialect": "Sqlite",
+    "sql": "WITH recent AS (SELECT id FROM orders WHERE status = 'open') SELECT id FROM recent"
+  },
+  {
+    "name": "sqlite-join-on",
+    "dialect": "Sqlite",
+    "sql": "SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id"
+  },
+  {
+    "name": "sqlite-join-using",
+    "dialect": "Sqlite",
+    "sql": "SELECT id FROM users JOIN orders USING (id)"
+  },
+  {
+    "name": "sqlite-union",
+    "dialect": "Sqlite",
+    "sql": "SELECT id FROM users UNION SELECT id FROM admins"
+  },
+  {
+    "name": "sqlite-window",
+    "dialect": "Sqlite",
+    "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) FROM orders"
+  },
+  {
+    "name": "sqlite-case",
+    "dialect": "Sqlite",
+    "sql": "SELECT CASE WHEN amount > 0 THEN amount ELSE 0 END FROM orders"
+  },
+  {
+    "name": "sqlite-coalesce",
+    "dialect": "Sqlite",
+    "sql": "SELECT COALESCE(name, 'n/a') FROM users"
+  },
+  {
+    "name": "sqlite-group-concat",
+    "dialect": "Sqlite",
+    "sql": "SELECT GROUP_CONCAT(name) FROM users"
+  },
+  {
+    "name": "oracle-select-basic",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users"
+  },
+  {
+    "name": "oracle-quoted-identifiers",
+    "dialect": "Oracle",
+    "sql": "SELECT \"USER_ID\" FROM \"USERS\""
+  },
+  {
+    "name": "oracle-offset",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users OFFSET 5 ROWS"
+  },
+  {
+    "name": "oracle-fetch-first",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-offset-fetch",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY"
+  },
+  {
+    "name": "oracle-cte",
+    "dialect": "Oracle",
+    "sql": "WITH recent AS (SELECT id FROM orders WHERE status = 'open') SELECT id FROM recent"
+  },
+  {
+    "name": "oracle-join-on",
+    "dialect": "Oracle",
+    "sql": "SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id"
+  },
+  {
+    "name": "oracle-join-using",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users JOIN orders USING (id)"
+  },
+  {
+    "name": "oracle-union",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users UNION SELECT id FROM admins"
+  },
+  {
+    "name": "oracle-window",
+    "dialect": "Oracle",
+    "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) FROM orders"
+  },
+  {
+    "name": "oracle-case",
+    "dialect": "Oracle",
+    "sql": "SELECT CASE WHEN amount > 0 THEN amount ELSE 0 END FROM orders"
+  },
+  {
+    "name": "oracle-typed-date",
+    "dialect": "Oracle",
+    "sql": "SELECT DATE '2026-08-24'"
+  },
+  {
+    "name": "oracle-typed-timestamp",
+    "dialect": "Oracle",
+    "sql": "SELECT TIMESTAMP '2026-08-24 12:34:56'"
+  },
+  {
+    "name": "oracle-coalesce",
+    "dialect": "Oracle",
+    "sql": "SELECT COALESCE(name, 'n/a') FROM users"
+  },
+  {
+    "name": "firebird-select-basic",
+    "dialect": "Firebird",
+    "sql": "SELECT id FROM users"
+  },
+  {
+    "name": "firebird-quoted-identifiers",
+    "dialect": "Firebird",
+    "sql": "SELECT \"USER_ID\" FROM \"USERS\""
+  },
+  {
+    "name": "firebird-offset",
+    "dialect": "Firebird",
+    "sql": "SELECT id FROM users OFFSET 5 ROWS"
+  },
+  {
+    "name": "firebird-offset-fetch",
+    "dialect": "Firebird",
+    "sql": "SELECT id FROM users OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY"
+  },
+  {
+    "name": "firebird-cte",
+    "dialect": "Firebird",
+    "sql": "WITH recent AS (SELECT id FROM orders WHERE status = 'open') SELECT id FROM recent"
+  },
+  {
+    "name": "firebird-join-on",
+    "dialect": "Firebird",
+    "sql": "SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id"
+  },
+  {
+    "name": "firebird-join-using",
+    "dialect": "Firebird",
+    "sql": "SELECT id FROM users JOIN orders USING (id)"
+  },
+  {
+    "name": "firebird-union",
+    "dialect": "Firebird",
+    "sql": "SELECT id FROM users UNION SELECT id FROM admins"
+  },
+  {
+    "name": "firebird-window",
+    "dialect": "Firebird",
+    "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) FROM orders"
+  },
+  {
+    "name": "firebird-case",
+    "dialect": "Firebird",
+    "sql": "SELECT CASE WHEN amount > 0 THEN amount ELSE 0 END FROM orders"
+  },
+  {
+    "name": "firebird-typed-date",
+    "dialect": "Firebird",
+    "sql": "SELECT DATE '2026-08-24'"
+  },
+  {
+    "name": "firebird-typed-time",
+    "dialect": "Firebird",
+    "sql": "SELECT TIME '12:34:56'"
+  },
+  {
+    "name": "firebird-typed-timestamp",
+    "dialect": "Firebird",
+    "sql": "SELECT TIMESTAMP '2026-08-24 12:34:56'"
+  },
+  {
+    "name": "firebird-coalesce",
+    "dialect": "Firebird",
+    "sql": "SELECT COALESCE(name, 'n/a') FROM users"
+  }
+]

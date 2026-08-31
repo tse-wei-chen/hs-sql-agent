@@ -220,7 +220,7 @@ jobs:
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
           --configuration Release --no-build --
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
-          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/postgres-main-compatibility-floor.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
           artifacts/parity/head.json
       - name: Build base main SqlCore
         env:
@@ -238,12 +238,12 @@ jobs:
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
           --configuration Release --no-build --
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
-          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/postgres-main-compatibility-floor.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
           artifacts/parity/main.json
       - name: Enforce main compatibility floor
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
           --configuration Release --no-build --
           compare artifacts/parity/main.json artifacts/parity/head.json
-          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/postgres-intentional-breaking-allowlist.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-intentional-breaking-allowlist.json
 

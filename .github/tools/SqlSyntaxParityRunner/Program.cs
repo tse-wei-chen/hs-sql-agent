@@ -31,7 +31,11 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     var validationType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlPlanValidationContext");
     var policyType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlExecutionPlanPolicy");
 
-    var postgres = Enum.Parse(dialectType, "Postgres");
+    var dialects = corpus.ToDictionary(
+        item => item.Name,
+        item => Enum.Parse(dialectType, item.Dialect ?? "Postgres", ignoreCase: true),
+        StringComparer.Ordinal);
+
     var parse = parserType.GetMethods(BindingFlags.Public | BindingFlags.Static)
         .Where(method => method.Name == "ParseQuery")
         .Where(method => method.GetParameters().Length is 2 or 3)
@@ -52,9 +56,10 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     {
         try
         {
-            var parsed = InvokeWithOptionalTail(parse, null, item.Sql, postgres)
+            var dialect = dialects[item.Name];
+            var parsed = InvokeWithOptionalTail(parse, null, item.Sql, dialect)
                 ?? throw new InvalidOperationException("ParseQuery returned null.");
-            var validation = CreateWithOptionalTail(validationType, "syntax-parity-main-floor-v1");
+            var validation = CreateWithOptionalTail(validationType, "syntax-parity-main-floor-v2");
             var policy = CreateWithOptionalTail(policyType);
 
             var compile = compilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -69,7 +74,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                 compile,
                 compiler,
                 parsed,
-                postgres,
+                dialect,
                 validation,
                 policy);
 
@@ -287,7 +292,7 @@ static int Usage()
     return 2;
 }
 
-sealed record CorpusCase(string Name, string Sql);
+sealed record CorpusCase(string Name, string Sql, string? Dialect = null);
 sealed record Outcome(string Name, bool Success, string? ExceptionType, string? Message);
 
 sealed class SqlCoreLoadContext(string assemblyPath) : AssemblyLoadContext(isCollectible: true)
