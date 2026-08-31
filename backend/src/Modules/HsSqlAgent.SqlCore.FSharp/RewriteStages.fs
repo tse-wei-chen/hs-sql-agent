@@ -143,6 +143,9 @@ module internal RewriteStages =
         match expression with
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            match SqlDateOnlyCapabilityRules.SourceValidationError(source, name, call.Arguments.Length) with
+            | null -> ()
+            | message -> compilationError message
             match SqlSourceFunctionRegistry.Find(name) |> Option.ofObj with
             | Some contract ->
                 match contract.ValidationError(source, call.Arguments.Length) with
@@ -686,6 +689,11 @@ module internal RewriteStages =
             if arguments.Length <> 1 then
                 compilationError (sourceName + " requires exactly 1 argument.")
             canonicalCall call "CORE_DATE_PART" [ Literal(ScalarValue.Text sourceName); arguments.Head ]
+        | None when SqlDateOnlyCapabilityRules.IsMySqlSourceFunction(sourceTool, sourceName) ->
+            if arguments.Length <> 1 then
+                compilationError "MySQL DATE(expr) requires exactly 1 argument."
+            canonicalCall call "CORE_DATE_ONLY" arguments
+
         | None when not (isNull sourceContract) ->
             match (requireSourceContract ()).CanonicalizationKind with
             | SqlSourceFunctionCanonicalizationKind.DateAdd ->
@@ -2470,6 +2478,10 @@ module internal RewriteStages =
                 | _ -> raise (SqlCompilationException(
                             "Canonical function '" + contract.Name
                             + "' requires a literal date-part unit."))
+            | SqlCanonicalTargetCapabilityFamily.DateOnly ->
+                match SqlDateOnlyCapabilityRules.TargetValidationError(provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
             | SqlCanonicalTargetCapabilityFamily.CurrentTemporal ->
                 if not contract.CurrentTemporalKind.HasValue then
                     raise (SqlCompilationException(

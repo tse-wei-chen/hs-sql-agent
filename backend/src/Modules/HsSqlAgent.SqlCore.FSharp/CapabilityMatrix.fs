@@ -301,6 +301,11 @@ type SqlCapabilityMatrix private () =
                     "PostgreSQL-native EXTRACT fields HOUR, MINUTE, SECOND, DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE are represented structurally. They render natively for PostgreSQL; other targets remain capability-gated until a lossless lowering is declared.")
                 cap("temporal.date_arithmetic","temporal",translated,
                     "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering.")
+                cap("temporal.date_only","temporal",(if provider=SqlAgentToolType.MySQL then supported else rejected),
+                    if provider = SqlAgentToolType.MySQL then
+                        "MySQL DATE(expr) is canonicalized explicitly and lowered back to native DATE(expr)."
+                    else
+                        "MySQL DATE(expr) cross-dialect lowering remains fail-closed because untyped string coercion semantics are not proven equivalent.")
                 cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")
                 cap("temporal.formatted_parse","temporal",(if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected),"Formatted parse uses declared provider lowering.")
                 cap("json.extract","json",jsonExtract,"Portable JSON extraction is provider-gated.")

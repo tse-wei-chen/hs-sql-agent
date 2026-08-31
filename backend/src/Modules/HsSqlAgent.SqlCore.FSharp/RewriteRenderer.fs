@@ -485,6 +485,13 @@ module internal RewriteRenderer =
             | SQLite -> "STRFTIME(" + format + ", " + value + ")"
             | Firebird -> fail "portable date formatting is not supported by Firebird."
 
+        | "CORE_DATE_ONLY" ->
+            requireCount 1
+            match SqlDateOnlyCapabilityRules.TargetValidationError(tool) with
+            | null -> ()
+            | message -> fail message
+            "DATE(" + renderExpr ctx call.Arguments[0] + ")"
+
         | "CORE_DATE_PARSE" ->
             requireCount 2
             match SqlTemporalFormatCapabilityRules.TargetValidationError("CORE_DATE_PARSE", tool) with

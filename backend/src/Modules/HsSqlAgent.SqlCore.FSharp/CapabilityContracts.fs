@@ -529,6 +529,21 @@ module internal SqlTemporalFormatCapabilityRules =
             + string provider + " for this Core plan."
         | value -> raise (ArgumentOutOfRangeException("canonicalFunctionName", value, "Unsupported canonical temporal format function."))
 
+module internal SqlDateOnlyCapabilityRules =
+    let IsMySqlSourceFunction(sourceDialect: SqlAgentToolType, functionName: string) =
+        sourceDialect = SqlAgentToolType.MySQL
+        && String.Equals(functionName.Trim(), "DATE", StringComparison.OrdinalIgnoreCase)
+
+    let SourceValidationError(sourceDialect: SqlAgentToolType, functionName: string, argumentCount: int) : string | null =
+        if not (IsMySqlSourceFunction(sourceDialect, functionName)) then null
+        elif argumentCount = 1 then null
+        else "MySQL DATE(expr) requires exactly 1 argument in the Core source capability profile."
+
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+        if provider = SqlAgentToolType.MySQL then null
+        else
+            "SQL capability 'temporal.date_only' currently preserves MySQL DATE(expr) semantics only for MySQL targets. Cross-dialect lowering remains fail-closed until Core can prove the operand is a temporal value rather than a provider-specific string coercion."
+
 module internal SqlJsonCapabilityRules =
     let TargetValidationError(canonicalFunctionName: string, provider: SqlAgentToolType) : string | null =
         match canonicalFunctionName with
@@ -664,6 +679,7 @@ type internal SqlCanonicalTargetCapabilityFamily =
     | DatePart = 5
     | DateMath = 6
     | CurrentTemporal = 7
+    | DateOnly = 8
 
 type internal SqlCanonicalPlanShapeValidationKind =
     | DistinctWildcardForbidden = 0
@@ -755,6 +771,7 @@ module internal SqlCanonicalFunctionRegistry =
           scalar "CORE_DATE_PART" 2 2 false
           scalar "CORE_DATE_FORMAT" 2 2 false
           scalar "CORE_DATE_PARSE" 2 2 false
+          scalar "CORE_DATE_ONLY" 1 1 false
           scalar "CORE_POSITION" 2 2 false
           scalar "CORE_JSON_EXTRACT" 2 2 false
           scalar "CORE_JSON_SET" 3 3 false
@@ -784,6 +801,7 @@ module internal SqlCanonicalFunctionRegistry =
         d["CORE_DATE_PART"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.DatePart
         d["CORE_DATE_FORMAT"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.TemporalFormat
         d["CORE_DATE_PARSE"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.TemporalFormat
+        d["CORE_DATE_ONLY"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.DateOnly
         d["CORE_JSON_EXTRACT"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.Json
         d["CORE_JSON_SET"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.Json
         d["CORE_REGEX_MATCH"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.Regex
