@@ -840,6 +840,7 @@ type internal SqlCanonicalTargetCapabilityFamily =
     | DateMath = 6
     | CurrentTemporal = 7
     | DateOnly = 8
+    | OracleSysdate = 9
 
 type internal SqlCanonicalPlanShapeValidationKind =
     | DistinctWildcardForbidden = 0
@@ -939,6 +940,7 @@ module internal SqlCanonicalFunctionRegistry =
           scalar "CORE_CURRENT_DATE" 0 0 false
           scalar "CORE_CURRENT_TIME" 0 0 false
           scalar "CORE_CURRENT_TIMESTAMP" 0 0 false
+          scalar "CORE_ORACLE_SYSDATE" 0 0 false
           SqlCanonicalFunctionContract("CORE_STRING_AGG",2,2,SqlCanonicalFunctionKind.Aggregate,false,true,false,false,false) ]
         |> List.iter add
 
@@ -971,6 +973,7 @@ module internal SqlCanonicalFunctionRegistry =
         d["CORE_CURRENT_TIME"].CurrentTemporalKind <- Nullable(SqlCurrentTemporalKind.Time)
         d["CORE_CURRENT_TIMESTAMP"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.CurrentTemporal
         d["CORE_CURRENT_TIMESTAMP"].CurrentTemporalKind <- Nullable(SqlCurrentTemporalKind.Timestamp)
+        d["CORE_ORACLE_SYSDATE"].TargetCapabilityFamily <- SqlCanonicalTargetCapabilityFamily.OracleSysdate
         d["CORE_STRING_AGG"].PlanShapeRules <-
             ImmutableArray.Create(SqlCanonicalPlanShapeRule(SqlCanonicalPlanShapeValidationKind.LiteralStringRequired,1,null,"aggregate.string.dynamic_separator"))
         d
@@ -1002,6 +1005,7 @@ type internal SqlSourceFunctionCanonicalizationKind =
     | RegexMatch = 7
     | CurrentTimestamp = 8
     | StringAggregate = 9
+    | OracleSysdate = 10
 
 [<Sealed>]
 type internal SqlSourceFunctionDialectRule(dialect, minArguments, maxArguments: Nullable<int>, supportsSeparator: bool) =
@@ -1046,6 +1050,7 @@ module internal SqlSourceFunctionRegistry =
           contract "REGEXP_LIKE" SqlSourceFunctionCanonicalizationKind.RegexMatch "REGEXP_LIKE is modeled for MySQL, Oracle, and SQL Server 2025+ source syntax." [any SqlAgentToolType.MySQL; any SqlAgentToolType.Oracle; any SqlAgentToolType.MsSqlServer]
           contract "GETDATE" SqlSourceFunctionCanonicalizationKind.CurrentTimestamp "GETDATE is modeled as MsSqlServer source syntax." [any SqlAgentToolType.MsSqlServer]
           contract "NOW" SqlSourceFunctionCanonicalizationKind.CurrentTimestamp "NOW is modeled for PostgreSQL and MySQL source syntax." [any SqlAgentToolType.Postgres; any SqlAgentToolType.MySQL]
+          contract "SYSDATE" SqlSourceFunctionCanonicalizationKind.OracleSysdate "Oracle bare SYSDATE is modeled as a server-clock DATE expression and is preserved only for Oracle targets." [exact SqlAgentToolType.Oracle 0]
           contract "STRING_AGG" SqlSourceFunctionCanonicalizationKind.StringAggregate "STRING_AGG is modeled as a two-argument PostgreSQL/SQL Server source function." [exact SqlAgentToolType.Postgres 2; exact SqlAgentToolType.MsSqlServer 2]
           contract "GROUP_CONCAT" SqlSourceFunctionCanonicalizationKind.StringAggregate "GROUP_CONCAT is modeled for MySQL source syntax and SQLite with one or two arguments; the SEPARATOR clause is MySQL-only." [anySep SqlAgentToolType.MySQL; range SqlAgentToolType.Sqlite 1 2]
           contract "LISTAGG" SqlSourceFunctionCanonicalizationKind.StringAggregate "LISTAGG is modeled for Oracle source syntax with one or two arguments." [range SqlAgentToolType.Oracle 1 2]

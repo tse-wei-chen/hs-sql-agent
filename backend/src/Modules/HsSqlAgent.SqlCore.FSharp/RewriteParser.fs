@@ -1045,14 +1045,15 @@ module internal RewriteParser =
         | Symbol '(' -> cursor.Advance(); let expression = parseExpression cursor in expectSymbol ')' cursor; expression
         | Identifier(value, false) when cursor.Dialect = SourceDialect.Oracle && value.Equals("SYSDATE", StringComparison.OrdinalIgnoreCase) ->
             cursor.Advance()
-            if acceptSymbol '(' cursor then
-                if not (acceptSymbol ')' cursor) then fail cursor.Current "SYSDATE() does not accept arguments"
-                raise (SqlCompilationException("Function 'SYSDATE' is not registered as a portable Core source function."))
-            else
-                let finish = token.Start + max token.Length 1
-                raise (SqlParseException(
-                    "Oracle bare SYSDATE is not represented as a portable Core temporal expression. Position "
-                    + string token.Start + ", span [" + string token.Start + ".." + string finish + ")."))
+            if isSymbol '(' cursor.Current then
+                fail cursor.Current "Oracle SYSDATE is a bare datetime value and does not use function-call parentheses"
+            FunctionCall
+                { Name = FunctionName.create "SYSDATE"
+                  Arguments = []
+                  IsDistinct = false
+                  AggregateOrderBy = []
+                  AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                  AggregateSeparator = None }
         | Keyword value when isContextualIdentifierKeyword value -> parseIdentifierExpression cursor
         | Identifier _ -> parseIdentifierExpression cursor
         | _ -> fail token "Expected expression"

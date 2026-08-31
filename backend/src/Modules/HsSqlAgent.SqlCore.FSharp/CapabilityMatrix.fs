@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.59"
+    static member Version = "2026-08-31.60"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -419,6 +419,11 @@ type SqlCapabilityMatrix private () =
                 cap("json.path.simple","json",translated,"Portable JSON paths are limited to constant property chains beginning at $.")
                 cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated.")
                 cap("regex.match","regex",regexStatus,regexDetail)
+                cap("function.oracle_sysdate","function",(if provider=SqlAgentToolType.Oracle then supported else rejected),
+                    if provider=SqlAgentToolType.Oracle then
+                        "Oracle bare SYSDATE is represented as a dedicated server-clock DATE semantic and emitted natively without parentheses."
+                    else
+                        "Oracle SYSDATE is native-only because its server-clock DATE semantics are not interchangeable with provider current-timestamp functions.")
                 cap("window.basic","window",translated,"OVER with PARTITION BY and ORDER BY is represented structurally.")
                 cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
                 cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")

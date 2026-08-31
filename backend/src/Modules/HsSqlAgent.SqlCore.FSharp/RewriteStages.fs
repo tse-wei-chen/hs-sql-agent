@@ -855,6 +855,13 @@ module internal RewriteStages =
                 if not arguments.IsEmpty then compilationError (sourceName + " does not accept arguments.")
                 canonicalCall call "CORE_CURRENT_TIMESTAMP" []
 
+            | SqlSourceFunctionCanonicalizationKind.OracleSysdate ->
+                if sourceTool <> SqlAgentToolType.Oracle then
+                    compilationError "SYSDATE source semantics are modeled only for Oracle."
+                if not arguments.IsEmpty then
+                    compilationError "Oracle SYSDATE does not accept arguments."
+                canonicalCall call "CORE_ORACLE_SYSDATE" []
+
             | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
                 if sourceName = "STRING_AGG" && arguments.Length <> 2 then
                     compilationError "STRING_AGG requires exactly 2 arguments."
@@ -2660,6 +2667,11 @@ module internal RewriteStages =
                           provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
+            | SqlCanonicalTargetCapabilityFamily.OracleSysdate ->
+                if provider <> SqlAgentToolType.Oracle then
+                    raise (SqlCompilationException(
+                        "SQL capability 'function.oracle_sysdate' is native-only because Oracle SYSDATE uses server-clock DATE semantics that are not equivalent to CURRENT_TIMESTAMP on provider "
+                        + string provider + "."))
             | value ->
                 raise (SqlCompilationException(
                     "Unsupported canonical target capability family '" + string value

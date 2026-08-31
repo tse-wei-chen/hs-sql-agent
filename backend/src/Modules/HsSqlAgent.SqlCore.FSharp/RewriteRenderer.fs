@@ -592,6 +592,13 @@ module internal RewriteRenderer =
             if call.IsDistinct then fail "Canonical current temporal function 'CORE_CURRENT_TIMESTAMP' cannot be DISTINCT."
             "CURRENT_TIMESTAMP"
 
+        | "CORE_ORACLE_SYSDATE" ->
+            requireCount 0
+            if call.IsDistinct then fail "Oracle SYSDATE cannot be DISTINCT."
+            if ctx.Provider <> Oracle then
+                fail ("SQL capability 'function.oracle_sysdate' is native-only and cannot render for provider " + string (providerTool ctx.Provider) + ".")
+            "SYSDATE"
+
         | "CORE_STRING_AGG" ->
             requireCount 2
             if call.IsDistinct then fail "Canonical CORE_STRING_AGG DISTINCT semantics are not enabled."
