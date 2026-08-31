@@ -69,12 +69,27 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
         object parsed;
         try
         {
-            var parse = parseMethods
-                .Where(method => method.GetParameters().Length == (sourceProfile is null ? 2 : 3))
-                .FirstOrDefault()
-                ?? throw new MissingMethodException(
-                    parserType.FullName,
-                    sourceProfile is null ? "ParseQuery(sql, dialect)" : "ParseQuery(sql, dialect, sourceProfile)");
+            var parse = sourceProfile is null
+                ? parseMethods
+                    .Where(method => method.GetParameters().Length is 2 or 3)
+                    .Where(method => LeadingArgumentsFit(
+                        method.GetParameters(),
+                        [item.Sql, sourceDialect]))
+                    .OrderBy(method => method.GetParameters().Length)
+                    .FirstOrDefault()
+                : parseMethods
+                    .Where(method => method.GetParameters().Length >= 3)
+                    .Where(method => LeadingArgumentsFit(
+                        method.GetParameters(),
+                        [item.Sql, sourceDialect, sourceProfile]))
+                    .OrderBy(method => method.GetParameters().Length)
+                    .FirstOrDefault();
+
+            parse ??= throw new MissingMethodException(
+                parserType.FullName,
+                sourceProfile is null
+                    ? "ParseQuery(sql, dialect[, sourceProfile])"
+                    : "ParseQuery(sql, dialect, sourceProfile)");
 
             parsed = sourceProfile is null
                 ? InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect)
@@ -105,14 +120,31 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                 targetDialect,
                 item.TargetVersion);
 
-            var compile = compilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            var compileMethods = compilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(method => method.Name == "Compile")
-                .Where(method => method.GetParameters().Length == (targetProfile is null ? 4 : 5))
-                .Where(method => method.GetParameters()[0].ParameterType.IsInstanceOfType(parsed))
-                .FirstOrDefault()
-                ?? throw new MissingMethodException(
-                    compilerType.FullName,
-                    targetProfile is null ? "Compile(parsed, target, validation, policy)" : "Compile(parsed, target, validation, policy, targetProfile)");
+                .Where(method => method.GetParameters().Length is 4 or 5)
+                .Where(method => method.GetParameters()[0].ParameterType.IsInstanceOfType(parsed));
+
+            var compile = targetProfile is null
+                ? compileMethods
+                    .Where(method => LeadingArgumentsFit(
+                        method.GetParameters(),
+                        [parsed, targetDialect, validation, policy]))
+                    .OrderBy(method => method.GetParameters().Length)
+                    .FirstOrDefault()
+                : compileMethods
+                    .Where(method => method.GetParameters().Length >= 5)
+                    .Where(method => LeadingArgumentsFit(
+                        method.GetParameters(),
+                        [parsed, targetDialect, validation, policy, targetProfile]))
+                    .OrderBy(method => method.GetParameters().Length)
+                    .FirstOrDefault();
+
+            compile ??= throw new MissingMethodException(
+                compilerType.FullName,
+                targetProfile is null
+                    ? "Compile(parsed, target, validation, policy[, targetProfile])"
+                    : "Compile(parsed, target, validation, policy, targetProfile)");
 
             _ = targetProfile is null
                 ? InvokeWithOptionalTail(
