@@ -1558,14 +1558,19 @@ module internal RewriteStages =
             "SQL capability 'dml.returning.expression' " + detail + " remains fail-closed."))
 
     let rec private validateRichReturningExpression expression =
-        let validateColumn identifier =
-            if Identifier.parts identifier |> List.length <> 1 then
-                returningExpressionError "accepts unqualified target-row columns only; qualified/source-table references"
+        let validateBoundColumn binding =
+            match binding with
+            | ColumnBinding.LocalRowSource -> ()
+            | ColumnBinding.OuterRowSource ->
+                returningExpressionError "does not admit correlated outer-row references"
+            | ColumnBinding.ProjectionAlias ->
+                returningExpressionError "does not admit projection-alias bindings"
 
         match expression with
-        | Column identifier
-        | BoundColumn(identifier, _) ->
-            validateColumn identifier
+        | BoundColumn(_, binding) ->
+            validateBoundColumn binding
+        | Column _ ->
+            returningExpressionError "requires every column reference to bind to a local DML row source"
         | Literal _ -> ()
         | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
             validateRichReturningExpression operand

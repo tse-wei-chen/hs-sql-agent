@@ -103,25 +103,35 @@ public sealed class CoreDmlReturningTests
     }
 
     [Fact]
-    public void Parse_ReturningQualifiedColumn_FailsClosed()
+    public void Parse_ReturningQualifiedColumn_IsRepresentedAndCompiles()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseDml(
-                "DELETE FROM users WHERE id = 1 RETURNING users.id",
-                SqlAgentToolType.Postgres));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING users.id",
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("unqualified", error.Message, StringComparison.OrdinalIgnoreCase);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Parse_ReturningWildcardCannotMixWithColumns()
+    public void Parse_ReturningWildcardCanMixWithColumns()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseDml(
-                "DELETE FROM users WHERE id = 1 RETURNING *, id",
-                SqlAgentToolType.Postgres));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING *, id",
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("cannot be mixed", error.Message, StringComparison.OrdinalIgnoreCase);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -98,6 +98,7 @@ public class CoreUpdateFromMilestoneTests
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext("policy-v1"));
 
-        Assert.Contains("warehouse AS w", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"warehouse\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS \"w\"", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 }

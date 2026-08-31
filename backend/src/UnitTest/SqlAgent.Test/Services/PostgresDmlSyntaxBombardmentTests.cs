@@ -81,6 +81,11 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             " FROM ",
             false);
         yield return Case(
+            "update-from-source-returning",
+            "UPDATE users SET status = a.status FROM archived AS a WHERE users.id = a.id RETURNING users.id, a.id AS archived_id",
+            "RETURNING",
+            true);
+        yield return Case(
             "update-from-derived-source",
             "UPDATE users SET status = a.status FROM (SELECT id, status FROM archived) AS a WHERE users.id = a.id",
             " FROM ",
@@ -95,6 +100,11 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "DELETE FROM inventory USING warehouse AS w WHERE inventory.id = w.inventory_id",
             "USING",
             false);
+        yield return Case(
+            "delete-using-source-returning",
+            "DELETE FROM inventory USING warehouse AS w WHERE inventory.id = w.inventory_id RETURNING inventory.id, w.inventory_id AS warehouse_inventory_id",
+            "RETURNING",
+            true);
         yield return Case(
             "delete-using-derived-source",
             "DELETE FROM inventory USING (SELECT inventory_id FROM warehouse) AS w WHERE inventory.id = w.inventory_id",
@@ -180,6 +190,10 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "returning-wildcard-alias",
             "DELETE FROM users WHERE id = 1 RETURNING * AS everything",
             "wildcard");
+        yield return Reject(
+            "returning-unknown-qualifier",
+            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING missing.id",
+            "unknown table/alias qualifier");
         yield return Reject(
             "insert-missing-column-list",
             "INSERT INTO users VALUES (1, 'Alice')",

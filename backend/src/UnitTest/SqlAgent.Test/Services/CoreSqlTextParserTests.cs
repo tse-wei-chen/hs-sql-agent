@@ -195,13 +195,13 @@ public class CoreSqlTextParserTests
     }
 
     [Fact]
-    public void ParseQuery_UnsupportedExtractUnit_FailsClosed()
+    public void ParseQuery_UnknownExtractUnit_FailsClosed()
     {
         var error = Assert.Throws<SqlParseException>(() =>
             CoreSqlTextParser.ParseQuery(
-                "SELECT EXTRACT(HOUR FROM created_at) FROM events",
+                "SELECT EXTRACT(FOOBAR FROM created_at) FROM events",
                 SqlAgentToolType.Postgres));
-        Assert.Contains("HOUR", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FOOBAR", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
