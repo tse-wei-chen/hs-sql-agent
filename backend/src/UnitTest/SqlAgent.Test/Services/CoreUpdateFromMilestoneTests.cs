@@ -29,17 +29,17 @@ public class CoreUpdateFromMilestoneTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void ParseUpdateFrom_NonPostgresSourceDialect_FailsClosed(SqlAgentToolType sourceDialect)
+    public void ParseUpdateFrom_UnsupportedSourceDialect_FailsClosed(SqlAgentToolType sourceDialect)
     {
         var error = Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseDml(
             "UPDATE inventory SET quantity = 1 FROM warehouse WHERE inventory.id = warehouse.inventory_id",
             sourceDialect));
 
-        Assert.Contains("PostgreSQL source dialect", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("dml.update.from", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(sourceDialect.ToString(), error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -63,11 +63,10 @@ public class CoreUpdateFromMilestoneTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void CompileUpdateFrom_NonPostgresTarget_RemainsFailClosed(SqlAgentToolType targetProvider)
+    public void CompileUpdateFrom_UnsupportedTarget_RemainsFailClosed(SqlAgentToolType targetProvider)
     {
         var parsed = CoreSqlTextParser.ParseDml(
             "UPDATE inventory SET quantity = quantity + 1 FROM warehouse WHERE inventory.id = warehouse.inventory_id",
