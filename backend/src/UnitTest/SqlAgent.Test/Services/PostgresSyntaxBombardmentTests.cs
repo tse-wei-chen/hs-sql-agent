@@ -826,6 +826,12 @@ public sealed class PostgresSyntaxBombardmentTests
             "filter-after-postfix-cast",
             "SELECT SUM(amount)::numeric FILTER (WHERE status = 'open') FROM orders");
         yield return Reject(
+            "filter-on-non-function",
+            "SELECT 1 FILTER (WHERE TRUE) FROM orders");
+        yield return Reject(
+            "over-on-column",
+            "SELECT id OVER (ORDER BY created_at) FROM orders");
+        yield return Reject(
             "empty-cte-column-alias-list",
             "WITH x() AS (SELECT id FROM users) SELECT id FROM x");
         yield return Reject(
