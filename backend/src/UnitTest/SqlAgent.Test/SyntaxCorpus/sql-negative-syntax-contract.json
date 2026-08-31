@@ -377,5 +377,44 @@
       "target ServerVersion",
       "8.0.1"
     ]
+  },
+  {
+    "name": "postgres-fetch-percent",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS ONLY",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.fetch_percent",
+      "Postgres"
+    ]
+  },
+  {
+    "name": "oracle-fetch-percent-old-source-version",
+    "dialect": "Oracle",
+    "sourceVersion": "11.2",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS ONLY",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.fetch_percent",
+      "source ServerVersion",
+      "12.1"
+    ]
+  },
+  {
+    "name": "oracle-fetch-percent-old-target-version",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "11.2",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS ONLY",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.fetch_percent",
+      "target ServerVersion",
+      "12.1"
+    ]
   }
 ]

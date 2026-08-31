@@ -607,5 +607,21 @@
     "name": "oracle-sysdate",
     "dialect": "Oracle",
     "sql": "SELECT SYSDATE FROM dual"
+  },
+  {
+    "name": "oracle-fetch-percent-versioned",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-fetch-percent-with-ties-versioned",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS WITH TIES"
   }
 ]
