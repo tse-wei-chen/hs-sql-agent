@@ -258,6 +258,29 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void RewriteCore_DoesNotDependOnCompatibilityAstOutsideExplicitAdapters()
+    {
+        var assembly = typeof(SqlCoreFacade).Assembly;
+        var offenders = assembly
+            .GetTypes()
+            .Where(type =>
+                type.FullName?.StartsWith(
+                    "HsSqlAgent.SqlCore.Rewrite.",
+                    StringComparison.Ordinal) == true)
+            .Where(type => !IsCompatibilityAdapter(type))
+            .SelectMany(type =>
+                ReferencedSignatureTypes(type)
+                    .Where(IsCompatibilityCompilerType)
+                    .Select(referenced =>
+                        $"{type.FullName} -> {referenced.FullName}"))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
     public void Facade_PublicApi_DoesNotExposeFSharpImplementationTypes()
     {
         var assembly = typeof(SqlCoreFacade).Assembly;
@@ -282,6 +305,71 @@ public sealed class SqlCoreFSharpFacadeInteropTests
                 foreach (var parameter in method.GetParameters())
                     AssertClrFriendly(parameter.ParameterType);
             }
+        }
+    }
+
+    private static bool IsCompatibilityAdapter(Type type)
+    {
+        var name = type.FullName ?? type.Name;
+        return name.Contains("RewriteLegacyAstAdapter", StringComparison.Ordinal)
+            || name.Contains("RewriteCompatibilityAstAdapter", StringComparison.Ordinal)
+            || name.Contains("RewriteFacadeAdapter", StringComparison.Ordinal);
+    }
+
+    private static bool IsCompatibilityCompilerType(Type type)
+    {
+        var candidate = UnwrapSignatureType(type);
+        var name = candidate.FullName ?? candidate.Name;
+
+        if (name.StartsWith(
+                "HsSqlAgent.SqlCore.Core.Ast.",
+                StringComparison.Ordinal))
+            return true;
+
+        if (name is
+            "HsSqlAgent.SqlCore.Core.Pipeline.ParsedStatement"
+            or "HsSqlAgent.SqlCore.Core.Pipeline.BoundStatement"
+            or "HsSqlAgent.SqlCore.Core.Pipeline.CanonicalStatement")
+            return true;
+
+        return candidate.IsGenericType
+            && candidate.GetGenericArguments().Any(IsCompatibilityCompilerType);
+    }
+
+    private static Type UnwrapSignatureType(Type type)
+    {
+        while (type.IsByRef || type.IsPointer || type.IsArray)
+            type = type.GetElementType()!;
+        return type;
+    }
+
+    private static IEnumerable<Type> ReferencedSignatureTypes(Type type)
+    {
+        const BindingFlags flags =
+            BindingFlags.Public |
+            BindingFlags.NonPublic |
+            BindingFlags.Instance |
+            BindingFlags.Static |
+            BindingFlags.DeclaredOnly;
+
+        if (type.BaseType is not null)
+            yield return type.BaseType;
+
+        foreach (var field in type.GetFields(flags))
+            yield return field.FieldType;
+
+        foreach (var property in type.GetProperties(flags))
+            yield return property.PropertyType;
+
+        foreach (var constructor in type.GetConstructors(flags))
+        foreach (var parameter in constructor.GetParameters())
+            yield return parameter.ParameterType;
+
+        foreach (var method in type.GetMethods(flags))
+        {
+            yield return method.ReturnType;
+            foreach (var parameter in method.GetParameters())
+                yield return parameter.ParameterType;
         }
     }
 
