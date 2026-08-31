@@ -963,9 +963,6 @@ public sealed class PostgresSyntaxBombardmentTests
             "postgres-top",
             "SELECT TOP 1 id FROM users");
         yield return Reject(
-            "unsupported-extract-unit",
-            "SELECT EXTRACT(HOUR FROM created_at) FROM events");
-        yield return Reject(
             "cast-arbitrary-qualifier",
             "SELECT CAST(amount AS NUMERIC GARBAGE) FROM orders");
         yield return Reject(

@@ -210,7 +210,7 @@ type SqlCapabilityMatrix private () =
         let booleanUpdate = if providerWide then translated else rejected
         let standaloneTime = if provider = SqlAgentToolType.Oracle then rejected else translated
         let currentTemporal = if provider = SqlAgentToolType.Oracle then translated else supported
-        let quarter = if provider = SqlAgentToolType.Postgres then supported else rejected
+        let postgresNativeDateParts = if provider = SqlAgentToolType.Postgres then supported else rejected
         let modulo = if provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird then translated else supported
         let nullOrdering = if provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.MsSqlServer then translated else supported
 
@@ -285,7 +285,10 @@ type SqlCapabilityMatrix private () =
                 cap("temporal.standalone_time","temporal",standaloneTime,"Standalone TIME follows provider type capability.")
                 cap("temporal.offset_timestamp","temporal",offsetStatus,offsetDetail)
                 cap("temporal.current_keywords","temporal",currentTemporal,"CURRENT_DATE/TIME/TIMESTAMP use provider translation where required.")
-                cap("temporal.date_part.quarter","temporal",quarter,"QUARTER is in the declared portable subset only for PostgreSQL targets.")
+                cap("temporal.date_part.quarter","temporal",postgresNativeDateParts,
+                    "QUARTER is represented canonically and currently has a declared lossless native lowering only for PostgreSQL targets.")
+                cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
+                    "PostgreSQL-native EXTRACT fields HOUR, MINUTE, SECOND, DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE are represented structurally. They render natively for PostgreSQL; other targets remain capability-gated until a lossless lowering is declared.")
                 cap("temporal.date_arithmetic","temporal",translated,
                     "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering.")
                 cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")

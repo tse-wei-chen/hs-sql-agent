@@ -538,20 +538,37 @@ module internal SqlCurrentTemporalCapabilityRules =
 
 module internal SqlDatePartCapabilityRules =
     let private normalize (rawPart: string) = rawPart.Trim().ToUpperInvariant()
+
+    let private portableParts =
+        set [ "YEAR"; "MONTH"; "DAY" ]
+
+    let private postgresNativeParts =
+        set [
+            "QUARTER"
+            "HOUR"; "MINUTE"; "SECOND"
+            "DOW"; "DOY"; "ISODOW"; "ISOYEAR"; "WEEK"
+            "EPOCH"; "CENTURY"; "DECADE"; "MILLENNIUM"; "JULIAN"
+            "MILLISECONDS"; "MICROSECONDS"
+            "TIMEZONE"; "TIMEZONE_HOUR"; "TIMEZONE_MINUTE"
+        ]
+
     let IsRepresentedPart(rawPart: string) =
-        match normalize rawPart with "YEAR" | "MONTH" | "DAY" | "QUARTER" -> true | _ -> false
+        let part = normalize rawPart
+        Set.contains part portableParts || Set.contains part postgresNativeParts
+
     let TargetValidationError(rawPart: string, provider: SqlAgentToolType) : string | null =
         let part = normalize rawPart
         let supported =
-            match part with
-            | "YEAR" | "MONTH" | "DAY" -> true
-            | "QUARTER" -> provider = SqlAgentToolType.Postgres
-            | _ -> false
+            Set.contains part portableParts
+            || (provider = SqlAgentToolType.Postgres && Set.contains part postgresNativeParts)
         if supported then null
         elif not (IsRepresentedPart part) then
-            "Date part " + part + " is outside the declared Core date-part subset. SQL capability 'temporal.date_part."
+            "Date part " + part + " is outside the declared Core date-part family. SQL capability 'temporal.date_part."
             + part.ToLowerInvariant() + "' is not supported by provider " + string provider + " for this Core plan."
-        else "SQL capability 'temporal.date_part." + part.ToLowerInvariant() + "' is not supported by provider " + string provider + " for this Core plan."
+        else
+            "SQL capability 'temporal.date_part." + part.ToLowerInvariant()
+            + "' is represented by Core but does not yet have a declared lossless lowering for provider "
+            + string provider + "."
 
 module internal SqlDateMathCapabilityRules =
     let NormalizeUnit(rawUnit: string, surfaceName: string) =
