@@ -256,6 +256,7 @@ type CteDefinition(name: SqlIdentifier, columnAliases: ImmutableArray<SqlIdentif
     member _.Name = name
     member _.ColumnAliases = columnAliases
     member _.Query = query
+    member val RecursiveScope = false with get, set
 
 [<Sealed>]
 type SelectStatement(

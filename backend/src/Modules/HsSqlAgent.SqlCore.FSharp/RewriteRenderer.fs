@@ -658,10 +658,17 @@ module internal RewriteRenderer =
     and private renderCtes (ctx: RenderContext) ctes =
         if List.isEmpty ctes then ""
         else
-            "WITH " +
-            (ctes
-             |> List.map (fun cte -> renderAlias ctx.Provider cte.Name + " AS (" + renderCteQuery ctx cte.Query + ")")
-             |> String.concat ", ") + " "
+            let recursiveScope = ctes |> List.exists (fun cte -> cte.RecursiveScope)
+            if recursiveScope then
+                match SqlRecursiveCteCapabilityRules.TargetValidationError(providerTool ctx.Provider, null) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            "WITH "
+            + (if recursiveScope then "RECURSIVE " else "")
+            + (ctes
+               |> List.map (fun cte -> renderAlias ctx.Provider cte.Name + " AS (" + renderCteQuery ctx cte.Query + ")")
+               |> String.concat ", ")
+            + " "
 
     and private renderSource (ctx: RenderContext) source =
         match source with

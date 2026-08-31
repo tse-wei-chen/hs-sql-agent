@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.56"
+    static member Version = "2026-08-31.57"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -241,6 +241,22 @@ type SqlCapabilityMatrix private () =
                 "SQL capability 'select.fetch_with_ties' has no proven native or semantics-preserving lowering for "
                 + string provider + "."
 
+        let recursiveCteStatus, recursiveCteDetail =
+            match provider with
+            | SqlAgentToolType.Postgres ->
+                match profileServerVersion with
+                | Some version when version.CompareTo(SqlRecursiveCteCapabilityRules.PostgresMinimumVersion) < 0 ->
+                    rejected,
+                    "WITH RECURSIVE requires PostgreSQL target ServerVersion 8.4+; declared version is "
+                    + version.ToString() + "."
+                | _ ->
+                    supported,
+                    "PostgreSQL 8.4+ WITH RECURSIVE scope is represented explicitly. Self-reference is admitted only as one direct source in a single anchor UNION/UNION ALL recursive term."
+            | _ ->
+                rejected,
+                "SQL capability 'select.recursive_cte' remains fail-closed for " + string provider
+                + " until provider-specific recursive evaluation semantics are proven."
+
         let lateralStatus, lateralDetail =
             match provider with
             | SqlAgentToolType.Postgres ->
@@ -294,6 +310,7 @@ type SqlCapabilityMatrix private () =
                 cap("select.lateral_derived","query",lateralStatus,lateralDetail)
                 cap("select.singleton","query",translated,"SELECT without FROM preserves singleton-row semantics.")
                 cap("select.cte_set","query",translated,"Root CTEs and set operations are represented structurally.")
+                cap("select.recursive_cte","query",recursiveCteStatus,recursiveCteDetail)
                 cap("set.intersect_all","query",(if provider=SqlAgentToolType.Postgres then supported else rejected),
                     if provider=SqlAgentToolType.Postgres then
                         "PostgreSQL INTERSECT ALL duplicate-preserving semantics are represented explicitly and rendered natively."

@@ -534,6 +534,14 @@ module internal RewriteStages =
             validateAggregateQuery enforceSource source sourceProfile target targetProfile query
 
     and private validateAggregateSelect enforceSource source sourceProfile target targetProfile select =
+        if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
+            if enforceSource then
+                match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            match SqlRecursiveCteCapabilityRules.TargetValidationError(target, targetProfile) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
         select.Ctes |> List.iter (fun cte -> validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
         iterDistinctOn (validateAggregateExpr enforceSource source sourceProfile target targetProfile) select
         select.Projection |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
@@ -1554,6 +1562,10 @@ module internal RewriteStages =
             | message -> raise (SqlCompilationException(message))
 
     and private proveTargetSelect targetRuntime expressionProofs select =
+        if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
+            match SqlRecursiveCteCapabilityRules.TargetValidationError(targetProvider targetRuntime, null) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
         select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
         match select.DistinctMode with
         | SelectDistinct.DistinctOn expressions ->

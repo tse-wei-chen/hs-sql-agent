@@ -391,7 +391,8 @@ module internal RewriteLegacyAstAdapter =
     and private cteOf (cte: HsSqlAgent.SqlCore.Core.Ast.CteDefinition) =
         { Cte.Name = singlePart "CTE name" cte.Name
           ColumnAliases = cte.ColumnAliases |> Seq.map (singlePart "CTE column alias") |> Seq.toList
-          Query = queryOfStatement cte.Query }
+          Query = queryOfStatement cte.Query
+          RecursiveScope = cte.RecursiveScope }
 
     and private selectOf (select: HsSqlAgent.SqlCore.Core.Ast.SelectStatement) =
         let projection =

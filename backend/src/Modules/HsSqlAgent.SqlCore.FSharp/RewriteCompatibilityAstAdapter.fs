@@ -389,18 +389,21 @@ module internal RewriteCompatibilityAstAdapter =
             unknown)
 
     and private cteOf (cte: Cte) =
-        HsSqlAgent.SqlCore.Core.Ast.CteDefinition(
-            HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
-                ImmutableArray.Create(partOf cte.Name),
-                unknown),
-            cte.ColumnAliases
-            |> List.map (fun alias ->
+        let result =
+            HsSqlAgent.SqlCore.Core.Ast.CteDefinition(
                 HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
-                    ImmutableArray.Create(partOf alias),
-                    unknown))
-            |> ImmutableArray.CreateRange,
-            queryOf cte.Query,
-            nodeSpan (box cte))
+                    ImmutableArray.Create(partOf cte.Name),
+                    unknown),
+                cte.ColumnAliases
+                |> List.map (fun alias ->
+                    HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
+                        ImmutableArray.Create(partOf alias),
+                        unknown))
+                |> ImmutableArray.CreateRange,
+                queryOf cte.Query,
+                nodeSpan (box cte))
+        result.RecursiveScope <- cte.RecursiveScope
+        result
 
     and private selectOf (select: Select) orderBy limit offset fetchWithTies selectSpan =
         let result =
