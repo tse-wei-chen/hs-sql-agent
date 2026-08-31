@@ -176,6 +176,9 @@ module internal RewriteFacadeAdapter =
           ReturningExpression =
             SqlDmlReturningExpressionCapabilityRules.SourceValidationError(source)
             |> capabilityProof
+          TargetAlias =
+            SqlDmlTargetAliasCapabilityRules.SourceValidationError(source)
+            |> capabilityProof
           UpdateFrom = CapabilityProof.ProvenCapability
           DeleteUsing = CapabilityProof.ProvenCapability }
 
@@ -185,6 +188,9 @@ module internal RewriteFacadeAdapter =
             |> capabilityProof
           ReturningExpression =
             SqlDmlReturningExpressionCapabilityRules.TargetValidationError(target)
+            |> capabilityProof
+          TargetAlias =
+            SqlDmlTargetAliasCapabilityRules.TargetValidationError(target)
             |> capabilityProof
           UpdateFrom =
             SqlDmlUpdateFromCapabilityRules.TargetValidationError(target)

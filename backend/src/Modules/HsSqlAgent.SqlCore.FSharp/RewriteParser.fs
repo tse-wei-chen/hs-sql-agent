@@ -53,6 +53,7 @@ module internal RewriteParser =
         let private permissiveDml =
             { Returning = ProvenCapability
               ReturningExpression = ProvenCapability
+              TargetAlias = ProvenCapability
               UpdateFrom = ProvenCapability
               DeleteUsing = ProvenCapability }
 
@@ -1545,6 +1546,7 @@ module internal RewriteParser =
           Returning = parseReturning cursor }
 
     and private parseDmlTargetAlias cursor =
+        let aliasToken = cursor.Current
         let alias =
             if acceptKeyword "AS" cursor then
                 Some(aliasIdentifierPart cursor)
@@ -1553,8 +1555,7 @@ module internal RewriteParser =
                 | Identifier _ -> Some(identifierPart cursor)
                 | Keyword value when isContextualIdentifierKeyword value -> Some(identifierPart cursor)
                 | _ -> None
-        if alias.IsSome && cursor.Dialect <> SourceDialect.PostgreSql then
-            fail cursor.Current "DML target aliases are currently represented only for the PostgreSQL source dialect"
+        alias |> Option.iter (fun _ -> requireSourceParseCapability aliasToken cursor.SourceDml.TargetAlias)
         alias
 
     and private parseNamedDmlSources cursor =

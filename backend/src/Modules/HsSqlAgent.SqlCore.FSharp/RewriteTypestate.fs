@@ -42,6 +42,7 @@ module internal Typestate =
     type DmlProofs =
         { Returning: CapabilityProof
           ReturningExpression: CapabilityProof
+          TargetAlias: CapabilityProof
           UpdateFrom: CapabilityProof
           DeleteUsing: CapabilityProof }
 

@@ -56,6 +56,21 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "RETURNING",
             true);
         yield return Case(
+            "update-target-implicit-alias",
+            "UPDATE users u SET name = 'Alice' WHERE u.id = 1 RETURNING u.id",
+            "RETURNING",
+            true);
+        yield return Case(
+            "update-target-as-alias",
+            "UPDATE users AS u SET name = 'Alice' WHERE u.id = 1 RETURNING u.id",
+            "RETURNING",
+            true);
+        yield return Case(
+            "delete-target-as-alias",
+            "DELETE FROM users AS u WHERE u.id = 1 RETURNING u.id",
+            "RETURNING",
+            true);
+        yield return Case(
             "qualified-returning-column",
             "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING users.id",
             "RETURNING",
@@ -143,17 +158,13 @@ public sealed class PostgresDmlSyntaxBombardmentTests
     public static IEnumerable<object[]> ExplicitFailClosedPostgresDml()
     {
         yield return Reject(
-            "update-target-alias",
-            "UPDATE users u SET name = 'Alice' WHERE u.id = 1",
-            "aliases");
+            "update-target-alias-hides-original-name",
+            "UPDATE users AS u SET name = 'Alice' WHERE users.id = 1",
+            "unknown table/alias qualifier");
         yield return Reject(
-            "update-target-as-alias",
-            "UPDATE users AS u SET name = 'Alice' WHERE u.id = 1",
-            "aliases");
-        yield return Reject(
-            "delete-target-as-alias",
-            "DELETE FROM users AS u WHERE u.id = 1",
-            "aliases");
+            "delete-target-alias-hides-original-name",
+            "DELETE FROM users AS u WHERE users.id = 1",
+            "unknown table/alias qualifier");
         yield return Reject(
             "qualified-update-assignment",
             "UPDATE users SET users.name = 'Alice' WHERE id = 1",

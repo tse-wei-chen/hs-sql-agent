@@ -1677,9 +1677,11 @@ module internal RewriteStages =
         | InsertStatement insert ->
             proveReturning proofs insert.Returning
         | UpdateStatement update ->
+            if update.TargetAlias.IsSome then requireDmlCapability proofs.TargetAlias
             if not update.From.IsEmpty then requireDmlCapability proofs.UpdateFrom
             proveReturning proofs update.Returning
         | DeleteStatement delete ->
+            if delete.TargetAlias.IsSome then requireDmlCapability proofs.TargetAlias
             if not delete.Using.IsEmpty then requireDmlCapability proofs.DeleteUsing
             proveReturning proofs delete.Returning
 

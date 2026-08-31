@@ -308,6 +308,11 @@ type SqlCapabilityMatrix private () =
                 cap("parameter.unbound","parameter",rejected,"Unbound SQL parameters are rejected.")
                 cap("dml.basic","dml",translated,"INSERT VALUES, UPDATE, and DELETE use the structured DML path.")
                 cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
+                cap("dml.target_alias","dml",(if provider=SqlAgentToolType.Postgres then supported else rejected),
+                    if provider=SqlAgentToolType.Postgres then
+                        "PostgreSQL UPDATE/DELETE target aliases are represented structurally, preserved across the CLR compatibility AST, participate in binder qualifier resolution, hide the original target name as PostgreSQL requires, and render natively."
+                    else
+                        "DML target aliases remain target-gated until an equivalent provider-specific mutation alias contract is declared.")
                 cap("dml.update.from","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"UPDATE FROM is currently PostgreSQL-only.")
                 cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
                 cap("dml.delete.using","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"DELETE USING is currently PostgreSQL-only.")
@@ -321,7 +326,7 @@ type SqlCapabilityMatrix private () =
                     if returningStatus=translated then
                         match provider with
                         | SqlAgentToolType.Postgres ->
-                            "INSERT/UPDATE/DELETE may return unqualified target columns or a lone wildcard through native RETURNING. Result-producing mutations are marked structurally, materialized through the DML execution boundary, and the returned-row count must still match the approved affected-row count before commit."
+                            "PostgreSQL RETURNING preserves SELECT-like output lists through the structured DML path, including mixed wildcard/column outputs, qualified target columns, and the proven scalar/predicate expression subset over binder-resolved local target/FROM/USING row sources. Subqueries, windows, correlated outer references, and unproven functions remain fail-closed. Result-producing mutations are materialized through the DML execution boundary, and the returned-row count must still match the approved affected-row count before commit."
                         | SqlAgentToolType.Sqlite ->
                             "SQLite ServerVersion 3.35+ target profiles may return unqualified target columns or a lone wildcard through native RETURNING. The explicit target version is required; returned-row count remains part of approval revalidation before commit."
                         | SqlAgentToolType.Firebird ->
