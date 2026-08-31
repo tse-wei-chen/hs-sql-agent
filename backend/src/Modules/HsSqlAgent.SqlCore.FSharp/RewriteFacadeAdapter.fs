@@ -265,6 +265,9 @@ module internal RewriteFacadeAdapter =
           FetchWithTies =
             SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile)
             |> capabilityProof
+          LateralDerivedTable =
+            SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> capabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
 
     let parseSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =

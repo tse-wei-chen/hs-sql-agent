@@ -28,6 +28,7 @@ module internal RewriteParser =
           OnConflict: CapabilityProof
           Ordering: SourceOrderingProofs
           FetchWithTies: CapabilityProof
+          LateralDerivedTable: CapabilityProof
           Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
@@ -73,6 +74,7 @@ module internal RewriteParser =
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
               FetchWithTies = ProvenCapability
+              LateralDerivedTable = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
@@ -85,6 +87,7 @@ module internal RewriteParser =
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
               FetchWithTies = ProvenCapability
+              LateralDerivedTable = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
@@ -106,6 +109,7 @@ module internal RewriteParser =
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
         member _.SourceFetchWithTies = semantics.FetchWithTies
+        member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
 
     let private rememberNodeSpan start (cursor: Cursor) (node: obj | null) =
         Parsed.rememberSpan node
@@ -1099,17 +1103,24 @@ module internal RewriteParser =
             items |> Seq.toList
 
     and private parseTableSource (cursor: Cursor) =
-        if isKeyword "LATERAL" cursor.Current then
-            fail cursor.Current "LATERAL sources are not represented by the portable Core grammar"
-        elif acceptSymbol '(' cursor then
+        let lateralToken = cursor.Current
+        let isLateral = acceptKeyword "LATERAL" cursor
+        if isLateral then
+            requireSourceParseCapability lateralToken cursor.SourceLateralDerivedTable
+
+        if acceptSymbol '(' cursor then
             let query = parseQuery cursor
             expectSymbol ')' cursor
             acceptKeyword "AS" cursor |> ignore
-            match cursor.Current.Kind with
-            | Identifier _ -> DerivedTable(query, identifierPart cursor)
-            | Keyword value when isContextualIdentifierKeyword value ->
-                DerivedTable(query, identifierPart cursor)
-            | _ -> fail cursor.Current "Derived table requires an alias"
+            let alias =
+                match cursor.Current.Kind with
+                | Identifier _ -> identifierPart cursor
+                | Keyword value when isContextualIdentifierKeyword value -> identifierPart cursor
+                | _ -> fail cursor.Current "Derived table requires an alias"
+            if isLateral then LateralDerivedTable(query, alias)
+            else DerivedTable(query, alias)
+        elif isLateral then
+            fail cursor.Current "Core currently models LATERAL only for derived subqueries"
         else
             let name = identifier cursor
             let alias =
@@ -1162,6 +1173,10 @@ module internal RewriteParser =
             | OnJoinKind.Inner | OnJoinKind.Left -> ()
 
             let source = parseTableSource cursor
+            match kind, source with
+            | (OnJoinKind.Right | OnJoinKind.Full), LateralDerivedTable _ ->
+                fail cursor.Current "RIGHT/FULL JOIN LATERAL is not admitted because left-side correlation is not semantically valid for those join directions"
+            | _ -> ()
             if acceptKeyword "USING" cursor then
                 match SqlUsingJoinCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with
                 | null -> ()

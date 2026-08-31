@@ -468,6 +468,26 @@ module internal SqlFetchWithTiesCapabilityRules =
     let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider targetProfile "target"
 
+module internal SqlLateralDerivedTableCapabilityRules =
+    let PostgresMinimumVersion = Version(9,3)
+
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+        if provider <> SqlAgentToolType.Postgres then
+            "SQL capability 'select.lateral_derived' is not supported by " + side
+            + " provider " + string provider
+            + "; LATERAL derived-table correlation remains fail-closed."
+        elif not (isNull profile) && not (isNull profile.ServerVersion)
+             && profile.ServerVersion.CompareTo(PostgresMinimumVersion) < 0 then
+            "SQL capability 'select.lateral_derived' requires PostgreSQL " + side
+            + " ServerVersion 9.3+; declared version is " + profile.ServerVersion.ToString() + "."
+        else null
+
+    let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
+
 module internal SqlAggregateFilterCapabilityRules =
     let private pg = Version(9,4)
     let private sqlite = Version(3,30)

@@ -246,6 +246,7 @@ module internal CoreModel =
         | NamedTable of Identifier * IdentifierPart option
         | CteTable of Identifier * IdentifierPart option
         | DerivedTable of Query * IdentifierPart
+        | LateralDerivedTable of Query * IdentifierPart
 
     and Join =
         | CrossJoin of TableSource

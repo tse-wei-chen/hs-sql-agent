@@ -225,6 +225,7 @@ type DerivedTableSource(query: SqlStatement, alias: IdentifierPart, span: Source
         DerivedTableSource(query, IdentifierPart(alias.Trim(), false, span), span)
     member _.Query = query
     member _.Alias = alias
+    member val IsLateral = false with get, set
 
 [<Sealed>]
 type SelectItem(expression: SqlExpr, alias: IdentifierPart, span: SourceSpan) =
