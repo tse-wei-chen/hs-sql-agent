@@ -250,150 +250,84 @@ module internal RewriteParser =
         | IntegerLiteral value when value > 0L && value <= int64 Int32.MaxValue -> PositiveRowCount.create (int value)
         | _ -> fail token (context + " requires an integer greater than zero")
 
-    let private parseCastType (cursor: Cursor) =
-        let parts = ResizeArray<string>()
-        let mutable depth = 0
+    let private castTypeQualifiers =
+        set [ "PRECISION"; "VARYING"; "WITH"; "WITHOUT"; "TIME"; "ZONE"; "SIGNED"; "UNSIGNED" ]
+
+    let private tryCastTypeWord (cursor: Cursor) =
+        match cursor.Current.Kind with
+        | Identifier(value, _)
+        | Keyword value ->
+            cursor.Advance()
+            Some value
+        | _ -> None
+
+    let private expectCastTypeWord context (cursor: Cursor) =
+        match tryCastTypeWord cursor with
+        | Some value -> value
+        | None -> fail cursor.Current context
+
+    let private appendCastQualifiers (parts: ResizeArray<string>) (cursor: Cursor) =
         let mutable scanning = true
         while scanning do
             match cursor.Current.Kind with
-            | End -> fail cursor.Current "Unterminated CAST target type"
-            | Symbol ')' when depth = 0 -> scanning <- false
-            | Identifier(value, _) | Keyword value ->
+            | Identifier(value, _)
+            | Keyword value when Set.contains value castTypeQualifiers ->
                 parts.Add(value)
                 cursor.Advance()
-            | IntegerLiteral value when value >= 0L ->
-                parts.Add(string value)
-                cursor.Advance()
-            | Symbol '(' ->
-                parts.Add("(")
-                depth <- depth + 1
-                cursor.Advance()
-            | Symbol ')' ->
-                parts.Add(")")
-                depth <- depth - 1
-                cursor.Advance()
-            | Symbol ',' ->
-                parts.Add(",")
-                cursor.Advance()
-            | Symbol '.' ->
-                let previousIsComponent =
-                    parts.Count > 0
-                    && parts[parts.Count - 1] <> "."
-                    && parts[parts.Count - 1] <> "("
-                    && parts[parts.Count - 1] <> ","
-                let nextIsComponent =
-                    match (cursor.Peek 1).Kind with
-                    | Identifier _
-                    | Keyword _ -> true
-                    | _ -> false
-                if not previousIsComponent || not nextIsComponent then
-                    fail cursor.Current "CAST target type contains a malformed qualified name"
-                parts.Add(".")
-                cursor.Advance()
-            | _ -> fail cursor.Current "CAST target type contains an unsupported token"
-        if parts.Count = 0 then fail cursor.Current "CAST target type cannot be empty"
+            | _ -> scanning <- false
+
+    let private parseCastTypeName (cursor: Cursor) =
+        let parts = ResizeArray<string>()
+        let mutable baseName = expectCastTypeWord "Expected cast type" cursor
+
+        while acceptSymbol '.' cursor do
+            let component = expectCastTypeWord "Expected cast type component after '.'" cursor
+            baseName <- baseName + "." + component
+
+        parts.Add(baseName)
+        appendCastQualifiers parts cursor
+
+        if acceptSymbol '(' cursor then
+            let mutable isMax = false
+            let first =
+                match cursor.Current.Kind with
+                | IntegerLiteral value when value >= 0L ->
+                    cursor.Advance()
+                    string value
+                | Identifier(value, _)
+                | Keyword value when value.Equals("MAX", StringComparison.OrdinalIgnoreCase) ->
+                    cursor.Advance()
+                    isMax <- true
+                    "MAX"
+                | _ ->
+                    fail cursor.Current "Cast type precision must be an integer or MAX"
+
+            let mutable suffix = "(" + first
+            if acceptSymbol ',' cursor then
+                if isMax then
+                    fail cursor.Current "Cast type MAX does not accept a scale"
+                match cursor.Current.Kind with
+                | IntegerLiteral value when value >= 0L ->
+                    cursor.Advance()
+                    suffix <- suffix + "," + string value
+                | _ ->
+                    fail cursor.Current "Cast type scale must be an integer"
+            expectSymbol ')' cursor
+            suffix <- suffix + ")"
+            parts[parts.Count - 1] <- parts[parts.Count - 1] + suffix
+
+        appendCastQualifiers parts cursor
+
         parts
         |> Seq.toList
         |> String.concat " "
-        |> fun value ->
-            value.Replace("( ", "(", StringComparison.Ordinal)
-                 .Replace(" (", "(", StringComparison.Ordinal)
-                 .Replace(" )", ")", StringComparison.Ordinal)
-                 .Replace(" , ", ",", StringComparison.Ordinal)
-                 .Replace(" . ", ".", StringComparison.Ordinal)
         |> CastType.create
+
+    let private parseCastType (cursor: Cursor) =
+        parseCastTypeName cursor
 
     let private parsePostfixCastType (cursor: Cursor) =
-        let parts = ResizeArray<string>()
-        let mutable depth = 0
-        let mutable scanning = true
-        let isBoundary token =
-            if depth <> 0 then false
-            else
-                match token.Kind with
-                | End
-                | Symbol ','
-                | Symbol ')' -> true
-                | Keyword "WHERE"
-                | Keyword "RETURNING"
-                | Keyword "FROM"
-                | Keyword "GROUP"
-                | Keyword "HAVING"
-                | Keyword "ORDER"
-                | Keyword "LIMIT"
-                | Keyword "OFFSET"
-                | Keyword "FETCH"
-                | Keyword "WHEN"
-                | Keyword "THEN"
-                | Keyword "ELSE"
-                | Keyword "END"
-                | Keyword "AND"
-                | Keyword "OR" -> true
-                | Operator "="
-                | Operator "<>"
-                | Operator "!="
-                | Operator ">"
-                | Operator "<"
-                | Operator ">="
-                | Operator "<="
-                | Operator "+"
-                | Operator "-"
-                | Operator "*"
-                | Operator "/"
-                | Operator "%"
-                | Operator "||" -> true
-                | _ -> false
-
-        while scanning && not (isBoundary cursor.Current) do
-            match cursor.Current.Kind with
-            | Identifier(value, _) | Keyword value ->
-                parts.Add(value)
-                cursor.Advance()
-            | IntegerLiteral value when value >= 0L ->
-                parts.Add(string value)
-                cursor.Advance()
-            | Symbol '(' ->
-                parts.Add("(")
-                depth <- depth + 1
-                cursor.Advance()
-            | Symbol ')' when depth > 0 ->
-                parts.Add(")")
-                depth <- depth - 1
-                cursor.Advance()
-            | Symbol ',' when depth > 0 ->
-                parts.Add(",")
-                cursor.Advance()
-            | Symbol '.' ->
-                let previousIsComponent =
-                    parts.Count > 0
-                    && parts[parts.Count - 1] <> "."
-                    && parts[parts.Count - 1] <> "("
-                    && parts[parts.Count - 1] <> ","
-                let nextIsComponent =
-                    match (cursor.Peek 1).Kind with
-                    | Identifier _
-                    | Keyword _ -> true
-                    | _ -> false
-                if not previousIsComponent || not nextIsComponent then
-                    fail cursor.Current "PostgreSQL CAST shorthand contains a malformed qualified type name"
-                parts.Add(".")
-                cursor.Advance()
-            | _ ->
-                scanning <- false
-
-        if parts.Count = 0 then fail cursor.Current "PostgreSQL CAST shorthand requires a target type"
-        if depth <> 0 then fail cursor.Current "Unterminated PostgreSQL CAST target type"
-
-        parts
-        |> Seq.toList
-        |> String.concat " "
-        |> fun value ->
-            value.Replace("( ", "(", StringComparison.Ordinal)
-                 .Replace(" (", "(", StringComparison.Ordinal)
-                 .Replace(" )", ")", StringComparison.Ordinal)
-                 .Replace(" , ", ",", StringComparison.Ordinal)
-                 .Replace(" . ", ".", StringComparison.Ordinal)
-        |> CastType.create
+        parseCastTypeName cursor
 
     let private parseDateLiteral (cursor: Cursor) =
         let token = cursor.Take()
