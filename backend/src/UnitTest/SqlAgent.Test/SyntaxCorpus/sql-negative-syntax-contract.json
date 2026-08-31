@@ -1,0 +1,209 @@
+[
+  {
+    "name": "pg-recursive-cte",
+    "dialect": "Postgres",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "WITH RECURSIVE"
+    ]
+  },
+  {
+    "name": "pg-lateral-source",
+    "dialect": "Postgres",
+    "sql": "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "LATERAL"
+    ]
+  },
+  {
+    "name": "pg-natural-join",
+    "dialect": "Postgres",
+    "sql": "SELECT a.id FROM a NATURAL JOIN b",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "NATURAL JOIN"
+    ]
+  },
+  {
+    "name": "pg-fetch-with-ties",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "WITH TIES"
+    ]
+  },
+  {
+    "name": "pg-cross-join-using",
+    "dialect": "Postgres",
+    "sql": "SELECT a.id FROM a CROSS JOIN b USING (id)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "ON/USING"
+    ]
+  },
+  {
+    "name": "mysql-postgres-cast",
+    "dialect": "MySQL",
+    "sql": "SELECT 'abc'::VARCHAR(20)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "::",
+      "MySQL"
+    ]
+  },
+  {
+    "name": "mysql-nulls-first",
+    "dialect": "MySQL",
+    "sql": "SELECT amount FROM orders ORDER BY amount NULLS FIRST",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "NULLS FIRST",
+      "MySQL"
+    ]
+  },
+  {
+    "name": "sqlserver-limit",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users LIMIT 5",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "LIMIT",
+      "MsSqlServer"
+    ]
+  },
+  {
+    "name": "sqlserver-current-date",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT CURRENT_DATE FROM orders",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "CURRENT_DATE"
+    ]
+  },
+  {
+    "name": "sqlite-typed-date",
+    "dialect": "Sqlite",
+    "sql": "SELECT DATE '2026-08-24'",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "typed temporal literal",
+      "Sqlite"
+    ]
+  },
+  {
+    "name": "oracle-limit",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users LIMIT 5",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "LIMIT",
+      "Oracle"
+    ]
+  },
+  {
+    "name": "firebird-limit",
+    "dialect": "Firebird",
+    "sql": "SELECT id FROM users LIMIT 5",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "LIMIT",
+      "Firebird"
+    ]
+  },
+  {
+    "name": "sqlserver-join-using",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users JOIN orders USING (id)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "join.using",
+      "MsSqlServer"
+    ]
+  },
+  {
+    "name": "pg-unregistered-qualified-function",
+    "dialect": "Postgres",
+    "sql": "SELECT custom.fn(id) FROM users",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "not registered"
+    ]
+  },
+  {
+    "name": "pg-intersect-all-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM alpha INTERSECT ALL SELECT id FROM beta",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "set.intersect_all",
+      "MySQL"
+    ]
+  },
+  {
+    "name": "pg-except-all-to-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM alpha EXCEPT ALL SELECT id FROM beta",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "set.except_all",
+      "MsSqlServer"
+    ]
+  },
+  {
+    "name": "pg-using-to-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM users JOIN orders USING (id)",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "join.using",
+      "MsSqlServer"
+    ]
+  },
+  {
+    "name": "mysql-date-to-postgres",
+    "dialect": "MySQL",
+    "targetDialect": "Postgres",
+    "sql": "SELECT DATE(created_at) FROM events",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "native-only",
+      "Postgres"
+    ]
+  },
+  {
+    "name": "pg-distinct-on-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT DISTINCT ON (customer_id) customer_id, created_at FROM orders ORDER BY customer_id, created_at DESC",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.distinct_on",
+      "MySQL"
+    ]
+  }
+]

@@ -9,6 +9,7 @@ return args[0] switch
 {
     "run" when args.Length == 4 => RunAssembly(args[1], args[2], args[3]),
     "compare" when args.Length == 4 => Compare(args[1], args[2], args[3]),
+    "verify-negative" when args.Length == 3 => VerifyNegative(args[1], args[2]),
     _ => Usage()
 };
 
@@ -31,9 +32,16 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     var validationType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlPlanValidationContext");
     var policyType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlExecutionPlanPolicy");
 
-    var dialects = corpus.ToDictionary(
+    var sourceDialects = corpus.ToDictionary(
         item => item.Name,
         item => Enum.Parse(dialectType, item.Dialect ?? "Postgres", ignoreCase: true),
+        StringComparer.Ordinal);
+    var targetDialects = corpus.ToDictionary(
+        item => item.Name,
+        item => Enum.Parse(
+            dialectType,
+            item.TargetDialect ?? item.Dialect ?? "Postgres",
+            ignoreCase: true),
         StringComparer.Ordinal);
 
     var parse = parserType.GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -54,12 +62,28 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     var outcomes = new List<Outcome>(corpus.Count);
     foreach (var item in corpus)
     {
+        var sourceDialect = sourceDialects[item.Name];
+        object parsed;
         try
         {
-            var dialect = dialects[item.Name];
-            var parsed = InvokeWithOptionalTail(parse, null, item.Sql, dialect)
+            parsed = InvokeWithOptionalTail(parse, null, item.Sql, sourceDialect)
                 ?? throw new InvalidOperationException("ParseQuery returned null.");
-            var validation = CreateWithOptionalTail(validationType, "syntax-parity-main-floor-v2");
+        }
+        catch (Exception exception)
+        {
+            var actual = Unwrap(exception);
+            outcomes.Add(new Outcome(
+                item.Name,
+                false,
+                "parse",
+                actual.GetType().FullName,
+                actual.Message));
+            continue;
+        }
+
+        try
+        {
+            var validation = CreateWithOptionalTail(validationType, "syntax-parity-main-floor-v3");
             var policy = CreateWithOptionalTail(policyType);
 
             var compile = compilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -74,11 +98,11 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                 compile,
                 compiler,
                 parsed,
-                dialect,
+                targetDialects[item.Name],
                 validation,
                 policy);
 
-            outcomes.Add(new Outcome(item.Name, true, null, null));
+            outcomes.Add(new Outcome(item.Name, true, "success", null, null));
         }
         catch (Exception exception)
         {
@@ -86,6 +110,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
             outcomes.Add(new Outcome(
                 item.Name,
                 false,
+                "compile",
                 actual.GetType().FullName,
                 actual.Message));
         }
@@ -109,6 +134,94 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
 
     loadContext.Unload();
     return 0;
+}
+
+static int VerifyNegative(string assemblyPath, string corpusPath)
+{
+    corpusPath = Path.GetFullPath(corpusPath);
+    var corpus = JsonSerializer.Deserialize<List<CorpusCase>>(
+        File.ReadAllText(corpusPath),
+        JsonOptions()) ?? throw new InvalidOperationException("Negative syntax corpus is empty.");
+
+    var temporary = Path.Combine(
+        Path.GetTempPath(),
+        "sql-negative-" + Guid.NewGuid().ToString("N") + ".json");
+
+    try
+    {
+        var runResult = RunAssembly(assemblyPath, corpusPath, temporary);
+        if (runResult != 0)
+            return runResult;
+
+        var outcomes = ReadOutcomes(temporary);
+        var violations = new List<string>();
+
+        foreach (var item in corpus)
+        {
+            if (!outcomes.TryGetValue(item.Name, out var outcome))
+            {
+                violations.Add($"{item.Name}: no outcome was captured");
+                continue;
+            }
+
+            if (outcome.Success)
+            {
+                violations.Add($"{item.Name}: expected fail-closed behavior but compilation succeeded");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(item.ExpectedStage))
+            {
+                violations.Add($"{item.Name}: negative corpus case does not declare expectedStage");
+            }
+            else if (!string.Equals(
+                         outcome.Stage,
+                         item.ExpectedStage,
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                violations.Add(
+                    $"{item.Name}: expected stage {item.ExpectedStage}, actual {outcome.Stage} " +
+                    $"({outcome.ExceptionType}: {outcome.Message})");
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.ExceptionTypeContains)
+                && (outcome.ExceptionType?.Contains(
+                        item.ExceptionTypeContains,
+                        StringComparison.OrdinalIgnoreCase) != true))
+            {
+                violations.Add(
+                    $"{item.Name}: expected exception type containing '{item.ExceptionTypeContains}', " +
+                    $"actual '{outcome.ExceptionType}'");
+            }
+
+            foreach (var fragment in item.MessageContains ?? [])
+            {
+                if (outcome.Message?.Contains(fragment, StringComparison.OrdinalIgnoreCase) != true)
+                {
+                    violations.Add(
+                        $"{item.Name}: expected diagnostic containing '{fragment}', " +
+                        $"actual '{outcome.Message}'");
+                }
+            }
+        }
+
+        if (violations.Count == 0)
+        {
+            Console.WriteLine(
+                $"Negative syntax contract: {corpus.Count} cases failed closed at their declared stages.");
+            return 0;
+        }
+
+        Console.Error.WriteLine("Negative syntax contract violations detected:");
+        foreach (var violation in violations)
+            Console.Error.WriteLine($"  - {violation}");
+        return 1;
+    }
+    finally
+    {
+        if (File.Exists(temporary))
+            File.Delete(temporary);
+    }
 }
 
 static int Compare(string mainPath, string headPath, string allowListPath)
@@ -294,12 +407,25 @@ static int Usage()
     Console.Error.WriteLine(
         "Usage:\n" +
         "  SqlSyntaxParityRunner run <HsSqlAgent.SqlCore.dll> <corpus.json> <output.json>\n" +
-        "  SqlSyntaxParityRunner compare <main.json> <head.json> <allowlist.json>");
+        "  SqlSyntaxParityRunner compare <main.json> <head.json> <allowlist.json>\n" +
+        "  SqlSyntaxParityRunner verify-negative <HsSqlAgent.SqlCore.dll> <corpus.json>");
     return 2;
 }
 
-sealed record CorpusCase(string Name, string Sql, string? Dialect = null);
-sealed record Outcome(string Name, bool Success, string? ExceptionType, string? Message);
+sealed record CorpusCase(
+    string Name,
+    string Sql,
+    string? Dialect = null,
+    string? TargetDialect = null,
+    string? ExpectedStage = null,
+    string? ExceptionTypeContains = null,
+    string[]? MessageContains = null);
+sealed record Outcome(
+    string Name,
+    bool Success,
+    string Stage,
+    string? ExceptionType,
+    string? Message);
 
 sealed class SqlCoreLoadContext(string assemblyPath) : AssemblyLoadContext(isCollectible: true)
 {

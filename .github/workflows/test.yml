@@ -222,6 +222,12 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
           artifacts/parity/head.json
+      - name: Enforce negative syntax failure stages
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          verify-negative artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-negative-syntax-contract.json
       - name: Build base main SqlCore
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
