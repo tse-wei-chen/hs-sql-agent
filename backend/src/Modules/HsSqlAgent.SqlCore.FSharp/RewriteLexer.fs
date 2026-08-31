@@ -387,7 +387,15 @@ module internal RewriteLexer =
                 while i < length && isIdentifierPart sql[i] do i <- i + 1
                 let parameter = sql.Substring(start, i - start)
                 invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
-            elif c = '
+            elif c = '$' then
+                let start = i
+                i <- i + 1
+                if i >= length || not (Char.IsDigit(sql[i])) then
+                    parseError "Invalid positional parameter. Expected '$' followed by digits." start 1
+                while i < length && Char.IsDigit(sql[i]) do i <- i + 1
+                let parameter = sql.Substring(start, i - start)
+                invalidArg "sql" ("Unbound SQL parameter '" + parameter + "' at offset " + string start + ".")
+            elif Char.IsDigit(c) || (c = '.' && i + 1 < length && Char.IsDigit(sql[i + 1])) then
                 let start = i
                 let mutable hasDigits = false
                 let mutable hasDot = false
