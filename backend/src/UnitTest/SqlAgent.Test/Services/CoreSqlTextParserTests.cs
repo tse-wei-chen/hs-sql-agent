@@ -141,9 +141,9 @@ public class CoreSqlTextParserTests
                 new SqlPlanValidationContext("mysql-date-function-cross-v1"),
                 new SqlExecutionPlanPolicy()));
 
+        Assert.Contains("temporal.date_only", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DATE(expr)", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("native-only", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Postgres", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Cross-dialect lowering", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
