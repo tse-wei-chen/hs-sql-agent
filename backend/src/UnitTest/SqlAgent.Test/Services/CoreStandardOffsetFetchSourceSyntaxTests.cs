@@ -148,15 +148,16 @@ public sealed class CoreStandardOffsetFetchSourceSyntaxTests
     }
 
     [Fact]
-    public void ParseQuery_FetchPercent_RemainsFailClosed()
+    public void ParseQuery_OracleFetchPercent_IsPreservedStructurally()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(
-                "SELECT id FROM users FETCH FIRST 10 PERCENT ROWS ONLY",
-                SqlAgentToolType.Oracle));
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM users FETCH FIRST 10 PERCENT ROWS ONLY",
+            SqlAgentToolType.Oracle);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
 
-        Assert.Contains("PERCENT", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("not represented", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(select.Limit);
+        Assert.Equal(10m, select.FetchPercent);
+        Assert.False(select.FetchWithTies);
     }
 
     [Fact]
