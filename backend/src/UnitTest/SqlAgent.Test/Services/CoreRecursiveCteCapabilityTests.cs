@@ -41,7 +41,7 @@ public sealed class CoreRecursiveCteCapabilityTests
             "WITH RECURSIVE x AS (SELECT id FROM x) SELECT * FROM x",
             SqlAgentToolType.Postgres);
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
+        var error = Assert.Throws<SqlCompilationException>(() =>
             Compile(parsed, SqlAgentToolType.Postgres));
 
         Assert.Contains("select.recursive_cte", error.Message, StringComparison.OrdinalIgnoreCase);
@@ -57,7 +57,7 @@ public sealed class CoreRecursiveCteCapabilityTests
             ") SELECT n FROM x",
             SqlAgentToolType.Postgres);
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
+        var error = Assert.Throws<SqlCompilationException>(() =>
             Compile(parsed, SqlAgentToolType.Postgres));
 
         Assert.Contains("select.recursive_cte", error.Message, StringComparison.OrdinalIgnoreCase);
