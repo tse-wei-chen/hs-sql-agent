@@ -271,15 +271,30 @@ module internal CoreModel =
             | UsingJoin(_, _, columns) -> Some(NonEmpty.toList columns)
             | CrossJoin _ | OnJoin _ -> None
 
+    and SelectDistinct =
+        | AllRows
+        | DistinctRows
+        | DistinctOn of NonEmpty<Expr>
+
     and Select =
         { Ctes: Cte list
-          Distinct: bool
+          DistinctMode: SelectDistinct
           ProjectionItems: NonEmpty<SelectItem>
           From: TableSource option
           Joins: Join list
           Where: Expr option
           GroupBy: Expr list
           Having: Expr option }
+        member this.Distinct =
+            match this.DistinctMode with
+            | SelectDistinct.AllRows -> false
+            | SelectDistinct.DistinctRows
+            | SelectDistinct.DistinctOn _ -> true
+        member this.DistinctOn =
+            match this.DistinctMode with
+            | SelectDistinct.DistinctOn expressions -> Some(NonEmpty.toList expressions)
+            | SelectDistinct.AllRows
+            | SelectDistinct.DistinctRows -> None
         member this.Projection = NonEmpty.toList this.ProjectionItems
 
     and SetBranch = { Operator: SetOperator; Query: Query }

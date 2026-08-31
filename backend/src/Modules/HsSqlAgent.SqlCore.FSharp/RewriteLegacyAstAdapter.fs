@@ -394,8 +394,19 @@ module internal RewriteLegacyAstAdapter =
                       Alias = None }
                     []
             | head :: tail -> NonEmpty.create head tail
+        let distinctMode =
+            if not select.DistinctOn.IsDefaultOrEmpty then
+                select.DistinctOn
+                |> Seq.map exprOf
+                |> Seq.toList
+                |> NonEmpty.ofList "DISTINCT ON expressions"
+                |> SelectDistinct.DistinctOn
+            elif select.Distinct then
+                SelectDistinct.DistinctRows
+            else
+                SelectDistinct.AllRows
         { Select.Ctes = select.Ctes |> Seq.map cteOf |> Seq.toList
-          Distinct = select.Distinct
+          DistinctMode = distinctMode
           ProjectionItems = projectionItems
           From = Option.ofObj select.From |> Option.map tableSourceOf
           Joins = select.Joins |> Seq.map joinOf |> Seq.toList

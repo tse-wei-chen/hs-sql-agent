@@ -272,6 +272,7 @@ type SelectStatement(
     inherit SqlStatement(span)
     member _.Ctes = ctes
     member _.Distinct = distinct
+    member val DistinctOn = ImmutableArray<SqlExpr>.Empty with get, set
     member _.Select = selectItems
     member _.From = fromSource
     member _.Joins = joins

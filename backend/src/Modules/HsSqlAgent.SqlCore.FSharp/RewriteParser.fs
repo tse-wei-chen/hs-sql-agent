@@ -1209,11 +1209,26 @@ module internal RewriteParser =
     and private parseSelectWithCtes (cursor: Cursor) (ctes: Cte list) =
         let start = cursor.Current.Start
         expectKeyword "SELECT" cursor
-        let distinct =
-            if acceptKeyword "DISTINCT" cursor then true
+        let distinctMode =
+            if acceptKeyword "DISTINCT" cursor then
+                if acceptKeyword "ON" cursor then
+                    match SqlDistinctOnCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with
+                    | null -> ()
+                    | message -> fail cursor.Current message
+                    expectSymbol '(' cursor
+                    let expressions = ResizeArray<Expr>()
+                    expressions.Add(parseExpression cursor)
+                    while acceptSymbol ',' cursor do expressions.Add(parseExpression cursor)
+                    expectSymbol ')' cursor
+                    SelectDistinct.DistinctOn(
+                        expressions
+                        |> Seq.toList
+                        |> NonEmpty.ofList "DISTINCT ON expressions")
+                else
+                    SelectDistinct.DistinctRows
             else
                 acceptKeyword "ALL" cursor |> ignore
-                false
+                SelectDistinct.AllRows
         let mutable top = None
         if cursor.Dialect = SourceDialect.SqlServer && acceptKeyword "TOP" cursor then
             let value = if acceptSymbol '(' cursor then let v = parseNonNegativeRowCount "TOP" cursor in expectSymbol ')' cursor; v else parseNonNegativeRowCount "TOP" cursor
@@ -1234,7 +1249,7 @@ module internal RewriteParser =
         let having = if acceptKeyword "HAVING" cursor then Some(parseExpression cursor) else None
         let select =
             { Ctes = ctes
-              Distinct = distinct
+              DistinctMode = distinctMode
               ProjectionItems = projection |> Seq.toList |> NonEmpty.ofList "projection"
               From = from
               Joins = joins |> Seq.toList

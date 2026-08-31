@@ -406,6 +406,19 @@ module internal SqlUsingJoinCapabilityRules =
         else
             "SQL capability 'join.using' is not supported by provider MsSqlServer because Transact-SQL has no native JOIN ... USING form and Core does not lower named-column join semantics to ON without a proven merged-column equivalence."
 
+module internal SqlDistinctOnCapabilityRules =
+    let SourceValidationError(provider: SqlAgentToolType) : string | null =
+        if provider = SqlAgentToolType.Postgres then null
+        else
+            "DISTINCT ON is PostgreSQL-specific source syntax. SQL capability 'select.distinct_on' is not supported by source provider "
+            + string provider + "."
+
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+        if provider = SqlAgentToolType.Postgres then null
+        else
+            "SQL capability 'select.distinct_on' is not supported by provider " + string provider
+            + " because Core has no proven cross-provider lowering for PostgreSQL first-row-per-group semantics."
+
 module internal SqlAggregateFilterCapabilityRules =
     let private pg = Version(9,4)
     let private sqlite = Version(3,30)
