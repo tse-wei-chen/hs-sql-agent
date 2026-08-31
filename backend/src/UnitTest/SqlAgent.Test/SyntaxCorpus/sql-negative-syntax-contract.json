@@ -64,7 +64,7 @@
     "name": "mysql-nulls-first",
     "dialect": "MySQL",
     "sql": "SELECT amount FROM orders ORDER BY amount NULLS FIRST",
-    "expectedStage": "compile",
+    "expectedStage": "parse",
     "exceptionTypeContains": "SqlCompilationException",
     "messageContains": [
       "NULLS FIRST",
@@ -190,8 +190,8 @@
     "expectedStage": "compile",
     "exceptionTypeContains": "SqlCompilationException",
     "messageContains": [
-      "native-only",
-      "Postgres"
+      "temporal.date_only",
+      "Cross-dialect lowering"
     ]
   },
   {
