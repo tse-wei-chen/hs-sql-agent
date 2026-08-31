@@ -392,6 +392,20 @@ module internal SqlJoinCapabilityRules =
         elif provider = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind targetProfile "target"
         else null
 
+module internal SqlUsingJoinCapabilityRules =
+    let Supports(provider: SqlAgentToolType) =
+        provider <> SqlAgentToolType.MsSqlServer
+
+    let SourceValidationError(provider: SqlAgentToolType) : string | null =
+        if Supports(provider) then null
+        else
+            "JOIN ... USING is not valid Transact-SQL source syntax. SQL capability 'join.using' is not supported by source provider MsSqlServer."
+
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+        if Supports(provider) then null
+        else
+            "SQL capability 'join.using' is not supported by provider MsSqlServer because Transact-SQL has no native JOIN ... USING form and Core does not lower named-column join semantics to ON without a proven merged-column equivalence."
+
 module internal SqlAggregateFilterCapabilityRules =
     let private pg = Version(9,4)
     let private sqlite = Version(3,30)

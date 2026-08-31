@@ -1159,8 +1159,9 @@ module internal RewriteParser =
 
             let source = parseTableSource cursor
             if acceptKeyword "USING" cursor then
-                if cursor.Dialect <> SourceDialect.PostgreSql then
-                    fail cursor.Current "JOIN ... USING is currently represented only for the PostgreSQL source dialect"
+                match SqlUsingJoinCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with
+                | null -> ()
+                | message -> fail cursor.Current message
                 expectSymbol '(' cursor
                 let columns = ResizeArray<IdentifierPart>()
                 let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)

@@ -195,6 +195,72 @@ public sealed class CoreJoinCapabilityContractTests
         Assert.Contains("join.full", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.MySQL, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.Sqlite, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.Oracle, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.Firebird, SqlCapabilityStatus.Translated)]
+    [InlineData(SqlAgentToolType.MsSqlServer, SqlCapabilityStatus.Rejected)]
+    public void Matrix_UsingJoinCapability_TracksNativeProviderSupport(
+        SqlAgentToolType provider,
+        SqlCapabilityStatus expectedStatus)
+    {
+        var capability = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(provider).Capabilities,
+            item => item.Id == "join.using");
+
+        Assert.Equal(expectedStatus, capability.Status);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_UsingJoin_RemainsNativeForSupportedSourceAndTarget(
+        SqlAgentToolType provider)
+    {
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(
+                "SELECT id FROM users JOIN archived USING (id)",
+                provider),
+            provider,
+            new SqlPlanValidationContext("join-using-native-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("USING", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_UsingJoinToSqlServer_FailsClosed()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseQuery(
+                    "SELECT id FROM users JOIN archived USING (id)",
+                    SqlAgentToolType.Postgres),
+                SqlAgentToolType.MsSqlServer,
+                new SqlPlanValidationContext("join-using-target-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("join.using", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MsSqlServer", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_UsingJoinFromSqlServer_FailsClosed()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT id FROM users JOIN archived USING (id)",
+                SqlAgentToolType.MsSqlServer));
+
+        Assert.Contains("join.using", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MsSqlServer", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_NestedRightJoinToSqliteWithoutProfile_FailsClosed()
     {

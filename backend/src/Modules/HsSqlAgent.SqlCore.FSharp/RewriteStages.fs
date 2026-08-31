@@ -1483,9 +1483,9 @@ module internal RewriteStages =
                 proveTargetSource targetRuntime expressionProofs source
                 proveTargetExpr targetRuntime expressionProofs predicate
             | UsingJoin(_, source, _) ->
-                if targetProvider targetRuntime <> SqlAgentToolType.Postgres then
-                    raise (SqlCompilationException(
-                        "JOIN ... USING is currently proven only for PostgreSQL targets; cross-provider lowering remains fail-closed."))
+                match SqlUsingJoinCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
                 proveTargetSource targetRuntime expressionProofs source)
         select.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
         select.GroupBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)

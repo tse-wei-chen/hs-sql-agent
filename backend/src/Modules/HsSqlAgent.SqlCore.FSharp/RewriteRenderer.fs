@@ -687,8 +687,9 @@ module internal RewriteRenderer =
             | OnJoin(_, _, predicate) ->
                 sql <- sql + " ON " + renderPredicate ctx predicate
             | UsingJoin(_, _, columns) ->
-                if ctx.Provider <> PostgreSql then
-                    invalidOp "JOIN USING is not supported by the target provider."
+                match SqlUsingJoinCapabilityRules.TargetValidationError(providerTool ctx.Provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
                 sql <-
                     sql
                     + " USING ("
