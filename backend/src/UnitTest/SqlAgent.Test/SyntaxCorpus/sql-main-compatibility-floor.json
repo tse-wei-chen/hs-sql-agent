@@ -602,5 +602,10 @@
     "sourceVersion": "2.1",
     "targetVersion": "2.1",
     "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "oracle-sysdate",
+    "dialect": "Oracle",
+    "sql": "SELECT SYSDATE FROM dual"
   }
 ]
