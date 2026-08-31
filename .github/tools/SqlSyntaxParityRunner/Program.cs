@@ -199,6 +199,23 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
             $"  - {outcome.Name}: {outcome.ExceptionType}: {outcome.Message}");
     }
 
+    var harnessFailures = outcomes
+        .Where(IsHarnessFailure)
+        .ToArray();
+    if (harnessFailures.Length > 0)
+    {
+        Console.Error.WriteLine(
+            "Parity harness failures detected; refusing to reinterpret runner/reflection failures as SQL capability differences:");
+        foreach (var failure in harnessFailures)
+        {
+            Console.Error.WriteLine(
+                $"  - {failure.Name}: {failure.ExceptionType}: {failure.Message}");
+        }
+
+        loadContext.Unload();
+        return 1;
+    }
+
     loadContext.Unload();
     return 0;
 }
@@ -363,6 +380,21 @@ static int Compare(string mainPath, string headPath, string allowListPath)
     foreach (var regression in regressions)
         Console.Error.WriteLine($"  - {regression}");
     return 1;
+}
+
+static bool IsHarnessFailure(Outcome outcome)
+{
+    if (outcome.Success || string.IsNullOrWhiteSpace(outcome.ExceptionType))
+        return false;
+
+    return outcome.ExceptionType is
+        "System.MissingMethodException"
+        or "System.TypeLoadException"
+        or "System.BadImageFormatException"
+        or "System.IO.FileNotFoundException"
+        or "System.IO.FileLoadException"
+        or "System.Reflection.AmbiguousMatchException"
+        or "System.Reflection.TargetParameterCountException";
 }
 
 static Dictionary<string, Outcome> ReadOutcomes(string path)
