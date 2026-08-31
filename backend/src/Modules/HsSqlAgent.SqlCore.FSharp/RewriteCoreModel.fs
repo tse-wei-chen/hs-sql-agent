@@ -304,7 +304,8 @@ module internal CoreModel =
           SetOperations: SetBranch list
           OrderBy: OrderBy list
           Limit: NonNegativeRowCount option
-          Offset: NonNegativeRowCount option }
+          Offset: NonNegativeRowCount option
+          FetchWithTies: bool }
 
     type ReturningItem =
         | ReturningColumn of Identifier * IdentifierPart option

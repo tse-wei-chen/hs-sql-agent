@@ -1332,6 +1332,7 @@ module internal RewriteParser =
         let orderBy = parseOrderBy true cursor
         let mutable limit = None
         let mutable offset = None
+        let mutable fetchWithTies = false
         let mutable usedCommaLimit = false
         let grammar = sourceRowLimitGrammar cursor
 
@@ -1370,9 +1371,18 @@ module internal RewriteParser =
             if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then
                 fail cursor.Current "Expected ROW or ROWS after FETCH count"
             if acceptKeyword "WITH" cursor then
+                let tiesToken = cursor.Current
                 expectKeyword "TIES" cursor
-                fail cursor.Current "FETCH ... WITH TIES is not represented by the portable compiler"
-            expectKeyword "ONLY" cursor
+                match SqlFetchWithTiesCapabilityRules.SourceValidationError(
+                          sourceDialectToolType cursor.Dialect,
+                          null) with
+                | null -> ()
+                | message -> fail tiesToken message
+                if orderBy.IsEmpty then
+                    fail tiesToken "FETCH ... WITH TIES requires ORDER BY so tie equality has a defined sort key"
+                fetchWithTies <- true
+            else
+                expectKeyword "ONLY" cursor
             limit <- Some(NonNegativeRowCount.create count)
 
         if acceptKeyword "LIMIT" cursor then
@@ -1422,7 +1432,7 @@ module internal RewriteParser =
         elif acceptKeyword "FETCH" cursor then
             parseFetch ()
 
-        orderBy, limit, offset
+        orderBy, limit, offset, fetchWithTies
 
     and private parseQuery cursor =
         let start = cursor.Current.Start
@@ -1440,7 +1450,8 @@ module internal RewriteParser =
                   SetOperations = []
                   OrderBy = []
                   Limit = branchTop
-                  Offset = None }
+                  Offset = None
+                  FetchWithTies = false }
 
         let appendIntersectChain (baseQuery: Query) =
             let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
@@ -1461,7 +1472,8 @@ module internal RewriteParser =
               SetOperations = []
               OrderBy = []
               Limit = top
-              Offset = None }
+              Offset = None
+              FetchWithTies = false }
             |> appendIntersectChain
 
         let lowerBranches = ResizeArray<SetBranch>()
@@ -1476,7 +1488,7 @@ module internal RewriteParser =
             else
                 scanning <- false
 
-        let orderBy, tailLimit, offset = parseQueryTail cursor
+        let orderBy, tailLimit, offset, fetchWithTies = parseQueryTail cursor
         let limit =
             match initial.Limit, tailLimit with
             | Some value, None -> Some value
@@ -1487,7 +1499,8 @@ module internal RewriteParser =
                 SetOperations = initial.SetOperations @ (lowerBranches |> Seq.toList)
                 OrderBy = orderBy
                 Limit = limit
-                Offset = offset }
+                Offset = offset
+                FetchWithTies = fetchWithTies }
         rememberNodeSpan start cursor (box query)
         query
 

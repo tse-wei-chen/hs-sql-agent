@@ -184,7 +184,8 @@ module internal RewriteRenderer =
         | _ -> invalidOp "Pagination requires every projected output to have a stable name; use explicit aliases for computed expressions."
 
     let private isSetQuery (query: Query) = not query.SetOperations.IsEmpty
-    let private hasTail (query: Query) = not query.OrderBy.IsEmpty || query.Limit.IsSome || query.Offset.IsSome
+    let private hasTail (query: Query) =
+        not query.OrderBy.IsEmpty || query.Limit.IsSome || query.Offset.IsSome || query.FetchWithTies
 
     let rec private isBooleanExpression expression =
         match expression with
@@ -735,7 +736,12 @@ module internal RewriteRenderer =
         let headNoCtes = { query.Head with Ctes = [] }
         let mutable sql = renderSelectBody ctx headNoCtes
         for branch in query.SetOperations do
-            let branchNoTail = { branch.Query with OrderBy = []; Limit = None; Offset = None }
+            let branchNoTail =
+                { branch.Query with
+                    OrderBy = []
+                    Limit = None
+                    Offset = None
+                    FetchWithTies = false }
             let branchSql =
                 if ctx.Provider = PostgreSql && not branchNoTail.SetOperations.IsEmpty then
                     "(" + renderQueryCore ctx branchNoTail + ")"
@@ -757,6 +763,16 @@ module internal RewriteRenderer =
     and private renderPaging (ctx: RenderContext) (query: Query) sql =
         let intValue value = NonNegativeRowCount.value value
         match ctx.Provider with
+        | PostgreSql when query.FetchWithTies ->
+            let withOffset =
+                query.Offset
+                |> Option.map (fun value -> sql + " OFFSET " + ctx.Bind(box (intValue value)) + " ROWS")
+                |> Option.defaultValue sql
+            match query.Limit with
+            | Some limit ->
+                withOffset + " FETCH FIRST " + ctx.Bind(box (intValue limit)) + " ROWS WITH TIES"
+            | None ->
+                invalidOp "FETCH WITH TIES reached PostgreSQL rendering without a row-count limit."
         | PostgreSql ->
             let withLimit = query.Limit |> Option.map (fun value -> sql + " LIMIT " + ctx.Bind(box (intValue value))) |> Option.defaultValue sql
             query.Offset |> Option.map (fun value -> withLimit + " OFFSET " + ctx.Bind(box (intValue value))) |> Option.defaultValue withLimit
@@ -773,10 +789,20 @@ module internal RewriteRenderer =
             | Some limit, None -> sql + " LIMIT " + ctx.Bind(box (intValue limit))
             | Some limit, Some offset -> sql + " LIMIT " + ctx.Bind(box (intValue limit)) + " OFFSET " + ctx.Bind(box (intValue offset))
         | Oracle ->
-            match query.Limit, query.Offset with
-            | None, None -> sql
-            | None, Some offset -> sql + " OFFSET " + ctx.Bind(box (int64 (intValue offset))) + " ROWS"
-            | Some limit, offset -> sql + " OFFSET " + ctx.Bind(box (int64 (offset |> Option.map intValue |> Option.defaultValue 0))) + " ROWS FETCH NEXT " + ctx.Bind(box (intValue limit)) + " ROWS ONLY"
+            match query.Limit, query.Offset, query.FetchWithTies with
+            | None, None, false -> sql
+            | None, Some offset, false -> sql + " OFFSET " + ctx.Bind(box (int64 (intValue offset))) + " ROWS"
+            | Some limit, offset, true ->
+                sql
+                + " OFFSET "
+                + ctx.Bind(box (int64 (offset |> Option.map intValue |> Option.defaultValue 0)))
+                + " ROWS FETCH NEXT "
+                + ctx.Bind(box (intValue limit))
+                + " ROWS WITH TIES"
+            | Some limit, offset, false ->
+                sql + " OFFSET " + ctx.Bind(box (int64 (offset |> Option.map intValue |> Option.defaultValue 0))) + " ROWS FETCH NEXT " + ctx.Bind(box (intValue limit)) + " ROWS ONLY"
+            | None, _, true ->
+                invalidOp "FETCH WITH TIES reached Oracle rendering without a row-count limit."
         | Firebird ->
             match query.Limit, query.Offset with
             | Some limit, Some offset when intValue limit > 0 && intValue offset > 0 ->

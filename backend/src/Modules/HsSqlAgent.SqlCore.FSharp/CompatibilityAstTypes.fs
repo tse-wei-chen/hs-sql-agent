@@ -282,6 +282,7 @@ type SelectStatement(
     member _.OrderBy = orderBy
     member _.Limit = limit
     member _.Offset = offset
+    member val FetchWithTies = false with get, set
 
 [<Sealed>]
 type Assignment(column: SqlIdentifier, value: SqlExpr, span: SourceSpan) =
@@ -403,6 +404,7 @@ type QueryStatement(
     member _.OrderBy = orderBy
     member _.Limit = limit
     member _.Offset = offset
+    member val FetchWithTies = false with get, set
 
 [<AbstractClass; Sealed>]
 type DmlReturningProjection private () =

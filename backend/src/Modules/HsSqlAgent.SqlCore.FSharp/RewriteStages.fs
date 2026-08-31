@@ -534,6 +534,20 @@ module internal RewriteStages =
         select.Having |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
 
     and private validateAggregateQuery enforceSource source sourceProfile target targetProfile query =
+        if query.FetchWithTies then
+            if query.Limit.IsNone then
+                raise (SqlCompilationException(
+                    "SQL capability 'select.fetch_with_ties' requires a FETCH row count."))
+            if query.OrderBy.IsEmpty then
+                raise (SqlCompilationException(
+                    "SQL capability 'select.fetch_with_ties' requires ORDER BY so tie equality has a defined sort key."))
+            if enforceSource then
+                match SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            match SqlFetchWithTiesCapabilityRules.TargetValidationError(target, targetProfile) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
         validateAggregateSelect enforceSource source sourceProfile target targetProfile query.Head
         query.SetOperations |> List.iter (fun branch -> validateAggregateQuery enforceSource source sourceProfile target targetProfile branch.Query)
         query.OrderBy |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
@@ -1544,6 +1558,12 @@ module internal RewriteStages =
         select.Having |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
 
     and private proveTargetQuery targetRuntime expressionProofs query =
+        if query.FetchWithTies then
+            match SqlFetchWithTiesCapabilityRules.TargetValidationError(
+                      targetProvider targetRuntime,
+                      null) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
         proveTargetSelect targetRuntime expressionProofs query.Head
         query.SetOperations
         |> List.iter (fun branch ->

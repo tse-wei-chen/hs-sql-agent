@@ -434,7 +434,8 @@ module internal RewriteLegacyAstAdapter =
               SetOperations = []
               OrderBy = select.OrderBy |> Seq.map orderByOf |> Seq.toList
               Limit = rowCount "limit" select.Limit
-              Offset = rowCount "offset" select.Offset }
+              Offset = rowCount "offset" select.Offset
+              FetchWithTies = select.FetchWithTies }
         | :? HsSqlAgent.SqlCore.Core.Ast.QueryStatement as query ->
             { Query.Head = selectOf query.Head
               SetOperations =
@@ -445,7 +446,8 @@ module internal RewriteLegacyAstAdapter =
                 |> Seq.toList
               OrderBy = query.OrderBy |> Seq.map orderByOf |> Seq.toList
               Limit = rowCount "limit" query.Limit
-              Offset = rowCount "offset" query.Offset }
+              Offset = rowCount "offset" query.Offset
+              FetchWithTies = query.FetchWithTies }
         | _ -> failClosed "query statement" statement
 
     and private returningItemOf (item: HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem) =

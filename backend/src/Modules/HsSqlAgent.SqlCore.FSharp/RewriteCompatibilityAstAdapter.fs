@@ -379,7 +379,7 @@ module internal RewriteCompatibilityAstAdapter =
             queryOf cte.Query,
             nodeSpan (box cte))
 
-    and private selectOf (select: Select) orderBy limit offset selectSpan =
+    and private selectOf (select: Select) orderBy limit offset fetchWithTies selectSpan =
         let result =
             HsSqlAgent.SqlCore.Core.Ast.SelectStatement(
                 select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
@@ -398,6 +398,7 @@ module internal RewriteCompatibilityAstAdapter =
             select.DistinctOn
             |> Option.map (List.map exprOf >> ImmutableArray.CreateRange)
             |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlExpr>.Empty
+        result.FetchWithTies <- fetchWithTies
         result
 
     and private setOperator = function
@@ -411,10 +412,11 @@ module internal RewriteCompatibilityAstAdapter =
     and private queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
         match query.SetOperations with
         | [] ->
-            selectOf query.Head query.OrderBy query.Limit query.Offset (nodeSpan (box query))
+            selectOf query.Head query.OrderBy query.Limit query.Offset query.FetchWithTies (nodeSpan (box query))
         | operations ->
-            let head = selectOf query.Head [] None None (nodeSpan (box query.Head))
-            HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
+            let head = selectOf query.Head [] None None false (nodeSpan (box query.Head))
+            let result =
+                HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
                 head,
                 operations
                 |> List.map (fun branch ->
@@ -427,6 +429,8 @@ module internal RewriteCompatibilityAstAdapter =
                 query.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
                 query.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
                 nodeSpan (box query))
+            result.FetchWithTies <- query.FetchWithTies
+            result
 
     let private returningOf item : HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem =
         match item with

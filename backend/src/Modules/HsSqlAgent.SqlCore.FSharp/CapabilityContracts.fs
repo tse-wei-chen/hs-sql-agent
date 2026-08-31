@@ -440,6 +440,34 @@ module internal SqlDistinctOnCapabilityRules =
             "SQL capability 'select.distinct_on' is not supported by provider " + string provider
             + " because Core has no proven cross-provider lowering for PostgreSQL first-row-per-group semantics."
 
+module internal SqlFetchWithTiesCapabilityRules =
+    let PostgresMinimumVersion = Version(13,0)
+    let OracleMinimumVersion = Version(12,1)
+
+    let private minimumVersion = function
+        | SqlAgentToolType.Postgres -> Some PostgresMinimumVersion
+        | SqlAgentToolType.Oracle -> Some OracleMinimumVersion
+        | _ -> None
+
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+        match minimumVersion provider with
+        | None ->
+            "SQL capability 'select.fetch_with_ties' is not supported by " + side
+            + " provider " + string provider
+            + "; FETCH ... WITH TIES remains fail-closed."
+        | Some minimum when isNull profile || isNull profile.ServerVersion -> null
+        | Some minimum when profile.ServerVersion.CompareTo(minimum) >= 0 -> null
+        | Some minimum ->
+            "SQL capability 'select.fetch_with_ties' requires " + string provider + " "
+            + side + " ServerVersion " + minimum.ToString()
+            + "+; declared version is " + profile.ServerVersion.ToString() + "."
+
+    let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
+
 module internal SqlAggregateFilterCapabilityRules =
     let private pg = Version(9,4)
     let private sqlite = Version(3,30)
