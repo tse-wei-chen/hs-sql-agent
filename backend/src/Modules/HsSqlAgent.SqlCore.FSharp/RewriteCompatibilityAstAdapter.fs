@@ -315,6 +315,14 @@ module internal RewriteCompatibilityAstAdapter =
                 queryOf query,
                 partOf alias,
                 unknown)
+        | TableSource.LateralDerivedTable(query, alias) ->
+            let result =
+                HsSqlAgent.SqlCore.Core.Ast.DerivedTableSource(
+                    queryOf query,
+                    partOf alias,
+                    unknown)
+            result.IsLateral <- true
+            result
 
     and private joinOf join =
         match join with

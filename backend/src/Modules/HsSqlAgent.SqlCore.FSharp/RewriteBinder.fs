@@ -86,7 +86,8 @@ module internal RewriteBinder =
             { QualifierKeys = qualifierKeys
               Alias = alias |> Option.map (fun value -> value.Value)
               AliasKey = aliasKey }
-        | DerivedTable(_, alias) ->
+        | DerivedTable(_, alias)
+        | LateralDerivedTable(_, alias) ->
             { QualifierKeys = [ partKey dialect alias ]
               Alias = Some alias.Value
               AliasKey = Some(partKey dialect alias) }
@@ -202,6 +203,8 @@ module internal RewriteBinder =
         | NamedTable(name, alias) when containsName (identifierKey dialect name) visibleCtes -> CteTable(name, alias)
         | NamedTable _ | CteTable _ -> source
         | DerivedTable(query, alias) -> DerivedTable(bindQuery dialect parentScope visibleCtes query, alias)
+        | LateralDerivedTable(query, alias) ->
+            LateralDerivedTable(bindQuery dialect parentScope visibleCtes query, alias)
 
     and private bindCtes dialect inheritedCtes (ctes: Cte list) =
         let mutable visible = inheritedCtes
@@ -213,7 +216,11 @@ module internal RewriteBinder =
         bound |> Seq.toList, visible
 
     and private bindJoin (scope: Scope) (join: Join) : Join * Scope =
-        let source = bindTableSource scope.Dialect (Some scope) scope.VisibleCtes join.Source
+        let correlationScope =
+            match join.Source with
+            | LateralDerivedTable _ -> Some scope
+            | _ -> scope.Parent
+        let source = bindTableSource scope.Dialect correlationScope scope.VisibleCtes join.Source
         let extended = { scope with Sources = scope.Sources @ [ sourceBinding scope.Dialect source ] }
         ensureDistinctAliases extended
         let boundJoin =

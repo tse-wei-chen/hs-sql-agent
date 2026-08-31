@@ -661,7 +661,13 @@ module internal RewriteRenderer =
         match source with
         | TableSource.NamedTable(identifier, alias) | TableSource.CteTable(identifier, alias) ->
             renderIdentifier ctx.Provider identifier + (alias |> Option.map (fun value -> tableAliasPrefix ctx.Provider + renderAlias ctx.Provider value) |> Option.defaultValue "")
-        | TableSource.DerivedTable(query, alias) -> "(" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+        | TableSource.DerivedTable(query, alias) ->
+            "(" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+        | TableSource.LateralDerivedTable(query, alias) ->
+            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(providerTool ctx.Provider, null) with
+            | null ->
+                "LATERAL (" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+            | message -> raise (SqlCompilationException(message))
 
     and private renderSelectBody (ctx: RenderContext) (select: Select) =
         let groupScope expression =

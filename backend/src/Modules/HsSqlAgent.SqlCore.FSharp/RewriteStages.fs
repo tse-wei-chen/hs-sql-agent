@@ -114,7 +114,8 @@ module internal RewriteStages =
     and private verifySourceRegexSource regexProof source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> verifySourceRegexQuery regexProof query
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) -> verifySourceRegexQuery regexProof query
 
     and private verifySourceRegexSelect regexProof select =
         select.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
@@ -273,7 +274,8 @@ module internal RewriteStages =
     and private validateRawSourceTable source orderingProofs mySqlPipes table =
         match table with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> validateRawSourceQuery source orderingProofs mySqlPipes query
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) -> validateRawSourceQuery source orderingProofs mySqlPipes query
 
     and private validateRawSourceSelect source orderingProofs mySqlPipes select =
         select.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
@@ -519,7 +521,17 @@ module internal RewriteStages =
     and private validateAggregateSource enforceSource source sourceProfile target targetProfile table =
         match table with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+        | DerivedTable(query, _) ->
+            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+        | LateralDerivedTable(query, _) ->
+            if enforceSource then
+                match SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(target, targetProfile) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
 
     and private validateAggregateSelect enforceSource source sourceProfile target targetProfile select =
         select.Ctes |> List.iter (fun cte -> validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
@@ -946,6 +958,8 @@ module internal RewriteStages =
         match source with
         | NamedTable _ | CteTable _ -> source
         | DerivedTable(query, alias) -> DerivedTable(normalizeQuery sourceDialect target query, alias)
+        | LateralDerivedTable(query, alias) ->
+            LateralDerivedTable(normalizeQuery sourceDialect target query, alias)
 
     and private normalizeJoin sourceDialect target (join: Join) =
         match join with
@@ -1108,7 +1122,8 @@ module internal RewriteStages =
         match source with
         | NamedTable(identifier, _) -> ensureTableAllowed allowedTables identifier
         | CteTable _ -> ()
-        | DerivedTable(query, _) -> validateQuery allowedTables query
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) -> validateQuery allowedTables query
 
     and private validateSelect allowedTables select =
         for cte in select.Ctes do validateQuery allowedTables cte.Query
@@ -1412,7 +1427,8 @@ module internal RewriteStages =
         match source with
         | NamedTable _
         | CteTable _ -> ()
-        | DerivedTable(query, _) ->
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) ->
             proveSourceFilterQuery expressionProofs query
 
     and private proveSourceFilterSelect expressionProofs select =
@@ -1528,6 +1544,12 @@ module internal RewriteStages =
         match source with
         | NamedTable _ | CteTable _ -> ()
         | DerivedTable(query, _) -> proveTargetQuery targetRuntime expressionProofs query
+        | LateralDerivedTable(query, _) ->
+            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                      targetProvider targetRuntime,
+                      null) with
+            | null -> proveTargetQuery targetRuntime expressionProofs query
+            | message -> raise (SqlCompilationException(message))
 
     and private proveTargetSelect targetRuntime expressionProofs select =
         select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
@@ -1619,7 +1641,8 @@ module internal RewriteStages =
     let rec private proveTargetJoinSource proofs source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> proveTargetJoinQuery proofs query
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) -> proveTargetJoinQuery proofs query
 
     and private proveTargetJoinSelect proofs select =
         select.Ctes |> List.iter (fun cte -> proveTargetJoinQuery proofs cte.Query)
@@ -1902,7 +1925,8 @@ module internal RewriteStages =
     and private proveOrderingSource targetRuntime targetOrdering source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> proveOrderingQuery targetRuntime targetOrdering query
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) -> proveOrderingQuery targetRuntime targetOrdering query
 
     and private proveOrderingSelect targetRuntime targetOrdering select =
         select.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
@@ -2013,9 +2037,9 @@ module internal RewriteStages =
 
     let rec private proveSqlServerPagingQuery query =
         query.Head.Ctes |> List.iter (fun cte -> proveSqlServerPagingQuery cte.Query)
-        query.Head.From |> Option.iter (function DerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
+        query.Head.From |> Option.iter (function DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
         query.Head.Joins |> List.iter (fun join ->
-            match join.Source with DerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
+            match join.Source with DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
         query.SetOperations |> List.iter (fun branch -> proveSqlServerPagingQuery branch.Query)
         match query.Offset with
         | Some offset when NonNegativeRowCount.value offset > 0 ->
@@ -2311,7 +2335,8 @@ module internal RewriteStages =
     and private validateNestedCteTable targetRuntime source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) ->
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) ->
             validateNestedCteQuery targetRuntime DerivedTablePosition query
 
     and private validateNestedCteSelect targetRuntime position select =
@@ -2815,7 +2840,8 @@ module internal RewriteStages =
     and private validateSemanticTable targetRuntime source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> validateSemanticQuery targetRuntime query
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) -> validateSemanticQuery targetRuntime query
 
     and private validateSemanticSelect targetRuntime select =
         select.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
@@ -3092,7 +3118,8 @@ module internal RewriteStages =
     and private validateNoFromSource source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) ->
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) ->
             validateNoFromQuery query
 
     and private validateNoFromSelect select =

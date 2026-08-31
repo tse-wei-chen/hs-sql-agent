@@ -352,7 +352,10 @@ module internal RewriteLegacyAstAdapter =
         | :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource as table ->
             NamedTable(identifierOf table.Name, Option.ofObj table.Alias |> Option.map partOf)
         | :? HsSqlAgent.SqlCore.Core.Ast.DerivedTableSource as derived ->
-            DerivedTable(queryOfStatement derived.Query, partOf derived.Alias)
+            if derived.IsLateral then
+                LateralDerivedTable(queryOfStatement derived.Query, partOf derived.Alias)
+            else
+                DerivedTable(queryOfStatement derived.Query, partOf derived.Alias)
         | _ -> failClosed "table source" source
 
     and private joinOf (join: HsSqlAgent.SqlCore.Core.Ast.JoinSource) =
