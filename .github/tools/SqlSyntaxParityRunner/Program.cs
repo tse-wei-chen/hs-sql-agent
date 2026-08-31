@@ -101,6 +101,12 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
         $"{outcomes.Count(outcome => outcome.Success)} success, " +
         $"{outcomes.Count(outcome => !outcome.Success)} failure.");
 
+    foreach (var outcome in outcomes.Where(outcome => !outcome.Success))
+    {
+        Console.WriteLine(
+            $"  - {outcome.Name}: {outcome.ExceptionType}: {outcome.Message}");
+    }
+
     loadContext.Unload();
     return 0;
 }
