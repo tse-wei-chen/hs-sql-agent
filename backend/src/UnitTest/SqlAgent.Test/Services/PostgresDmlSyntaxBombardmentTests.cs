@@ -184,7 +184,7 @@ public sealed class PostgresDmlSyntaxBombardmentTests
         yield return Reject(
             "date-without-string-literal",
             "UPDATE orders SET order_date = DATE 20260821 WHERE id = 1",
-            "DATE requires a string literal");
+            "Unexpected trailing token");
         yield return Reject(
             "dml-unbound-parameter",
             "UPDATE users SET name = :name WHERE id = 1",
