@@ -185,7 +185,9 @@ module internal RewriteFacadeAdapter =
           TargetAlias =
             SqlDmlTargetAliasCapabilityRules.SourceValidationError(source)
             |> capabilityProof
-          UpdateFrom = CapabilityProof.ProvenCapability
+          UpdateFrom =
+            SqlDmlUpdateFromCapabilityRules.SourceValidationError(source)
+            |> capabilityProof
           DeleteUsing = CapabilityProof.ProvenCapability }
 
     let private targetDmlProofs target (targetProfile: SqlProviderCapabilityProfile | null) : DmlProofs =

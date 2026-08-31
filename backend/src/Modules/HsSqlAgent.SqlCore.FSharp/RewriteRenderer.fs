@@ -1415,7 +1415,8 @@ module internal RewriteRenderer =
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
         let mutable sql = "UPDATE " + renderIdentifier ctx.Provider update.Target + targetAlias + " SET " + assignments
         if not update.From.IsEmpty then
-            if ctx.Provider <> PostgreSql then invalidOp "UPDATE ... FROM is not supported by the target provider."
+            if ctx.Provider <> PostgreSql && ctx.Provider <> SqlServer then
+                invalidOp "UPDATE ... FROM is not supported by the target provider."
             sql <- sql + " FROM " + (update.From |> List.map (renderSource ctx) |> String.concat ", ")
         update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         sql + renderReturning ctx update.Returning

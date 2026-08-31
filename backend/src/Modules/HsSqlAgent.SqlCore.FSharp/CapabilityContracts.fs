@@ -268,10 +268,18 @@ module internal SqlDmlTargetAliasCapabilityRules =
              + string provider + " remains fail-closed."
 
 module internal SqlDmlUpdateFromCapabilityRules =
+    let private supported provider =
+        provider = SqlAgentToolType.Postgres || provider = SqlAgentToolType.MsSqlServer
+
+    let SourceValidationError(provider: SqlAgentToolType) : string | null =
+        if supported provider then null
+        else "SQL capability 'dml.update.from' is not valid for source provider " + string provider
+             + " in the current Core source grammar."
+
     let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
+        if supported provider then null
         else "SQL capability 'dml.update.from' remains fail-closed for provider " + string provider
-             + "; equivalent mutation, duplicate-match, alias, and runtime-version semantics are not yet proven."
+             + "; equivalent joined-mutation semantics are not yet proven."
 
 module internal SqlDmlDeleteUsingCapabilityRules =
     let TargetValidationError(provider: SqlAgentToolType) : string | null =

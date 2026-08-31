@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.64"
+    static member Version = "2026-08-31.65"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -461,7 +461,17 @@ type SqlCapabilityMatrix private () =
                         "PostgreSQL UPDATE/DELETE target aliases are represented structurally, preserved across the CLR compatibility AST, participate in binder qualifier resolution, hide the original target name as PostgreSQL requires, and render natively."
                     else
                         "DML target aliases remain target-gated until an equivalent provider-specific mutation alias contract is declared.")
-                cap("dml.update.from","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"UPDATE FROM is currently PostgreSQL-only.")
+                cap("dml.update.from","dml",
+                    (if provider=SqlAgentToolType.Postgres then translated
+                     elif provider=SqlAgentToolType.MsSqlServer then supported
+                     else rejected),
+                    match provider with
+                    | SqlAgentToolType.Postgres ->
+                        "PostgreSQL UPDATE ... FROM is represented structurally and emitted natively."
+                    | SqlAgentToolType.MsSqlServer ->
+                        "SQL Server UPDATE <object> SET ... FROM <table_source> is preserved natively for source=target SQL Server when no Core target alias is present. Cross-provider UPDATE ... FROM remains fail-closed because duplicate-match and target-row selection semantics are not proven equivalent."
+                    | _ ->
+                        "UPDATE ... FROM remains fail-closed for this target provider.")
                 cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
                 cap("dml.delete.using","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"DELETE USING is currently PostgreSQL-only.")
                 cap("dml.insert_select","dml",translated,"INSERT SELECT is supported for statically-known source width.")

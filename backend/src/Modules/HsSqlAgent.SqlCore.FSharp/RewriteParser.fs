@@ -1815,7 +1815,7 @@ module internal RewriteParser =
         while acceptSymbol ',' cursor do assignments.Add(parseAssignment())
         let from =
             if acceptKeyword "FROM" cursor then
-                if cursor.Dialect <> SourceDialect.PostgreSql then fail cursor.Current "UPDATE ... FROM is only supported in the PostgreSQL source dialect"
+                requireSourceParseCapability cursor.Current cursor.SourceDml.UpdateFrom
                 parseNamedDmlSources cursor
             else []
         { Target = target

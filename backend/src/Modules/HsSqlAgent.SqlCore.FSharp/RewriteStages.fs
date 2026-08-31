@@ -604,6 +604,12 @@ module internal RewriteStages =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
         | UpdateStatement update ->
+            if not update.From.IsEmpty
+               && source <> target
+               && (source = SqlAgentToolType.MsSqlServer || target = SqlAgentToolType.MsSqlServer) then
+                raise (SqlCompilationException(
+                    "SQL capability 'dml.update.from' is native-only when SQL Server participates because duplicate-match and target-row selection semantics are not proven equivalent across providers. Source provider "
+                    + string source + ", target provider " + string target + "."))
             update.AssignmentItems |> NonEmpty.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Value)
             update.From |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
             update.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
