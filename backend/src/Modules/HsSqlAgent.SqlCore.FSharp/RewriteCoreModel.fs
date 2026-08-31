@@ -333,6 +333,7 @@ module internal CoreModel =
 
     type Update =
         { Target: Identifier
+          TargetAlias: IdentifierPart option
           AssignmentItems: NonEmpty<Assignment>
           From: TableSource list
           Where: Expr option
@@ -341,6 +342,7 @@ module internal CoreModel =
 
     type Delete =
         { Target: Identifier
+          TargetAlias: IdentifierPart option
           Using: TableSource list
           Where: Expr option
           Returning: ReturningItem list }

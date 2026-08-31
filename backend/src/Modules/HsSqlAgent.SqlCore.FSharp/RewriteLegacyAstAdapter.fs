@@ -501,6 +501,7 @@ module internal RewriteLegacyAstAdapter =
         | :? HsSqlAgent.SqlCore.Core.Ast.UpdateStatement as update ->
             Statement.UpdateStatement
                 { Update.Target = identifierOf update.Target.Name
+                  TargetAlias = Option.ofObj update.Target.Alias |> Option.map partOf
                   AssignmentItems =
                     update.Assignments
                     |> Seq.map (fun assignment ->
@@ -521,6 +522,7 @@ module internal RewriteLegacyAstAdapter =
         | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement as delete ->
             Statement.DeleteStatement
                 { Delete.Target = identifierOf delete.Target.Name
+                  TargetAlias = Option.ofObj delete.Target.Alias |> Option.map partOf
                   Using =
                     (if delete.UsingSources.IsDefaultOrEmpty then
                         delete.Using |> Seq.map (fun source -> source :> HsSqlAgent.SqlCore.Core.Ast.TableSource)

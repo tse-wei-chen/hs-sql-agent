@@ -1272,7 +1272,12 @@ module internal RewriteRenderer =
 
     let private renderUpdate (ctx: RenderContext) (update: Update) =
         let assignments = update.Assignments |> List.map (fun (assignment: Assignment) -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value) |> String.concat ", "
-        let mutable sql = "UPDATE " + renderIdentifier ctx.Provider update.Target + " SET " + assignments
+        let targetAlias =
+            match update.TargetAlias with
+            | None -> ""
+            | Some alias when ctx.Provider = PostgreSql -> " AS " + renderAlias ctx.Provider alias
+            | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
+        let mutable sql = "UPDATE " + renderIdentifier ctx.Provider update.Target + targetAlias + " SET " + assignments
         if not update.From.IsEmpty then
             if ctx.Provider <> PostgreSql then invalidOp "UPDATE ... FROM is not supported by the target provider."
             sql <- sql + " FROM " + (update.From |> List.map (renderSource ctx) |> String.concat ", ")
@@ -1280,7 +1285,12 @@ module internal RewriteRenderer =
         sql + renderReturning ctx update.Returning
 
     let private renderDelete (ctx: RenderContext) (delete: Delete) =
-        let mutable sql = "DELETE FROM " + renderIdentifier ctx.Provider delete.Target
+        let targetAlias =
+            match delete.TargetAlias with
+            | None -> ""
+            | Some alias when ctx.Provider = PostgreSql -> " AS " + renderAlias ctx.Provider alias
+            | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
+        let mutable sql = "DELETE FROM " + renderIdentifier ctx.Provider delete.Target + targetAlias
         if not delete.Using.IsEmpty then
             if ctx.Provider <> PostgreSql then invalidOp "DELETE ... USING is not supported by the target provider."
             sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")

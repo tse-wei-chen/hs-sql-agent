@@ -1544,6 +1544,19 @@ module internal RewriteParser =
           Conflict = Some { TargetColumns = targets |> Seq.toList |> NonEmpty.ofList "conflict target"; Action = action }
           Returning = parseReturning cursor }
 
+    and private parseDmlTargetAlias cursor =
+        let alias =
+            if acceptKeyword "AS" cursor then
+                Some(aliasIdentifierPart cursor)
+            else
+                match cursor.Current.Kind with
+                | Identifier _ -> Some(identifierPart cursor)
+                | Keyword value when isContextualIdentifierKeyword value -> Some(identifierPart cursor)
+                | _ -> None
+        if alias.IsSome && cursor.Dialect <> SourceDialect.PostgreSql then
+            fail cursor.Current "DML target aliases are currently represented only for the PostgreSQL source dialect"
+        alias
+
     and private parseNamedDmlSources cursor =
         let values = ResizeArray<TableSource>()
         values.Add(parseTableSource cursor)
@@ -1553,10 +1566,7 @@ module internal RewriteParser =
     and private parseUpdate cursor =
         expectKeyword "UPDATE" cursor
         let target = identifier cursor
-        match cursor.Current.Kind with
-        | Identifier _
-        | Keyword "AS" -> fail cursor.Current "UPDATE target aliases are not supported by the portable grammar"
-        | _ -> ()
+        let targetAlias = parseDmlTargetAlias cursor
         expectKeyword "SET" cursor
         let assignments = ResizeArray<Assignment>()
         let seenAssignments = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -1578,6 +1588,7 @@ module internal RewriteParser =
                 parseNamedDmlSources cursor
             else []
         { Target = target
+          TargetAlias = targetAlias
           AssignmentItems = assignments |> Seq.toList |> NonEmpty.ofList "assignments"
           From = from
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
@@ -1587,16 +1598,14 @@ module internal RewriteParser =
         expectKeyword "DELETE" cursor
         expectKeyword "FROM" cursor
         let target = identifier cursor
-        match cursor.Current.Kind with
-        | Identifier _
-        | Keyword "AS" -> fail cursor.Current "DELETE target aliases are not supported by the portable grammar"
-        | _ -> ()
+        let targetAlias = parseDmlTargetAlias cursor
         let using =
             if acceptKeyword "USING" cursor then
                 if cursor.Dialect <> SourceDialect.PostgreSql then fail cursor.Current "DELETE ... USING is only supported in the PostgreSQL source dialect"
                 parseNamedDmlSources cursor
             else []
         { Target = target
+          TargetAlias = targetAlias
           Using = using
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
           Returning = parseReturning cursor }

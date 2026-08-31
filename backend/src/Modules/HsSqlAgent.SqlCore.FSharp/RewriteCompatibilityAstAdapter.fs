@@ -486,7 +486,10 @@ module internal RewriteCompatibilityAstAdapter =
         | Statement.UpdateStatement update ->
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.UpdateStatement(
-                    HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(identifierOf update.Target, null, unknown),
+                    HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
+                        identifierOf update.Target,
+                        update.TargetAlias |> Option.map partOf |> Option.defaultValue null,
+                        unknown),
                     update.Assignments
                     |> List.map (fun assignment ->
                         HsSqlAgent.SqlCore.Core.Ast.Assignment(
@@ -509,7 +512,10 @@ module internal RewriteCompatibilityAstAdapter =
         | Statement.DeleteStatement delete ->
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
-                    HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(identifierOf delete.Target, null, unknown),
+                    HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
+                        identifierOf delete.Target,
+                        delete.TargetAlias |> Option.map partOf |> Option.defaultValue null,
+                        unknown),
                     delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                     statementSpan)
             let usingSources = delete.Using |> List.map tableSourceOf
