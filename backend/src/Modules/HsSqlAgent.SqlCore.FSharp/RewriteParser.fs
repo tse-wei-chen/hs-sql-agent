@@ -635,40 +635,56 @@ module internal RewriteParser =
                 left <- Binary(BinaryOperator.Concat, left, parseUnary cursor)
         markExpr start cursor left
 
+    and private tryParsePostfixCast (cursor: Cursor) (expression: Expr) =
+        if not (isOperator "::" cursor.Current) then None
+        else
+            let token = cursor.Current
+            if cursor.Dialect <> SourceDialect.PostgreSql then
+                let finish = token.Start + max token.Length 1
+                raise (SqlParseException(
+                    "PostgreSQL '::' CAST shorthand is not valid for source dialect "
+                    + sourceDialectName cursor.Dialect
+                    + "; use CAST(... AS ...). Position "
+                    + string token.Start + ", span ["
+                    + string token.Start + ".." + string finish + ")."))
+            cursor.Advance()
+            let target = parsePostfixCastType cursor
+            Some(applyTypedCast cursor expression target)
+
     and private parseUnary cursor =
+        let parseSigned signMultiplier =
+            let sign = cursor.Take()
+            let literal =
+                match cursor.Current.Kind with
+                | IntegerLiteral value ->
+                    cursor.Advance()
+                    Literal(ScalarValue.Integer(signMultiplier * value))
+                | DecimalLiteral value ->
+                    cursor.Advance()
+                    Literal(ScalarValue.Decimal(decimal signMultiplier * value))
+                | _ ->
+                    fail sign ("Unary '" + (if signMultiplier < 0L then "-" else "+") + "' is only supported for numeric literals")
+            let mutable expression = literal
+            let mutable scanning = true
+            while scanning do
+                match tryParsePostfixCast cursor expression with
+                | Some casted -> expression <- casted
+                | None -> scanning <- false
+            expression
+
         match cursor.Current.Kind with
-        | Operator "-" ->
-            let sign = cursor.Take()
-            match cursor.Current.Kind with
-            | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Integer(-value))
-            | DecimalLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal(-value))
-            | _ -> fail sign "Unary '-' is only supported for numeric literals"
-        | Operator "+" ->
-            let sign = cursor.Take()
-            match cursor.Current.Kind with
-            | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Integer value)
-            | DecimalLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal value)
-            | _ -> fail sign "Unary '+' is only supported for numeric literals"
+        | Operator "-" -> parseSigned -1L
+        | Operator "+" -> parseSigned 1L
         | _ -> parsePostfix cursor
 
     and private parsePostfix cursor =
         let mutable expression = parsePrimary cursor
         let mutable scanning = true
         while scanning do
-            if isOperator "::" cursor.Current then
-                let token = cursor.Current
-                if cursor.Dialect <> SourceDialect.PostgreSql then
-                    let finish = token.Start + max token.Length 1
-                    raise (SqlParseException(
-                        "PostgreSQL '::' CAST shorthand is not valid for source dialect "
-                        + sourceDialectName cursor.Dialect
-                        + "; use CAST(... AS ...). Position "
-                        + string token.Start + ", span ["
-                        + string token.Start + ".." + string finish + ")."))
-                cursor.Advance()
-                let target = parsePostfixCastType cursor
-                expression <- applyTypedCast cursor expression target
-            elif acceptKeyword "WITHIN" cursor then
+            match tryParsePostfixCast cursor expression with
+            | Some casted ->
+                expression <- casted
+            | None when acceptKeyword "WITHIN" cursor ->
                 expectKeyword "GROUP" cursor
                 expectSymbol '(' cursor
                 let ordering : OrderBy list = parseOrderBy false cursor
@@ -685,15 +701,16 @@ module internal RewriteParser =
                     fail cursor.Current "Aggregate ordering cannot be specified more than once"
                 | _ ->
                     fail cursor.Current "WITHIN GROUP must modify a function call"
-            elif acceptKeyword "FILTER" cursor then
+            | None when acceptKeyword "FILTER" cursor ->
                 expectSymbol '(' cursor
                 expectKeyword "WHERE" cursor
                 let predicate = parseExpression cursor
                 expectSymbol ')' cursor
                 expression <- FilteredAggregate(expression, predicate)
-            elif acceptKeyword "OVER" cursor then
+            | None when acceptKeyword "OVER" cursor ->
                 expression <- Windowed(expression, parseWindow cursor)
-            else scanning <- false
+            | None ->
+                scanning <- false
         expression
 
     and private parseWindow cursor =
