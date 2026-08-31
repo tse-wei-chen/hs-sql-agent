@@ -208,10 +208,10 @@ public sealed class SqliteGrammarMatrixTests
         {
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 10L);
+                parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 10L));
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 2L);
+                parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 2L));
         }
     }
 }

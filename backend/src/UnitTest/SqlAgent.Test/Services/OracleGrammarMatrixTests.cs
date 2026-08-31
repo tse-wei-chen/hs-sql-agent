@@ -222,18 +222,18 @@ public sealed class OracleGrammarMatrixTests
             Assert.Contains("SYSDATE", command.Sql, StringComparison.OrdinalIgnoreCase);
 
         if (name.EndsWith("__offset", StringComparison.Ordinal))
-            Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 5L);
+            Assert.Contains(command.Parameters, parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 5L));
 
         if (name.EndsWith("__fetch-first", StringComparison.Ordinal))
         {
-            Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 0L);
-            Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 10L);
+            Assert.Contains(command.Parameters, parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 0L));
+            Assert.Contains(command.Parameters, parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 10L));
         }
 
         if (name.EndsWith("__offset-fetch", StringComparison.Ordinal))
         {
-            Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 5L);
-            Assert.Contains(command.Parameters, parameter => Convert.ToInt64(parameter.Value) == 10L);
+            Assert.Contains(command.Parameters, parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 5L));
+            Assert.Contains(command.Parameters, parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 10L));
         }
     }
 }

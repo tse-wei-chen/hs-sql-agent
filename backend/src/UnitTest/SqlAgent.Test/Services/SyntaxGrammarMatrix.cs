@@ -21,6 +21,20 @@ internal static class SyntaxGrammarMatrix
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
 
+    public static bool IntegerParameterEquals(object? value, long expected) =>
+        value switch
+        {
+            sbyte actual => actual == expected,
+            byte actual => actual == expected,
+            short actual => actual == expected,
+            ushort actual => actual == expected,
+            int actual => actual == expected,
+            uint actual => actual == expected,
+            long actual => actual == expected,
+            ulong actual => actual <= long.MaxValue && (long)actual == expected,
+            _ => false
+        };
+
     public static (int? Limit, int? Offset) CanonicalPaging(
         HsSqlAgent.SqlCore.Core.Ast.SqlStatement statement,
         string caseName) =>

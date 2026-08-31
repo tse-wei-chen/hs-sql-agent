@@ -312,7 +312,7 @@ public sealed class SqlServerGrammarMatrixTests
         {
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 5L);
+                parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 5L));
         }
 
         if (name.EndsWith("__offset", StringComparison.Ordinal))
@@ -320,7 +320,7 @@ public sealed class SqlServerGrammarMatrixTests
             Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 6L);
+                parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 6L));
         }
 
         if (name.EndsWith("__offset-fetch", StringComparison.Ordinal))
@@ -328,10 +328,10 @@ public sealed class SqlServerGrammarMatrixTests
             Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 6L);
+                parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 6L));
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 15L);
+                parameter => SyntaxGrammarMatrix.IntegerParameterEquals(parameter.Value, 15L));
         }
     }
 }
