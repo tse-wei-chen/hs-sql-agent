@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Runtime.CompilerServices
+open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 
 /// Unforgeable compiler-stage wrappers. Construction is intentionally centralized here.

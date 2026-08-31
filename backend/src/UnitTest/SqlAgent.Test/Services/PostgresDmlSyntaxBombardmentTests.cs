@@ -21,6 +21,16 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "ON CONFLICT",
             false);
         yield return Case(
+            "insert-on-conflict-do-nothing-targetless",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT DO NOTHING",
+            "ON CONFLICT DO NOTHING",
+            false);
+        yield return Case(
+            "insert-select-on-conflict-do-nothing-targetless",
+            "INSERT INTO users (id, name) SELECT id, name FROM staged_users ON CONFLICT DO NOTHING",
+            "ON CONFLICT DO NOTHING",
+            false);
+        yield return Case(
             "insert-on-conflict-update-returning",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name RETURNING id",
             "DO UPDATE",
@@ -177,6 +187,10 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "duplicate-update-assignment",
             "UPDATE users SET name = 'Alice', name = 'Bob' WHERE id = 1",
             "more than once");
+        yield return Reject(
+            "conflict-targetless-do-update",
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT DO UPDATE SET name = excluded.name",
+            "explicit conflict target");
         yield return Reject(
             "conflict-arbitrary-expression",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name || '!'",
