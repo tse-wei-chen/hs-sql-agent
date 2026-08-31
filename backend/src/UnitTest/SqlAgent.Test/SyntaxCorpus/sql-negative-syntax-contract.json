@@ -1,12 +1,47 @@
 [
   {
-    "name": "pg-recursive-cte",
-    "dialect": "Postgres",
+    "name": "mysql-with-recursive",
+    "dialect": "MySQL",
     "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
     "expectedStage": "parse",
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
-      "WITH RECURSIVE"
+      "select.recursive_cte",
+      "MySQL"
+    ]
+  },
+  {
+    "name": "pg-recursive-anchor-self-reference",
+    "dialect": "Postgres",
+    "sql": "WITH RECURSIVE x AS (SELECT id FROM x) SELECT * FROM x",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "InvalidOperationException",
+    "messageContains": [
+      "select.recursive_cte",
+      "anchor"
+    ]
+  },
+  {
+    "name": "pg-recursive-multiple-self-reference",
+    "dialect": "Postgres",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT a.n + b.n FROM x a JOIN x b ON TRUE) SELECT n FROM x",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "InvalidOperationException",
+    "messageContains": [
+      "select.recursive_cte",
+      "exactly one direct self-reference"
+    ]
+  },
+  {
+    "name": "pg-recursive-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.recursive_cte",
+      "MySQL"
     ]
   },
   {

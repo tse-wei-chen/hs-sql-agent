@@ -17,6 +17,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "WITH",
             "orders");
         yield return Case(
+            "recursive-cte-keyword",
+            "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+            "WITH RECURSIVE",
+            "");
+        yield return Case(
+            "recursive-cte-self-reference",
+            "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x",
+            "WITH RECURSIVE",
+            "");
+        yield return Case(
             "cte-column-alias",
             "WITH recent(id) AS (SELECT id FROM orders) SELECT id FROM recent",
             "WITH",
@@ -923,10 +933,6 @@ public sealed class PostgresSyntaxBombardmentTests
 
     public static IEnumerable<object[]> ExplicitFailClosedPostgresSyntax()
     {
-        yield return RejectWithMessage(
-            "recursive-cte",
-            "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
-            "WITH RECURSIVE");
         yield return RejectWithMessage(
             "cross-join-using",
             "SELECT a.id FROM a CROSS JOIN b USING (id)",
