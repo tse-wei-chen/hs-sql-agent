@@ -142,6 +142,26 @@ public sealed class PostgresSyntaxBombardmentTests
             "COALESCE",
             "orders");
         yield return Case(
+            "modulo",
+            "SELECT price % 10 FROM products",
+            "%",
+            "products");
+        yield return Case(
+            "boolean-and",
+            "SELECT active = TRUE AND deleted = FALSE FROM products",
+            "AND",
+            "products");
+        yield return Case(
+            "boolean-or",
+            "SELECT active = TRUE OR deleted = FALSE FROM products",
+            "OR",
+            "products");
+        yield return Case(
+            "escaped-quote-string",
+            "SELECT 'O''Brien' AS name FROM users",
+            "SELECT",
+            "users");
+        yield return Case(
             "ilike",
             "SELECT id FROM users WHERE name ILIKE 'a%'",
             "ILIKE",
@@ -707,6 +727,18 @@ public sealed class PostgresSyntaxBombardmentTests
             "unterminated-template-parameter",
             "SELECT {{bad FROM users",
             "Unterminated template parameter");
+        yield return RejectWithMessage(
+            "unterminated-quoted-identifier",
+            "SELECT \"unterminated FROM users",
+            "Unterminated quoted identifier");
+        yield return RejectWithMessage(
+            "unterminated-block-comment",
+            "SELECT * FROM users /* unterminated",
+            "Unterminated block comment");
+        yield return RejectWithMessage(
+            "invalid-numeric-literal",
+            "SELECT 1.2.3 FROM users",
+            "Invalid numeric literal");
     }
 
     public static IEnumerable<object[]> UnsupportedPostgresSyntax()

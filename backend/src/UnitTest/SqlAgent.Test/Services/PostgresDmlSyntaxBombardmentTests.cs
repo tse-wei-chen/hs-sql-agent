@@ -55,6 +55,21 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "DELETE FROM inventory USING warehouse WHERE inventory.id = warehouse.inventory_id RETURNING id",
             "RETURNING",
             true);
+        yield return Case(
+            "delete-complex-predicate",
+            "DELETE FROM users WHERE (status = 'old' OR status IS NULL) AND id IN (1, 2) AND age BETWEEN 18 AND 65",
+            "DELETE",
+            false);
+        yield return Case(
+            "update-string-containing-where",
+            "UPDATE main.notes SET body = 'look where the value is', title = 'set, where' WHERE id = 7",
+            "UPDATE",
+            false);
+        yield return Case(
+            "quoted-dml-identifiers",
+            "UPDATE \"app\".\"Order\" SET \"Display Name\" = 'ready' WHERE \"Id\" = 1",
+            "UPDATE",
+            false);
     }
 
     public static IEnumerable<object[]> ParserOnlySupportedPostgresDml()
