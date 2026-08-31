@@ -1060,8 +1060,6 @@ module internal RewriteParser =
         else
             requireSourceParseCapability cursor.Current cursor.SourceDml.Returning
 
-            let seenColumns = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-
             let parseItem () =
                 let expression = parseExpression cursor
                 let alias =
@@ -1082,12 +1080,7 @@ module internal RewriteParser =
                 | Wildcard None, None ->
                     ReturningWildcard None
                 | Column identifier, None when Identifier.parts identifier |> List.length = 1 ->
-                    let name = (Identifier.parts identifier).Head.Value
-                    if not (seenColumns.Add name) then
-                        fail cursor.Current ("RETURNING column '" + name + "' is declared more than once")
                     ReturningColumn(identifier, None)
-                | Column identifier, None ->
-                    fail cursor.Current "RETURNING column references must be unqualified in the portable Core grammar"
                 | expression, alias ->
                     requireSourceCapability cursor.SourceDml.ReturningExpression
                     ReturningExpression(expression, alias)
@@ -1095,11 +1088,7 @@ module internal RewriteParser =
             let items = ResizeArray<ReturningItem>()
             items.Add(parseItem())
             while acceptSymbol ',' cursor do items.Add(parseItem())
-            let values = items |> Seq.toList
-            if values.Length > 1
-               && values |> List.exists (function ReturningWildcard _ -> true | _ -> false) then
-                fail cursor.Current "RETURNING wildcard cannot be mixed with columns or expressions"
-            values
+            items |> Seq.toList
 
     and private parseTableSource (cursor: Cursor) =
         if isKeyword "LATERAL" cursor.Current then
