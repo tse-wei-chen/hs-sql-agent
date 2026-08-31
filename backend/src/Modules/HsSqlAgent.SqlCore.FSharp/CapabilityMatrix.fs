@@ -241,6 +241,16 @@ type SqlCapabilityMatrix private () =
                     "Structured Core row-count limits are translated to provider-native target syntax. Raw LIMIT spelling is accepted only for PostgreSQL, MySQL, and SQLite source dialects. PostgreSQL LIMIT ALL is canonicalized to no row-count limit, including LIMIT ALL OFFSET n where only the offset remains; MySQL and SQLite reject LIMIT ALL. MySQL and SQLite additionally accept native LIMIT offset,row_count and canonicalize the first integer to OFFSET and the second to LIMIT; PostgreSQL comma-form LIMIT is rejected. Raw bare OFFSET remains valid PostgreSQL syntax; MySQL and SQLite accept OFFSET only after LIMIT, and comma-form LIMIT cannot be combined with a separate OFFSET clause. PostgreSQL, Oracle, and Firebird raw source may use the modeled SQL-standard integer OFFSET ... ROW(S) and FETCH FIRST/NEXT ... ROW(S) ONLY forms, including FETCH without OFFSET; PostgreSQL may omit ROW/ROWS after OFFSET and may omit the FETCH count, which canonicalizes to one row. Explicit LIMIT and FETCH clauses remain mutually exclusive at the raw source boundary, including LIMIT ALL, matching PostgreSQL's alternative-syntax grammar. SQL Server raw OFFSET/FETCH requires statement-level ORDER BY, FETCH requires a preceding OFFSET, and TOP cannot share the same query scope. FETCH PERCENT, WITH TIES, and non-integer row-count expressions remain fail-closed because those semantics are not represented by the canonical Limit/Offset model.")
                 cap("select.singleton","query",translated,"SELECT without FROM preserves singleton-row semantics.")
                 cap("select.cte_set","query",translated,"Root CTEs and set operations are represented structurally.")
+                cap("set.intersect_all","query",(if provider=SqlAgentToolType.Postgres then supported else rejected),
+                    if provider=SqlAgentToolType.Postgres then
+                        "PostgreSQL INTERSECT ALL duplicate-preserving semantics are represented explicitly and rendered natively."
+                    else
+                        "Duplicate-preserving INTERSECT ALL remains fail-closed for this target provider until a provider/version-specific semantic contract is declared.")
+                cap("set.except_all","query",(if provider=SqlAgentToolType.Postgres then supported else rejected),
+                    if provider=SqlAgentToolType.Postgres then
+                        "PostgreSQL EXCEPT ALL duplicate-preserving semantics are represented explicitly and rendered natively."
+                    else
+                        "Duplicate-preserving EXCEPT ALL remains fail-closed for this target provider until a provider/version-specific semantic contract is declared.")
                 cap("select.cte_derived","query",nestedStatus, if nestedStatus=translated then "Derived-table-local CTEs preserve lexical scope." else "Nested CTE form remains fail-closed.")
                 cap("select.cte_set_branch","query",nestedStatus, if nestedStatus=translated then "Set-operation branch CTEs preserve lexical scope." else "Nested CTE form remains fail-closed.")
                 cap("select.cte_scalar_root","query",nestedStatus,

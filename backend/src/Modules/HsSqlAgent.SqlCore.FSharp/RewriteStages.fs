@@ -1545,7 +1545,26 @@ module internal RewriteStages =
 
     and private proveTargetQuery targetRuntime expressionProofs query =
         proveTargetSelect targetRuntime expressionProofs query.Head
-        query.SetOperations |> List.iter (fun branch -> proveTargetQuery targetRuntime expressionProofs branch.Query)
+        query.SetOperations
+        |> List.iter (fun branch ->
+            match branch.Operator with
+            | SetOperator.IntersectAll ->
+                match SqlSetAllCapabilityRules.TargetValidationError(
+                          "INTERSECT",
+                          targetProvider targetRuntime) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | SetOperator.ExceptAll ->
+                match SqlSetAllCapabilityRules.TargetValidationError(
+                          "EXCEPT",
+                          targetProvider targetRuntime) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | SetOperator.Union
+            | SetOperator.UnionAll
+            | SetOperator.Intersect
+            | SetOperator.Except -> ()
+            proveTargetQuery targetRuntime expressionProofs branch.Query)
         query.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
 
     let private proveTargetDocument targetRuntime expressionProofs document =
