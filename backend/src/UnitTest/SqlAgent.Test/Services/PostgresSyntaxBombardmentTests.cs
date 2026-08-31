@@ -814,6 +814,18 @@ public sealed class PostgresSyntaxBombardmentTests
             "postfix-cast-too-many-precision-components",
             "SELECT amount::DECIMAL(10,2,3) FROM orders");
         yield return Reject(
+            "filter-after-over",
+            "SELECT SUM(amount) OVER (PARTITION BY customer_id) FILTER (WHERE status = 'open') FROM orders");
+        yield return Reject(
+            "duplicate-filter",
+            "SELECT SUM(amount) FILTER (WHERE status = 'open') FILTER (WHERE status = 'closed') FROM orders");
+        yield return Reject(
+            "duplicate-over",
+            "SELECT SUM(amount) OVER (PARTITION BY customer_id) OVER (ORDER BY created_at) FROM orders");
+        yield return Reject(
+            "filter-after-postfix-cast",
+            "SELECT SUM(amount)::numeric FILTER (WHERE status = 'open') FROM orders");
+        yield return Reject(
             "empty-cte-column-alias-list",
             "WITH x() AS (SELECT id FROM users) SELECT id FROM x");
         yield return Reject(
