@@ -1710,7 +1710,7 @@ module internal RewriteParser =
         { Target = target
           Columns = columns |> Seq.toList
           Input = Values(NonEmpty.create (values |> Seq.toList |> NonEmpty.ofList "values") [])
-          Conflict = Some { TargetColumns = targets |> Seq.toList |> NonEmpty.ofList "conflict target"; Action = action }
+          Conflict = Some { TargetColumns = Some(targets |> Seq.toList |> NonEmpty.ofList "conflict target"); Action = action }
           Returning = parseReturning cursor }
 
     and private parseDmlTargetAlias (cursor: Cursor) =

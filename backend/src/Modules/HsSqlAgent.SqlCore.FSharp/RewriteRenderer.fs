@@ -1226,7 +1226,7 @@ module internal RewriteRenderer =
                 match conflict.Action with
                 | DoNothing -> " ON CONFLICT" + targetClause + " DO NOTHING"
                 | UpdateProposedValues assignments ->
-                    if conflict.TargetColumns.IsNone then
+                    if Option.isNone conflict.TargetColumns then
                         invalidOp "ON CONFLICT DO UPDATE reached rendering without an explicit conflict target."
                     let values = assignments |> NonEmpty.toList |> List.map (fun assignment -> renderIdentifier ctx.Provider assignment.Target + " = EXCLUDED." + renderIdentifier ctx.Provider assignment.Proposed) |> String.concat ", "
                     " ON CONFLICT" + targetClause + " DO UPDATE SET " + values

@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.58"
+    static member Version = "2026-08-31.59"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -196,6 +196,12 @@ type SqlCapabilityMatrix private () =
             | SqlAgentToolType.Postgres -> translated
             | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(3,35)) -> translated
             | SqlAgentToolType.Firebird when SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(5,0)) -> translated
+            | _ -> rejected
+
+        let targetlessDoNothingStatus =
+            match provider with
+            | SqlAgentToolType.Postgres -> translated
+            | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(3,24)) -> translated
             | _ -> rejected
 
         let upsertStatus =
@@ -461,12 +467,22 @@ type SqlCapabilityMatrix private () =
                         | SqlAgentToolType.MySQL ->
                             "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."
                         | _ -> "DML RETURNING result rows remain fail-closed.")
+                cap("dml.conflict_do_nothing_any","dml",targetlessDoNothingStatus,
+                    if targetlessDoNothingStatus=translated then
+                        match provider with
+                        | SqlAgentToolType.Postgres ->
+                            "Targetless ON CONFLICT DO NOTHING is preserved natively for PostgreSQL. Because omitting a conflict target depends on the provider's complete native conflict domain, compilation requires source and target providers to be identical; cross-provider lowering remains fail-closed."
+                        | SqlAgentToolType.Sqlite ->
+                            "Targetless ON CONFLICT DO NOTHING is preserved natively for SQLite ServerVersion 3.24+ target profiles. Compilation requires the same SQLite source/target provider and explicit source/target version proof; cross-provider lowering remains fail-closed."
+                        | _ -> "Targetless conflict-ignore semantics are not modeled for this provider."
+                    else
+                        "Targetless ON CONFLICT DO NOTHING is available only for native PostgreSQL and version-proven SQLite; other providers remain fail-closed.")
                 cap("dml.upsert_merge","dml",upsertStatus,
                     if upsertStatus=translated then
                         if provider=SqlAgentToolType.Postgres then
-                            "PostgreSQL supports the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and closed assignments of the form target = EXCLUDED.source. Arbitrary expressions, predicates, named constraints, partial-index predicates, INSERT ... SELECT upsert, and typed approval execution remain fail-closed."
+                            "PostgreSQL supports the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. Explicit-target DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and closed assignments of the form target = EXCLUDED.source. Targetless DO NOTHING is tracked separately by dml.conflict_do_nothing_any. Arbitrary expressions, predicates, named constraints, partial-index predicates, and typed approval execution remain fail-closed."
                         else
-                            "SQLite ServerVersion 3.24+ target profiles support the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and target = EXCLUDED.source assignments. The target version must be explicit; richer SQLite UPSERT grammar and typed approval execution remain fail-closed."
+                            "SQLite ServerVersion 3.24+ target profiles support the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. Explicit-target DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and target = EXCLUDED.source assignments. Targetless DO NOTHING is tracked separately by dml.conflict_do_nothing_any and remains native-only. The target version must be explicit; richer SQLite UPSERT grammar and typed approval execution remain fail-closed."
                     else
                         match provider with
                         | SqlAgentToolType.Sqlite ->
