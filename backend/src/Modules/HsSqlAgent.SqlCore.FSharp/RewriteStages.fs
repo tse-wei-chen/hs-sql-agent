@@ -594,6 +594,10 @@ module internal RewriteStages =
         | InsertStatement insert ->
             match insert.Input with
             | Values rows ->
+                if insert.Columns.IsEmpty && source <> target then
+                    raise (SqlCompilationException(
+                        "SQL capability 'dml.insert_implicit_columns' is native-only because omitted INSERT target columns depend on provider table-column order. Source provider "
+                        + string source + ", target provider " + string target + "."))
                 rows |> NonEmpty.iter (NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
             | QuerySource query ->
                 validateAggregateQuery enforceSource source sourceProfile target targetProfile query
@@ -1242,10 +1246,20 @@ module internal RewriteStages =
         match insert.Input with
         | DefaultValues -> ()
         | Values rows ->
-            if insert.Columns.IsEmpty then invalidOp "INSERT VALUES requires explicit target columns."
+            if insert.Columns.IsEmpty && insert.Conflict.IsSome then
+                invalidOp "INSERT conflict handling requires explicit target columns; implicit target-column order is not admitted for conflict proofs."
+            let expectedImplicitWidth =
+                if insert.Columns.IsEmpty then
+                    rows |> NonEmpty.toList |> List.head |> NonEmpty.length |> Some
+                else None
             rows
             |> NonEmpty.iter (fun row ->
-                if NonEmpty.length row <> insert.Columns.Length then invalidOp "INSERT VALUES row width does not match target column count."
+                match expectedImplicitWidth with
+                | Some expected when NonEmpty.length row <> expected ->
+                    invalidOp "INSERT VALUES without an explicit column list requires every row to have the same width."
+                | None when NonEmpty.length row <> insert.Columns.Length ->
+                    invalidOp "INSERT VALUES row width does not match target column count."
+                | _ -> ()
                 row |> NonEmpty.iter validateInsertValueScope)
         | QuerySource query ->
             if insert.Columns.IsEmpty then invalidOp "INSERT ... SELECT requires explicit target columns."

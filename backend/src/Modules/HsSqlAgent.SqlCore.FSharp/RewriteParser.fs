@@ -1694,11 +1694,10 @@ module internal RewriteParser =
             expectSymbol ')' cursor
         ensureUniqueInsertColumns cursor (columns |> Seq.toList)
         let requiresExplicitColumns =
-            isKeyword "VALUES" cursor.Current
-            || isKeyword "SELECT" cursor.Current
+            isKeyword "SELECT" cursor.Current
             || isKeyword "WITH" cursor.Current
         if columns.Count = 0 && requiresExplicitColumns then
-            fail cursor.Current "INSERT requires an explicit INSERT column list"
+            fail cursor.Current "INSERT ... SELECT requires an explicit INSERT column list"
         let input =
             if acceptKeyword "VALUES" cursor then
                 let rows = ResizeArray<NonEmpty<Expr>>()
@@ -1708,7 +1707,7 @@ module internal RewriteParser =
                     values.Add(parseExpression cursor)
                     while acceptSymbol ',' cursor do values.Add(parseExpression cursor)
                     expectSymbol ')' cursor
-                    if values.Count <> columns.Count then
+                    if columns.Count > 0 && values.Count <> columns.Count then
                         fail cursor.Current (
                             "INSERT row has " + string values.Count
                             + " values but " + string columns.Count
@@ -1716,7 +1715,12 @@ module internal RewriteParser =
                     values |> Seq.toList |> NonEmpty.ofList "values"
                 rows.Add(parseRow())
                 while acceptSymbol ',' cursor do rows.Add(parseRow())
-                Values(rows |> Seq.toList |> NonEmpty.ofList "rows")
+                let parsedRows = rows |> Seq.toList
+                if columns.Count = 0 then
+                    let widths = parsedRows |> List.map NonEmpty.length |> List.distinct
+                    if widths.Length <> 1 then
+                        fail cursor.Current "INSERT VALUES without an explicit column list requires every VALUES row to have the same width"
+                Values(parsedRows |> NonEmpty.ofList "rows")
             elif isKeyword "SELECT" cursor.Current || isKeyword "WITH" cursor.Current then QuerySource(parseQuery cursor)
             elif acceptKeyword "DEFAULT" cursor then expectKeyword "VALUES" cursor; DefaultValues
             else fail cursor.Current "Expected VALUES, SELECT, or DEFAULT VALUES"

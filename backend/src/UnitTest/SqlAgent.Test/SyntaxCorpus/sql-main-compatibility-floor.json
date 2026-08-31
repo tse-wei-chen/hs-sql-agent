@@ -684,5 +684,41 @@
     "name": "natural-left-join-lateral",
     "dialect": "Postgres",
     "sql": "SELECT u.id FROM users u NATURAL LEFT JOIN LATERAL (SELECT u.id AS id) q"
+  },
+  {
+    "name": "postgres-insert-implicit-columns",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "mysql-insert-implicit-columns",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "sqlite-insert-implicit-columns",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "sqlserver-insert-implicit-columns",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "oracle-insert-implicit-columns",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "firebird-insert-implicit-columns",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
   }
 ]

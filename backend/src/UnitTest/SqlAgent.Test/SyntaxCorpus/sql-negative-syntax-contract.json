@@ -436,5 +436,38 @@
     "messageContains": [
       "RIGHT/FULL JOIN LATERAL"
     ]
+  },
+  {
+    "name": "postgres-insert-implicit-columns-cross-provider",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.insert_implicit_columns",
+      "native-only"
+    ]
+  },
+  {
+    "name": "postgres-insert-implicit-columns-row-width",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO users VALUES (1, 'Alice'), (2)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "same width"
+    ]
+  },
+  {
+    "name": "postgres-insert-implicit-columns-conflict",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO users VALUES (1, 'Alice') ON CONFLICT DO NOTHING",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "conflict handling",
+      "explicit target columns"
+    ]
   }
 ]
