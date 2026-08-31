@@ -833,6 +833,10 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT TIME ' 09:30 ' FROM users",
             "Invalid TIME literal");
         yield return RejectWithMessage(
+            "lowercase-zulu-timestamp",
+            "SELECT TIMESTAMP '2026-08-21T01:30z' FROM users",
+            "Invalid TIMESTAMP literal");
+        yield return RejectWithMessage(
             "invalid-numeric-literal",
             "SELECT 1.2.3 FROM users",
             "Invalid numeric literal");
