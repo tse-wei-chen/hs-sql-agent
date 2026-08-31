@@ -230,9 +230,19 @@ public sealed class SqlServerGrammarMatrixTests
         var parsed = CoreSqlTextParser.ParseQuery(
             sql,
             SqlAgentToolType.MsSqlServer);
-        var select = Assert.IsType<SelectStatement>(parsed.Statement);
-        Assert.Equal(expectedLimit, select.Limit);
-        Assert.Equal(expectedOffset, select.Offset);
+        var (actualLimit, actualOffset) = parsed.Statement switch
+        {
+            SelectStatement select => (
+                select.Limit.HasValue ? select.Limit.Value : (int?)null,
+                select.Offset.HasValue ? select.Offset.Value : (int?)null),
+            QueryStatement query => (
+                query.Limit.HasValue ? query.Limit.Value : (int?)null,
+                query.Offset.HasValue ? query.Offset.Value : (int?)null),
+            var statement => throw new Xunit.Sdk.XunitException(
+                $"{name}: expected SELECT/query compatibility AST, actual {statement.GetType().FullName}.")
+        };
+        Assert.Equal(expectedLimit, actualLimit);
+        Assert.Equal(expectedOffset, actualOffset);
 
         var facts = SqlCoreInspection.GetQueryFacts(parsed);
         var expectedTables = expectedTablesCsv.Split(
