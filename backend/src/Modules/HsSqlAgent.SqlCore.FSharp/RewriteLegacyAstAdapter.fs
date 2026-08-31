@@ -508,14 +508,26 @@ module internal RewriteLegacyAstAdapter =
                           Value = exprOf assignment.Value })
                     |> Seq.toList
                     |> NonEmpty.ofList "assignments"
-                  From = update.From |> Seq.map (fun source -> tableSourceOf source) |> Seq.toList
+                  From =
+                    (if update.FromSources.IsDefaultOrEmpty then
+                        update.From |> Seq.map (fun source -> source :> HsSqlAgent.SqlCore.Core.Ast.TableSource)
+                     else
+                        update.FromSources :> seq<HsSqlAgent.SqlCore.Core.Ast.TableSource>)
+                    |> Seq.map tableSourceOf
+                    |> Seq.toList
                   Where = Option.ofObj update.Predicate |> Option.map exprOf
                   Returning = update.Returning |> Seq.map returningItemOf |> Seq.toList }
 
         | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement as delete ->
             Statement.DeleteStatement
                 { Delete.Target = identifierOf delete.Target.Name
-                  Using = delete.Using |> Seq.map (fun source -> tableSourceOf source) |> Seq.toList
+                  Using =
+                    (if delete.UsingSources.IsDefaultOrEmpty then
+                        delete.Using |> Seq.map (fun source -> source :> HsSqlAgent.SqlCore.Core.Ast.TableSource)
+                     else
+                        delete.UsingSources :> seq<HsSqlAgent.SqlCore.Core.Ast.TableSource>)
+                    |> Seq.map tableSourceOf
+                    |> Seq.toList
                   Where = Option.ofObj delete.Predicate |> Option.map exprOf
                   Returning = delete.Returning |> Seq.map returningItemOf |> Seq.toList }
 

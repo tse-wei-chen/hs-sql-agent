@@ -101,12 +101,21 @@ public class CoreDeleteUsingMilestoneTests
     }
 
     [Fact]
-    public void ParseDeleteUsing_Alias_RemainsFailClosed()
+    public void ParseDeleteUsing_Alias_IsRepresentedAndCompiles()
     {
-        var error = Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseDml(
+        var parsed = CoreSqlTextParser.ParseDml(
             "DELETE FROM inventory USING warehouse AS w WHERE inventory.id = w.inventory_id",
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("aliases", error.Message, StringComparison.OrdinalIgnoreCase);
+        var delete = Assert.IsType<DeleteStatement>(parsed.Statement);
+        var source = Assert.Single(delete.Using);
+        Assert.Equal("w", source.Alias?.Value, ignoreCase: true);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.Contains("warehouse AS w", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 }

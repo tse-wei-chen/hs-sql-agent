@@ -83,12 +83,21 @@ public class CoreUpdateFromMilestoneTests
     }
 
     [Fact]
-    public void ParseUpdateFrom_Alias_RemainsFailClosedInFirstSlice()
+    public void ParseUpdateFrom_Alias_IsRepresentedAndCompiles()
     {
-        var error = Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseDml(
+        var parsed = CoreSqlTextParser.ParseDml(
             "UPDATE inventory SET quantity = 1 FROM warehouse AS w WHERE inventory.id = w.inventory_id",
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("aliases", error.Message, StringComparison.OrdinalIgnoreCase);
+        var update = Assert.IsType<UpdateStatement>(parsed.Statement);
+        var source = Assert.Single(update.From);
+        Assert.Equal("w", source.Alias?.Value, ignoreCase: true);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.Contains("warehouse AS w", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 }

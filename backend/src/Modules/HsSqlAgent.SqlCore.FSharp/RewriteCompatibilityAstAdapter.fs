@@ -420,11 +420,6 @@ module internal RewriteCompatibilityAstAdapter =
                 alias |> Option.map partOf |> Option.defaultValue null,
                 unknown)
 
-    let private namedDmlSource context source =
-        match tableSourceOf source with
-        | :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource as named -> named
-        | _ -> raise (SqlCompilationException(context + " supports named DML sources only."))
-
     let private conflictOf (conflict: InsertConflict) =
         let action, assignments =
             match conflict.Action with
@@ -501,7 +496,13 @@ module internal RewriteCompatibilityAstAdapter =
                     |> ImmutableArray.CreateRange,
                     update.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                     statementSpan)
-            result.From <- update.From |> List.map (namedDmlSource "UPDATE FROM") |> ImmutableArray.CreateRange
+            let fromSources = update.From |> List.map tableSourceOf
+            result.FromSources <- fromSources |> ImmutableArray.CreateRange
+            if fromSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
+                result.From <-
+                    fromSources
+                    |> List.map (fun source -> source :?> HsSqlAgent.SqlCore.Core.Ast.NamedTableSource)
+                    |> ImmutableArray.CreateRange
             result.Returning <- update.Returning |> List.map returningOf |> ImmutableArray.CreateRange
             result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
@@ -511,7 +512,13 @@ module internal RewriteCompatibilityAstAdapter =
                     HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(identifierOf delete.Target, null, unknown),
                     delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                     statementSpan)
-            result.Using <- delete.Using |> List.map (namedDmlSource "DELETE USING") |> ImmutableArray.CreateRange
+            let usingSources = delete.Using |> List.map tableSourceOf
+            result.UsingSources <- usingSources |> ImmutableArray.CreateRange
+            if usingSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
+                result.Using <-
+                    usingSources
+                    |> List.map (fun source -> source :?> HsSqlAgent.SqlCore.Core.Ast.NamedTableSource)
+                    |> ImmutableArray.CreateRange
             result.Returning <- delete.Returning |> List.map returningOf |> ImmutableArray.CreateRange
             result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 

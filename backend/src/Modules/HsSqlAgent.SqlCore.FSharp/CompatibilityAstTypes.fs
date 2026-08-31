@@ -313,6 +313,9 @@ type UpdateStatement(target: NamedTableSource, assignments: ImmutableArray<Assig
     member _.Assignments = assignments
     member _.Predicate = predicate
     member val From = ImmutableArray<NamedTableSource>.Empty with get, set
+    /// Full PostgreSQL FROM table-expression surface. When non-empty this is the
+    /// source-of-truth collection; From remains the legacy named-source view.
+    member val FromSources = ImmutableArray<TableSource>.Empty with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 [<Sealed>]
@@ -321,6 +324,9 @@ type DeleteStatement(target: NamedTableSource, predicate: SqlExpr, span: SourceS
     member val Target = target with get, set
     member _.Predicate = predicate
     member val Using = ImmutableArray<NamedTableSource>.Empty with get, set
+    /// Full PostgreSQL USING table-expression surface. When non-empty this is the
+    /// source-of-truth collection; Using remains the legacy named-source view.
+    member val UsingSources = ImmutableArray<TableSource>.Empty with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 [<AbstractClass>]
