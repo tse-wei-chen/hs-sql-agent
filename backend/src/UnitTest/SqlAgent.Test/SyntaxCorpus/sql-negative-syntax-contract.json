@@ -11,6 +11,30 @@
     ]
   },
   {
+    "name": "sqlite-with-recursive-without-profile",
+    "dialect": "Sqlite",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "explicit source ServerVersion",
+      "Sqlite"
+    ]
+  },
+  {
+    "name": "firebird-with-recursive-without-profile",
+    "dialect": "Firebird",
+    "sql": "WITH RECURSIVE x AS (SELECT 1 FROM RDB$DATABASE) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "explicit source ServerVersion",
+      "Firebird"
+    ]
+  },
+  {
     "name": "pg-recursive-anchor-self-reference",
     "dialect": "Postgres",
     "sql": "WITH RECURSIVE x AS (SELECT id FROM x) SELECT * FROM x",
