@@ -197,3 +197,53 @@ jobs:
         working-directory: frontend
       - run: pnpm lint
         working-directory: frontend
+
+  sql-syntax-parity:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build differential parity runner
+        run: dotnet build .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj --configuration Release
+      - name: Build PR SqlCore
+        run: dotnet build backend/src/Modules/HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj --configuration Release --output artifacts/parity/head
+      - name: Capture PR syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/postgres-main-compatibility-floor.json
+          artifacts/parity/head.json
+      - name: Build base main SqlCore
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_SHA" --depth=1
+          git worktree add --detach /tmp/hs-sql-agent-main "$BASE_SHA"
+          dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj \
+            --configuration Release \
+            --output artifacts/parity/main
+      - name: Capture base main syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/postgres-main-compatibility-floor.json
+          artifacts/parity/main.json
+      - name: Enforce main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main.json artifacts/parity/head.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/postgres-intentional-breaking-allowlist.json
+
