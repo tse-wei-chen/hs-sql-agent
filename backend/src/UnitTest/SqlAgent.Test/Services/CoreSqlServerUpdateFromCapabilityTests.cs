@@ -13,9 +13,9 @@ public sealed class CoreSqlServerUpdateFromCapabilityTests
         var parsed = CoreSqlTextParser.ParseDml(Sql, SqlAgentToolType.MsSqlServer);
         var update = Assert.IsType<UpdateStatement>(parsed.Statement);
 
-        Assert.Single(update.From);
-        Assert.Null(update.TargetAlias);
-        Assert.NotNull(update.Where);
+        Assert.Single(update.FromSources);
+        Assert.Null(update.Target.Alias);
+        Assert.NotNull(update.Predicate);
     }
 
     [Fact]
