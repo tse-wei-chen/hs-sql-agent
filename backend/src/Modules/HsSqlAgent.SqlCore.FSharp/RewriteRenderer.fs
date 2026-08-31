@@ -1216,14 +1216,20 @@ module internal RewriteRenderer =
         match conflict with
         | None -> ""
         | Some conflict ->
-            let targets = conflict.TargetColumns |> NonEmpty.toList |> List.map (renderIdentifier ctx.Provider) |> String.concat ", "
+            let targetClause =
+                conflict.TargetColumns
+                |> Option.map (fun columns ->
+                    " (" + (columns |> NonEmpty.toList |> List.map (renderIdentifier ctx.Provider) |> String.concat ", ") + ")")
+                |> Option.defaultValue ""
             match ctx.Provider with
             | PostgreSql | SQLite ->
                 match conflict.Action with
-                | DoNothing -> " ON CONFLICT (" + targets + ") DO NOTHING"
+                | DoNothing -> " ON CONFLICT" + targetClause + " DO NOTHING"
                 | UpdateProposedValues assignments ->
+                    if conflict.TargetColumns.IsNone then
+                        invalidOp "ON CONFLICT DO UPDATE reached rendering without an explicit conflict target."
                     let values = assignments |> NonEmpty.toList |> List.map (fun assignment -> renderIdentifier ctx.Provider assignment.Target + " = EXCLUDED." + renderIdentifier ctx.Provider assignment.Proposed) |> String.concat ", "
-                    " ON CONFLICT (" + targets + ") DO UPDATE SET " + values
+                    " ON CONFLICT" + targetClause + " DO UPDATE SET " + values
             | _ -> invalidOp "Portable INSERT conflict lowering is not supported by the target provider."
 
     let private renderInsert (ctx: RenderContext) insert =
@@ -1234,7 +1240,12 @@ module internal RewriteRenderer =
                 match insert.Input with
                 | Values rows when NonEmpty.length rows = 1 -> rows |> NonEmpty.toList |> List.head |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", "
                 | _ -> invalidOp "Firebird UPDATE OR INSERT requires exactly one VALUES row."
-            let targets = conflict.TargetColumns |> NonEmpty.toList |> List.map (renderIdentifier ctx.Provider) |> String.concat ", "
+            let targets =
+                conflict.TargetColumns
+                |> Option.defaultWith (fun () -> invalidOp "Firebird UPDATE OR INSERT requires an explicit MATCHING conflict target.")
+                |> NonEmpty.toList
+                |> List.map (renderIdentifier ctx.Provider)
+                |> String.concat ", "
             "UPDATE OR INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + " VALUES (" + values + ") MATCHING (" + targets + ")" + renderReturning ctx insert.Returning
         | MySql, Some conflict ->
             let values =

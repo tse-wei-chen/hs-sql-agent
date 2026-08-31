@@ -316,7 +316,7 @@ module internal RewriteFacadeAdapter =
                 value.MatchedUniqueKeyColumns |> Seq.toList,
                 value.IsSoleEnforcedUniqueKey)
 
-    let private conflictProofs target (targetProfile: SqlProviderCapabilityProfile | null) (assurance: DmlConflictTargetAssurance | null) : ConflictProofs =
+    let private conflictProofs source target (targetProfile: SqlProviderCapabilityProfile | null) (assurance: DmlConflictTargetAssurance | null) : ConflictProofs =
         let firebirdPrimaryKey, sourceRows =
             match assurance with
             | null ->
@@ -325,7 +325,8 @@ module internal RewriteFacadeAdapter =
             | value ->
                 columnSetAssurance value.PrimaryKeyColumns,
                 columnSetAssurance value.SourceRowsUniqueByInsertColumns
-        { DirectTarget =
+        { SourceProvider = source
+          DirectTarget =
             SqlDmlUpsertCapabilityRules.DirectTargetValidationError(target, targetProfile)
             |> capabilityProof
           MySqlConditionalTarget =
@@ -412,7 +413,7 @@ module internal RewriteFacadeAdapter =
                   TargetJoins = targetJoinProofs target targetProfile
                   TargetOrdering = targetNullOrdering target
                   TargetDml = targetDmlProofs target targetProfile
-                  ConflictProofs = conflictProofs target targetProfile conflictTargetAssurance
+                  ConflictProofs = conflictProofs source target targetProfile conflictTargetAssurance
                   Policy = policy
                   AllowedTables = allowed }
                 sql
@@ -486,7 +487,7 @@ module internal RewriteFacadeAdapter =
                   TargetJoins = targetJoinProofs target targetProfile
                   TargetOrdering = targetNullOrdering target
                   TargetDml = targetDmlProofs target targetProfile
-                  ConflictProofs = conflictProofs target targetProfile conflictTargetAssurance
+                  ConflictProofs = conflictProofs source target targetProfile conflictTargetAssurance
                   Policy = policy
                   AllowedTables = allowed }
                 (RewriteLegacyAstAdapter.toParsed parsed.Statement)

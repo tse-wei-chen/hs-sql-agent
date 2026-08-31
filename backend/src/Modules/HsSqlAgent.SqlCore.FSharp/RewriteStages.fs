@@ -2109,20 +2109,33 @@ module internal RewriteStages =
         | AssuredColumns columns -> columns
         | MissingAssurance -> raise (SqlCompilationException(label))
 
+    let private requireExplicitConflictTarget label (conflict: InsertConflict) =
+        match conflict.TargetColumns with
+        | Some columns -> columns
+        | None -> raise (SqlCompilationException(label))
+
     let private validateConflictTargetColumns (insert: Insert) (conflict: InsertConflict) =
-        let insertColumns =
-            HashSet<string>(
-                insert.Columns |> List.map (fun column -> column.Value),
-                StringComparer.OrdinalIgnoreCase)
-        let seen = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        for target in conflict.TargetColumns |> NonEmpty.toList do
-            let name = Identifier.text target
-            if not (seen.Add name) then
+        match conflict.TargetColumns with
+        | None ->
+            match conflict.Action with
+            | DoNothing -> ()
+            | UpdateProposedValues _ ->
                 raise (SqlCompilationException(
-                    "INSERT conflict target column '" + name + "' is declared more than once."))
-            if not (insertColumns.Contains name) then
-                raise (SqlCompilationException(
-                    "INSERT conflict target column '" + name + "' must be explicitly present in the INSERT column list so Core does not depend on provider-default conflict-key values."))
+                    "ON CONFLICT DO UPDATE requires an explicit conflict target in the modeled Core contract."))
+        | Some targets ->
+            let insertColumns =
+                HashSet<string>(
+                    insert.Columns |> List.map (fun column -> column.Value),
+                    StringComparer.OrdinalIgnoreCase)
+            let seen = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            for target in targets |> NonEmpty.toList do
+                let name = Identifier.text target
+                if not (seen.Add name) then
+                    raise (SqlCompilationException(
+                        "INSERT conflict target column '" + name + "' is declared more than once."))
+                if not (insertColumns.Contains name) then
+                    raise (SqlCompilationException(
+                        "INSERT conflict target column '" + name + "' must be explicitly present in the INSERT column list so Core does not depend on provider-default conflict-key values."))
 
     let private validateInsertSelectConflictAssurance (conflict: InsertConflict) (proofs: ConflictProofs) =
         let proven =
@@ -2130,7 +2143,8 @@ module internal RewriteStages =
                 "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target."
                 proofs.SourceRowsUniqueByInsertColumns
         let target =
-            conflict.TargetColumns
+            conflict
+            |> requireExplicitConflictTarget "INSERT ... SELECT conflict DO UPDATE requires an explicit conflict target."
             |> NonEmpty.toList
             |> List.map Identifier.text
         if not (exactColumnSetMatch target proven) then
@@ -2167,6 +2181,23 @@ module internal RewriteStages =
         | Values _ -> ()
 
         validateConflictTargetColumns insert conflict
+
+        match conflict.TargetColumns, conflict.Action with
+        | None, DoNothing ->
+            let target = targetProvider targetRuntime
+            if proofs.SourceProvider <> target then
+                raise (SqlCompilationException(
+                    "SQL capability 'dml.conflict_do_nothing_any' is native-only because an omitted conflict target depends on the provider's complete native conflict domain. Source provider "
+                    + string proofs.SourceProvider + ", target provider " + string target + "."))
+            match targetRuntime with
+            | PostgreSqlRuntime | SQLiteRuntime -> ()
+            | _ ->
+                raise (SqlCompilationException(
+                    "SQL capability 'dml.conflict_do_nothing_any' is supported only for PostgreSQL and SQLite native targets."))
+        | None, UpdateProposedValues _ ->
+            raise (SqlCompilationException(
+                "ON CONFLICT DO UPDATE requires an explicit conflict target in the modeled Core contract."))
+        | Some _, _ -> ()
 
         match conflict.Action with
         | DoNothing -> ()
@@ -2225,7 +2256,8 @@ module internal RewriteStages =
                         "MySQL ON DUPLICATE KEY UPDATE can react to any UNIQUE or PRIMARY KEY conflict. Core requires the matched conflict target to be the sole enforced native unique-conflict source, including no additional richer expression, prefix, partial, or otherwise unsupported enforced unique keys."))
                 | AssuredMySqlUniqueKey(columns, true) -> columns
             let target =
-                conflict.TargetColumns
+                conflict
+                |> requireExplicitConflictTarget "MySQL conflict lowering requires an explicit canonical conflict target."
                 |> NonEmpty.toList
                 |> List.map Identifier.text
             if not (exactColumnSetMatch target matchedColumns) then
@@ -2247,7 +2279,8 @@ module internal RewriteStages =
                     "Firebird UPDATE OR INSERT requires metadata-backed conflict-target assurance proving MATCHING equals the resolved primary key; absent assurance remains fail-closed because non-unique MATCHING can update multiple rows."
                     proofs.FirebirdPrimaryKey
             let target =
-                conflict.TargetColumns
+                conflict
+                |> requireExplicitConflictTarget "Firebird conflict lowering requires an explicit canonical conflict target."
                 |> NonEmpty.toList
                 |> List.map Identifier.text
             if not (exactColumnSetMatch target primaryKey) then

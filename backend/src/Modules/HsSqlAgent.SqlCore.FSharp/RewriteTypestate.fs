@@ -56,7 +56,8 @@ module internal Typestate =
         | AssuredMySqlUniqueKey of columns: string list * isSoleEnforcedUniqueKey: bool
 
     type ConflictProofs =
-        { DirectTarget: CapabilityProof
+        { SourceProvider: SqlAgentToolType
+          DirectTarget: CapabilityProof
           MySqlConditionalTarget: CapabilityProof
           FirebirdPrimaryKey: ColumnSetAssurance
           MySqlUniqueKey: MySqlUniqueKeyAssurance
