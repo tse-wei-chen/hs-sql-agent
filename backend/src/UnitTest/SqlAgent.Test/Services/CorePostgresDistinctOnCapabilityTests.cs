@@ -83,8 +83,8 @@ public sealed class CorePostgresDistinctOnCapabilityTests
             "SELECT DISTINCT ON ((SELECT MAX(id) FROM archived_orders)) id FROM orders",
             SqlAgentToolType.Postgres);
 
-        Assert.Contains("orders", facts.Tables, StringComparer.OrdinalIgnoreCase);
-        Assert.Contains("archived_orders", facts.Tables, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("orders", facts.ReferencedTables, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("archived_orders", facts.ReferencedTables, StringComparer.OrdinalIgnoreCase);
         Assert.True(facts.ContainsSubquery);
     }
 
