@@ -79,7 +79,7 @@ public sealed class CorePostgresDistinctOnCapabilityTests
     [Fact]
     public void Inspection_DistinctOnExpression_TraversesNestedSubquery()
     {
-        var facts = SqlCoreInspection.GetQueryFacts(
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(
             "SELECT DISTINCT ON ((SELECT MAX(id) FROM archived_orders)) id FROM orders",
             SqlAgentToolType.Postgres);
 
