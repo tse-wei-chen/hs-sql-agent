@@ -202,10 +202,6 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "DELETE FROM users WHERE id = 1 RETURNING * AS everything",
             "wildcard");
         yield return Reject(
-            "returning-unknown-qualifier",
-            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING missing.id",
-            "unknown table/alias qualifier");
-        yield return Reject(
             "insert-missing-column-list",
             "INSERT INTO users VALUES (1, 'Alice')",
             "INSERT column list");
@@ -295,6 +291,22 @@ public sealed class PostgresDmlSyntaxBombardmentTests
 
         Assert.NotNull(parsed.Statement);
         Assert.False(string.IsNullOrWhiteSpace(parsed.RawSql), name);
+    }
+
+    [Fact]
+    public void ReturningUnknownQualifier_FailsClosedDuringBinding()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING missing.id",
+            SqlAgentToolType.Postgres);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("postgres-dml-syntax-bombardment-v1")));
+
+        Assert.Contains("unknown table/alias qualifier", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
