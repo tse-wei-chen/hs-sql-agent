@@ -56,6 +56,21 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "RETURNING",
             true);
         yield return Case(
+            "qualified-returning-column",
+            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING users.id",
+            "RETURNING",
+            true);
+        yield return Case(
+            "mixed-wildcard-returning",
+            "DELETE FROM users WHERE id = 1 RETURNING *, id",
+            "RETURNING",
+            true);
+        yield return Case(
+            "duplicate-returning-output",
+            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id, id",
+            "RETURNING",
+            true);
+        yield return Case(
             "update-from",
             "UPDATE users SET status = archived.status FROM archived WHERE users.id = archived.id",
             " FROM ",
@@ -153,18 +168,6 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "postgres-on-duplicate-key",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON DUPLICATE KEY UPDATE name = name",
             "conflict target");
-        yield return Reject(
-            "qualified-returning-column",
-            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING users.id",
-            "unqualified");
-        yield return Reject(
-            "returning-wildcard-mixed",
-            "DELETE FROM users WHERE id = 1 RETURNING *, id",
-            "wildcard");
-        yield return Reject(
-            "duplicate-returning-column",
-            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id, id",
-            "more than once");
         yield return Reject(
             "implicit-returning-column-alias",
             "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id returned_id",
