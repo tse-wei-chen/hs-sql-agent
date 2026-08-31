@@ -802,6 +802,21 @@ public sealed class PostgresSyntaxBombardmentTests
             "LATERAL",
             "users");
         yield return Case(
+            "natural-join",
+            "SELECT id FROM alpha NATURAL JOIN beta",
+            "NATURAL JOIN",
+            "alpha,beta");
+        yield return Case(
+            "natural-left-join",
+            "SELECT id FROM alpha NATURAL LEFT JOIN beta",
+            "NATURAL LEFT JOIN",
+            "alpha,beta");
+        yield return Case(
+            "natural-full-join",
+            "SELECT id FROM alpha NATURAL FULL JOIN beta",
+            "NATURAL FULL OUTER JOIN",
+            "alpha,beta");
+        yield return Case(
             "fetch-first",
             "SELECT id FROM users ORDER BY id FETCH FIRST 5 ROWS ONLY",
             "LIMIT",
@@ -916,10 +931,6 @@ public sealed class PostgresSyntaxBombardmentTests
             "cross-join-using",
             "SELECT a.id FROM a CROSS JOIN b USING (id)",
             "ON/USING");
-        yield return RejectWithMessage(
-            "natural-join",
-            "SELECT a.id FROM a NATURAL JOIN b",
-            "NATURAL JOIN");
         yield return RejectWithMessage(
             "unbound-question-parameter",
             "SELECT ? FROM users",

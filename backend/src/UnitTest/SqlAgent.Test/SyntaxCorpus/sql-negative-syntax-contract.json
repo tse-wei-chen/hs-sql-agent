@@ -43,13 +43,36 @@
     ]
   },
   {
-    "name": "pg-natural-join",
-    "dialect": "Postgres",
-    "sql": "SELECT a.id FROM a NATURAL JOIN b",
+    "name": "sqlserver-natural-join",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta",
     "expectedStage": "parse",
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
-      "NATURAL JOIN"
+      "join.natural",
+      "MsSqlServer"
+    ]
+  },
+  {
+    "name": "pg-natural-join-on",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta ON alpha.id = beta.id",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "NATURAL JOIN",
+      "ON or USING"
+    ]
+  },
+  {
+    "name": "pg-natural-join-using",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta USING (id)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "NATURAL JOIN",
+      "ON or USING"
     ]
   },
   {
