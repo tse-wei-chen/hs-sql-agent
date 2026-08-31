@@ -197,6 +197,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT",
             "events");
         yield return Case(
+            "typed-time-single-digit-hour",
+            "SELECT TIME '9:30' AS report_time FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
+            "typed-time-whitespace",
+            "SELECT TIME ' 09:30 ' AS report_time FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
             "time-without-time-zone",
             "SELECT TIME WITHOUT TIME ZONE '09:30:15' AS report_time FROM events",
             "SELECT",
@@ -224,6 +234,11 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Case(
             "typed-timestamp-minute-zulu",
             "SELECT TIMESTAMP '2026-08-21T01:30Z' AS happened_at FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
+            "typed-timestamp-minute-lowercase-zulu",
+            "SELECT TIMESTAMP '2026-08-21T01:30z' AS happened_at FROM events",
             "SELECT",
             "events");
         yield return Case(
@@ -825,18 +840,6 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT DATE '2026-02-30' FROM users",
             "Invalid DATE literal");
         yield return RejectWithMessage(
-            "noncanonical-time-single-digit-hour",
-            "SELECT TIME '9:30' FROM users",
-            "Invalid TIME literal");
-        yield return RejectWithMessage(
-            "noncanonical-time-whitespace",
-            "SELECT TIME ' 09:30 ' FROM users",
-            "Invalid TIME literal");
-        yield return RejectWithMessage(
-            "lowercase-zulu-timestamp",
-            "SELECT TIMESTAMP '2026-08-21T01:30z' FROM users",
-            "Invalid TIMESTAMP literal");
-        yield return RejectWithMessage(
             "invalid-numeric-literal",
             "SELECT 1.2.3 FROM users",
             "Invalid numeric literal");
@@ -932,6 +935,20 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Reject(
             "unterminated-string",
             "SELECT 'unterminated FROM users");
+    }
+
+    [Fact]
+    public void BarePostgresTimestamp_IgnoresTimezoneDecorationInSourceSemantics()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT TIMESTAMP '2026-08-21T09:30+08:00' FROM events",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var literal = Assert.IsType<LiteralExpr>(Assert.Single(select.Select).Expression);
+        var local = Assert.IsType<SqlLocalDateTimeValue>(literal.Value);
+
+        Assert.Equal(new DateTime(2026, 8, 21, 9, 30, 0), local.Value);
     }
 
     [Fact]

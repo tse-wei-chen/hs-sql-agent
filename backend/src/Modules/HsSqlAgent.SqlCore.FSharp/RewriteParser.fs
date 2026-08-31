@@ -338,20 +338,11 @@ module internal RewriteParser =
             | _ -> fail token "Invalid DATE literal"
         | _ -> fail token "DATE requires a string literal"
 
-    let private timeFormats =
-        [| "HH:mm"
-           "HH:mm:ss"
-           "HH:mm:ss.FFFFFFF" |]
-
     let private parseTimeLiteral (cursor: Cursor) =
         let token = cursor.Take()
         match token.Kind with
         | StringLiteral text ->
-            match TimeOnly.TryParseExact(
-                text,
-                timeFormats,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.None) with
+            match TimeOnly.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
             | true, value -> ScalarValue.Time value
             | _ -> fail token "Invalid TIME literal"
         | _ -> fail token "TIME requires a string literal"
@@ -373,14 +364,14 @@ module internal RewriteParser =
            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz" |]
 
     let private hasExplicitTimestampOffset (text: string) =
-        if text.EndsWith("Z", StringComparison.Ordinal) then true
+        if text.EndsWith("Z", StringComparison.OrdinalIgnoreCase) then true
         else
             let timeSeparator = max (text.LastIndexOf('T')) (text.LastIndexOf(' '))
             if timeSeparator < 0 then false
             else text.LastIndexOf('+') > timeSeparator || text.LastIndexOf('-') > timeSeparator
 
     let private timestampLocalPart (text: string) =
-        if text.EndsWith("Z", StringComparison.Ordinal) then
+        if text.EndsWith("Z", StringComparison.OrdinalIgnoreCase) then
             text.Substring(0, text.Length - 1)
         elif hasExplicitTimestampOffset text && text.Length >= 6 then
             text.Substring(0, text.Length - 6)
@@ -409,7 +400,7 @@ module internal RewriteParser =
         else None
 
     let private tryParseZuluTimestamp (text: string) =
-        if not (text.EndsWith("Z", StringComparison.Ordinal)) then None
+        if not (text.EndsWith("Z", StringComparison.OrdinalIgnoreCase)) then None
         else
             match tryParseLocalTimestamp (text.Substring(0, text.Length - 1)) with
             | Some local ->
@@ -420,16 +411,12 @@ module internal RewriteParser =
         let token = cursor.Take()
         match token.Kind with
         | StringLiteral text ->
-            match tryParseZuluTimestamp text with
-            | Some value -> ScalarValue.OffsetDateTime value
-            | None when hasExplicitTimestampOffset text ->
-                match tryParseOffsetTimestamp text with
-                | Some value -> ScalarValue.OffsetDateTime value
-                | None -> fail token "Invalid TIMESTAMP literal"
-            | None ->
-                match tryParseLocalTimestamp text with
-                | Some local -> ScalarValue.LocalDateTime local
-                | None -> fail token "Invalid TIMESTAMP literal"
+            // PostgreSQL TIMESTAMP means TIMESTAMP WITHOUT TIME ZONE. Any timezone
+            // decoration in the input is ignored by source semantics, so canonicalize
+            // the local wall-clock fields rather than preserving an offset.
+            match tryParseLocalTimestamp (timestampLocalPart text) with
+            | Some local -> ScalarValue.LocalDateTime local
+            | None -> fail token "Invalid TIMESTAMP literal"
         | _ -> fail token "TIMESTAMP requires a string literal"
 
     let private parseOffsetTimestampLiteral (cursor: Cursor) =
