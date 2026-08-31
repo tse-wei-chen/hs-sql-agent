@@ -614,11 +614,24 @@ module internal RewriteParser =
     and private parsePostfix cursor =
         let mutable expression = parsePrimary cursor
         let mutable scanning = true
+        let mutable withinSeen = false
+        let mutable filterSeen = false
+        let mutable overSeen = false
+        let mutable castSeen = false
+
         while scanning do
-            match tryParsePostfixCast cursor expression with
-            | Some casted ->
-                expression <- casted
-            | None when acceptKeyword "WITHIN" cursor ->
+            match cursor.Current.Kind with
+            | Operator "::" ->
+                match tryParsePostfixCast cursor expression with
+                | Some casted ->
+                    expression <- casted
+                    castSeen <- true
+                | None ->
+                    scanning <- false
+            | Keyword "WITHIN" ->
+                if withinSeen || filterSeen || overSeen || castSeen then
+                    fail cursor.Current "WITHIN GROUP must precede FILTER, OVER, and postfix CAST"
+                cursor.Advance()
                 expectKeyword "GROUP" cursor
                 expectSymbol '(' cursor
                 let ordering : OrderBy list = parseOrderBy false cursor
@@ -631,19 +644,37 @@ module internal RewriteParser =
                             { call with
                                 AggregateOrderBy = ordering
                                 AggregateOrderSyntax = AggregateOrderSyntax.WithinGroupAggregateOrder }
+                    withinSeen <- true
                 | FunctionCall _ ->
                     fail cursor.Current "Aggregate ordering cannot be specified more than once"
                 | _ ->
                     fail cursor.Current "WITHIN GROUP must modify a function call"
-            | None when acceptKeyword "FILTER" cursor ->
-                expectSymbol '(' cursor
-                expectKeyword "WHERE" cursor
-                let predicate = parseExpression cursor
-                expectSymbol ')' cursor
-                expression <- FilteredAggregate(expression, predicate)
-            | None when acceptKeyword "OVER" cursor ->
-                expression <- Windowed(expression, parseWindow cursor)
-            | None ->
+            | Keyword "FILTER" ->
+                if filterSeen || overSeen || castSeen then
+                    fail cursor.Current "FILTER must appear at most once and before OVER or postfix CAST"
+                match expression with
+                | FunctionCall _ ->
+                    cursor.Advance()
+                    expectSymbol '(' cursor
+                    expectKeyword "WHERE" cursor
+                    let predicate = parseExpression cursor
+                    expectSymbol ')' cursor
+                    expression <- FilteredAggregate(expression, predicate)
+                    filterSeen <- true
+                | _ ->
+                    fail cursor.Current "FILTER must modify a function call"
+            | Keyword "OVER" ->
+                if overSeen || castSeen then
+                    fail cursor.Current "OVER must appear at most once and before postfix CAST"
+                match expression with
+                | FunctionCall _
+                | FilteredAggregate _ ->
+                    cursor.Advance()
+                    expression <- Windowed(expression, parseWindow cursor)
+                    overSeen <- true
+                | _ ->
+                    fail cursor.Current "OVER must modify a function call or FILTER result"
+            | _ ->
                 scanning <- false
         expression
 
