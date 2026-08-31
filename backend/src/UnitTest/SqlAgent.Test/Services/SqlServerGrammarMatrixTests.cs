@@ -20,7 +20,8 @@ public sealed class SqlServerGrammarMatrixTests
 
     private sealed record PagingVariant(
         Func<string, string> Apply,
-        string? RenderedMarker);
+        string? RenderedMarker,
+        CanonicalPagingExpectation Canonical);
 
     private static readonly GrammarVariant<Func<string, string>>[] CteForms =
     [
@@ -139,22 +140,26 @@ public sealed class SqlServerGrammarMatrixTests
             "none",
             new PagingVariant(
                 query => query,
-                null)),
+                null,
+                new CanonicalPagingExpectation(null, null))),
         new(
             "top",
             new PagingVariant(
                 query => $"SELECT TOP 5 id FROM ({query}) limited",
-                "TOP")),
+                "TOP",
+                new CanonicalPagingExpectation(5, null))),
         new(
             "offset",
             new PagingVariant(
                 query => query + " ORDER BY id OFFSET 5 ROWS",
-                "OFFSET")),
+                "ROW_NUMBER() OVER",
+                new CanonicalPagingExpectation(null, 5))),
         new(
             "offset-fetch",
             new PagingVariant(
                 query => query + " ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
-                "FETCH NEXT"))
+                "ROW_NUMBER() OVER",
+                new CanonicalPagingExpectation(10, 5)))
     ];
 
     public static IEnumerable<object[]> SqlServerCteGrammarMatrix()
@@ -179,6 +184,8 @@ public sealed class SqlServerGrammarMatrixTests
                 body.Value.RenderedMarker,
                 root.Value.RenderedMarker,
                 paging.Value.RenderedMarker,
+                paging.Value.Canonical.Limit,
+                paging.Value.Canonical.Offset,
                 expectedTablesCsv
             ];
         }
@@ -216,11 +223,17 @@ public sealed class SqlServerGrammarMatrixTests
         string bodyRenderedMarker,
         string rootRenderedMarker,
         string? pagingRenderedMarker,
+        int? expectedLimit,
+        int? expectedOffset,
         string expectedTablesCsv)
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             sql,
             SqlAgentToolType.MsSqlServer);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        Assert.Equal(expectedLimit, select.Limit);
+        Assert.Equal(expectedOffset, select.Offset);
+
         var facts = SqlCoreInspection.GetQueryFacts(parsed);
         var expectedTables = expectedTablesCsv.Split(
             ',',
@@ -301,14 +314,23 @@ public sealed class SqlServerGrammarMatrixTests
                 parameter => Convert.ToInt64(parameter.Value) == 5L);
         }
 
+        if (name.EndsWith("__offset", StringComparison.Ordinal))
+        {
+            Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                command.Parameters,
+                parameter => Convert.ToInt64(parameter.Value) == 6L);
+        }
+
         if (name.EndsWith("__offset-fetch", StringComparison.Ordinal))
         {
+            Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 5L);
+                parameter => Convert.ToInt64(parameter.Value) == 6L);
             Assert.Contains(
                 command.Parameters,
-                parameter => Convert.ToInt64(parameter.Value) == 10L);
+                parameter => Convert.ToInt64(parameter.Value) == 15L);
         }
     }
 }

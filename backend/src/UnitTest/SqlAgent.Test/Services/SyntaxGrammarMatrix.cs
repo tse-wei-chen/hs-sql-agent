@@ -4,6 +4,10 @@ internal sealed record GrammarVariant<T>(
     string Name,
     T Value);
 
+internal sealed record CanonicalPagingExpectation(
+    int? Limit,
+    int? Offset);
+
 internal static class SyntaxGrammarMatrix
 {
     public static string CaseName(params string[] dimensions) =>
