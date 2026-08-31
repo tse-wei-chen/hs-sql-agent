@@ -497,7 +497,9 @@ module internal RewriteCompatibilityAstAdapter =
                         unknown))
                  |> ImmutableArray.CreateRange)
         HsSqlAgent.SqlCore.Core.Ast.InsertConflictClause(
-            conflict.TargetColumns |> NonEmpty.toList |> List.map identifierOf |> ImmutableArray.CreateRange,
+            conflict.TargetColumns
+            |> Option.map (NonEmpty.toList >> List.map identifierOf >> ImmutableArray.CreateRange)
+            |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier>.Empty,
             action,
             assignments,
             unknown)

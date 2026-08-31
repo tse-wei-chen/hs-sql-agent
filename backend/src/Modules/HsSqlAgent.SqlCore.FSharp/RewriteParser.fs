@@ -1578,21 +1578,27 @@ module internal RewriteParser =
         if not (acceptKeyword "ON" cursor) then None
         else
             expectKeyword "CONFLICT" cursor
-            expectSymbol '(' cursor
-            let targets = ResizeArray<Identifier>()
-            let seenTargets = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            let parseTarget () =
-                let part = identifierPart cursor
-                if not (seenTargets.Add part.Value) then
-                    fail cursor.Current ("ON CONFLICT target column '" + part.Value + "' is declared more than once")
-                singlePartIdentifier part
-            targets.Add(parseTarget())
-            while acceptSymbol ',' cursor do targets.Add(parseTarget())
-            expectSymbol ')' cursor
+            let targets =
+                if acceptSymbol '(' cursor then
+                    let values = ResizeArray<Identifier>()
+                    let seenTargets = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    let parseTarget () =
+                        let part = identifierPart cursor
+                        if not (seenTargets.Add part.Value) then
+                            fail cursor.Current ("ON CONFLICT target column '" + part.Value + "' is declared more than once")
+                        singlePartIdentifier part
+                    values.Add(parseTarget())
+                    while acceptSymbol ',' cursor do values.Add(parseTarget())
+                    expectSymbol ')' cursor
+                    Some(values |> Seq.toList |> NonEmpty.ofList "conflict target")
+                else
+                    None
             expectKeyword "DO" cursor
             let action =
                 if acceptKeyword "NOTHING" cursor then InsertConflictAction.DoNothing
                 elif acceptKeyword "UPDATE" cursor then
+                    if Option.isNone targets then
+                        fail cursor.Current "ON CONFLICT DO UPDATE requires an explicit conflict target in the modeled Core grammar"
                     expectKeyword "SET" cursor
                     let assignments = ResizeArray<ConflictAssignment>()
                     let seenAssignments = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -1617,7 +1623,7 @@ module internal RewriteParser =
                             "ON CONFLICT DO UPDATE conflict clause supports only target = EXCLUDED.source assignments; arbitrary expressions remain fail-closed"
                     UpdateProposedValues(assignments |> Seq.toList |> NonEmpty.ofList "conflict assignments")
                 else fail cursor.Current "Expected NOTHING or UPDATE after ON CONFLICT DO"
-            Some { TargetColumns = targets |> Seq.toList |> NonEmpty.ofList "conflict target"; Action = action }
+            Some { TargetColumns = targets; Action = action }
 
     and private parseInsert (cursor: Cursor) =
         expectKeyword "INSERT" cursor

@@ -481,10 +481,9 @@ module internal RewriteLegacyAstAdapter =
 
     and private insertConflictOf (conflict: HsSqlAgent.SqlCore.Core.Ast.InsertConflictClause) =
         let targetColumns =
-            conflict.TargetColumns
-            |> Seq.map identifierOf
-            |> Seq.toList
-            |> NonEmpty.ofList "conflictTargetColumns"
+            match conflict.TargetColumns |> Seq.map identifierOf |> Seq.toList with
+            | [] -> None
+            | values -> Some(NonEmpty.ofList "conflictTargetColumns" values)
         let action =
             match conflict.Action with
             | HsSqlAgent.SqlCore.Core.Ast.InsertConflictActionKind.DoNothing ->

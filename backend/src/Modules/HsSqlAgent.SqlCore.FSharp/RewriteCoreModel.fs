@@ -350,7 +350,7 @@ module internal CoreModel =
         | UpdateProposedValues of NonEmpty<ConflictAssignment>
 
     type InsertConflict =
-        { TargetColumns: NonEmpty<Identifier>
+        { TargetColumns: NonEmpty<Identifier> option
           Action: InsertConflictAction }
 
     type InsertInput =
