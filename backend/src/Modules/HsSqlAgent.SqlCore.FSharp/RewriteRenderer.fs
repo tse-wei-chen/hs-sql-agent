@@ -166,7 +166,8 @@ module internal RewriteRenderer =
 
     let private setText = function
         | SetOperator.Union -> "UNION" | SetOperator.UnionAll -> "UNION ALL"
-        | SetOperator.Intersect -> "INTERSECT" | SetOperator.Except -> "EXCEPT"
+        | SetOperator.Intersect -> "INTERSECT" | SetOperator.IntersectAll -> "INTERSECT ALL"
+        | SetOperator.Except -> "EXCEPT" | SetOperator.ExceptAll -> "EXCEPT ALL"
 
     let private frameBoundText = function
         | WindowFrameBound.UnboundedPreceding -> "UNBOUNDED PRECEDING"
@@ -736,7 +737,9 @@ module internal RewriteRenderer =
         for branch in query.SetOperations do
             let branchNoTail = { branch.Query with OrderBy = []; Limit = None; Offset = None }
             let branchSql =
-                if branchNoTail.Head.Ctes.IsEmpty then
+                if ctx.Provider = PostgreSql && not branchNoTail.SetOperations.IsEmpty then
+                    "(" + renderQueryCore ctx branchNoTail + ")"
+                elif branchNoTail.Head.Ctes.IsEmpty then
                     renderQueryCore ctx branchNoTail
                 else
                     "SELECT * FROM ("

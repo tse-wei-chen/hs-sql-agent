@@ -404,7 +404,9 @@ module internal RewriteCompatibilityAstAdapter =
         | SetOperator.Union -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Union
         | SetOperator.UnionAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.UnionAll
         | SetOperator.Intersect -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Intersect
+        | SetOperator.IntersectAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.IntersectAll
         | SetOperator.Except -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Except
+        | SetOperator.ExceptAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.ExceptAll
 
     and private queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
         match query.SetOperations with

@@ -380,6 +380,8 @@ type SetOperationKind =
     | UnionAll = 1
     | Intersect = 2
     | Except = 3
+    | IntersectAll = 4
+    | ExceptAll = 5
 
 [<Sealed>]
 type SetOperation(kind: SetOperationKind, query: SqlStatement, span: SourceSpan) =

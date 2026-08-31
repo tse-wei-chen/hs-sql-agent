@@ -418,7 +418,9 @@ module internal RewriteLegacyAstAdapter =
         | HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Union -> SetOperator.Union
         | HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.UnionAll -> SetOperator.UnionAll
         | HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Intersect -> SetOperator.Intersect
+        | HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.IntersectAll -> SetOperator.IntersectAll
         | HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Except -> SetOperator.Except
+        | HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.ExceptAll -> SetOperator.ExceptAll
         | value -> raise (SqlCompilationException("Unsupported set operator '" + string value + "'."))
 
     and private rowCount argumentName (value: int Nullable) =

@@ -81,7 +81,7 @@ module internal CoreModel =
     type JoinKind = Inner | Left | Right | Full | Cross
     type OnJoinKind = Inner | Left | Right | Full
     type NullOrdering = Default | NullsFirst | NullsLast
-    type SetOperator = Union | UnionAll | Intersect | Except
+    type SetOperator = Union | UnionAll | Intersect | IntersectAll | Except | ExceptAll
     type WindowFrameUnit = Rows | Range
 
     type FrameOffset = private FrameOffset of int

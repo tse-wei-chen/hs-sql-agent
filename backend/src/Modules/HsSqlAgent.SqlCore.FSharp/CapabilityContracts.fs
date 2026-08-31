@@ -406,6 +406,27 @@ module internal SqlUsingJoinCapabilityRules =
         else
             "SQL capability 'join.using' is not supported by provider MsSqlServer because Transact-SQL has no native JOIN ... USING form and Core does not lower named-column join semantics to ON without a proven merged-column equivalence."
 
+module internal SqlSetAllCapabilityRules =
+    let private capabilityId operatorName =
+        match operatorName.Trim().ToUpperInvariant() with
+        | "INTERSECT" -> "set.intersect_all"
+        | "EXCEPT" -> "set.except_all"
+        | value -> "set." + value.ToLowerInvariant() + "_all"
+
+    let private validationError operatorName provider side =
+        if provider = SqlAgentToolType.Postgres then null
+        else
+            "SQL capability '" + capabilityId operatorName + "' is not supported by " + side
+            + " provider " + string provider
+            + "; duplicate-preserving " + operatorName.Trim().ToUpperInvariant()
+            + " ALL remains fail-closed until a provider/version-specific semantic contract is declared."
+
+    let SourceValidationError(operatorName: string, provider: SqlAgentToolType) : string | null =
+        validationError operatorName provider "source"
+
+    let TargetValidationError(operatorName: string, provider: SqlAgentToolType) : string | null =
+        validationError operatorName provider "target"
+
 module internal SqlDistinctOnCapabilityRules =
     let SourceValidationError(provider: SqlAgentToolType) : string | null =
         if provider = SqlAgentToolType.Postgres then null

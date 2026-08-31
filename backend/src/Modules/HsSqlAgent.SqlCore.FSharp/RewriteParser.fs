@@ -1307,13 +1307,25 @@ module internal RewriteParser =
                 acceptKeyword "DISTINCT" cursor |> ignore
                 Some SetOperator.Union
         elif acceptKeyword "INTERSECT" cursor then
-            if acceptKeyword "ALL" cursor then fail cursor.Current "INTERSECT ALL is not supported"
-            acceptKeyword "DISTINCT" cursor |> ignore
-            Some SetOperator.Intersect
+            if acceptKeyword "ALL" cursor then
+                match SqlSetAllCapabilityRules.SourceValidationError(
+                          "INTERSECT",
+                          sourceDialectToolType cursor.Dialect) with
+                | null -> Some SetOperator.IntersectAll
+                | message -> fail cursor.Current message
+            else
+                acceptKeyword "DISTINCT" cursor |> ignore
+                Some SetOperator.Intersect
         elif acceptKeyword "EXCEPT" cursor then
-            if acceptKeyword "ALL" cursor then fail cursor.Current "EXCEPT ALL is not supported"
-            acceptKeyword "DISTINCT" cursor |> ignore
-            Some SetOperator.Except
+            if acceptKeyword "ALL" cursor then
+                match SqlSetAllCapabilityRules.SourceValidationError(
+                          "EXCEPT",
+                          sourceDialectToolType cursor.Dialect) with
+                | null -> Some SetOperator.ExceptAll
+                | message -> fail cursor.Current message
+            else
+                acceptKeyword "DISTINCT" cursor |> ignore
+                Some SetOperator.Except
         else None
 
     and private parseQueryTail (cursor: Cursor) =
@@ -1416,28 +1428,66 @@ module internal RewriteParser =
         let start = cursor.Current.Start
         let ctes = parseCtes cursor
         let head, top = parseSelectWithCtes cursor ctes
-        let branches = ResizeArray<SetBranch>()
+
+        let parseOperand () =
+            if acceptSymbol '(' cursor then
+                let query = parseQuery cursor
+                expectSymbol ')' cursor
+                query
+            else
+                let branchHead, branchTop = parseSelectWithCtes cursor []
+                { Head = branchHead
+                  SetOperations = []
+                  OrderBy = []
+                  Limit = branchTop
+                  Offset = None }
+
+        let appendIntersectChain (baseQuery: Query) =
+            let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
+            let mutable scanning = true
+            while scanning && isKeyword "INTERSECT" cursor.Current do
+                match parseSetOperator cursor with
+                | Some(SetOperator.Intersect as operator)
+                | Some(SetOperator.IntersectAll as operator) ->
+                    if not baseQuery.OrderBy.IsEmpty || baseQuery.Offset.IsSome then
+                        fail cursor.Current "A parenthesized set operand with a local ORDER BY/OFFSET cannot be followed by INTERSECT without an explicit set-term wrapper"
+                    let branchQuery = parseOperand ()
+                    branches.Add { Operator = operator; Query = branchQuery }
+                | _ -> scanning <- false
+            { baseQuery with SetOperations = branches |> Seq.toList }
+
+        let initial =
+            { Head = head
+              SetOperations = []
+              OrderBy = []
+              Limit = top
+              Offset = None }
+            |> appendIntersectChain
+
+        let lowerBranches = ResizeArray<SetBranch>()
         let mutable scanning = true
         while scanning do
-            match parseSetOperator cursor with
-            | Some operator ->
-                let branchQuery =
-                    if acceptSymbol '(' cursor then
-                        let query = parseQuery cursor
-                        expectSymbol ')' cursor
-                        query
-                    else
-                        let branchHead, branchTop = parseSelectWithCtes cursor []
-                        { Head = branchHead
-                          SetOperations = []
-                          OrderBy = []
-                          Limit = branchTop
-                          Offset = None }
-                branches.Add { Operator = operator; Query = branchQuery }
-            | None -> scanning <- false
+            if isKeyword "UNION" cursor.Current || isKeyword "EXCEPT" cursor.Current then
+                match parseSetOperator cursor with
+                | Some operator ->
+                    let branchQuery = parseOperand () |> appendIntersectChain
+                    lowerBranches.Add { Operator = operator; Query = branchQuery }
+                | None -> scanning <- false
+            else
+                scanning <- false
+
         let orderBy, tailLimit, offset = parseQueryTail cursor
-        let limit = match top, tailLimit with Some value, None -> Some value | None, value -> value | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
-        let query = { Head = head; SetOperations = branches |> Seq.toList; OrderBy = orderBy; Limit = limit; Offset = offset }
+        let limit =
+            match initial.Limit, tailLimit with
+            | Some value, None -> Some value
+            | None, value -> value
+            | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
+        let query =
+            { initial with
+                SetOperations = initial.SetOperations @ (lowerBranches |> Seq.toList)
+                OrderBy = orderBy
+                Limit = limit
+                Offset = offset }
         rememberNodeSpan start cursor (box query)
         query
 
