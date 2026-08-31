@@ -96,15 +96,35 @@ public sealed class CoreQuotedIdentifierLoweringTests
             CoreSqlTextParser.ParseQuery(
                 "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
                 SqlAgentToolType.Postgres));
-        Assert.Contains("quoted or qualified function identifier", error.Message, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("Quoted function identifiers", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("lossless identifier quoting", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Parse_QualifiedFunction_FailsClosedBeforeRegistryNameFlattening()
+    public void QualifiedFunction_ParsesStructurally_ThenUnknownSemanticFailsClosed()
     {
-        Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseQuery(
+        var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT custom.fn(id) FROM users",
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.Postgres);
+        var select = parsed.Statement switch
+        {
+            SelectStatement value => value,
+            QueryStatement value => value.Head,
+            _ => throw new Xunit.Sdk.XunitException(
+                $"Expected SELECT/query AST, got {parsed.Statement.GetType().Name}.")
+        };
+        var function = Assert.IsType<FunctionCallExpr>(Assert.Single(select.Select).Expression);
+
+        Assert.Equal(2, function.Name.Parts.Length);
+        Assert.Equal("custom", function.Name.Parts[0].Value);
+        Assert.Equal("fn", function.Name.Parts[1].Value);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile("SELECT custom.fn(id) FROM users", SqlAgentToolType.Postgres));
+
+        Assert.Contains("not registered", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("normalization", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

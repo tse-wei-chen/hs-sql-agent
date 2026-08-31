@@ -155,7 +155,7 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "INSERT INTO users (id, name) SELECT id, name FROM staged_users ON CONFLICT (id) DO UPDATE SET name = excluded.name");
     }
 
-    public static IEnumerable<object[]> ExplicitFailClosedPostgresDml()
+    public static IEnumerable<object[]> BindingFailClosedPostgresDml()
     {
         yield return Reject(
             "update-target-alias-hides-original-name",
@@ -165,6 +165,10 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "delete-target-alias-hides-original-name",
             "DELETE FROM users AS u WHERE users.id = 1",
             "unknown table/alias qualifier");
+    }
+
+    public static IEnumerable<object[]> ExplicitFailClosedPostgresDml()
+    {
         yield return Reject(
             "qualified-update-assignment",
             "UPDATE users SET users.name = 'Alice' WHERE id = 1",
@@ -291,6 +295,26 @@ public sealed class PostgresDmlSyntaxBombardmentTests
 
         Assert.NotNull(parsed.Statement);
         Assert.False(string.IsNullOrWhiteSpace(parsed.RawSql), name);
+    }
+
+    [Theory]
+    [MemberData(nameof(BindingFailClosedPostgresDml))]
+    public void BindingFailClosedPostgresDml_ReportsBindingBoundary(
+        string name,
+        string sql,
+        string expectedDiagnostic)
+    {
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        Assert.NotNull(parsed.Statement);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("postgres-dml-syntax-bombardment-v1")));
+
+        Assert.Contains(expectedDiagnostic, error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(name));
     }
 
     [Fact]

@@ -650,6 +650,14 @@ module internal RewriteStages =
         let orderBy = call.AggregateOrderBy |> List.map (normalizeOrderBy source target)
         let call = { call with Arguments = arguments; AggregateOrderBy = orderBy }
         let sourceName = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        let sourceRegistryName =
+            let postgresCatalogPrefix = "PG_CATALOG."
+            if sourceTool = SqlAgentToolType.Postgres
+               && targetTool = SqlAgentToolType.Postgres
+               && sourceName.StartsWith(postgresCatalogPrefix, StringComparison.Ordinal) then
+                sourceName.Substring(postgresCatalogPrefix.Length)
+            else
+                sourceName
 
         let sourceContract = SqlSourceFunctionRegistry.Find(sourceName)
         let requireSourceContract () =
@@ -816,7 +824,7 @@ module internal RewriteStages =
 
         | None ->
             let sourceDefinition =
-                match functionRegistry.Find(sourceTool, sourceName, arguments.Length) |> Option.ofObj with
+                match functionRegistry.Find(sourceTool, sourceRegistryName, arguments.Length) |> Option.ofObj with
                 | Some definition -> definition
                 | None ->
                     compilationError (

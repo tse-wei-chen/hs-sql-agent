@@ -360,6 +360,7 @@ module internal RewriteFacadeAdapter =
         message.StartsWith("INSERT ", StringComparison.Ordinal)
         || message.StartsWith("CTE ", StringComparison.Ordinal)
         || message.StartsWith("Column reference", StringComparison.Ordinal)
+        || message.Contains("references unknown table/alias qualifier", StringComparison.Ordinal)
         || message.StartsWith("COUNT(DISTINCT *)", StringComparison.Ordinal)
         || message.StartsWith("ORDER BY projection alias", StringComparison.Ordinal)
         || message.StartsWith("ORDER BY alias", StringComparison.Ordinal)

@@ -12,20 +12,20 @@ namespace SqlAgent.Test.Services;
 
 public sealed class PostgresCteGrammarMatrixTests
 {
-    private static readonly (string Name, string Sql, string RenderedFragment, string TablesCsv)[] Bodies =
+    private static readonly (string Name, string Sql, string RenderedFragment, string TablesCsv, int ProjectionWidth)[] Bodies =
     [
-        ("plain", "SELECT id FROM users", "FROM users", "users"),
-        ("where-ilike", "SELECT id FROM users WHERE name ILIKE 'a%'", "ILIKE", "users"),
-        ("join-on", "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id", " JOIN ", "users,accounts"),
-        ("join-using", "SELECT id FROM users JOIN accounts USING (id)", "USING (", "users,accounts"),
-        ("group-having", "SELECT user_id AS id FROM orders GROUP BY user_id HAVING COUNT(*) > 0", "HAVING", "orders"),
-        ("window", "SELECT id, LAG(id) OVER (ORDER BY id) AS previous_id FROM users", " OVER (", "users"),
-        ("filter", "SELECT user_id AS id, SUM(amount) FILTER (WHERE status = 'open') AS total FROM orders GROUP BY user_id", "FILTER (WHERE", "orders"),
-        ("subquery", "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders)", " IN (", "users,orders"),
-        ("set-operation", "SELECT id FROM users UNION SELECT user_id AS id FROM orders", "UNION", "users,orders"),
-        ("order-limit-offset", "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 1", "LIMIT", "users"),
-        ("postfix-cast", "SELECT id FROM events WHERE created_at::date >= DATE '2026-01-01'", "CAST", "events"),
-        ("interval", "SELECT id FROM events WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '1 day'", "INTERVAL", "events")
+        ("plain", "SELECT id FROM users", "FROM \"users\"", "users", 1),
+        ("where-ilike", "SELECT id FROM users WHERE name ILIKE 'a%'", "ILIKE", "users", 1),
+        ("join-on", "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id", " JOIN ", "users,accounts", 1),
+        ("join-using", "SELECT id FROM users JOIN accounts USING (id)", "USING (", "users,accounts", 1),
+        ("group-having", "SELECT user_id AS id FROM orders GROUP BY user_id HAVING COUNT(*) > 0", "HAVING", "orders", 1),
+        ("window", "SELECT id, LAG(id) OVER (ORDER BY id) AS previous_id FROM users", " OVER (", "users", 2),
+        ("filter", "SELECT user_id AS id, SUM(amount) FILTER (WHERE status = 'open') AS total FROM orders GROUP BY user_id", "FILTER (WHERE", "orders", 2),
+        ("subquery", "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders)", " IN (", "users,orders", 1),
+        ("set-operation", "SELECT id FROM users UNION SELECT user_id AS id FROM orders", "UNION", "users,orders", 1),
+        ("order-limit-offset", "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 1", "LIMIT", "users", 1),
+        ("postfix-cast", "SELECT id FROM events WHERE created_at::date >= DATE '2026-01-01'", "CAST", "events", 1),
+        ("interval", "SELECT id FROM events WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '1 day'", "INTERVAL", "events", 1)
     ];
 
     private static readonly string[] RootShapes =
@@ -47,7 +47,7 @@ public sealed class PostgresCteGrammarMatrixTests
         {
             foreach (var rootShape in RootShapes)
             {
-                var sql = Wrap(rootShape, body.Sql);
+                var sql = Wrap(rootShape, body.Sql, body.ProjectionWidth);
                 var expectedTables = rootShape == "physical-table-join"
                     ? MergeTables(body.TablesCsv, "audit_log")
                     : body.TablesCsv;
@@ -59,7 +59,8 @@ public sealed class PostgresCteGrammarMatrixTests
                     body.Name,
                     sql,
                     body.RenderedFragment,
-                    expectedTables
+                    expectedTables,
+                    body.ProjectionWidth
                 ];
             }
         }
@@ -73,12 +74,13 @@ public sealed class PostgresCteGrammarMatrixTests
         string bodyShape,
         string sql,
         string expectedBodyRenderedFragment,
-        string expectedTablesCsv)
+        string expectedTablesCsv,
+        int projectionWidth)
     {
         var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
         var root = Head(parsed.Statement);
 
-        AssertRootShape(parsed.Statement, root, rootShape);
+        AssertRootShape(parsed.Statement, root, rootShape, projectionWidth);
         var effectiveBody = EffectiveBody(root, rootShape);
         AssertBodyShape(effectiveBody, bodyShape);
 
@@ -102,21 +104,23 @@ public sealed class PostgresCteGrammarMatrixTests
             new SqlPlanValidationContext("postgres-cte-grammar-matrix-v1"),
             new SqlExecutionPlanPolicy());
 
-        Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
-        Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(expectedBodyRenderedFragment, command.Sql, StringComparison.OrdinalIgnoreCase);
+        var rendered = command.Sql
+            ?? throw new Xunit.Sdk.XunitException($"{name} compiled with a null SQL string.");
+        Assert.False(string.IsNullOrWhiteSpace(rendered), name);
+        Assert.Contains("WITH", rendered, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expectedBodyRenderedFragment, rendered, StringComparison.OrdinalIgnoreCase);
 
         if (rootShape == "quoted-identifier")
-            Assert.Contains("\"CaseCte\"", command.Sql, StringComparison.Ordinal);
+            Assert.Contains("\"CaseCte\"", rendered, StringComparison.Ordinal);
         if (rootShape == "root-union")
-            Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("UNION ALL", rendered, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Wrap(string rootShape, string body) =>
+    private static string Wrap(string rootShape, string body, int projectionWidth) =>
         rootShape switch
         {
             "simple" => $"WITH x AS ({body}) SELECT id FROM x",
-            "column-alias" => $"WITH x(id) AS ({body}) SELECT id FROM x",
+            "column-alias" => $"WITH x({ColumnAliases(projectionWidth)}) AS ({body}) SELECT id FROM x",
             "multiple" => $"WITH x AS ({body}), y AS (SELECT id FROM x) SELECT id FROM y",
             "root-union" => $"WITH x AS ({body}) SELECT id FROM x UNION ALL SELECT id FROM x",
             "nested-cte" => $"WITH x AS (WITH y AS ({body}) SELECT id FROM y) SELECT id FROM x",
@@ -126,6 +130,12 @@ public sealed class PostgresCteGrammarMatrixTests
             "root-order-limit" => $"WITH x AS ({body}) SELECT id FROM x ORDER BY id LIMIT 3 OFFSET 1",
             _ => throw new ArgumentOutOfRangeException(nameof(rootShape), rootShape, null)
         };
+
+    private static string ColumnAliases(int projectionWidth) =>
+        string.Join(
+            ", ",
+            Enumerable.Range(1, projectionWidth)
+                .Select(index => index == 1 ? "id" : $"extra_{index}"));
 
     private static string MergeTables(string tablesCsv, string extra) =>
         string.Join(
@@ -145,9 +155,9 @@ public sealed class PostgresCteGrammarMatrixTests
 
     private static SqlStatement EffectiveBody(SelectStatement root, string rootShape)
     {
-        var outer = Assert.Single(root.Ctes);
-        if (rootShape == "multiple")
-            outer = root.Ctes[0];
+        var outer = rootShape == "multiple"
+            ? root.Ctes[0]
+            : Assert.Single(root.Ctes);
 
         if (rootShape != "nested-cte")
             return outer.Query;
@@ -160,7 +170,8 @@ public sealed class PostgresCteGrammarMatrixTests
     private static void AssertRootShape(
         SqlStatement statement,
         SelectStatement root,
-        string rootShape)
+        string rootShape,
+        int projectionWidth)
     {
         switch (rootShape)
         {
@@ -169,7 +180,7 @@ public sealed class PostgresCteGrammarMatrixTests
                 break;
             case "column-alias":
                 Assert.Single(root.Ctes);
-                Assert.Single(root.Ctes[0].ColumnAliases);
+                Assert.Equal(projectionWidth, root.Ctes[0].ColumnAliases.Length);
                 break;
             case "multiple":
                 Assert.Equal(2, root.Ctes.Length);
@@ -306,7 +317,8 @@ public sealed class PostgresCteGrammarMatrixTests
             BinaryExpr binary => ContainsNode<T>(binary.Left) || ContainsNode<T>(binary.Right),
             FunctionCallExpr function => function.Arguments.Any(ContainsNode<T>),
             FilterExpr filter => ContainsNode<T>(filter.Expression) || ContainsNode<T>(filter.Predicate),
-            WindowedExpr windowed => ContainsNode<T>(windowed.Expression)
+            WindowedExpr windowed when windowed.Window is not null =>
+                ContainsNode<T>(windowed.Expression)
                 || windowed.Window.PartitionBy.Any(ContainsNode<T>)
                 || windowed.Window.OrderBy.Any(item => ContainsNode<T>(item.Expression)),
             CastExpr cast => ContainsNode<T>(cast.Expression),
