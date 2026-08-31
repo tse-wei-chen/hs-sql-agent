@@ -587,6 +587,16 @@ public sealed class PostgresSyntaxBombardmentTests
             "CAST",
             "events");
         yield return Case(
+            "signed-negative-postfix-cast",
+            "SELECT -1::numeric FROM users",
+            "CAST",
+            "users");
+        yield return Case(
+            "signed-positive-postfix-cast",
+            "SELECT +2::int FROM users",
+            "CAST",
+            "users");
+        yield return Case(
             "standard-multiword-cast",
             "SELECT CAST(created_at AS TIMESTAMP(6) WITHOUT TIME ZONE) FROM events",
             "CAST",
