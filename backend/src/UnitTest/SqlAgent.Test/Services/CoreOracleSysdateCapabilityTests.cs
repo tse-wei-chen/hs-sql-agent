@@ -14,7 +14,7 @@ public sealed class CoreOracleSysdateCapabilityTests
         var function = Assert.IsType<FunctionCallExpr>(
             Assert.Single(select.Select).Expression);
 
-        Assert.Equal("SYSDATE", function.Name, ignoreCase: true);
+        Assert.Equal("SYSDATE", IdentifierText(function.Name), ignoreCase: true);
         Assert.Empty(function.Arguments);
     }
 
@@ -100,6 +100,9 @@ public sealed class CoreOracleSysdateCapabilityTests
                 Capability(provider).Status);
         }
     }
+
+    private static string IdentifierText(SqlIdentifier identifier) =>
+        string.Join(".", identifier.Parts.Select(part => part.Value));
 
     private static SqlCapability Capability(SqlAgentToolType provider) =>
         Assert.Single(
