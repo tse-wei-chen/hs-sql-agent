@@ -477,9 +477,24 @@ public sealed class PostgresSyntaxBombardmentTests
             "UNION",
             "alpha,beta");
         yield return Case(
+            "distinct-on",
+            "SELECT DISTINCT ON (customer_id) customer_id, created_at FROM orders ORDER BY customer_id, created_at DESC",
+            "DISTINCT ON",
+            "orders");
+        yield return Case(
+            "distinct-on-multiple",
+            "SELECT DISTINCT ON (tenant_id, customer_id) tenant_id, customer_id, created_at FROM orders ORDER BY tenant_id, customer_id, created_at DESC",
+            "DISTINCT ON",
+            "orders");
+        yield return Case(
             "intersect",
             "SELECT id FROM alpha INTERSECT SELECT id FROM beta",
             "INTERSECT",
+            "alpha,beta");
+        yield return Case(
+            "intersect-all",
+            "SELECT id FROM alpha INTERSECT ALL SELECT id FROM beta",
+            "INTERSECT ALL",
             "alpha,beta");
         yield return Case(
             "intersect-distinct-explicit",
@@ -490,6 +505,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "except",
             "SELECT id FROM alpha EXCEPT SELECT id FROM beta",
             "EXCEPT",
+            "alpha,beta");
+        yield return Case(
+            "except-all",
+            "SELECT id FROM alpha EXCEPT ALL SELECT id FROM beta",
+            "EXCEPT ALL",
             "alpha,beta");
         yield return Case(
             "except-distinct-explicit",
@@ -968,12 +988,6 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Reject(
             "fetch-with-ties",
             "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES");
-        yield return Reject(
-            "intersect-all",
-            "SELECT id FROM alpha INTERSECT ALL SELECT id FROM beta");
-        yield return Reject(
-            "except-all",
-            "SELECT id FROM alpha EXCEPT ALL SELECT id FROM beta");
         yield return Reject(
             "postgres-comma-limit",
             "SELECT id FROM users LIMIT 5, 10");
