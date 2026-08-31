@@ -132,6 +132,11 @@ module private Inspection =
         select.Ctes |> List.iter (fun cte -> inspectQuery state cte.Query)
         select.From |> Option.iter (inspectSource state scope)
         select.Joins |> List.iter (inspectJoin state scope)
+        match select.DistinctMode with
+        | SelectDistinct.DistinctOn expressions ->
+            expressions |> NonEmpty.iter (inspectExpr state)
+        | SelectDistinct.AllRows
+        | SelectDistinct.DistinctRows -> ()
         select.Projection |> List.iter (fun item -> inspectExpr state item.Expression)
         select.Where |> Option.iter (inspectExpr state)
         select.GroupBy |> List.iter (inspectExpr state)
