@@ -641,7 +641,8 @@ static Outcome FailureOutcome(string name, string stage, Exception exception)
 {
     var diagnostic = exception.GetType()
         .GetProperty("Diagnostic", BindingFlags.Public | BindingFlags.Instance)
-        ?.GetValue(exception);
+        ?.GetValue(exception)
+        ?? exception.Data["HsSqlAgent.SqlCore.Diagnostic"];
 
     string? code = null;
     string? diagnosticStage = null;

@@ -26,15 +26,22 @@ module internal RewritePolicy =
 
     let safeDefaults = { UpdateSafety = RequirePredicate; DeleteSafety = RequirePredicate; QueryRows = Unlimited }
 
+    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
+
     let private deny code (span: Span) message : 'T =
+        let diagnosticSpan =
+            if span.Start < 0 || span.Length < 0 then null
+            else SqlDiagnosticSpan(span.Start, span.Length)
         let diagnostic =
             SqlDiagnostic(
                 code,
                 SqlDiagnosticStage.Policy,
                 SqlDiagnosticCategory.Policy,
                 message,
-                SqlDiagnosticSpan(span.Start, span.Length))
-        raise (SqlPolicyException(message, diagnostic))
+                diagnosticSpan)
+        let error = UnauthorizedAccessException(message)
+        error.Data[diagnosticDataKey] <- diagnostic
+        raise error
 
     let private clampQueryLimit span (rowCap: RowCap) (query: Query) =
         match rowCap with

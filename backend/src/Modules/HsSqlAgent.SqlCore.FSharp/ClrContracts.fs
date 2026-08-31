@@ -179,13 +179,6 @@ type SqlCompilationException(message: string, innerException: Exception, diagnos
     new(message: string, diagnostic: SqlDiagnostic) = SqlCompilationException(message, null, diagnostic)
     member _.Diagnostic = diagnostic
 
-type SqlPolicyException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) =
-    inherit UnauthorizedAccessException(message, innerException)
-    new(message: string) = SqlPolicyException(message, null, null)
-    new(message: string, innerException: Exception) = SqlPolicyException(message, innerException, null)
-    new(message: string, diagnostic: SqlDiagnostic) = SqlPolicyException(message, null, diagnostic)
-    member _.Diagnostic = diagnostic
-
 namespace HsSqlAgent.SqlCore.SqlParsing
 
 open System

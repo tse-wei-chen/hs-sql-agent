@@ -47,13 +47,16 @@ module internal RewriteStages =
             action()
         with
         | :? SqlCompilationException as ex when isNull ex.Diagnostic ->
+            let diagnosticSpan =
+                if span.Start < 0 || span.Length < 0 then null
+                else SqlDiagnosticSpan(span.Start, span.Length)
             let diagnostic =
                 SqlDiagnostic(
                     code,
                     stage,
                     category,
                     ex.Message,
-                    SqlDiagnosticSpan(span.Start, span.Length))
+                    diagnosticSpan)
             raise (SqlCompilationException(ex.Message, ex, diagnostic))
 
     let private iterDistinctOn action (select: Select) =

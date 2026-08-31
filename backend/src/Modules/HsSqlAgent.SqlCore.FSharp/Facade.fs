@@ -57,39 +57,49 @@ module private FacadeResult =
     let private singletonDiagnostic diagnostic : IReadOnlyList<SqlDiagnostic> =
         [| diagnostic |] :> IReadOnlyList<SqlDiagnostic>
 
+    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
+
+    let private dataDiagnostic (ex: exn) =
+        match ex.Data[diagnosticDataKey] with
+        | :? SqlDiagnostic as diagnostic -> Some diagnostic
+        | _ -> None
+
     let private typedDiagnosticsFor (ex: exn) =
         match ex with
         | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
             singletonDiagnostic parseError.Diagnostic
         | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
             singletonDiagnostic compilationError.Diagnostic
-        | :? SqlPolicyException as policyError when not (isNull policyError.Diagnostic) ->
-            singletonDiagnostic policyError.Diagnostic
-        | :? SqlParseException ->
-            singletonDiagnostic (
-                SqlDiagnostic(
-                    "SQL_PARSE_ERROR",
-                    SqlDiagnosticStage.Parse,
-                    SqlDiagnosticCategory.Syntax,
-                    ex.Message,
-                    null))
-        | :? SqlCompilationException ->
-            singletonDiagnostic (
-                SqlDiagnostic(
-                    "SQL_COMPILATION_ERROR",
-                    SqlDiagnosticStage.SemanticValidation,
-                    SqlDiagnosticCategory.Semantic,
-                    ex.Message,
-                    null))
-        | :? UnauthorizedAccessException ->
-            singletonDiagnostic (
-                SqlDiagnostic(
-                    "SQL_POLICY_DENIED",
-                    SqlDiagnosticStage.Policy,
-                    SqlDiagnosticCategory.Policy,
-                    ex.Message,
-                    null))
-        | _ -> noTypedDiagnostics
+        | _ ->
+            match dataDiagnostic ex with
+            | Some diagnostic -> singletonDiagnostic diagnostic
+            | None ->
+                match ex with
+                | :? SqlParseException ->
+                    singletonDiagnostic (
+                        SqlDiagnostic(
+                            "SQL_PARSE_ERROR",
+                            SqlDiagnosticStage.Parse,
+                            SqlDiagnosticCategory.Syntax,
+                            ex.Message,
+                            null))
+                | :? SqlCompilationException ->
+                    singletonDiagnostic (
+                        SqlDiagnostic(
+                            "SQL_COMPILATION_ERROR",
+                            SqlDiagnosticStage.SemanticValidation,
+                            SqlDiagnosticCategory.Semantic,
+                            ex.Message,
+                            null))
+                | :? UnauthorizedAccessException ->
+                    singletonDiagnostic (
+                        SqlDiagnostic(
+                            "SQL_POLICY_DENIED",
+                            SqlDiagnosticStage.Policy,
+                            SqlDiagnosticCategory.Policy,
+                            ex.Message,
+                            null))
+                | _ -> noTypedDiagnostics
 
     let capture<'T> (action: unit -> 'T) : SqlCoreTryResult<'T> =
         try
