@@ -281,8 +281,8 @@ module internal RewriteParser =
         let mutable baseName = expectCastTypeWord "Expected cast type" cursor
 
         while acceptSymbol '.' cursor do
-            let component = expectCastTypeWord "Expected cast type component after '.'" cursor
-            baseName <- baseName + "." + component
+            let typeComponent = expectCastTypeWord "Expected cast type component after '.'" cursor
+            baseName <- baseName + "." + typeComponent
 
         parts.Add(baseName)
         appendCastQualifiers parts cursor
