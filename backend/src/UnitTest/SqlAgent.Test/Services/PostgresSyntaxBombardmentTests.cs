@@ -797,6 +797,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "HAVING",
             "events");
         yield return Case(
+            "lateral-derived-correlated",
+            "SELECT u.id, q.id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q",
+            "LATERAL",
+            "users");
+        yield return Case(
             "fetch-first",
             "SELECT id FROM users ORDER BY id FETCH FIRST 5 ROWS ONLY",
             "LIMIT",
@@ -912,10 +917,6 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT a.id FROM a CROSS JOIN b USING (id)",
             "ON/USING");
         yield return RejectWithMessage(
-            "lateral-source",
-            "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
-            "LATERAL");
-        yield return RejectWithMessage(
             "natural-join",
             "SELECT a.id FROM a NATURAL JOIN b",
             "NATURAL JOIN");
@@ -987,9 +988,6 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Reject(
             "recursive-cte",
             "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x");
-        yield return Reject(
-            "lateral-source",
-            "SELECT q.id FROM LATERAL (SELECT id FROM users) q");
         yield return Reject(
             "postgres-comma-limit",
             "SELECT id FROM users LIMIT 5, 10");

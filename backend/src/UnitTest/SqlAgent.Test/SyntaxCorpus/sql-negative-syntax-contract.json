@@ -10,13 +10,36 @@
     ]
   },
   {
-    "name": "pg-lateral-source",
-    "dialect": "Postgres",
+    "name": "mysql-lateral-derived-source",
+    "dialect": "MySQL",
     "sql": "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
     "expectedStage": "parse",
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
-      "LATERAL"
+      "select.lateral_derived",
+      "MySQL"
+    ]
+  },
+  {
+    "name": "pg-lateral-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.lateral_derived",
+      "MySQL"
+    ]
+  },
+  {
+    "name": "pg-right-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT a.id FROM alpha a RIGHT JOIN LATERAL (SELECT a.id AS id) q ON TRUE",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "RIGHT/FULL JOIN LATERAL"
     ]
   },
   {

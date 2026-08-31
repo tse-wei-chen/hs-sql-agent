@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.54"
+    static member Version = "2026-08-31.55"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -241,6 +241,23 @@ type SqlCapabilityMatrix private () =
                 "SQL capability 'select.fetch_with_ties' has no proven native or semantics-preserving lowering for "
                 + string provider + "."
 
+        let lateralStatus, lateralDetail =
+            match provider with
+            | SqlAgentToolType.Postgres ->
+                match profileServerVersion with
+                | Some version when version.CompareTo(SqlLateralDerivedTableCapabilityRules.PostgresMinimumVersion) < 0 ->
+                    rejected,
+                    "LATERAL derived-table correlation requires PostgreSQL target ServerVersion 9.3+; declared version is "
+                    + version.ToString() + "."
+                | _ ->
+                    supported,
+                    "PostgreSQL 9.3+ LATERAL derived subqueries are represented explicitly. "
+                    + "Only LATERAL sources may reference preceding FROM items; ordinary derived tables remain independent."
+            | _ ->
+                rejected,
+                "SQL capability 'select.lateral_derived' has no proven cross-provider lowering for "
+                + string provider + "."
+
         let capabilities : SqlCapability list =
             [
                 cap("provider.target_profile","provider",supported,
@@ -267,6 +284,7 @@ type SqlCapabilityMatrix private () =
                 cap("select.row_limit","query",translated,
                     "Structured Core row-count limits are translated to provider-native target syntax. Raw LIMIT spelling is accepted only for PostgreSQL, MySQL, and SQLite source dialects. PostgreSQL LIMIT ALL is canonicalized to no row-count limit, including LIMIT ALL OFFSET n where only the offset remains; MySQL and SQLite reject LIMIT ALL. MySQL and SQLite additionally accept native LIMIT offset,row_count and canonicalize the first integer to OFFSET and the second to LIMIT; PostgreSQL comma-form LIMIT is rejected. Raw bare OFFSET remains valid PostgreSQL syntax; MySQL and SQLite accept OFFSET only after LIMIT, and comma-form LIMIT cannot be combined with a separate OFFSET clause. PostgreSQL, Oracle, and Firebird raw source may use the modeled SQL-standard integer OFFSET ... ROW(S) and FETCH FIRST/NEXT ... ROW(S) ONLY forms, including FETCH without OFFSET; PostgreSQL may omit ROW/ROWS after OFFSET and may omit the FETCH count, which canonicalizes to one row. Explicit LIMIT and FETCH clauses remain mutually exclusive at the raw source boundary, including LIMIT ALL, matching PostgreSQL's alternative-syntax grammar. SQL Server raw OFFSET/FETCH requires statement-level ORDER BY, FETCH requires a preceding OFFSET, and TOP cannot share the same query scope. FETCH PERCENT and non-integer row-count expressions remain fail-closed. FETCH ... WITH TIES is modeled separately by select.fetch_with_ties because its result cardinality can exceed the FETCH count.")
                 cap("select.fetch_with_ties","query",fetchWithTiesStatus,fetchWithTiesDetail)
+                cap("select.lateral_derived","query",lateralStatus,lateralDetail)
                 cap("select.singleton","query",translated,"SELECT without FROM preserves singleton-row semantics.")
                 cap("select.cte_set","query",translated,"Root CTEs and set operations are represented structurally.")
                 cap("set.intersect_all","query",(if provider=SqlAgentToolType.Postgres then supported else rejected),
