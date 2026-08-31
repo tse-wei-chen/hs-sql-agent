@@ -1258,6 +1258,7 @@ module internal RewriteParser =
         let orderBy = parseOrderBy true cursor
         let mutable limit = None
         let mutable offset = None
+        let mutable usedCommaLimit = false
         let grammar = sourceRowLimitGrammar cursor
 
         let parseOffsetRowKeyword () =
@@ -1316,12 +1317,15 @@ module internal RewriteParser =
                 if acceptSymbol ',' cursor then
                     if not grammar.SupportsCommaLimit then
                         fail cursor.Current "LIMIT offset,row_count is only valid in MySQL and SQLite"
+                    usedCommaLimit <- true
                     offset <- Some first
                     limit <- Some(parseNonNegativeRowCount "LIMIT count" cursor)
                 else
                     limit <- Some first
 
             if acceptKeyword "OFFSET" cursor then
+                if usedCommaLimit then
+                    fail cursor.Current "LIMIT offset,row_count cannot be combined with a separate OFFSET clause"
                 if grammar.OffsetRequiresOrderBy && orderBy.IsEmpty then
                     fail cursor.Current (
                         sourceDialectName cursor.Dialect + " OFFSET/FETCH requires ORDER BY")
