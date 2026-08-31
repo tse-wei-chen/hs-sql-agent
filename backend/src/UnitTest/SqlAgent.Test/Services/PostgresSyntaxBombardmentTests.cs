@@ -192,6 +192,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT",
             "events");
         yield return Case(
+            "typed-time-minute-precision",
+            "SELECT TIME '09:30' AS report_time FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
             "time-without-time-zone",
             "SELECT TIME WITHOUT TIME ZONE '09:30:15' AS report_time FROM events",
             "SELECT",
@@ -204,6 +209,21 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Case(
             "typed-timestamp",
             "SELECT TIMESTAMP '2026-08-21 09:30:15' AS happened_at FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
+            "typed-timestamp-minute-precision",
+            "SELECT TIMESTAMP '2026-08-21 09:30' AS happened_at FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
+            "typed-timestamp-minute-offset",
+            "SELECT TIMESTAMP '2026-08-21T09:30+08:00' AS happened_at FROM events",
+            "SELECT",
+            "events");
+        yield return Case(
+            "typed-timestamp-minute-zulu",
+            "SELECT TIMESTAMP '2026-08-21T01:30Z' AS happened_at FROM events",
             "SELECT",
             "events");
         yield return Case(
@@ -804,6 +824,14 @@ public sealed class PostgresSyntaxBombardmentTests
             "invalid-date-literal",
             "SELECT DATE '2026-02-30' FROM users",
             "Invalid DATE literal");
+        yield return RejectWithMessage(
+            "noncanonical-time-single-digit-hour",
+            "SELECT TIME '9:30' FROM users",
+            "Invalid TIME literal");
+        yield return RejectWithMessage(
+            "noncanonical-time-whitespace",
+            "SELECT TIME ' 09:30 ' FROM users",
+            "Invalid TIME literal");
         yield return RejectWithMessage(
             "invalid-numeric-literal",
             "SELECT 1.2.3 FROM users",
