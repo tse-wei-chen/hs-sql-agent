@@ -636,6 +636,17 @@ module internal RewriteParser =
         | _ -> parsePostfix cursor
 
     and private parsePostfix cursor =
+        let directFunctionSyntax =
+            let nextIsCall = isSymbol '(' (cursor.Peek 1)
+            match cursor.Current.Kind with
+            | Identifier _ -> nextIsCall
+            | Keyword "LEFT"
+            | Keyword "RIGHT"
+            | Keyword "TIME"
+            | Keyword "TIMESTAMP" -> nextIsCall
+            | Keyword value when isContextualIdentifierKeyword value -> nextIsCall
+            | _ -> false
+
         let mutable expression = parsePrimary cursor
         let mutable scanning = true
         let mutable withinSeen = false
@@ -653,6 +664,8 @@ module internal RewriteParser =
                 | None ->
                     scanning <- false
             | Keyword "WITHIN" ->
+                if not directFunctionSyntax then
+                    fail cursor.Current "WITHIN GROUP must directly modify a function call"
                 if withinSeen || filterSeen || overSeen || castSeen then
                     fail cursor.Current "WITHIN GROUP must precede FILTER, OVER, and postfix CAST"
                 cursor.Advance()
@@ -674,6 +687,8 @@ module internal RewriteParser =
                 | _ ->
                     fail cursor.Current "WITHIN GROUP must modify a function call"
             | Keyword "FILTER" ->
+                if not directFunctionSyntax then
+                    fail cursor.Current "FILTER must directly modify a function call"
                 if filterSeen || overSeen || castSeen then
                     fail cursor.Current "FILTER must appear at most once and before OVER or postfix CAST"
                 match expression with
@@ -688,6 +703,8 @@ module internal RewriteParser =
                 | _ ->
                     fail cursor.Current "FILTER must modify a function call"
             | Keyword "OVER" ->
+                if not directFunctionSyntax then
+                    fail cursor.Current "OVER must directly modify a function call or its FILTER result"
                 if overSeen || castSeen then
                     fail cursor.Current "OVER must appear at most once and before postfix CAST"
                 match expression with
