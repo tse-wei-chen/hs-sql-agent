@@ -230,17 +230,8 @@ public sealed class SqlServerGrammarMatrixTests
         var parsed = CoreSqlTextParser.ParseQuery(
             sql,
             SqlAgentToolType.MsSqlServer);
-        var (actualLimit, actualOffset) = parsed.Statement switch
-        {
-            SelectStatement select => (
-                select.Limit.HasValue ? select.Limit.Value : (int?)null,
-                select.Offset.HasValue ? select.Offset.Value : (int?)null),
-            QueryStatement query => (
-                query.Limit.HasValue ? query.Limit.Value : (int?)null,
-                query.Offset.HasValue ? query.Offset.Value : (int?)null),
-            var statement => throw new Xunit.Sdk.XunitException(
-                $"{name}: expected SELECT/query compatibility AST, actual {statement.GetType().FullName}.")
-        };
+        var (actualLimit, actualOffset) =
+            SyntaxGrammarMatrix.CanonicalPaging(parsed.Statement, name);
         Assert.Equal(expectedLimit, actualLimit);
         Assert.Equal(expectedOffset, actualOffset);
 

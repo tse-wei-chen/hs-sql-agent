@@ -21,6 +21,21 @@ internal static class SyntaxGrammarMatrix
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
 
+    public static (int? Limit, int? Offset) CanonicalPaging(
+        HsSqlAgent.SqlCore.Core.Ast.SqlStatement statement,
+        string caseName) =>
+        statement switch
+        {
+            HsSqlAgent.SqlCore.Core.Ast.SelectStatement select => (
+                select.Limit.HasValue ? select.Limit.Value : null,
+                select.Offset.HasValue ? select.Offset.Value : null),
+            HsSqlAgent.SqlCore.Core.Ast.QueryStatement query => (
+                query.Limit.HasValue ? query.Limit.Value : null,
+                query.Offset.HasValue ? query.Offset.Value : null),
+            _ => throw new Xunit.Sdk.XunitException(
+                $"{caseName}: expected SELECT/query compatibility AST, actual {statement.GetType().FullName}.")
+        };
+
     public static int ProductCount<T1, T2, T3, T4>(
         IReadOnlyList<GrammarVariant<T1>> first,
         IReadOnlyList<GrammarVariant<T2>> second,
