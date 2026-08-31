@@ -1,5 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
+open System
+open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.RewriteParser
@@ -79,6 +81,36 @@ module internal RewritePipeline =
         | SourceDialect.Oracle -> SqlAgentToolType.Oracle
         | SourceDialect.Firebird -> SqlAgentToolType.Firebird
 
+    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
+
+    let private renderWithDiagnostic executable =
+        let document = RewritePolicy.Executable.value executable
+        let diagnosticSpan =
+            if document.Span.Start < 0 || document.Span.Length < 0 then null
+            else SqlDiagnosticSpan(document.Span.Start, document.Span.Length)
+        try
+            RewriteRenderer.render executable
+        with
+        | :? SqlCompilationException as ex when isNull ex.Diagnostic ->
+            let diagnostic =
+                SqlDiagnostic(
+                    "SQL_RENDERING_INVARIANT",
+                    SqlDiagnosticStage.RenderingInvariant,
+                    SqlDiagnosticCategory.Invariant,
+                    ex.Message,
+                    diagnosticSpan)
+            raise (SqlCompilationException(ex.Message, ex, diagnostic))
+        | :? InvalidOperationException as ex ->
+            let diagnostic =
+                SqlDiagnostic(
+                    "SQL_RENDERING_INVARIANT",
+                    SqlDiagnosticStage.RenderingInvariant,
+                    SqlDiagnosticCategory.Invariant,
+                    ex.Message,
+                    diagnosticSpan)
+            ex.Data[diagnosticDataKey] <- diagnostic
+            reraise()
+
     let private finish options parsed =
         let source = options.Source
         let target = options.Target
@@ -109,7 +141,7 @@ module internal RewritePipeline =
             (VerifiedTarget.dml target)
             options.ConflictProofs
         |> RewritePolicy.authorize options.Policy
-        |> RewriteRenderer.render
+        |> renderWithDiagnostic
 
     let compileParsed options parsed =
         finish options parsed

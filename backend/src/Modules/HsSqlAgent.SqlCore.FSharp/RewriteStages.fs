@@ -1117,16 +1117,59 @@ module internal RewriteStages =
     let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile bound =
         Transition.normalize
             (fun document ->
-                verifySourceRegexDocument sourceRegexProof document
+                withCompilationDiagnostic
+                    "SQL_SOURCE_VALIDATION_REJECTED"
+                    SqlDiagnosticStage.SourceValidation
+                    SqlDiagnosticCategory.Capability
+                    document.Span
+                    (fun () -> verifySourceRegexDocument sourceRegexProof document)
+
                 let source = sourceProvider sourceDialect
                 let target = targetProvider targetRuntime
-                validateAggregateDocument enforceDialectSyntax source sourceProfile target targetProfile document
+
+                withCompilationDiagnostic
+                    "SQL_SEMANTIC_VALIDATION_FAILED"
+                    SqlDiagnosticStage.SemanticValidation
+                    SqlDiagnosticCategory.Semantic
+                    document.Span
+                    (fun () ->
+                        validateAggregateDocument
+                            enforceDialectSyntax
+                            source
+                            sourceProfile
+                            target
+                            targetProfile
+                            document)
+
                 if enforceDialectSyntax then
-                    validateRawSourceDocument source sourceOrdering mySqlPipes document
-                normalizeDocument sourceDialect targetRuntime document)
+                    withCompilationDiagnostic
+                        "SQL_SOURCE_VALIDATION_REJECTED"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.Capability
+                        document.Span
+                        (fun () -> validateRawSourceDocument source sourceOrdering mySqlPipes document)
+
+                withCompilationDiagnostic
+                    "SQL_NORMALIZATION_REJECTED"
+                    SqlDiagnosticStage.SemanticValidation
+                    SqlDiagnosticCategory.Semantic
+                    document.Span
+                    (fun () -> normalizeDocument sourceDialect targetRuntime document))
             bound
 
     let private identifierText = Identifier.text
+    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
+
+    let private identifierDiagnosticSpan identifier =
+        let parts = Identifier.parts identifier
+        match parts with
+        | [] -> null
+        | first :: _ ->
+            let last = List.last parts
+            if first.Span.Start < 0 || last.Span.Start < 0 then null
+            else
+                let finish = last.Span.Start + max 0 last.Span.Length
+                SqlDiagnosticSpan(first.Span.Start, max 0 (finish - first.Span.Start))
 
     let private ensureTableAllowed allowedTables identifier =
         match allowedTables with
@@ -1134,7 +1177,17 @@ module internal RewriteStages =
         | Some allowed ->
             let table = identifierText identifier
             if not (allowed |> List.exists (fun value -> StringComparer.OrdinalIgnoreCase.Equals(value, table))) then
-                raise (UnauthorizedAccessException("SQL plan is not authorized to access table(s): " + table))
+                let message = "SQL plan is not authorized to access table(s): " + table
+                let diagnostic =
+                    SqlDiagnostic(
+                        "SQL_POLICY_TABLE_NOT_ALLOWED",
+                        SqlDiagnosticStage.Policy,
+                        SqlDiagnosticCategory.Policy,
+                        message,
+                        identifierDiagnosticSpan identifier)
+                let error = UnauthorizedAccessException(message)
+                error.Data[diagnosticDataKey] <- diagnostic
+                raise error
 
     let private isWildcard = function Wildcard _ -> true | _ -> false
 

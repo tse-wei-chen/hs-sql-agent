@@ -63,7 +63,8 @@ module private FacadeResult =
         | Some diagnostic
             when diagnostic.Stage = SqlDiagnosticStage.Binding
                  || diagnostic.Stage = SqlDiagnosticStage.SemanticValidation
-                 || diagnostic.Stage = SqlDiagnosticStage.TargetCapability ->
+                 || diagnostic.Stage = SqlDiagnosticStage.TargetCapability
+                 || diagnostic.Stage = SqlDiagnosticStage.RenderingInvariant ->
             "SQL_COMPILATION_ERROR"
         | Some diagnostic
             when diagnostic.Stage = SqlDiagnosticStage.Lexical

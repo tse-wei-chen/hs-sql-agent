@@ -106,6 +106,29 @@ public sealed class SqlCoreFSharpFacadeInteropTests
 
 
     [Fact]
+    public void Facade_TryCompileQuery_ReportsWhitelistDenialAsTypedPolicyDiagnostic()
+    {
+        var result = SqlCoreFacade.TryCompileQuery(
+            "SELECT id FROM public.secrets",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext(
+                "fsharp-whitelist-diagnostic-v1",
+                new HashSet<string>(new[] { "public.users" }, StringComparer.OrdinalIgnoreCase)),
+            new SqlExecutionPlanPolicy());
+
+        Assert.False(result.Success);
+        Assert.Equal("SQL_POLICY_DENIED", result.ErrorCode);
+
+        var diagnostic = Assert.Single(result.TypedDiagnostics);
+        Assert.Equal("SQL_POLICY_TABLE_NOT_ALLOWED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Policy, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.True(diagnostic.Span.Length > 0);
+    }
+
+    [Fact]
     public void Facade_TryCompileQuery_ReportsGrammarFailuresAsParseErrors()
     {
         var result = SqlCoreFacade.TryCompileQuery(

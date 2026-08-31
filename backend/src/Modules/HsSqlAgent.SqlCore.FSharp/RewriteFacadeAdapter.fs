@@ -388,6 +388,15 @@ module internal RewriteFacadeAdapter =
     let private unknownQualifierError (message: string) =
         message.Contains("references unknown table/alias qualifier", StringComparison.Ordinal)
 
+    let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
+
+    let private compilationExceptionFrom (ex: InvalidOperationException) =
+        match ex.Data[diagnosticDataKey] with
+        | :? SqlDiagnostic as diagnostic ->
+            SqlCompilationException(ex.Message, ex, diagnostic)
+        | _ ->
+            SqlCompilationException(ex.Message, ex)
+
     let private verifiedSource source semantics sourceProfile =
         RewritePipeline.VerifiedSource.create
             (sourceDialect source)
@@ -421,7 +430,7 @@ module internal RewriteFacadeAdapter =
         | :? ArgumentException as ex when String.Equals(ex.ParamName, "sql", StringComparison.Ordinal) ->
             raise (SqlParseException(ex.Message, ex))
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
-            raise (SqlCompilationException(ex.Message, ex))
+            raise (compilationExceptionFrom ex)
 
     let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
@@ -459,7 +468,7 @@ module internal RewriteFacadeAdapter =
                 compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
-                raise (SqlCompilationException(ex.Message, ex))
+                raise (compilationExceptionFrom ex)
         if command.Kind = SqlStatementKind.Query then
             raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
         command
@@ -486,7 +495,7 @@ module internal RewriteFacadeAdapter =
         | :? UnauthorizedAccessException -> reraise()
         | :? SqlCompilationException -> reraise()
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
-            raise (SqlCompilationException(ex.Message, ex))
+            raise (compilationExceptionFrom ex)
 
     let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed =
         let source = parsed.SourceDialect
@@ -548,7 +557,7 @@ module internal RewriteFacadeAdapter =
                     (allowedTables validationContext.AllowedTables)
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
-                raise (SqlCompilationException(ex.Message, ex))
+                raise (compilationExceptionFrom ex)
         if command.Kind = SqlStatementKind.Query then
             raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
         command

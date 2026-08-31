@@ -216,7 +216,11 @@
     "exceptionTypeContains": "SqlCompilationException",
     "messageContains": [
       "CURRENT_DATE"
-    ]
+    ],
+    "expectedDiagnosticCode": "SQL_SOURCE_VALIDATION_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
   },
   {
     "name": "sqlite-typed-date",
@@ -318,7 +322,11 @@
     "messageContains": [
       "temporal.date_only",
       "Cross-dialect lowering"
-    ]
+    ],
+    "expectedDiagnosticCode": "SQL_NORMALIZATION_REJECTED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
   },
   {
     "name": "pg-distinct-on-to-mysql",
