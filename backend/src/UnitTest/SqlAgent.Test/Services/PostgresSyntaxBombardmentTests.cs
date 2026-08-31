@@ -809,7 +809,7 @@ public sealed class PostgresSyntaxBombardmentTests
             "SELECT CAST(amount AS DECIMAL(10,2,3)) FROM orders");
         yield return Reject(
             "postfix-cast-arbitrary-qualifier",
-            "SELECT amount::NUMERIC GARBAGE FROM orders");
+            "SELECT (amount::NUMERIC GARBAGE) FROM orders");
         yield return Reject(
             "postfix-cast-too-many-precision-components",
             "SELECT amount::DECIMAL(10,2,3) FROM orders");
