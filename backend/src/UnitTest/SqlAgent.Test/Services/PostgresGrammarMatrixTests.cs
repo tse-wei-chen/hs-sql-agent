@@ -41,19 +41,19 @@ public sealed class PostgresGrammarMatrixTests
             "simple",
             new BodyVariant(
                 "SELECT id FROM orders",
-                "FROM orders",
+                "FROM \"orders\"",
                 ["orders"])),
         new(
             "where",
             new BodyVariant(
                 "SELECT id FROM orders WHERE active = TRUE",
-                "WHERE active",
+                "\"active\"",
                 ["orders"])),
         new(
             "join",
             new BodyVariant(
                 "SELECT o.id AS id FROM orders o JOIN customers c ON o.customer_id = c.id",
-                "JOIN customers",
+                "JOIN \"customers\"",
                 ["orders", "customers"])),
         new(
             "group-having",
@@ -71,19 +71,19 @@ public sealed class PostgresGrammarMatrixTests
             "subquery",
             new BodyVariant(
                 "SELECT id FROM orders WHERE EXISTS (SELECT id FROM audit_events WHERE audit_events.order_id = orders.id)",
-                "EXISTS",
+                "FROM \"audit_events\"",
                 ["orders", "audit_events"])),
         new(
             "set-operation",
             new BodyVariant(
                 "SELECT id FROM orders UNION ALL SELECT id FROM archive_orders",
-                "UNION ALL",
+                "FROM \"archive_orders\"",
                 ["orders", "archive_orders"])),
         new(
             "nested-cte",
             new BodyVariant(
                 "WITH nested AS (SELECT id FROM orders) SELECT id FROM nested",
-                "WITH nested",
+                "WITH \"nested\"",
                 ["orders"])),
         new(
             "postgres-expression-stack",
@@ -99,25 +99,25 @@ public sealed class PostgresGrammarMatrixTests
             "select",
             new RootVariant(
                 "SELECT id FROM recent",
-                "FROM recent",
+                "FROM \"recent\"",
                 [])),
         new(
             "physical-join",
             new RootVariant(
                 "SELECT recent.id FROM recent JOIN users u ON recent.id = u.id",
-                "JOIN users",
+                "JOIN \"users\"",
                 ["users"])),
         new(
             "correlated-subquery",
             new RootVariant(
                 "SELECT id FROM recent WHERE EXISTS (SELECT id FROM users u WHERE u.id = recent.id)",
-                "EXISTS",
+                "FROM \"users\"",
                 ["users"])),
         new(
             "root-set-operation",
             new RootVariant(
                 "SELECT id FROM recent UNION ALL SELECT id FROM users",
-                "UNION ALL",
+                "FROM \"users\"",
                 ["users"]))
     ];
 
@@ -166,11 +166,11 @@ public sealed class PostgresGrammarMatrixTests
     public void PostgresCteGrammarMatrix_IsCartesianAndCollisionFree()
     {
         var cases = PostgresCteGrammarMatrix().ToArray();
-        var expectedCount =
-            CteForms.Length *
-            Bodies.Length *
-            Roots.Length *
-            Tails.Length;
+        var expectedCount = SyntaxGrammarMatrix.ProductCount(
+            CteForms,
+            Bodies,
+            Roots,
+            Tails);
 
         Assert.Equal(432, expectedCount);
         Assert.Equal(expectedCount, cases.Length);
@@ -226,6 +226,15 @@ public sealed class PostgresGrammarMatrixTests
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FROM \"recent\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var table in expectedTables)
+        {
+            Assert.Contains(
+                $"\"{table}\"",
+                command.Sql,
+                StringComparison.OrdinalIgnoreCase);
+        }
         Assert.Contains(
             bodyRenderedFragment,
             command.Sql,

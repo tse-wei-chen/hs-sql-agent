@@ -6,6 +6,13 @@ internal sealed record GrammarVariant<T>(
 
 internal static class SyntaxGrammarMatrix
 {
+    public static int ProductCount<T1, T2, T3, T4>(
+        IReadOnlyList<GrammarVariant<T1>> first,
+        IReadOnlyList<GrammarVariant<T2>> second,
+        IReadOnlyList<GrammarVariant<T3>> third,
+        IReadOnlyList<GrammarVariant<T4>> fourth) =>
+        checked(first.Count * second.Count * third.Count * fourth.Count);
+
     public static IEnumerable<(
         GrammarVariant<T1> First,
         GrammarVariant<T2> Second,
