@@ -1193,9 +1193,9 @@ module internal RewriteParser =
             | OnJoinKind.Inner | OnJoinKind.Left -> ()
 
             let source = parseTableSource cursor
-            match source with
-            | LateralDerivedTable _ ->
-                fail cursor.Current "NATURAL JOIN LATERAL is not admitted because implicit common-column matching plus left-side correlation is not represented by one proven Core contract"
+            match kind, source with
+            | (OnJoinKind.Right | OnJoinKind.Full), LateralDerivedTable _ ->
+                fail cursor.Current "RIGHT/FULL JOIN LATERAL is not admitted because left-side correlation is not semantically valid for those join directions"
             | _ -> ()
 
             if isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current then

@@ -674,5 +674,15 @@
     "sourceVersion": "12.1",
     "targetVersion": "12.1",
     "sql": "SELECT id FROM users ORDER BY id FETCH FIRST NULL PERCENT ROWS ONLY"
+  },
+  {
+    "name": "natural-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT u.id FROM users u NATURAL JOIN LATERAL (SELECT u.id AS id) q"
+  },
+  {
+    "name": "natural-left-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT u.id FROM users u NATURAL LEFT JOIN LATERAL (SELECT u.id AS id) q"
   }
 ]

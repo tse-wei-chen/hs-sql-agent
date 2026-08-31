@@ -36,6 +36,49 @@ public sealed class CoreNaturalJoinCapabilityTests
     }
 
     [Fact]
+    public void Compile_PostgresNaturalJoinLateral_PreservesNativeCorrelationAndNaturalMatch()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT u.id FROM users u NATURAL JOIN LATERAL (SELECT u.id AS id) q",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var join = Assert.Single(select.Joins);
+        Assert.True(join.IsNatural);
+        var lateral = Assert.IsType<DerivedTableSource>(join.Source);
+        Assert.True(lateral.IsLateral);
+
+        var command = Compile(parsed, SqlAgentToolType.Postgres);
+
+        Assert.Contains("NATURAL JOIN LATERAL", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_PostgresNaturalLeftJoinLateral_PreservesNativeCorrelationAndOuterJoinShape()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT u.id FROM users u NATURAL LEFT JOIN LATERAL (SELECT u.id AS id) q",
+            SqlAgentToolType.Postgres);
+
+        var command = Compile(parsed, SqlAgentToolType.Postgres);
+
+        Assert.Contains("NATURAL LEFT JOIN LATERAL", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("RIGHT")]
+    [InlineData("FULL")]
+    public void Parse_PostgresNaturalRightOrFullJoinLateral_RemainsFailClosed(string joinKind)
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                $"SELECT u.id FROM users u NATURAL {joinKind} JOIN LATERAL (SELECT u.id AS id) q",
+                SqlAgentToolType.Postgres));
+
+        Assert.Contains("RIGHT/FULL JOIN LATERAL", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Parse_SqlServerNaturalJoin_FailsAtSourceBoundary()
     {
         var error = Assert.Throws<SqlParseException>(() =>

@@ -416,5 +416,25 @@
       "target ServerVersion",
       "12.1"
     ]
+  },
+  {
+    "name": "postgres-natural-right-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT u.id FROM users u NATURAL RIGHT JOIN LATERAL (SELECT u.id AS id) q",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "RIGHT/FULL JOIN LATERAL"
+    ]
+  },
+  {
+    "name": "postgres-natural-full-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT u.id FROM users u NATURAL FULL JOIN LATERAL (SELECT u.id AS id) q",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "RIGHT/FULL JOIN LATERAL"
+    ]
   }
 ]
