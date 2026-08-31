@@ -240,10 +240,18 @@ module internal RewriteBinder =
                 let boundJoin, nextScope = bindJoin currentScope join
                 boundJoins @ [ boundJoin ], nextScope)
         let projectionItems = select.ProjectionItems |> NonEmpty.map (fun (item: SelectItem) -> { item with Expression = bindExpr scope item.Expression })
+        let distinctMode =
+            match select.DistinctMode with
+            | SelectDistinct.DistinctOn expressions ->
+                expressions
+                |> NonEmpty.map (bindExpr scope)
+                |> SelectDistinct.DistinctOn
+            | mode -> mode
         { select with
             Ctes = ctes
             From = from
             Joins = joins
+            DistinctMode = distinctMode
             ProjectionItems = projectionItems
             Where = select.Where |> Option.map (bindExpr scope)
             GroupBy = select.GroupBy |> List.map (bindExpr scope)

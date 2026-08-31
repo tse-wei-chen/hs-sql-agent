@@ -380,19 +380,25 @@ module internal RewriteCompatibilityAstAdapter =
             nodeSpan (box cte))
 
     and private selectOf (select: Select) orderBy limit offset selectSpan =
-        HsSqlAgent.SqlCore.Core.Ast.SelectStatement(
-            select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
-            select.Distinct,
-            select.Projection |> List.map selectItemOf |> ImmutableArray.CreateRange,
-            select.From |> Option.map tableSourceOf |> Option.defaultValue (Unchecked.defaultof<_>),
-            select.Joins |> List.map joinOf |> ImmutableArray.CreateRange,
-            select.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-            select.GroupBy |> List.map exprOf |> ImmutableArray.CreateRange,
-            select.Having |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-            orderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
-            limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-            offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-            selectSpan)
+        let result =
+            HsSqlAgent.SqlCore.Core.Ast.SelectStatement(
+                select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
+                select.Distinct,
+                select.Projection |> List.map selectItemOf |> ImmutableArray.CreateRange,
+                select.From |> Option.map tableSourceOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                select.Joins |> List.map joinOf |> ImmutableArray.CreateRange,
+                select.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                select.GroupBy |> List.map exprOf |> ImmutableArray.CreateRange,
+                select.Having |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                orderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
+                limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                selectSpan)
+        result.DistinctOn <-
+            select.DistinctOn
+            |> Option.map (List.map exprOf >> ImmutableArray.CreateRange)
+            |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlExpr>.Empty
+        result
 
     and private setOperator = function
         | SetOperator.Union -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Union

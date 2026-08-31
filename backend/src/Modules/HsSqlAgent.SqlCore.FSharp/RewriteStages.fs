@@ -42,6 +42,18 @@ module internal RewriteStages =
     let private compilationError message =
         raise (SqlCompilationException(message))
 
+    let private iterDistinctOn action (select: Select) =
+        match select.DistinctMode with
+        | SelectDistinct.DistinctOn expressions -> expressions |> NonEmpty.iter action
+        | SelectDistinct.AllRows
+        | SelectDistinct.DistinctRows -> ()
+
+    let private mapDistinctOn action = function
+        | SelectDistinct.DistinctOn expressions ->
+            expressions |> NonEmpty.map action |> SelectDistinct.DistinctOn
+        | SelectDistinct.AllRows -> SelectDistinct.AllRows
+        | SelectDistinct.DistinctRows -> SelectDistinct.DistinctRows
+
     let private requireSourceRegexCapability = function
         | ProvenCapability -> ()
         | RejectedCapability message -> raise (SqlCompilationException(message))
@@ -106,6 +118,7 @@ module internal RewriteStages =
 
     and private verifySourceRegexSelect regexProof select =
         select.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
+        iterDistinctOn (verifySourceRegexExpr regexProof) select
         select.Projection |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
         select.From |> Option.iter (verifySourceRegexSource regexProof)
         select.Joins |> List.iter (fun join ->
@@ -264,6 +277,14 @@ module internal RewriteStages =
 
     and private validateRawSourceSelect source orderingProofs mySqlPipes select =
         select.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
+        match select.DistinctMode with
+        | SelectDistinct.DistinctOn _ ->
+            match SqlDistinctOnCapabilityRules.SourceValidationError(source) with
+            | null -> ()
+            | message -> compilationError message
+        | SelectDistinct.AllRows
+        | SelectDistinct.DistinctRows -> ()
+        iterDistinctOn (validateRawSourceExpr source orderingProofs mySqlPipes) select
         select.Projection |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
         select.From |> Option.iter (validateRawSourceTable source orderingProofs mySqlPipes)
         select.Joins |> List.iter (fun join ->
@@ -502,6 +523,7 @@ module internal RewriteStages =
 
     and private validateAggregateSelect enforceSource source sourceProfile target targetProfile select =
         select.Ctes |> List.iter (fun cte -> validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
+        iterDistinctOn (validateAggregateExpr enforceSource source sourceProfile target targetProfile) select
         select.Projection |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
         select.From |> Option.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
         select.Joins |> List.iter (fun join ->
@@ -932,6 +954,7 @@ module internal RewriteStages =
     and private normalizeSelect sourceDialect target (select: Select) =
         { select with
             Ctes = select.Ctes |> List.map (normalizeCte sourceDialect target)
+            DistinctMode = select.DistinctMode |> mapDistinctOn (normalizeExpr sourceDialect target)
             ProjectionItems =
                 select.ProjectionItems
                 |> NonEmpty.map (fun (item: SelectItem) ->
@@ -1067,6 +1090,7 @@ module internal RewriteStages =
         if select.From.IsNone && select.Joins.IsEmpty && select.Projection |> List.exists (fun item -> isWildcard item.Expression) then
             invalidOp "Column reference '*' requires a FROM source in the portable Core query model."
         select.From |> Option.iter (validateSource allowedTables)
+        iterDistinctOn (validateExpr allowedTables) select
         select.ProjectionItems |> NonEmpty.iter (fun item -> validateExpr allowedTables item.Expression)
         select.Where |> Option.iter (validateExpr allowedTables)
         select.GroupBy |> List.iter (validateExpr allowedTables)
@@ -1368,6 +1392,7 @@ module internal RewriteStages =
 
     and private proveSourceFilterSelect expressionProofs select =
         select.Ctes |> List.iter (fun cte -> proveSourceFilterQuery expressionProofs cte.Query)
+        iterDistinctOn (proveSourceFilterExpr expressionProofs) select
         select.Projection |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
         select.From |> Option.iter (proveSourceFilterSource expressionProofs)
         select.Joins |> List.iter (fun join ->
@@ -1481,6 +1506,14 @@ module internal RewriteStages =
 
     and private proveTargetSelect targetRuntime expressionProofs select =
         select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
+        match select.DistinctMode with
+        | SelectDistinct.DistinctOn expressions ->
+            match SqlDistinctOnCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            expressions |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
+        | SelectDistinct.AllRows
+        | SelectDistinct.DistinctRows -> ()
         select.ProjectionItems |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
         select.From |> Option.iter (proveTargetSource targetRuntime expressionProofs)
         select.Joins
@@ -1823,6 +1856,7 @@ module internal RewriteStages =
 
     and private proveOrderingSelect targetRuntime targetOrdering select =
         select.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
+        iterDistinctOn (proveOrderingExpr targetRuntime targetOrdering) select
         select.Projection |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
         select.From |> Option.iter (proveOrderingSource targetRuntime targetOrdering)
         select.Joins |> List.iter (fun join ->
@@ -2238,6 +2272,7 @@ module internal RewriteStages =
         select.Joins |> List.iter (fun join ->
             validateNestedCteTable targetRuntime join.Source
             join.Predicate |> Option.iter (validateNestedCteExpr targetRuntime))
+        iterDistinctOn (validateNestedCteExpr targetRuntime) select
         select.Projection |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
         select.Where |> Option.iter (validateNestedCteExpr targetRuntime)
         select.GroupBy |> List.iter (validateNestedCteExpr targetRuntime)
@@ -2739,6 +2774,7 @@ module internal RewriteStages =
             validateSemanticTable targetRuntime join.Source
             join.Predicate
             |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false))
+        iterDistinctOn (validateSemanticExpr targetRuntime ProjectionClause false false) select
         select.Projection
         |> List.iter (fun item ->
             validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
@@ -3021,6 +3057,7 @@ module internal RewriteStages =
 
         match select.From with
         | Some _ ->
+            iterDistinctOn visitNestedNoFromExpression select
             select.Projection
             |> List.iter (fun item ->
                 visitNestedNoFromExpression item.Expression)
@@ -3031,6 +3068,7 @@ module internal RewriteStages =
             if not select.Joins.IsEmpty then
                 raise (SqlCompilationException(
                     "A Core SELECT cannot contain JOIN sources without a primary FROM source."))
+            iterDistinctOn (validateNoFromExpression false) select
             select.Projection
             |> List.iter (fun item ->
                 validateNoFromExpression false item.Expression)

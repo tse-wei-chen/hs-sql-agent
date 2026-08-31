@@ -223,6 +223,11 @@ type SqlCapabilityMatrix private () =
                 cap("provider.unique_key_metadata","provider",supported,
                     "Provider metadata readers inventory PRIMARY and UNIQUE conflict sources across PostgreSQL, MySQL, SQLite, SQL Server, Oracle, and Firebird. Simple enforced full-column keys are distinguishable from partial, expression/computed, prefix, disabled/invalid, or otherwise richer key shapes, and richer enforced keys remain visible instead of being filtered out. This metadata is an assurance prerequisite only; it does not by itself authorize a SQL lowering.")
                 cap("select.basic","query",translated,"SELECT/WHERE/GROUP BY/HAVING/ORDER BY and JOIN are represented structurally.")
+                cap("select.distinct_on","query",(if provider = SqlAgentToolType.Postgres then supported else rejected),
+                    if provider = SqlAgentToolType.Postgres then
+                        "PostgreSQL DISTINCT ON expressions are represented structurally, bound and validated with the SELECT scope, and emitted natively."
+                    else
+                        "PostgreSQL first-row-per-group DISTINCT ON semantics have no proven cross-provider lowering and remain fail-closed.")
                 cap("join.right","query",rightJoinStatus,
                     if provider = SqlAgentToolType.Sqlite && rightJoinStatus = translated then "SQLite 3.39+ RIGHT JOIN runtime contract is satisfied." else "RIGHT JOIN follows provider capability rules.")
                 cap("join.full","query",fullJoinStatus,

@@ -683,7 +683,21 @@ module internal RewriteRenderer =
                    |> Option.defaultValue ""))
             |> String.concat ", "
 
-        let mutable sql = "SELECT " + (if select.Distinct then "DISTINCT " else "") + projection
+        let distinctSql =
+            match select.DistinctMode with
+            | SelectDistinct.AllRows -> ""
+            | SelectDistinct.DistinctRows -> "DISTINCT "
+            | SelectDistinct.DistinctOn expressions ->
+                if ctx.Provider <> PostgreSql then
+                    raise (SqlCompilationException(
+                        "SQL capability 'select.distinct_on' is not supported by this target provider."))
+                "DISTINCT ON ("
+                + (expressions
+                   |> NonEmpty.toList
+                   |> List.map (renderExpr ctx)
+                   |> String.concat ", ")
+                + ") "
+        let mutable sql = "SELECT " + distinctSql + projection
         select.From |> Option.iter (fun source -> sql <- sql + " FROM " + renderSource ctx source)
         if select.From.IsNone then
             match ctx.Provider with Oracle -> sql <- sql + " FROM DUAL" | Firebird -> sql <- sql + " FROM RDB$DATABASE" | _ -> ()
