@@ -206,13 +206,120 @@ module internal RewriteBinder =
         | LateralDerivedTable(query, alias) ->
             LateralDerivedTable(bindQuery dialect parentScope visibleCtes query, alias)
 
+    and private countRecursiveReferencesExpr dialect cteKey expression =
+        let recurse = countRecursiveReferencesExpr dialect cteKey
+        match expression with
+        | Column _
+        | BoundColumn _
+        | Wildcard _
+        | OrderOrdinal _
+        | Literal _
+        | Interval _ -> 0
+        | Unary(_, operand)
+        | Cast(operand, _)
+        | Extract(_, operand)
+        | IsNull(operand, _) -> recurse operand
+        | Binary(_, left, right)
+        | RegexMatch(left, right)
+        | FilteredAggregate(left, right) -> recurse left + recurse right
+        | Like(value, pattern, _, _, _) -> recurse value + recurse pattern
+        | RawRegexCall(arguments, _) -> arguments |> List.sumBy recurse
+        | FunctionCall call ->
+            (call.Arguments |> List.sumBy recurse)
+            + (call.AggregateOrderBy |> List.sumBy (fun item -> recurse item.Expression))
+        | Windowed(value, window) ->
+            recurse value
+            + (window.PartitionBy |> List.sumBy recurse)
+            + (window.OrderBy |> List.sumBy (fun item -> recurse item.Expression))
+        | SimpleCase(input, branches, fallback) ->
+            recurse input
+            + (branches |> NonEmpty.toList |> List.sumBy (fun branch -> recurse branch.Match + recurse branch.Result))
+            + (fallback |> Option.map recurse |> Option.defaultValue 0)
+        | SearchedCase(branches, fallback) ->
+            (branches |> NonEmpty.toList |> List.sumBy (fun branch -> recurse branch.Condition + recurse branch.Result))
+            + (fallback |> Option.map recurse |> Option.defaultValue 0)
+        | InList(value, items, _) ->
+            recurse value + (items |> NonEmpty.toList |> List.sumBy recurse)
+        | InSubquery(value, query, _) ->
+            recurse value + countRecursiveReferencesQuery dialect cteKey query
+        | Between(value, lower, upper, _) ->
+            recurse value + recurse lower + recurse upper
+        | ScalarSubquery query
+        | Exists(query, _) ->
+            countRecursiveReferencesQuery dialect cteKey query
+
+    and private countRecursiveReferencesSource dialect cteKey source =
+        match source with
+        | NamedTable(name, _)
+        | CteTable(name, _) ->
+            if StringComparer.Ordinal.Equals(identifierKey dialect name, cteKey) then 1 else 0
+        | DerivedTable(query, _)
+        | LateralDerivedTable(query, _) ->
+            countRecursiveReferencesQuery dialect cteKey query
+
+    and private countDirectRecursiveSources dialect cteKey (select: Select) =
+        let countDirect source =
+            match source with
+            | NamedTable(name, _)
+            | CteTable(name, _) when StringComparer.Ordinal.Equals(identifierKey dialect name, cteKey) -> 1
+            | _ -> 0
+        (select.From |> Option.map countDirect |> Option.defaultValue 0)
+        + (select.Joins |> List.sumBy (fun join -> countDirect join.Source))
+
+    and private countRecursiveReferencesSelect dialect cteKey (select: Select) =
+        let expr = countRecursiveReferencesExpr dialect cteKey
+        (select.From |> Option.map (countRecursiveReferencesSource dialect cteKey) |> Option.defaultValue 0)
+        + (select.Joins
+           |> List.sumBy (fun join ->
+               countRecursiveReferencesSource dialect cteKey join.Source
+               + (join.Predicate |> Option.map expr |> Option.defaultValue 0)))
+        + (select.Projection |> List.sumBy (fun item -> expr item.Expression))
+        + (select.Where |> Option.map expr |> Option.defaultValue 0)
+        + (select.GroupBy |> List.sumBy expr)
+        + (select.Having |> Option.map expr |> Option.defaultValue 0)
+
+    and private countRecursiveReferencesQuery dialect cteKey (query: Query) =
+        countRecursiveReferencesSelect dialect cteKey query.Head
+        + (query.SetOperations |> List.sumBy (fun branch -> countRecursiveReferencesQuery dialect cteKey branch.Query))
+        + (query.OrderBy |> List.sumBy (fun item -> countRecursiveReferencesExpr dialect cteKey item.Expression))
+
+    and private validateRecursiveCteShape dialect (cte: Cte) =
+        if cte.RecursiveScope then
+            let cteKey = partKey dialect cte.Name
+            let totalReferences = countRecursiveReferencesQuery dialect cteKey cte.Query
+            if totalReferences > 0 then
+                let anchorReferences = countRecursiveReferencesSelect dialect cteKey cte.Query.Head
+                if anchorReferences <> 0 then
+                    invalidOp (
+                        "SQL capability 'select.recursive_cte' requires a non-recursive anchor term; CTE '"
+                        + cte.Name.Value + "' references itself in the anchor.")
+                match cte.Query.SetOperations with
+                | [ branch ]
+                    when (branch.Operator = SetOperator.Union || branch.Operator = SetOperator.UnionAll)
+                         && branch.Query.SetOperations.IsEmpty ->
+                    let recursiveReferences = countRecursiveReferencesQuery dialect cteKey branch.Query
+                    let directSources = countDirectRecursiveSources dialect cteKey branch.Query.Head
+                    if recursiveReferences <> 1 || directSources <> 1 then
+                        invalidOp (
+                            "SQL capability 'select.recursive_cte' requires exactly one direct self-reference in the recursive UNION term for CTE '"
+                            + cte.Name.Value + "'.")
+                | _ ->
+                    invalidOp (
+                        "SQL capability 'select.recursive_cte' requires self-reference to use one anchor UNION or UNION ALL recursive term for CTE '"
+                        + cte.Name.Value + "'.")
+
     and private bindCtes dialect inheritedCtes (ctes: Cte list) =
         let mutable visible = inheritedCtes
         let bound = ResizeArray<Cte>()
         for cte in ctes do
-            let query = bindQuery dialect None visible cte.Query
+            validateRecursiveCteShape dialect cte
+            let cteKey = partKey dialect cte.Name
+            let bindingVisible =
+                if cte.RecursiveScope then visible @ [ cteKey ]
+                else visible
+            let query = bindQuery dialect None bindingVisible cte.Query
             bound.Add { cte with Query = query }
-            visible <- visible @ [ partKey dialect cte.Name ]
+            visible <- visible @ [ cteKey ]
         bound |> Seq.toList, visible
 
     and private bindJoin (scope: Scope) (join: Join) : Join * Scope =
