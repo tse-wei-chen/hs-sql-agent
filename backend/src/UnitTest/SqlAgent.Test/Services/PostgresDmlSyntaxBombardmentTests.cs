@@ -139,6 +139,18 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id, id",
             "more than once");
         yield return Reject(
+            "implicit-returning-column-alias",
+            "UPDATE users SET name = 'Alice' WHERE id = 1 RETURNING id returned_id",
+            "requires AS");
+        yield return Reject(
+            "implicit-returning-expression-alias",
+            "DELETE FROM users WHERE id = 1 RETURNING lower(name) normalized_name",
+            "requires AS");
+        yield return Reject(
+            "returning-wildcard-alias",
+            "DELETE FROM users WHERE id = 1 RETURNING * AS everything",
+            "wildcard");
+        yield return Reject(
             "insert-missing-column-list",
             "INSERT INTO users VALUES (1, 'Alice')",
             "INSERT column list");
