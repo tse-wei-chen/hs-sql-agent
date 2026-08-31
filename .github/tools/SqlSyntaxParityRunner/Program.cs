@@ -261,8 +261,12 @@ static Type RequiredType(Assembly assembly, string name) =>
 
 static Exception Unwrap(Exception exception)
 {
-    while (exception is TargetInvocationException { InnerException: not null } invocation)
-        exception = invocation.InnerException;
+    while (exception is TargetInvocationException invocation
+           && invocation.InnerException is Exception inner)
+    {
+        exception = inner;
+    }
+
     return exception;
 }
 

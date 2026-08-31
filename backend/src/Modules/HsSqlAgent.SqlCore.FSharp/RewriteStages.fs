@@ -890,6 +890,11 @@ module internal RewriteStages =
                 kind,
                 normalizeSource sourceDialect target source,
                 normalizeExpr sourceDialect target predicate)
+        | UsingJoin(kind, source, columns) ->
+            UsingJoin(
+                kind,
+                normalizeSource sourceDialect target source,
+                columns)
 
     and private normalizeCte sourceDialect target (cte: Cte) =
         let query = normalizeQuery sourceDialect target cte.Query
@@ -1050,8 +1055,12 @@ module internal RewriteStages =
         select.Having |> Option.iter (validateExpr allowedTables)
         select.Joins
         |> List.iter (function
-            | CrossJoin source -> validateSource allowedTables source
-            | OnJoin(_, source, predicate) -> validateSource allowedTables source; validateExpr allowedTables predicate)
+            | CrossJoin source
+            | UsingJoin(_, source, _) ->
+                validateSource allowedTables source
+            | OnJoin(_, source, predicate) ->
+                validateSource allowedTables source
+                validateExpr allowedTables predicate)
 
     and private validateQuery allowedTables query =
         validateSelect allowedTables query.Head
@@ -1458,10 +1467,16 @@ module internal RewriteStages =
         select.From |> Option.iter (proveTargetSource targetRuntime expressionProofs)
         select.Joins
         |> List.iter (function
-            | CrossJoin source -> proveTargetSource targetRuntime expressionProofs source
+            | CrossJoin source ->
+                proveTargetSource targetRuntime expressionProofs source
             | OnJoin(_, source, predicate) ->
                 proveTargetSource targetRuntime expressionProofs source
-                proveTargetExpr targetRuntime expressionProofs predicate)
+                proveTargetExpr targetRuntime expressionProofs predicate
+            | UsingJoin(_, source, _) ->
+                if targetProvider targetRuntime <> SqlAgentToolType.Postgres then
+                    raise (SqlCompilationException(
+                        "JOIN ... USING is currently proven only for PostgreSQL targets; cross-provider lowering remains fail-closed."))
+                proveTargetSource targetRuntime expressionProofs source)
         select.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
         select.GroupBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
         select.Having |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
