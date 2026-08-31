@@ -267,6 +267,26 @@ public sealed class PostgresSyntaxBombardmentTests
             "NULLS FIRST",
             "orders");
         yield return Case(
+            "order-by-projection-alias",
+            "SELECT amount AS total FROM orders ORDER BY total DESC",
+            "ORDER BY",
+            "orders");
+        yield return Case(
+            "order-by-aggregate-alias",
+            "SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id ORDER BY total DESC",
+            "ORDER BY",
+            "orders");
+        yield return Case(
+            "order-by-ordinal",
+            "SELECT id, name FROM users ORDER BY 1 DESC",
+            "ORDER BY 1 DESC",
+            "users");
+        yield return Case(
+            "set-order-by-output-alias",
+            "SELECT id AS item_id FROM alpha UNION SELECT id FROM beta ORDER BY item_id",
+            "ORDER BY",
+            "alpha,beta");
+        yield return Case(
             "limit-offset",
             "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 5",
             "OFFSET",
