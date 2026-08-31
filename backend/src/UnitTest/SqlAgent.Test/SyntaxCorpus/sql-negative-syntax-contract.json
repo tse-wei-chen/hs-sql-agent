@@ -30,13 +30,26 @@
     ]
   },
   {
-    "name": "pg-fetch-with-ties",
+    "name": "pg-fetch-with-ties-without-order",
     "dialect": "Postgres",
-    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
+    "sql": "SELECT id FROM users FETCH FIRST 10 ROWS WITH TIES",
     "expectedStage": "parse",
     "exceptionTypeContains": "SqlParseException",
     "messageContains": [
-      "WITH TIES"
+      "WITH TIES",
+      "ORDER BY"
+    ]
+  },
+  {
+    "name": "pg-fetch-with-ties-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.fetch_with_ties",
+      "MySQL"
     ]
   },
   {

@@ -802,6 +802,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "LIMIT",
             "users");
         yield return Case(
+            "fetch-first-with-ties",
+            "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
+            "WITH TIES",
+            "users");
+        yield return Case(
             "fetch-zero",
             "SELECT id FROM users ORDER BY id FETCH FIRST 0 ROWS ONLY",
             "LIMIT",
@@ -985,9 +990,6 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Reject(
             "lateral-source",
             "SELECT q.id FROM LATERAL (SELECT id FROM users) q");
-        yield return Reject(
-            "fetch-with-ties",
-            "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES");
         yield return Reject(
             "postgres-comma-limit",
             "SELECT id FROM users LIMIT 5, 10");

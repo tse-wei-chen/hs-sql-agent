@@ -262,6 +262,9 @@ module internal RewriteFacadeAdapter =
           Dml = sourceDmlProofs source sourceProfile
           OnConflict = sourceOnConflictProof source sourceProfile
           Ordering = sourceOrderingProofs source
+          FetchWithTies =
+            SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> capabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
 
     let parseSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =

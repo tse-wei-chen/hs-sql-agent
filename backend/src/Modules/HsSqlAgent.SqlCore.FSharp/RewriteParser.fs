@@ -27,6 +27,7 @@ module internal RewriteParser =
           Dml: DmlProofs
           OnConflict: CapabilityProof
           Ordering: SourceOrderingProofs
+          FetchWithTies: CapabilityProof
           Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
@@ -71,6 +72,7 @@ module internal RewriteParser =
               Dml = permissiveDml
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
+              FetchWithTies = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
@@ -82,6 +84,7 @@ module internal RewriteParser =
               Dml = permissiveDml
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
+              FetchWithTies = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
@@ -102,6 +105,7 @@ module internal RewriteParser =
         member _.SourceDml = semantics.Dml
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
+        member _.SourceFetchWithTies = semantics.FetchWithTies
 
     let private rememberNodeSpan start (cursor: Cursor) (node: obj | null) =
         Parsed.rememberSpan node
@@ -1373,11 +1377,7 @@ module internal RewriteParser =
             if acceptKeyword "WITH" cursor then
                 let tiesToken = cursor.Current
                 expectKeyword "TIES" cursor
-                match SqlFetchWithTiesCapabilityRules.SourceValidationError(
-                          sourceDialectToolType cursor.Dialect,
-                          null) with
-                | null -> ()
-                | message -> fail tiesToken message
+                requireSourceParseCapability tiesToken cursor.SourceFetchWithTies
                 if orderBy.IsEmpty then
                     fail tiesToken "FETCH ... WITH TIES requires ORDER BY so tie equality has a defined sort key"
                 fetchWithTies <- true

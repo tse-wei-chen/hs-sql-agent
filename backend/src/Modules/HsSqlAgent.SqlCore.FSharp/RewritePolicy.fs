@@ -28,6 +28,10 @@ module internal RewritePolicy =
     let private clampQueryLimit (rowCap: RowCap) (query: Query) =
         match rowCap with
         | Unlimited -> query
+        | MaxRows _ when query.FetchWithTies ->
+            raise (UnauthorizedAccessException(
+                "Security policy QueryMaxRows is a hard row cap, but FETCH ... WITH TIES can return more rows than its FETCH count. "
+                + "SQL capability 'select.fetch_with_ties' therefore remains policy-denied when QueryMaxRows is enabled."))
         | MaxRows maxRows ->
             let maxValue = PositiveRowCount.value maxRows
             let limit =
