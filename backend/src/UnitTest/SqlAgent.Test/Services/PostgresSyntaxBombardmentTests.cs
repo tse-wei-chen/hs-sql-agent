@@ -252,6 +252,11 @@ public sealed class PostgresSyntaxBombardmentTests
             "OFFSET",
             "users");
         yield return Case(
+            "limit-offset-rows",
+            "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 5 ROWS",
+            "OFFSET",
+            "users");
+        yield return Case(
             "union-all",
             "SELECT id FROM alpha UNION ALL SELECT id FROM beta",
             "UNION ALL",
@@ -564,6 +569,11 @@ public sealed class PostgresSyntaxBombardmentTests
         yield return Case(
             "fetch-zero",
             "SELECT id FROM users ORDER BY id FETCH FIRST 0 ROWS ONLY",
+            "LIMIT",
+            "users");
+        yield return Case(
+            "fetch-default-one",
+            "SELECT id FROM users ORDER BY id FETCH FIRST ROW ONLY",
             "LIMIT",
             "users");
         yield return Case(
