@@ -558,10 +558,21 @@ module internal RewriteStages =
         select.Having |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
 
     and private validateAggregateQuery enforceSource source sourceProfile target targetProfile query =
-        if query.FetchWithTies then
-            if query.Limit.IsNone then
+        if query.FetchPercent.IsSome then
+            if query.Limit.IsSome then
                 raise (SqlCompilationException(
-                    "SQL capability 'select.fetch_with_ties' requires a FETCH row count."))
+                    "FETCH row count and FETCH percentage cannot coexist in one canonical Query."))
+            if enforceSource then
+                match SqlFetchPercentCapabilityRules.SourceValidationError(source, sourceProfile) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            match SqlFetchPercentCapabilityRules.TargetValidationError(target, targetProfile) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+        if query.FetchWithTies then
+            if query.Limit.IsNone && query.FetchPercent.IsNone then
+                raise (SqlCompilationException(
+                    "SQL capability 'select.fetch_with_ties' requires a FETCH row count or percentage."))
             if query.OrderBy.IsEmpty then
                 raise (SqlCompilationException(
                     "SQL capability 'select.fetch_with_ties' requires ORDER BY so tie equality has a defined sort key."))
@@ -1612,6 +1623,12 @@ module internal RewriteStages =
         select.Having |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
 
     and private proveTargetQuery targetRuntime expressionProofs query =
+        if query.FetchPercent.IsSome then
+            match SqlFetchPercentCapabilityRules.TargetValidationError(
+                      targetProvider targetRuntime,
+                      null) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
         if query.FetchWithTies then
             match SqlFetchWithTiesCapabilityRules.TargetValidationError(
                       targetProvider targetRuntime,

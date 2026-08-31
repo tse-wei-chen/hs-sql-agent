@@ -191,7 +191,7 @@ module internal RewriteRenderer =
 
     let private isSetQuery (query: Query) = not query.SetOperations.IsEmpty
     let private hasTail (query: Query) =
-        not query.OrderBy.IsEmpty || query.Limit.IsSome || query.Offset.IsSome || query.FetchWithTies
+        not query.OrderBy.IsEmpty || query.Limit.IsSome || query.Offset.IsSome || query.FetchPercent.IsSome || query.FetchWithTies
 
     let rec private isBooleanExpression expression =
         match expression with
@@ -777,6 +777,7 @@ module internal RewriteRenderer =
                     OrderBy = []
                     Limit = None
                     Offset = None
+                    FetchPercent = None
                     FetchWithTies = false }
             let branchSql =
                 if ctx.Provider = PostgreSql && not branchNoTail.SetOperations.IsEmpty then
@@ -798,6 +799,9 @@ module internal RewriteRenderer =
 
     and private renderPaging (ctx: RenderContext) (query: Query) sql =
         let intValue value = NonNegativeRowCount.value value
+        let percentValue value = NonNegativePercentage.value value
+        if query.FetchPercent.IsSome && ctx.Provider <> Oracle then
+            invalidOp ("FETCH PERCENT reached rendering for unsupported provider " + string (providerTool ctx.Provider) + ".")
         match ctx.Provider with
         | PostgreSql when query.FetchWithTies ->
             let withOffset =
@@ -825,20 +829,36 @@ module internal RewriteRenderer =
             | Some limit, None -> sql + " LIMIT " + ctx.Bind(box (intValue limit))
             | Some limit, Some offset -> sql + " LIMIT " + ctx.Bind(box (intValue limit)) + " OFFSET " + ctx.Bind(box (intValue offset))
         | Oracle ->
-            match query.Limit, query.Offset, query.FetchWithTies with
-            | None, None, false -> sql
-            | None, Some offset, false -> sql + " OFFSET " + ctx.Bind(box (int64 (intValue offset))) + " ROWS"
-            | Some limit, offset, true ->
+            match query.Limit, query.FetchPercent, query.Offset, query.FetchWithTies with
+            | None, None, None, false -> sql
+            | None, None, Some offset, false ->
+                sql + " OFFSET " + ctx.Bind(box (int64 (intValue offset))) + " ROWS"
+            | Some limit, None, offset, true ->
                 sql
                 + " OFFSET "
                 + ctx.Bind(box (int64 (offset |> Option.map intValue |> Option.defaultValue 0)))
                 + " ROWS FETCH NEXT "
                 + ctx.Bind(box (intValue limit))
                 + " ROWS WITH TIES"
-            | Some limit, offset, false ->
-                sql + " OFFSET " + ctx.Bind(box (int64 (offset |> Option.map intValue |> Option.defaultValue 0))) + " ROWS FETCH NEXT " + ctx.Bind(box (intValue limit)) + " ROWS ONLY"
-            | None, _, true ->
-                invalidOp "FETCH WITH TIES reached Oracle rendering without a row-count limit."
+            | Some limit, None, offset, false ->
+                sql
+                + " OFFSET "
+                + ctx.Bind(box (int64 (offset |> Option.map intValue |> Option.defaultValue 0)))
+                + " ROWS FETCH NEXT "
+                + ctx.Bind(box (intValue limit))
+                + " ROWS ONLY"
+            | None, Some percent, offset, ties ->
+                sql
+                + " OFFSET "
+                + ctx.Bind(box (int64 (offset |> Option.map intValue |> Option.defaultValue 0)))
+                + " ROWS FETCH NEXT "
+                + ctx.Bind(box (percentValue percent))
+                + " PERCENT ROWS "
+                + (if ties then "WITH TIES" else "ONLY")
+            | Some _, Some _, _, _ ->
+                invalidOp "FETCH row count and percentage reached Oracle rendering simultaneously."
+            | None, None, _, true ->
+                invalidOp "FETCH WITH TIES reached Oracle rendering without a row count or percentage."
         | Firebird ->
             match query.Limit, query.Offset with
             | Some limit, Some offset when intValue limit > 0 && intValue offset > 0 ->

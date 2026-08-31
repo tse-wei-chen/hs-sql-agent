@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.60"
+    static member Version = "2026-08-31.61"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -220,6 +220,22 @@ type SqlCapabilityMatrix private () =
         let modulo = if provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird then translated else supported
         let nullOrdering = if provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.MsSqlServer then translated else supported
 
+        let fetchPercentStatus, fetchPercentDetail =
+            match provider with
+            | SqlAgentToolType.Oracle ->
+                match profileServerVersion with
+                | Some version when version.CompareTo(SqlFetchPercentCapabilityRules.OracleMinimumVersion) < 0 ->
+                    rejected,
+                    "FETCH ... PERCENT requires Oracle target ServerVersion 12.1+; declared version is "
+                    + version.ToString() + "."
+                | _ ->
+                    supported,
+                    "Oracle 12.1+ FETCH ... PERCENT is represented as a typed non-negative decimal percentage and emitted natively. The current proven source subset accepts numeric literals; general numeric expressions remain fail-closed."
+            | _ ->
+                rejected,
+                "SQL capability 'select.fetch_percent' has no proven native or semantics-preserving lowering for "
+                + string provider + "."
+
         let fetchWithTiesStatus, fetchWithTiesDetail =
             match provider with
             | SqlAgentToolType.Postgres ->
@@ -327,7 +343,8 @@ type SqlCapabilityMatrix private () =
                     else
                         "SQL Server has no native JOIN ... USING form; lowering to ON remains fail-closed until Core proves merged-column projection semantics.")
                 cap("select.row_limit","query",translated,
-                    "Structured Core row-count limits are translated to provider-native target syntax. Raw LIMIT spelling is accepted only for PostgreSQL, MySQL, and SQLite source dialects. PostgreSQL LIMIT ALL is canonicalized to no row-count limit, including LIMIT ALL OFFSET n where only the offset remains; MySQL and SQLite reject LIMIT ALL. MySQL and SQLite additionally accept native LIMIT offset,row_count and canonicalize the first integer to OFFSET and the second to LIMIT; PostgreSQL comma-form LIMIT is rejected. Raw bare OFFSET remains valid PostgreSQL syntax; MySQL and SQLite accept OFFSET only after LIMIT, and comma-form LIMIT cannot be combined with a separate OFFSET clause. PostgreSQL, Oracle, and Firebird raw source may use the modeled SQL-standard integer OFFSET ... ROW(S) and FETCH FIRST/NEXT ... ROW(S) ONLY forms, including FETCH without OFFSET; PostgreSQL may omit ROW/ROWS after OFFSET and may omit the FETCH count, which canonicalizes to one row. Explicit LIMIT and FETCH clauses remain mutually exclusive at the raw source boundary, including LIMIT ALL, matching PostgreSQL's alternative-syntax grammar. SQL Server raw OFFSET/FETCH requires statement-level ORDER BY, FETCH requires a preceding OFFSET, and TOP cannot share the same query scope. FETCH PERCENT and non-integer row-count expressions remain fail-closed. FETCH ... WITH TIES is modeled separately by select.fetch_with_ties because its result cardinality can exceed the FETCH count.")
+                    "Structured Core row-count limits are translated to provider-native target syntax. Raw LIMIT spelling is accepted only for PostgreSQL, MySQL, and SQLite source dialects. PostgreSQL LIMIT ALL is canonicalized to no row-count limit, including LIMIT ALL OFFSET n where only the offset remains; MySQL and SQLite reject LIMIT ALL. MySQL and SQLite additionally accept native LIMIT offset,row_count and canonicalize the first integer to OFFSET and the second to LIMIT; PostgreSQL comma-form LIMIT is rejected. Raw bare OFFSET remains valid PostgreSQL syntax; MySQL and SQLite accept OFFSET only after LIMIT, and comma-form LIMIT cannot be combined with a separate OFFSET clause. PostgreSQL, Oracle, and Firebird raw source may use the modeled SQL-standard integer OFFSET ... ROW(S) and FETCH FIRST/NEXT ... ROW(S) ONLY forms, including FETCH without OFFSET; PostgreSQL may omit ROW/ROWS after OFFSET and may omit the FETCH count, which canonicalizes to one row. Explicit LIMIT and FETCH clauses remain mutually exclusive at the raw source boundary, including LIMIT ALL, matching PostgreSQL's alternative-syntax grammar. SQL Server raw OFFSET/FETCH requires statement-level ORDER BY, FETCH requires a preceding OFFSET, and TOP cannot share the same query scope. Oracle FETCH ... PERCENT is modeled separately by select.fetch_percent as a typed native percentage; percentage expressions beyond numeric literals and non-integer row-count expressions remain fail-closed. FETCH ... WITH TIES is modeled separately by select.fetch_with_ties because its result cardinality can exceed the FETCH count.")
+                cap("select.fetch_percent","query",fetchPercentStatus,fetchPercentDetail)
                 cap("select.fetch_with_ties","query",fetchWithTiesStatus,fetchWithTiesDetail)
                 cap("select.lateral_derived","query",lateralStatus,lateralDetail)
                 cap("select.singleton","query",translated,"SELECT without FROM preserves singleton-row semantics.")

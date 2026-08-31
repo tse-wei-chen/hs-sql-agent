@@ -262,6 +262,9 @@ module internal RewriteFacadeAdapter =
           Dml = sourceDmlProofs source sourceProfile
           OnConflict = sourceOnConflictProof source sourceProfile
           Ordering = sourceOrderingProofs source
+          FetchPercent =
+            SqlFetchPercentCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> capabilityProof
           FetchWithTies =
             SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile)
             |> capabilityProof

@@ -518,6 +518,29 @@ module internal SqlDistinctOnCapabilityRules =
             "SQL capability 'select.distinct_on' is not supported by provider " + string provider
             + " because Core has no proven cross-provider lowering for PostgreSQL first-row-per-group semantics."
 
+module internal SqlFetchPercentCapabilityRules =
+    let OracleMinimumVersion = Version(12,1)
+
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+        if provider <> SqlAgentToolType.Oracle then
+            "SQL capability 'select.fetch_percent' is not supported by " + side
+            + " provider " + string provider
+            + "; FETCH ... PERCENT is currently modeled only as Oracle-native row-limiting semantics."
+        elif isNull profile || isNull profile.ServerVersion then
+            null
+        elif profile.ServerVersion.CompareTo(OracleMinimumVersion) >= 0 then
+            null
+        else
+            "SQL capability 'select.fetch_percent' requires Oracle "
+            + side + " ServerVersion " + OracleMinimumVersion.ToString()
+            + "+; declared version is " + profile.ServerVersion.ToString() + "."
+
+    let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
+
 module internal SqlFetchWithTiesCapabilityRules =
     let PostgresMinimumVersion = Version(13,0)
     let OracleMinimumVersion = Version(12,1)

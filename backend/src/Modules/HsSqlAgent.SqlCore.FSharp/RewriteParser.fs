@@ -27,6 +27,7 @@ module internal RewriteParser =
           Dml: DmlProofs
           OnConflict: CapabilityProof
           Ordering: SourceOrderingProofs
+          FetchPercent: CapabilityProof
           FetchWithTies: CapabilityProof
           LateralDerivedTable: CapabilityProof
           RecursiveCte: CapabilityProof
@@ -74,6 +75,7 @@ module internal RewriteParser =
               Dml = permissiveDml
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
+              FetchPercent = ProvenCapability
               FetchWithTies = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
@@ -88,6 +90,7 @@ module internal RewriteParser =
               Dml = permissiveDml
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
+              FetchPercent = ProvenCapability
               FetchWithTies = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
@@ -111,6 +114,7 @@ module internal RewriteParser =
         member _.SourceDml = semantics.Dml
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
+        member _.SourceFetchPercent = semantics.FetchPercent
         member _.SourceFetchWithTies = semantics.FetchWithTies
         member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
         member _.SourceRecursiveCte = semantics.RecursiveCte
@@ -263,6 +267,16 @@ module internal RewriteParser =
         match token.Kind with
         | IntegerLiteral value when value > 0L && value <= int64 Int32.MaxValue -> PositiveRowCount.create (int value)
         | _ -> fail token (context + " requires an integer greater than zero")
+
+    let private parseNonNegativePercentage context (cursor: Cursor) =
+        let token = cursor.Take()
+        match token.Kind with
+        | IntegerLiteral value when value >= 0L ->
+            NonNegativePercentage.create (decimal value)
+        | DecimalLiteral value when value >= 0M ->
+            NonNegativePercentage.create value
+        | _ ->
+            fail token (context + " requires a non-negative numeric literal")
 
     let private castTypeQualifiers =
         set [ "PRECISION"; "VARYING"; "WITH"; "WITHOUT"; "TIME"; "ZONE"; "SIGNED"; "UNSIGNED" ]
@@ -1402,6 +1416,7 @@ module internal RewriteParser =
         let orderBy = parseOrderBy true cursor
         let mutable limit = None
         let mutable offset = None
+        let mutable fetchPercent = None
         let mutable fetchWithTies = false
         let mutable usedCommaLimit = false
         let grammar = sourceRowLimitGrammar cursor
@@ -1426,20 +1441,35 @@ module internal RewriteParser =
             if not (acceptKeyword "FIRST" cursor || acceptKeyword "NEXT" cursor) then
                 fail cursor.Current "Expected FIRST or NEXT after FETCH"
 
-            let count =
-                if isKeyword "ROW" cursor.Current || isKeyword "ROWS" cursor.Current then
-                    if not grammar.FetchCountOptional then
-                        fail cursor.Current "SQL Server FETCH requires an explicit positive integer row count"
-                    1
-                elif grammar.FetchCountMustBePositive then
-                    parsePositiveRowCount "FETCH row count" cursor |> PositiveRowCount.value
-                else
-                    parseNonNegativeRowCount "FETCH row count" cursor |> NonNegativeRowCount.value
+            let mutable parsedRowCount : int option = None
+            if isKeyword "ROW" cursor.Current || isKeyword "ROWS" cursor.Current then
+                if not grammar.FetchCountOptional then
+                    fail cursor.Current "SQL Server FETCH requires an explicit positive integer row count"
+                parsedRowCount <- Some 1
+            else
+                match cursor.Current.Kind, cursor.Peek(1).Kind with
+                | DecimalLiteral _, Keyword "PERCENT"
+                | IntegerLiteral _, Keyword "PERCENT" ->
+                    let percentToken = cursor.Current
+                    let percent = parseNonNegativePercentage "FETCH percentage" cursor
+                    expectKeyword "PERCENT" cursor
+                    requireSourceParseCapability percentToken cursor.SourceFetchPercent
+                    fetchPercent <- Some percent
+                | _ ->
+                    let count =
+                        if grammar.FetchCountMustBePositive then
+                            parsePositiveRowCount "FETCH row count" cursor |> PositiveRowCount.value
+                        else
+                            parseNonNegativeRowCount "FETCH row count" cursor |> NonNegativeRowCount.value
+                    if acceptKeyword "PERCENT" cursor then
+                        let percentToken = cursor.Current
+                        requireSourceParseCapability percentToken cursor.SourceFetchPercent
+                        fetchPercent <- Some(NonNegativePercentage.create (decimal count))
+                    else
+                        parsedRowCount <- Some count
 
-            if acceptKeyword "PERCENT" cursor then
-                fail cursor.Current "FETCH ... PERCENT is not represented by the portable compiler"
             if not (acceptKeyword "ROW" cursor || acceptKeyword "ROWS" cursor) then
-                fail cursor.Current "Expected ROW or ROWS after FETCH count"
+                fail cursor.Current "Expected ROW or ROWS after FETCH count or percentage"
             if acceptKeyword "WITH" cursor then
                 let tiesToken = cursor.Current
                 expectKeyword "TIES" cursor
@@ -1449,7 +1479,10 @@ module internal RewriteParser =
                 fetchWithTies <- true
             else
                 expectKeyword "ONLY" cursor
-            limit <- Some(NonNegativeRowCount.create count)
+            match parsedRowCount, fetchPercent with
+            | Some count, None -> limit <- Some(NonNegativeRowCount.create count)
+            | None, Some _ -> ()
+            | _ -> fail cursor.Current "FETCH must declare exactly one row count or percentage"
 
         if acceptKeyword "LIMIT" cursor then
             if not grammar.SupportsLimitKeyword then
@@ -1498,7 +1531,7 @@ module internal RewriteParser =
         elif acceptKeyword "FETCH" cursor then
             parseFetch ()
 
-        orderBy, limit, offset, fetchWithTies
+        orderBy, limit, offset, fetchPercent, fetchWithTies
 
     and private parseQuery cursor =
         let start = cursor.Current.Start
@@ -1517,6 +1550,7 @@ module internal RewriteParser =
                   OrderBy = []
                   Limit = branchTop
                   Offset = None
+                  FetchPercent = None
                   FetchWithTies = false }
 
         let appendIntersectChain (baseQuery: Query) =
@@ -1539,6 +1573,7 @@ module internal RewriteParser =
               OrderBy = []
               Limit = top
               Offset = None
+              FetchPercent = None
               FetchWithTies = false }
             |> appendIntersectChain
 
@@ -1554,7 +1589,7 @@ module internal RewriteParser =
             else
                 scanning <- false
 
-        let orderBy, tailLimit, offset, fetchWithTies = parseQueryTail cursor
+        let orderBy, tailLimit, offset, fetchPercent, fetchWithTies = parseQueryTail cursor
         let limit =
             match initial.Limit, tailLimit with
             | Some value, None -> Some value
@@ -1566,6 +1601,7 @@ module internal RewriteParser =
                 OrderBy = orderBy
                 Limit = limit
                 Offset = offset
+                FetchPercent = fetchPercent
                 FetchWithTies = fetchWithTies }
         rememberNodeSpan start cursor (box query)
         query
