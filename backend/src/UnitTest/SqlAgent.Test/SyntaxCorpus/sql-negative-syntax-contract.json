@@ -274,7 +274,11 @@
     "exceptionTypeContains": "SqlCompilationException",
     "messageContains": [
       "not registered"
-    ]
+    ],
+    "expectedDiagnosticCode": "SQL_NORMALIZATION_REJECTED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
   },
   {
     "name": "pg-intersect-all-to-mysql",
@@ -323,7 +327,7 @@
       "temporal.date_only",
       "Cross-dialect lowering"
     ],
-    "expectedDiagnosticCode": "SQL_NORMALIZATION_REJECTED",
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
     "expectedDiagnosticStage": "SemanticValidation",
     "expectedDiagnosticCategory": "Semantic",
     "requireDiagnosticSpan": true
