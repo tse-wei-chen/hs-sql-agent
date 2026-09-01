@@ -307,7 +307,7 @@ module internal RewriteRenderer =
                 renderExpr ctx value + " FILTER (WHERE " + renderPredicate ctx predicate + ")"
             | _ -> invalidOp "Aggregate FILTER requires provider-specific lowering before rendering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
-        | Expr.Cast(value, targetType) -> "CAST(" + renderExpr ctx value + " AS " + CastType.value targetType + ")"
+        | Expr.Cast(value, targetType) -> "CAST(" + renderExpr ctx value + " AS " + RewriteCastTypes.renderTarget (providerTool ctx.Provider) targetType + ")"
         | Expr.Extract(field, value) ->
             let part = ExtractField.value field |> fun value -> value.Trim().ToUpperInvariant()
             let tool = providerTool ctx.Provider
