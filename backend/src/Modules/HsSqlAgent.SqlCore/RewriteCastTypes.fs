@@ -150,7 +150,12 @@ module internal RewriteCastTypes =
             if m.Groups["s"].Success then Some(parseInt m.Groups["s"].Value) else None
 
         let semantic = classify source first suffix name precision scale isMax
-        CastType.modeled source semantic normalized
+        let literalCoercion =
+            match name with
+            | "DATE" -> DateLiteralCoercion
+            | "DATETIME" | "DATETIME2" | "SMALLDATETIME" -> LocalDateTimeLiteralCoercion
+            | _ -> NoLiteralCoercion
+        CastType.modeled source semantic normalized literalCoercion
 
     let private bounded (precision: int option) (maximum: int) (target: SqlAgentToolType) =
         match precision with
