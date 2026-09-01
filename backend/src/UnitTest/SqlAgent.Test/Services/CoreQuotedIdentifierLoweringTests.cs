@@ -90,15 +90,25 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
-    public void Parse_QuotedCanonicalLookingFunction_FailsBeforeNormalization()
+    public void QuotedCanonicalLookingFunction_PreservesIdentity_AndDoesNotBecomeInternalCanonical()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
+            SqlAgentToolType.Postgres);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var function = Assert.IsType<FunctionCallExpr>(Assert.Single(select.Select).Expression);
+
+        var part = Assert.Single(function.Name.Parts);
+        Assert.Equal("CORE_DATE_ADD", part.Value);
+        Assert.True(part.WasQuoted);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(
                 "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
                 SqlAgentToolType.Postgres));
 
-        Assert.Contains("Quoted function identifiers", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("lossless identifier quoting", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not registered", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("normalization", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
