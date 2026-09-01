@@ -555,6 +555,10 @@ module internal RewriteStages =
             | None when not (isNull sourceContract) ->
                 match (requireSourceContract ()).CanonicalizationKind with
                 | SqlSourceFunctionCanonicalizationKind.DateAdd ->
+                    if call.IsDistinct then
+                        compilationError "CORE_DATE_ADD does not support DISTINCT."
+                    if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
+                        compilationError "CORE_DATE_ADD does not support aggregate-local modifiers."
                     if arguments.Length <> 3 then
                         compilationError (sourceName + " requires exactly 3 arguments.")
                     let unit =
@@ -563,6 +567,10 @@ module internal RewriteStages =
                     DateAdd(unit, arguments[1], arguments[2])
 
                 | SqlSourceFunctionCanonicalizationKind.DateDiff ->
+                    if call.IsDistinct then
+                        compilationError "CORE_DATE_DIFF does not support DISTINCT."
+                    if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
+                        compilationError "CORE_DATE_DIFF does not support aggregate-local modifiers."
                     let portableDay startValue endValue =
                         let canonical =
                             DateDiff(
@@ -598,6 +606,10 @@ module internal RewriteStages =
                             + "3-argument (unit, start, end) shape; received " + string values.Length + " arguments.")
 
                 | SqlSourceFunctionCanonicalizationKind.DatePart ->
+                    if call.IsDistinct then
+                        compilationError "CORE_DATE_PART does not support DISTINCT."
+                    if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
+                        compilationError "CORE_DATE_PART does not support aggregate-local modifiers."
                     if arguments.Length <> 2 then
                         compilationError (sourceName + " requires exactly 2 arguments.")
                     let rawPart =

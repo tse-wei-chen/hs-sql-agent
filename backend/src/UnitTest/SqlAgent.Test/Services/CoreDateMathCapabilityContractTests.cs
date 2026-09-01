@@ -99,7 +99,11 @@ public sealed class CoreDateMathCapabilityContractTests
 
         Assert.Equal(SqlCapabilityStatus.Translated, capability.Status);
         Assert.Contains(
-            "target-specific unit restrictions",
+            "typed in the closed F# AST",
+            capability.Detail,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "non-DAY date difference remains fail-closed",
             capability.Detail,
             StringComparison.OrdinalIgnoreCase);
     }
