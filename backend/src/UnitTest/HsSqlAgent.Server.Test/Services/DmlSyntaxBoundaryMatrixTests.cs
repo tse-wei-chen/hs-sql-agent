@@ -159,7 +159,9 @@ public sealed class DmlSyntaxBoundaryMatrixTests
         Assert.Equal(1, fixture.Connections.CreateCount);
 
         Assert.Contains(
-            "INSERT INTO",
+            dialect == SqlAgentToolType.Oracle && expectedRows > 1
+                ? "INSERT ALL"
+                : "INSERT INTO",
             session.Plan.MutationCommand.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
