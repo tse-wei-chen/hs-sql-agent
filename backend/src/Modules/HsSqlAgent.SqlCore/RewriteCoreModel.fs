@@ -248,6 +248,17 @@ module internal CoreModel =
             | ModeledCastType(_, _, _, literalCoercion) -> literalCoercion
             | CompatibilityRawCastType _ -> NoLiteralCoercion
 
+        let private normalizeRawSpelling (value: string) =
+            Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant()
+
+        let internal equivalent left right =
+            match left, right with
+            | ModeledCastType(_, leftSemantic, _, _), ModeledCastType(_, rightSemantic, _, _) ->
+                leftSemantic = rightSemantic
+            | CompatibilityRawCastType leftSpelling, CompatibilityRawCastType rightSpelling ->
+                normalizeRawSpelling leftSpelling = normalizeRawSpelling rightSpelling
+            | _ -> false
+
         let value = function
             | ModeledCastType(_, _, sourceSpelling, _)
             | CompatibilityRawCastType sourceSpelling -> sourceSpelling
@@ -608,7 +619,7 @@ module internal CoreModel =
                 && listEquivalent orderEquivalent leftWindow.OrderBy rightWindow.OrderBy
                 && leftWindow.Frame = rightWindow.Frame
             | Cast(leftValue, leftType), Cast(rightValue, rightType) ->
-                leftType = rightType && equivalent leftValue rightValue
+                CastType.equivalent leftType rightType && equivalent leftValue rightValue
             | Extract(leftField, leftValue), Extract(rightField, rightValue) ->
                 leftField = rightField && equivalent leftValue rightValue
             | SimpleCase(leftInput, leftBranches, leftFallback),
