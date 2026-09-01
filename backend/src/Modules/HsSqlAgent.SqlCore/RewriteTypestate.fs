@@ -100,6 +100,15 @@ module internal Typestate =
         | OracleRuntime
         | FirebirdRuntime
 
+    module TargetRuntime =
+        let provider = function
+            | PostgreSqlRuntime -> SqlAgentToolType.Postgres
+            | MySqlRuntime -> SqlAgentToolType.MySQL
+            | SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
+            | SQLiteRuntime -> SqlAgentToolType.Sqlite
+            | OracleRuntime -> SqlAgentToolType.Oracle
+            | FirebirdRuntime -> SqlAgentToolType.Firebird
+
     type ParsedSql = private ParsedSql of Document
     type BoundSql = private BoundSql of Document
     type CanonicalSql = private CanonicalSql of Document

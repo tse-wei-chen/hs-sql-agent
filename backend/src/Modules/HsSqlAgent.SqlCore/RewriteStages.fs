@@ -31,14 +31,6 @@ module internal RewriteStages =
         | RewriteParser.SourceDialect.Oracle -> SqlAgentToolType.Oracle
         | RewriteParser.SourceDialect.Firebird -> SqlAgentToolType.Firebird
 
-    let private targetProvider = function
-        | TargetRuntime.PostgreSqlRuntime -> SqlAgentToolType.Postgres
-        | TargetRuntime.MySqlRuntime -> SqlAgentToolType.MySQL
-        | TargetRuntime.SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
-        | TargetRuntime.SQLiteRuntime -> SqlAgentToolType.Sqlite
-        | TargetRuntime.OracleRuntime -> SqlAgentToolType.Oracle
-        | TargetRuntime.FirebirdRuntime -> SqlAgentToolType.Firebird
-
     let private compilationError message =
         raise (SqlCompilationException(message))
 
@@ -887,7 +879,7 @@ module internal RewriteStages =
                     (fun () -> RewriteSourceValidation.verifyRegexDocument sourceRegexProof document)
 
                 let source = sourceProvider sourceDialect
-                let target = targetProvider targetRuntime
+                let target = TargetRuntime.provider targetRuntime
 
                 withCompilationDiagnostic
                     "SQL_SEMANTIC_VALIDATION_FAILED"
@@ -1164,7 +1156,7 @@ module internal RewriteStages =
         | Literal(ScalarValue.Boolean _) -> true
         | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ -> true
         | RegexMatch _ ->
-            SqlRegexCapabilityRules.SupportsTarget(targetProvider targetRuntime, null)
+            SqlRegexCapabilityRules.SupportsTarget(TargetRuntime.provider targetRuntime, null)
         | Unary(UnaryOperator.Not, _) -> true
         | Binary(operator, _, _) ->
             match operator with
@@ -1190,7 +1182,7 @@ module internal RewriteStages =
 
     let private validateBooleanScalar targetRuntime capability expression =
         if isDefinitelyBoolean targetRuntime expression then
-            match SqlScalarBooleanCapabilityRules.TargetValidationError(targetProvider targetRuntime, capability) with
+            match SqlScalarBooleanCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime, capability) with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
 
@@ -1236,7 +1228,7 @@ module internal RewriteStages =
                 + string provider + " for this Core plan."))
 
     let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
-        let provider = targetProvider targetRuntime
+        let provider = TargetRuntime.provider targetRuntime
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
         let quotedNative = FunctionName.hasQuotedParts call.Name
         if quotedNative
@@ -1447,7 +1439,7 @@ module internal RewriteStages =
                 "FILTER must modify a directly modeled aggregate function."))
 
     let private validateWindowTarget targetRuntime value (window: WindowSpec) =
-        let provider = targetProvider targetRuntime
+        let provider = TargetRuntime.provider targetRuntime
         match directWindowFunction value with
         | None -> raise (SqlCompilationException(
                     "OVER must modify a directly modeled aggregate or window function."))
@@ -1538,7 +1530,7 @@ module internal RewriteStages =
                         || context = HavingClause
                         || context = OrderByClause
                         || (context = WindowSpecificationClause
-                            && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(targetProvider targetRuntime))
+                            && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(TargetRuntime.provider targetRuntime))
                 if not allowed then
                     raise (SqlCompilationException(
                         "Aggregate function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
@@ -1635,12 +1627,12 @@ module internal RewriteStages =
             if part.WasQuoted || part.PreserveSpelling then
                 part.Value
             else
-                match targetProvider targetRuntime with
+                match TargetRuntime.provider targetRuntime with
                 | SqlAgentToolType.Postgres -> part.Value.ToLowerInvariant()
                 | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird -> part.Value.ToUpperInvariant()
                 | _ -> part.Value
         let comparer =
-            match targetProvider targetRuntime with
+            match TargetRuntime.provider targetRuntime with
             | SqlAgentToolType.Postgres | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird ->
                 StringComparer.Ordinal
             | _ -> StringComparer.OrdinalIgnoreCase

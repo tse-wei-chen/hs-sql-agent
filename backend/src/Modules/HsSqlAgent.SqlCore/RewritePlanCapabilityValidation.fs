@@ -16,14 +16,6 @@ module internal RewritePlanCapabilityValidation =
     let private targetCapabilityMessage =
         RewriteCapabilityProvenance.targetMessage "target capability validation"
 
-    let private targetProvider = function
-        | TargetRuntime.PostgreSqlRuntime -> SqlAgentToolType.Postgres
-        | TargetRuntime.MySqlRuntime -> SqlAgentToolType.MySQL
-        | TargetRuntime.SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
-        | TargetRuntime.SQLiteRuntime -> SqlAgentToolType.Sqlite
-        | TargetRuntime.OracleRuntime -> SqlAgentToolType.Oracle
-        | TargetRuntime.FirebirdRuntime -> SqlAgentToolType.Firebird
-
     let private iterDistinctOn action (select: Select) =
         match select.DistinctMode with
         | SelectDistinct.DistinctOn expressions -> expressions |> NonEmpty.iter action
@@ -570,7 +562,7 @@ module internal RewritePlanCapabilityValidation =
 
         match conflict.TargetColumns, conflict.Action with
         | None, DoNothing ->
-            let target = targetProvider targetRuntime
+            let target = TargetRuntime.provider targetRuntime
             if proofs.SourceProvider <> target then
                 raise (SqlCompilationException(
                     "SQL capability 'dml.conflict_do_nothing_any' is native-only because an omitted conflict target depends on the provider's complete native conflict domain. Source provider "

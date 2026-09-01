@@ -15,14 +15,6 @@ module internal RewriteCapabilityValidation =
     let private targetCapabilityMessage =
         RewriteCapabilityProvenance.targetMessage "target capability validation"
 
-    let private targetProvider = function
-        | TargetRuntime.PostgreSqlRuntime -> SqlAgentToolType.Postgres
-        | TargetRuntime.MySqlRuntime -> SqlAgentToolType.MySQL
-        | TargetRuntime.SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
-        | TargetRuntime.SQLiteRuntime -> SqlAgentToolType.Sqlite
-        | TargetRuntime.OracleRuntime -> SqlAgentToolType.Oracle
-        | TargetRuntime.FirebirdRuntime -> SqlAgentToolType.Firebird
-
     let private iterDistinctOn action (select: Select) =
         match select.DistinctMode with
         | SelectDistinct.DistinctOn expressions -> expressions |> NonEmpty.iter action
@@ -335,14 +327,14 @@ module internal RewriteCapabilityValidation =
         | DerivedTable(query, _) -> proveTargetQuery targetRuntime expressionProofs query
         | LateralDerivedTable(query, _) ->
             match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                      targetProvider targetRuntime,
+                      TargetRuntime.provider targetRuntime,
                       null) with
             | null -> proveTargetQuery targetRuntime expressionProofs query
             | message -> raise (SqlCompilationException(message))
 
     and private proveTargetSelect targetRuntime expressionProofs select =
         if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
-            let provider = targetProvider targetRuntime
+            let provider = TargetRuntime.provider targetRuntime
             if not (SqlRecursiveCteCapabilityRules.SupportsWithRecursiveSyntax(provider)) then
                 raise (SqlCompilationException(
                     "SQL capability 'select.recursive_cte' is not supported by target provider "
@@ -350,7 +342,7 @@ module internal RewriteCapabilityValidation =
         select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
         match select.DistinctMode with
         | SelectDistinct.DistinctOn expressions ->
-            match SqlDistinctOnCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
+            match SqlDistinctOnCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime) with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
             expressions |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
@@ -363,7 +355,7 @@ module internal RewriteCapabilityValidation =
             | CrossJoin source ->
                 proveTargetSource targetRuntime expressionProofs source
             | NaturalJoin(_, source) ->
-                match SqlNaturalJoinCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
+                match SqlNaturalJoinCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
                 proveTargetSource targetRuntime expressionProofs source
@@ -371,7 +363,7 @@ module internal RewriteCapabilityValidation =
                 proveTargetSource targetRuntime expressionProofs source
                 proveTargetExpr targetRuntime expressionProofs predicate
             | UsingJoin(_, source, _) ->
-                match SqlUsingJoinCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
+                match SqlUsingJoinCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
                 proveTargetSource targetRuntime expressionProofs source)
@@ -382,13 +374,13 @@ module internal RewriteCapabilityValidation =
     and private proveTargetQuery targetRuntime expressionProofs query =
         if query.FetchPercent.IsSome then
             match SqlFetchPercentCapabilityRules.TargetValidationError(
-                      targetProvider targetRuntime,
+                      TargetRuntime.provider targetRuntime,
                       null) with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
         if query.FetchWithTies then
             match SqlFetchWithTiesCapabilityRules.TargetValidationError(
-                      targetProvider targetRuntime,
+                      TargetRuntime.provider targetRuntime,
                       null) with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
@@ -399,13 +391,13 @@ module internal RewriteCapabilityValidation =
             | SetOperator.IntersectAll ->
                 match SqlSetAllCapabilityRules.TargetValidationError(
                           "INTERSECT",
-                          targetProvider targetRuntime) with
+                          TargetRuntime.provider targetRuntime) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | SetOperator.ExceptAll ->
                 match SqlSetAllCapabilityRules.TargetValidationError(
                           "EXCEPT",
-                          targetProvider targetRuntime) with
+                          TargetRuntime.provider targetRuntime) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | SetOperator.Union

@@ -12,14 +12,6 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// validation so RewriteStages can focus on stage sequencing and diagnostic ownership.
 module internal RewriteStructuralValidation =
 
-    let private targetProvider = function
-        | TargetRuntime.PostgreSqlRuntime -> SqlAgentToolType.Postgres
-        | TargetRuntime.MySqlRuntime -> SqlAgentToolType.MySQL
-        | TargetRuntime.SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
-        | TargetRuntime.SQLiteRuntime -> SqlAgentToolType.Sqlite
-        | TargetRuntime.OracleRuntime -> SqlAgentToolType.Oracle
-        | TargetRuntime.FirebirdRuntime -> SqlAgentToolType.Firebird
-
     let private iterDistinctOn action (select: Select) =
         match select.DistinctMode with
         | SelectDistinct.DistinctOn expressions -> expressions |> NonEmpty.iter action
@@ -39,7 +31,7 @@ module internal RewriteStructuralValidation =
             "SQL capability 'select.cte_scope' is not supported by the native SQL backend: " + detail + "."))
 
     let private nestedCteSupported targetRuntime =
-        SqlNestedCteCapabilityRules.SupportsTarget(targetProvider targetRuntime)
+        SqlNestedCteCapabilityRules.SupportsTarget(TargetRuntime.provider targetRuntime)
 
     let private validateCtePlacement targetRuntime position (ctes: Cte list) =
         if not ctes.IsEmpty && not (nestedCteSupported targetRuntime) then
@@ -47,19 +39,19 @@ module internal RewriteStructuralValidation =
             | RootQuery | InsertSelectSource -> ()
             | CteDefinition ->
                 cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
+                    "provider " + string (TargetRuntime.provider targetRuntime)
                     + " has no declared portable nested-WITH-inside-a-CTE-definition contract")
             | DerivedTablePosition ->
                 cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
+                    "provider " + string (TargetRuntime.provider targetRuntime)
                     + " has no declared portable WITH-in-derived-table lowering contract")
             | SetBranchPosition ->
                 cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
+                    "provider " + string (TargetRuntime.provider targetRuntime)
                     + " has no declared portable WITH-in-set-operation-branch lowering contract")
             | ScalarSubqueryPosition ->
                 cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
+                    "provider " + string (TargetRuntime.provider targetRuntime)
                     + " has no declared portable WITH-at-the-root-of-a-scalar/EXISTS-subquery contract")
 
     let rec private validateNestedCteExpr targetRuntime expression =
