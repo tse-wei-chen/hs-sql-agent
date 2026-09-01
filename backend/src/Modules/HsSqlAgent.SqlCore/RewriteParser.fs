@@ -939,7 +939,8 @@ module internal RewriteParser =
         let isRawRegex =
             Identifier.parts name
             |> function
-                | [ part ] -> part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
+                | [ part ] when not part.WasQuoted && not part.PreserveSpelling ->
+                    part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
                 | _ -> false
         if isRawRegex then
             if not aggregateOrderBy.IsEmpty || aggregateSeparator.IsSome then
