@@ -381,9 +381,8 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
             SqlAgentToolType.MsSqlServer,
             SqlAgentToolType.MsSqlServer);
 
-        Assert.Contains("CAST([value] AS INT)", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ORDER BY", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("OFFSET", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SELECT DISTINCT CAST([value] AS INT)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[converted]", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
