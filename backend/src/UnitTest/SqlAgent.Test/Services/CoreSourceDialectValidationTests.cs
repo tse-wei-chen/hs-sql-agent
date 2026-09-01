@@ -28,6 +28,28 @@ public class CoreSourceDialectValidationTests
     }
 
     [Fact]
+    public void Compile_MySqlTimestampAddHour_RemainsPortable()
+    {
+        var command = CompileQuery(
+            "SELECT TIMESTAMPADD(HOUR, 1, created_at) FROM orders",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("INTERVAL '1 hour'", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_PostgresDatePartHour_RemainsPortable()
+    {
+        var command = CompileQuery(
+            "SELECT DATE_PART('HOUR', created_at) FROM orders",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer);
+
+        Assert.Contains("DATEPART(HOUR", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_MySqlTwoArgumentDateDiff_RemainsPortable()
     {
         var command = CompileQuery(
