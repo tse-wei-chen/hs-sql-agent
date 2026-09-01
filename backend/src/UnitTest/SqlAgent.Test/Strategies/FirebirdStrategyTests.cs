@@ -509,4 +509,18 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
         // Structured projection aliases preserve caller spelling.
         Assert.True(rows[0].TryGetProperty(PropOrderCount, out _));
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteFirebirdNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT TIMESTAMP '2026-08-24 12:34:56' AS item_ts FROM RDB$DATABASE" +
+            ") SELECT item_ts FROM recent",
+            SqlAgentToolType.Firebird,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
 }

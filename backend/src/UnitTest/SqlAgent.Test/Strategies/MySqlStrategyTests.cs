@@ -200,4 +200,33 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             new[] { "Alice", "Bob", "Charlie" },
             names.Split('|').OrderBy(value => value, StringComparer.Ordinal).ToArray());
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteMySqlNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT CAST(`id` AS SIGNED) AS item_id FROM `users`" +
+            ") SELECT item_id FROM recent ORDER BY item_id LIMIT 1",
+            SqlAgentToolType.MySQL,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_NestedInnerCte_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH outer_cte AS (" +
+            "WITH inner_cte AS (SELECT id AS item_id FROM users) " +
+            "SELECT item_id FROM inner_cte" +
+            ") SELECT item_id FROM outer_cte",
+            SqlAgentToolType.MySQL,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
 }

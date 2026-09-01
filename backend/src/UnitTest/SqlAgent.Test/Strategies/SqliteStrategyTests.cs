@@ -534,4 +534,18 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
         Assert.Single(rows);
         Assert.Equal(420m, rows[0].GetProperty("TotalWithTax").GetDecimal());
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteSqliteNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT GROUP_CONCAT(Name) AS names FROM Users" +
+            ") SELECT names FROM recent",
+            SqlAgentToolType.Sqlite,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
 }
