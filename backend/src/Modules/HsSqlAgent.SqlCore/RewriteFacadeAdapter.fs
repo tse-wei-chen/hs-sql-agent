@@ -178,10 +178,7 @@ module internal RewriteFacadeAdapter =
             SqlOffsetTimestampCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           FirebirdTimeZoneType =
-            SqlFirebirdTimeZoneTypeCapabilityRules.CastTargetValidationError(
-                target,
-                targetProfile,
-                "TIMESTAMP WITH TIME ZONE")
+            SqlFirebirdTimeZoneTypeCapabilityRules.CastTargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           FirebirdExtendedDecimal =
             if target <> SqlAgentToolType.Firebird
