@@ -18,17 +18,17 @@ module internal RewritePipeline =
         private
             { Dialect: SourceDialect
               Semantics: SourceSemantics
-              Profile: SqlProviderCapabilityProfile | null }
+              Profile: SqlProviderCapabilityProfile option }
 
     module VerifiedSource =
-        let internal create dialect semantics profile =
+        let internal create dialect semantics (profile: SqlProviderCapabilityProfile | null) =
             { Dialect = dialect
               Semantics = semantics
-              Profile = profile }
+              Profile = Option.ofObj profile }
 
         let internal dialect source = source.Dialect
         let internal semantics source = source.Semantics
-        let internal profile source = source.Profile
+        let internal profile source = source.Profile |> Option.toObj
 
     /// Target runtime identity and every target capability proof travel as one value.
     /// Renderer identity is derived from Runtime, so proofs can no longer be detached from
@@ -36,23 +36,23 @@ module internal RewritePipeline =
     type VerifiedTarget =
         private
             { Runtime: TargetRuntime
-              Profile: SqlProviderCapabilityProfile | null
+              Profile: SqlProviderCapabilityProfile option
               Expressions: ExpressionProofs
               Joins: JoinProofs
               Ordering: TargetNullOrdering
               Dml: DmlProofs }
 
     module VerifiedTarget =
-        let internal create runtime profile expressions joins ordering dml =
+        let internal create runtime (profile: SqlProviderCapabilityProfile | null) expressions joins ordering dml =
             { Runtime = runtime
-              Profile = profile
+              Profile = Option.ofObj profile
               Expressions = expressions
               Joins = joins
               Ordering = ordering
               Dml = dml }
 
         let internal runtime target = target.Runtime
-        let internal profile target = target.Profile
+        let internal profile target = target.Profile |> Option.toObj
         let internal expressions target = target.Expressions
         let internal joins target = target.Joins
         let internal ordering target = target.Ordering
