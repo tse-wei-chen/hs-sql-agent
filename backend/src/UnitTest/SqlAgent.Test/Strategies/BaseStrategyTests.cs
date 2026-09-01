@@ -189,6 +189,79 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     [Fact]
+    public async Task ExecuteRawQueryAsync_CteCorrelatedExists_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id " +
+            $"FROM {TestOrdersTableName}" +
+            $") SELECT r.owner_id FROM recent r " +
+            $"WHERE EXISTS (" +
+            $"SELECT {TestUserIdColumn} FROM {TestTableName} u " +
+            $"WHERE u.{TestUserIdColumn} = r.owner_id" +
+            $")";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteWindow_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH ranked AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id, " +
+            $"ROW_NUMBER() OVER (" +
+            $"PARTITION BY {TestOrdersUserIdColumn} " +
+            $"ORDER BY {TestOrdersIdColumn}" +
+            $") AS row_no " +
+            $"FROM {TestOrdersTableName}" +
+            $") SELECT owner_id, row_no FROM ranked";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        Assert.All(
+            rows,
+            row => Assert.True(
+                TryGetPropertyIgnoreCase(row, "row_no", out _)));
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_ChainedCtes_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH base AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $"), recent AS (" +
+            $"SELECT item_id FROM base" +
+            $") SELECT item_id FROM recent";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
         var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };
