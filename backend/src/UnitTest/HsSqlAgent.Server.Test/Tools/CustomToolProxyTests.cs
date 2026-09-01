@@ -290,7 +290,7 @@ public class CustomToolProxyTests
 
         Assert.Contains("cancelled by user", result, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, approval.ElicitCount);
-        connections.Verify(x => x.Create("Host=localhost;Database=testdb"), Times.Once);
+        connections.Verify(x => x.Create("Host=localhost;Database=testdb"), Times.Exactly(2));
         metadata.VerifyAll();
     }
 
@@ -387,8 +387,25 @@ public class CustomToolProxyTests
 
     private void SetupPostgresProvider()
     {
+        var verificationConnection = new Mock<DbConnection>();
+        verificationConnection
+            .SetupGet(x => x.State)
+            .Returns(System.Data.ConnectionState.Open);
+        verificationConnection
+            .SetupGet(x => x.ServerVersion)
+            .Returns("17.5");
+        verificationConnection
+            .Setup(x => x.OpenAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var connections = new Mock<IDbConnectionFactory>();
+        connections
+            .Setup(x => x.Create("Host=localhost;Database=testdb"))
+            .Returns(verificationConnection.Object);
+
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(p => p.Type).Returns(SqlAgentToolType.Postgres);
+        provider.SetupGet(p => p.Connections).Returns(connections.Object);
         _providerFactoryMock
             .Setup(f => f.GetProvider(SqlAgentToolType.Postgres))
             .Returns(provider.Object);
