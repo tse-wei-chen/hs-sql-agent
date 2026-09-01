@@ -17,6 +17,8 @@ public sealed class DialectGrammarMatrixCoverageTests
         var recursive = RecursiveCteGrammarMatrixTests.RecursiveCteGrammarMatrix().Count();
         var postgresNative =
             PostgresNativeCapabilityGrammarMatrixTests.PostgresNativeCapabilityMatrix().Count();
+        var oracleNative =
+            OracleNativeCapabilityGrammarMatrixTests.OracleNativeCapabilityMatrix().Count();
 
         Assert.Equal(432, postgres);
         Assert.Equal(900, mySql);
@@ -26,9 +28,10 @@ public sealed class DialectGrammarMatrixCoverageTests
         Assert.Equal(900, firebird);
         Assert.Equal(128, recursive);
         Assert.Equal(72, postgresNative);
+        Assert.Equal(72, oracleNative);
         Assert.Equal(
-            4685,
-            postgres + mySql + sqlServer + sqlite + oracle + firebird + recursive + postgresNative);
+            4757,
+            postgres + mySql + sqlServer + sqlite + oracle + firebird + recursive + postgresNative + oracleNative);
     }
 
     [Fact]
@@ -113,6 +116,35 @@ public sealed class DialectGrammarMatrixCoverageTests
         Assert.Equal(825, counts["Sqlite"]);
         Assert.Equal(900, counts["Oracle"]);
         Assert.Equal(900, counts["Firebird"]);
+    }
+
+    [Fact]
+    public void GeneratedOracleNativeParityCorpus_MatchesNativeMatrixFloor()
+    {
+        var path = Path.Combine(
+            AppContext.BaseDirectory,
+            "SyntaxCorpus",
+            "sql-generated-oracle-native-compatibility-floor.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var cases = document.RootElement.EnumerateArray().ToArray();
+
+        Assert.Equal(72, cases.Length);
+        Assert.Equal(
+            72,
+            cases.Select(item => item.GetProperty("name").GetString())
+                .Distinct(StringComparer.Ordinal)
+                .Count());
+        Assert.All(
+            cases,
+            item => Assert.Equal(
+                "Oracle",
+                item.GetProperty("dialect").GetString(),
+                ignoreCase: true));
+        Assert.All(
+            cases,
+            item => Assert.Equal(
+                "12.1",
+                item.GetProperty("sourceVersion").GetString()));
     }
 
     [Fact]

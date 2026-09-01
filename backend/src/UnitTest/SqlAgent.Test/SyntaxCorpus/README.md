@@ -10,6 +10,7 @@ These corpora are merge contracts for the SQL compiler rewrite. They are not a l
 - `sql-generated-dml-predicate-compatibility-floor.json` is the six-dialect Cartesian UPDATE/DELETE predicate-assignment plus INSERT...SELECT projection/source-predicate floor.
 - `sql-generated-recursive-compatibility-floor.json` is the version-aware recursive CTE grammar floor for PostgreSQL, MySQL, SQLite, and Firebird.
 - `sql-generated-postgres-native-compatibility-floor.json` is the PostgreSQL 13 native modifier floor for DISTINCT ON, LATERAL, explicit NULL ordering, and FETCH WITH TIES.
+- `sql-generated-oracle-native-compatibility-floor.json` is the Oracle 12.1 native row-limiting floor for explicit NULL ordering, row-count/percentage FETCH, and WITH TIES.
 - The differential runner compares the base `main` assembly with the PR assembly one-way:
   - `main=success, PR=failure` is a regression.
   - `main=failure, PR=success` is a capability expansion.
@@ -34,9 +35,10 @@ Current query matrix floor:
 | **Non-recursive subtotal** | **4485** |
 | Version-aware recursive CTE matrix | 128 |
 | PostgreSQL native modifier matrix | 72 |
-| **Total positive query floor** | **4685** |
+| Oracle 12.1 native row-limiting matrix | 72 |
+| **Total positive query floor** | **4757** |
 
-The recursive matrix additionally cross-products four proven native providers, four legal recursive-member shapes, four root consumers, and root ordering, with explicit source/target server-version proofs. The PostgreSQL native modifier matrix cross-products root/CTE placement, DISTINCT ON, CROSS/LEFT LATERAL, NULLS FIRST/LAST, and FETCH WITH TIES under an explicit PostgreSQL 13 source/target profile. The matrices exercise parsing, query facts/binding, validation, compilation, and native rendering. Assertions are semantic and renderer-aware: source spelling is not required to survive when a target renderer intentionally lowers it to an equivalent native form.
+The recursive matrix additionally cross-products four proven native providers, four legal recursive-member shapes, four root consumers, and root ordering, with explicit source/target server-version proofs. The PostgreSQL native modifier matrix cross-products root/CTE placement, DISTINCT ON, CROSS/LEFT LATERAL, NULLS FIRST/LAST, and FETCH WITH TIES under an explicit PostgreSQL 13 source/target profile. The Oracle native matrix cross-products root/CTE placement, simple/join/correlated sources, explicit NULL ordering, row-count versus percentage FETCH, and ONLY versus WITH TIES under an explicit Oracle 12.1 source/target profile. The matrices exercise parsing, query facts/binding, validation, compilation, and native rendering. Assertions are semantic and renderer-aware: source spelling is not required to survive when a target renderer intentionally lowers it to an equivalent native form.
 
 The DML positive floor contains 42 common six-dialect cases, 17 explicit native/profile/assurance-gated capability cases, 180 Cartesian UPDATE/DELETE predicate/assignment cases, and 180 Cartesian INSERT...SELECT projection/source-predicate cases, for 419 positive DML cases total.
 
