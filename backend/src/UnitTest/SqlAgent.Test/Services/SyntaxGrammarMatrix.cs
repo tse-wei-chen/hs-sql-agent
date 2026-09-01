@@ -50,6 +50,18 @@ internal static class SyntaxGrammarMatrix
                 $"{caseName}: expected SELECT/query compatibility AST, actual {statement.GetType().FullName}.")
         };
 
+    public static IEnumerable<(
+        GrammarVariant<T1> First,
+        GrammarVariant<T2> Second)>
+        Product<T1, T2>(
+            IReadOnlyList<GrammarVariant<T1>> first,
+            IReadOnlyList<GrammarVariant<T2>> second)
+    {
+        foreach (var firstVariant in first)
+        foreach (var secondVariant in second)
+            yield return (firstVariant, secondVariant);
+    }
+
     public static int ProductCount<T1, T2, T3, T4>(
         IReadOnlyList<GrammarVariant<T1>> first,
         IReadOnlyList<GrammarVariant<T2>> second,
