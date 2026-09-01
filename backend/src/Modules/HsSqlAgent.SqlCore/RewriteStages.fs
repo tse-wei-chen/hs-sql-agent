@@ -962,16 +962,21 @@ module internal RewriteStages =
 
             | None when sourceName = "COALESCE" ->
                 if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
-                let name =
-                if FunctionName.requiresNativeIdentifierSemantics call.Name then call.Name
-                else FunctionName.create "COALESCE"
-            FunctionCall { call with Name = name; Arguments = arguments }
+                let renderedName =
+                    if FunctionName.requiresNativeIdentifierSemantics call.Name then
+                        call.Name
+                    else
+                        FunctionName.create "COALESCE"
+                FunctionCall { call with Name = renderedName; Arguments = arguments }
 
             | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceRegistryName) ->
                 let renderedName =
-                    if sourceTool = targetTool then sourceName
-                    else sourceRegistryName
-                FunctionCall { call with Name = FunctionName.create renderedName; Arguments = arguments }
+                    if sourceTool = targetTool && FunctionName.requiresNativeIdentifierSemantics call.Name then
+                        call.Name
+                    else
+                        let name = if sourceTool = targetTool then sourceName else sourceRegistryName
+                        FunctionName.create name
+                FunctionCall { call with Name = renderedName; Arguments = arguments }
 
             | None ->
                 let sourceDefinition =
@@ -1026,7 +1031,12 @@ module internal RewriteStages =
                                 + "; no lossless Core translator is registered yet.")
                         FunctionCall { call with Name = FunctionName.create (targetDefinition.Name.Trim().ToUpperInvariant()); Arguments = arguments }
                 else
-                    FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
+                    let renderedName =
+                        if FunctionName.requiresNativeIdentifierSemantics call.Name then
+                            call.Name
+                        else
+                            FunctionName.create sourceName
+                    FunctionCall { call with Name = renderedName; Arguments = arguments }
 
     and private normalizeWindow source target (window: WindowSpec) =
         { window with
