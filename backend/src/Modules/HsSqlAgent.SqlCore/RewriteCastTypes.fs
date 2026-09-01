@@ -49,7 +49,34 @@ module internal RewriteCastTypes =
         | Some p, Some s when s > p -> fail "DECIMAL/NUMERIC scale cannot exceed precision."
         | _ -> SqlDecimal(precision, scale)
 
-    let private classify (source: SqlAgentToolType) (normalized: string) (name: string) (precision: int option) (scale: int option) (isMax: bool) =
+    let private providerNativeType
+        (source: SqlAgentToolType)
+        (first: string)
+        (suffix: string)
+        (precision: int option)
+        (scale: int option)
+        (isMax: bool) =
+        let qualifiers =
+            if String.IsNullOrWhiteSpace(suffix) then []
+            else
+                suffix.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                |> Array.map ProviderTypeQualifier.create
+                |> Array.toList
+        let arguments =
+            if isMax then [ ProviderTypeMax ]
+            else
+                match precision, scale with
+                | None, None -> []
+                | Some p, None -> [ ProviderTypeInteger p ]
+                | Some p, Some s -> [ ProviderTypeInteger p; ProviderTypeInteger s ]
+                | None, Some _ -> fail "Provider-native CAST scale requires a leading type argument."
+        SqlProviderNative
+            { Provider = source
+              Name = ProviderTypeName.create first
+              Qualifiers = qualifiers
+              Arguments = arguments }
+
+    let private classify (source: SqlAgentToolType) (normalized: string) (first: string) (suffix: string) (name: string) (precision: int option) (scale: int option) (isMax: bool) =
         if isMax then
             if source <> SqlAgentToolType.MsSqlServer then
                 fail "CAST type length MAX is supported only for SQL Server source syntax."
@@ -106,7 +133,7 @@ module internal RewriteCastTypes =
                 temporalType name precision scale true SqlTimestamp
             | "UUID" | "UNIQUEIDENTIFIER" -> noArguments name precision scale SqlUuid
             | "JSON" | "JSONB" -> noArguments name precision scale SqlJson
-            | _ -> SqlProviderNative(source, normalized)
+            | _ -> providerNativeType source first suffix precision scale isMax
 
     let parseSource source (raw: string) =
         let normalized = normalizeSpaces raw
@@ -125,7 +152,7 @@ module internal RewriteCastTypes =
         let scale =
             if m.Groups["s"].Success then Some(parseInt m.Groups["s"].Value) else None
 
-        let semantic = classify source normalized name precision scale isMax
+        let semantic = classify source normalized first suffix name precision scale isMax
         CastType.modeled source semantic normalized
 
     let private bounded (precision: int option) (maximum: int) (target: SqlAgentToolType) =
@@ -363,11 +390,11 @@ module internal RewriteCastTypes =
             | SqlAgentToolType.Firebird ->
                 fail "JSON has no dedicated Firebird CAST target in the current Core model."
             | _ -> fail ("CAST type '" + source + "' has no Core target mapping for provider " + string target + ".")
-        | SqlProviderNative(provider, spelling) ->
-            if provider = target then spelling
+        | SqlProviderNative nativeType ->
+            if nativeType.Provider = target then source
             else
                 fail (
-                    "CAST type '" + spelling + "' from source dialect " + string provider
+                    "CAST type '" + source + "' from source dialect " + string nativeType.Provider
                     + " has no cross-dialect Core semantic mapping yet.")
 
     let renderTarget (target: SqlAgentToolType) (castType: CastType) =
