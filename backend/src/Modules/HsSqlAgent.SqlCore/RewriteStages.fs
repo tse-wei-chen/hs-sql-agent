@@ -1390,7 +1390,8 @@ module internal RewriteStages =
             | SqlCanonicalTargetCapabilityFamily.DateMath ->
                 match call.Arguments |> List.tryHead with
                 | Some(Literal(ScalarValue.Text rawUnit)) ->
-                    match SqlDateMathCapabilityRules.TargetValidationError(rawUnit, provider, contract.Name) with
+                    let unit = SqlDateMathUnit.Parse(rawUnit, contract.Name)
+                    match SqlDateMathCapabilityRules.TargetValidationError(unit, provider, contract.Name) with
                     | null -> ()
                     | message -> raise (SqlCompilationException(message))
                 | _ -> raise (SqlCompilationException(
