@@ -1812,50 +1812,50 @@ module internal RewriteStages =
             delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
         document
 
-    let private requireCapability = function
+    let private requireCapability capabilityMessage = function
         | ProvenCapability -> ()
         | RejectedCapability rejection ->
-            raise (SqlCompilationException(targetCapabilityMessage rejection))
+            raise (SqlCompilationException(capabilityMessage rejection))
 
-    let private proveJoinKind (proofs: JoinProofs) = function
-        | JoinKind.Right -> requireCapability proofs.RightJoin
-        | JoinKind.Full -> requireCapability proofs.FullJoin
+    let private proveJoinKind capabilityMessage (proofs: JoinProofs) = function
+        | JoinKind.Right -> requireCapability capabilityMessage proofs.RightJoin
+        | JoinKind.Full -> requireCapability capabilityMessage proofs.FullJoin
         | JoinKind.Inner | JoinKind.Left | JoinKind.Cross -> ()
 
-    let rec private proveTargetJoinSource proofs source =
+    let rec private proveJoinSource capabilityMessage proofs source =
         match source with
         | NamedTable _ | CteTable _ -> ()
         | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> proveTargetJoinQuery proofs query
+        | LateralDerivedTable(query, _) -> proveJoinQuery capabilityMessage proofs query
 
-    and private proveTargetJoinSelect proofs select =
-        select.Ctes |> List.iter (fun cte -> proveTargetJoinQuery proofs cte.Query)
-        select.From |> Option.iter (proveTargetJoinSource proofs)
+    and private proveJoinSelect capabilityMessage proofs select =
+        select.Ctes |> List.iter (fun cte -> proveJoinQuery capabilityMessage proofs cte.Query)
+        select.From |> Option.iter (proveJoinSource capabilityMessage proofs)
         select.Joins
         |> List.iter (fun join ->
-            proveJoinKind proofs join.Kind
-            proveTargetJoinSource proofs join.Source)
+            proveJoinKind capabilityMessage proofs join.Kind
+            proveJoinSource capabilityMessage proofs join.Source)
 
-    and private proveTargetJoinQuery proofs query =
-        proveTargetJoinSelect proofs query.Head
-        query.SetOperations |> List.iter (fun branch -> proveTargetJoinQuery proofs branch.Query)
+    and private proveJoinQuery capabilityMessage proofs query =
+        proveJoinSelect capabilityMessage proofs query.Head
+        query.SetOperations |> List.iter (fun branch -> proveJoinQuery capabilityMessage proofs branch.Query)
 
-    let private proveTargetJoins proofs document =
+    let private proveJoins capabilityMessage proofs document =
         match document.Statement with
-        | QueryStatement query -> proveTargetJoinQuery proofs query
+        | QueryStatement query -> proveJoinQuery capabilityMessage proofs query
         | InsertStatement insert ->
             match insert.Input with
-            | QuerySource query -> proveTargetJoinQuery proofs query
+            | QuerySource query -> proveJoinQuery capabilityMessage proofs query
             | Values _ | DefaultValues -> ()
         | UpdateStatement update ->
-            update.From |> List.iter (proveTargetJoinSource proofs)
+            update.From |> List.iter (proveJoinSource capabilityMessage proofs)
         | DeleteStatement delete ->
-            delete.Using |> List.iter (proveTargetJoinSource proofs)
+            delete.Using |> List.iter (proveJoinSource capabilityMessage proofs)
 
-    let private requireDmlCapability = function
+    let private requireDmlCapability capabilityMessage = function
         | ProvenCapability -> ()
         | RejectedCapability rejection ->
-            raise (SqlCompilationException(targetCapabilityMessage rejection))
+            raise (SqlCompilationException(capabilityMessage rejection))
 
     let private returningNodeName = function
         | Column _ -> "ColumnExpr"
@@ -1987,31 +1987,31 @@ module internal RewriteStages =
                 "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
                 + returningNodeName expression)
 
-    let private proveReturning (proofs: DmlProofs) (items: ReturningItem list) =
+    let private proveReturning capabilityMessage (proofs: DmlProofs) (items: ReturningItem list) =
         if not (List.isEmpty items) then
-            requireDmlCapability proofs.Returning
+            requireDmlCapability capabilityMessage proofs.Returning
             let rich =
                 items
                 |> List.choose (function
                     | ReturningExpression(expression, _) -> Some expression
                     | ReturningColumn _ | ReturningWildcard _ -> None)
             if not rich.IsEmpty then
-                requireDmlCapability proofs.ReturningExpression
+                requireDmlCapability capabilityMessage proofs.ReturningExpression
                 rich |> List.iter validateRichReturningExpression
 
-    let private proveTargetDml (proofs: DmlProofs) document =
+    let private proveDml capabilityMessage (proofs: DmlProofs) document =
         match document.Statement with
         | QueryStatement _ -> ()
         | InsertStatement insert ->
-            proveReturning proofs insert.Returning
+            proveReturning capabilityMessage proofs insert.Returning
         | UpdateStatement update ->
-            if update.TargetAlias.IsSome then requireDmlCapability proofs.TargetAlias
-            if not update.From.IsEmpty then requireDmlCapability proofs.UpdateFrom
-            proveReturning proofs update.Returning
+            if update.TargetAlias.IsSome then requireDmlCapability capabilityMessage proofs.TargetAlias
+            if not update.From.IsEmpty then requireDmlCapability capabilityMessage proofs.UpdateFrom
+            proveReturning capabilityMessage proofs update.Returning
         | DeleteStatement delete ->
-            if delete.TargetAlias.IsSome then requireDmlCapability proofs.TargetAlias
-            if not delete.Using.IsEmpty then requireDmlCapability proofs.DeleteUsing
-            proveReturning proofs delete.Returning
+            if delete.TargetAlias.IsSome then requireDmlCapability capabilityMessage proofs.TargetAlias
+            if not delete.Using.IsEmpty then requireDmlCapability capabilityMessage proofs.DeleteUsing
+            proveReturning capabilityMessage proofs delete.Returning
 
     let private orderingProviderName = function
         | MySqlRuntime -> "MySQL"
@@ -3549,10 +3549,10 @@ module internal RewriteStages =
                 validateDocument allowedTables document)
 
         targetCheck (fun () -> proveTargetDocument targetRuntime targetExpressions validated |> ignore)
-        sourceCheck (fun () -> proveTargetJoins sourceJoins validated)
-        targetCheck (fun () -> proveTargetJoins targetJoins validated)
+        sourceCheck (fun () -> proveJoins sourceCapabilityMessage sourceJoins validated)
+        targetCheck (fun () -> proveJoins targetCapabilityMessage targetJoins validated)
         targetCheck (fun () -> proveOrderingAndPaging targetRuntime targetOrdering validated)
-        sourceCheck (fun () -> proveTargetDml sourceDml validated)
-        targetCheck (fun () -> proveTargetDml targetDml validated)
+        sourceCheck (fun () -> proveDml sourceCapabilityMessage sourceDml validated)
+        targetCheck (fun () -> proveDml targetCapabilityMessage targetDml validated)
         targetCheck (fun () -> proveConflicts targetRuntime conflictProofs validated)
         ValidatedSql(validated, targetRuntime)
