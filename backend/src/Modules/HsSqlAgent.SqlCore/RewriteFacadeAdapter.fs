@@ -113,9 +113,7 @@ module internal RewriteFacadeAdapter =
         { ILike =
             SqlIlikeCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
-          DistinctFrom =
-            SqlDistinctFromCapabilityRules.SourceValidationError(source, sourceProfile)
-            |> sourceCapabilityProof
+          DistinctFrom = CapabilityProof.ProvenCapability
           IntervalLiteral =
             SqlIntervalLiteralCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
@@ -277,6 +275,9 @@ module internal RewriteFacadeAdapter =
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
           MySqlNoBackslashEscapes =
             SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(source, sourceProfile)
+          DistinctFromSyntax =
+            SqlDistinctFromCapabilityRules.SourceSyntaxValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile

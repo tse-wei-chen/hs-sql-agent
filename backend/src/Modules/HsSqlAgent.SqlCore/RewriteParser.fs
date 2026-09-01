@@ -22,6 +22,7 @@ module internal RewriteParser =
         { EnforceDialectSyntax: bool
           MySqlPipes: MySqlPipesSemantics
           MySqlNoBackslashEscapes: bool
+          DistinctFromSyntax: CapabilityProof
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
@@ -71,6 +72,7 @@ module internal RewriteParser =
             { EnforceDialectSyntax = false
               MySqlPipes = RejectAmbiguousPipes
               MySqlNoBackslashEscapes = false
+              DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
@@ -86,6 +88,7 @@ module internal RewriteParser =
             { EnforceDialectSyntax = true
               MySqlPipes = PipesAsConcat
               MySqlNoBackslashEscapes = false
+              DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
@@ -110,6 +113,7 @@ module internal RewriteParser =
         member _.Dialect = dialect
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
         member _.MySqlNoBackslashEscapes = semantics.MySqlNoBackslashEscapes
+        member _.SourceDistinctFromSyntax = semantics.DistinctFromSyntax
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
@@ -579,7 +583,7 @@ module internal RewriteParser =
                 cursor.Advance()
                 let negated = acceptKeyword "NOT" cursor
                 if acceptKeyword "DISTINCT" cursor then
-                    requireSourceCapability token cursor.SourceExpressions.DistinctFrom
+                    requireSourceCapability token cursor.SourceDistinctFromSyntax
                     expectKeyword "FROM" cursor
                     let operator =
                         if negated then BinaryOperator.NotDistinctFrom

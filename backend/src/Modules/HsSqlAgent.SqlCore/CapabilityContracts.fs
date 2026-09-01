@@ -228,7 +228,7 @@ module internal SqlDistinctFromCapabilityRules =
         && not (isNull profile.ServerVersion)
         && profile.ServerVersion.CompareTo(minimum) >= 0
 
-    let SourceValidationError(
+    let SourceSyntaxValidationError(
         sourceDialect: SqlAgentToolType,
         sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         match sourceDialect with
