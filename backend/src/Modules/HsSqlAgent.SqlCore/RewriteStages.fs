@@ -1920,6 +1920,10 @@ module internal RewriteStages =
             validateRichReturningExpression value
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            if FunctionName.hasQuotedParts call.Name then
+                returningExpressionError (
+                    "does not infer portable scalar semantics from quoted native function identity; function '"
+                    + name + "'")
             match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
             | Some contract
                 when contract.Kind = SqlCanonicalFunctionKind.Scalar
@@ -2677,7 +2681,10 @@ module internal RewriteStages =
 
     let private canonicalFunctionKind (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-        name, SqlCanonicalFunctionRegistry.IsAggregate(name), SqlCanonicalFunctionRegistry.IsWindow(name)
+        if FunctionName.hasQuotedParts call.Name then
+            name, false, false
+        else
+            name, SqlCanonicalFunctionRegistry.IsAggregate(name), SqlCanonicalFunctionRegistry.IsWindow(name)
 
     let private targetCapabilityError provider capability =
         SqlCompilationException(
@@ -2716,7 +2723,16 @@ module internal RewriteStages =
     let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
         let provider = targetProvider targetRuntime
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-        match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+        let quotedNative = FunctionName.hasQuotedParts call.Name
+        if quotedNative
+           && (call.IsDistinct || not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome) then
+            raise (SqlCompilationException(
+                "Quoted native function '" + name
+                + "' cannot use DISTINCT or aggregate-local modifiers until its aggregate semantics are explicitly modeled."))
+        let contract =
+            if quotedNative then None
+            else SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj
+        match contract with
         | None ->
             if call.IsDistinct then
                 raise (SqlCompilationException(
@@ -2902,6 +2918,10 @@ module internal RewriteStages =
     let private validateFilterTarget = function
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            if FunctionName.hasQuotedParts call.Name then
+                raise (SqlCompilationException(
+                    "Quoted native function '" + name
+                    + "' cannot use FILTER until its aggregate semantics are explicitly modeled."))
             match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
             | Some contract when contract.AllowFilter -> ()
             | _ ->
@@ -2918,6 +2938,10 @@ module internal RewriteStages =
                     "OVER must modify a directly modeled aggregate or window function."))
         | Some call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            if FunctionName.hasQuotedParts call.Name then
+                raise (SqlCompilationException(
+                    "Quoted native function '" + name
+                    + "' cannot use OVER until its aggregate/window semantics are explicitly modeled."))
             let contract =
                 match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
                 | Some contract when contract.AllowWindow -> contract
@@ -3239,7 +3263,8 @@ module internal RewriteStages =
             call.Arguments
             |> List.iteri (fun index argument ->
                 let allowFunctionWildcard =
-                    name = "COUNT"
+                    not (FunctionName.hasQuotedParts call.Name)
+                    && name = "COUNT"
                     && index = 0
                     && (match argument with
                         | Wildcard None -> true
@@ -3434,7 +3459,10 @@ module internal RewriteStages =
         match expression with
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            name = "RAND" || name = "RANDOM"
+            let isKnownRandom =
+                not (FunctionName.hasQuotedParts call.Name)
+                && (name = "RAND" || name = "RANDOM")
+            isKnownRandom
             || (call.Arguments |> List.exists containsVolatileRandom)
             || (call.AggregateOrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
         | Unary(_, operand) -> containsVolatileRandom operand
