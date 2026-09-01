@@ -444,7 +444,7 @@ module internal RewriteStages =
         | Cast(value, targetType) ->
             Cast(
                 normalizeExpr source target value,
-                RewriteCastTypes.normalize (sourceProvider source) (targetProvider target) targetType)
+                RewriteCastTypes.normalize (sourceProvider source) (TargetRuntime.provider target) targetType)
         | Extract(field, value) -> Extract(field, normalizeExpr source target value)
         | SimpleCase(input, branches, fallback) ->
             SimpleCase(
@@ -483,7 +483,7 @@ module internal RewriteStages =
 
     and private normalizeFunction source target (call: FunctionCall) =
         let sourceTool = sourceProvider source
-        let targetTool = targetProvider target
+        let targetTool = TargetRuntime.provider target
         let arguments = call.Arguments |> List.map (normalizeExpr source target)
         let orderBy = call.AggregateOrderBy |> List.map (normalizeOrderBy source target)
         let call = { call with Arguments = arguments; AggregateOrderBy = orderBy }
