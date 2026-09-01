@@ -76,6 +76,10 @@ module internal RewriteCapabilityValidation =
         | OrderOrdinal _
         | Literal _
         | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            proveFilterPredicate capabilityMessage proofs amount
+            proveFilterPredicate capabilityMessage proofs value
         | Unary(_, operand) ->
             proveFilterPredicate capabilityMessage proofs operand
         | Binary(_, left, right) ->
@@ -140,6 +144,10 @@ module internal RewriteCapabilityValidation =
         | Literal _ -> ()
         | Interval _ ->
             requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            proveFilterExpr capabilityMessage expressionProofs amount
+            proveFilterExpr capabilityMessage expressionProofs value
         | Unary(_, operand) ->
             proveFilterExpr capabilityMessage expressionProofs operand
         | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
@@ -253,6 +261,9 @@ module internal RewriteCapabilityValidation =
         match expression with
         | Spanned(_, inner) -> isRepeatableDistinctOperand inner
         | Column _ | BoundColumn _ | OrderOrdinal _ | Literal _ -> true
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            isRepeatableDistinctOperand amount && isRepeatableDistinctOperand value
         | Unary(_, operand)
         | Cast(operand, _)
         | Extract(_, operand) ->
@@ -272,6 +283,24 @@ module internal RewriteCapabilityValidation =
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ -> ()
         | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
         | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
+        | DateAdd(unit, amount, value) ->
+            match SqlDateMathCapabilityRules.TargetValidationError(
+                      unit,
+                      TargetRuntime.provider targetRuntime,
+                      "CORE_DATE_ADD") with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            proveTargetExpr targetRuntime expressionProofs amount
+            proveTargetExpr targetRuntime expressionProofs value
+        | DateDiff(unit, startValue, finishValue) ->
+            match SqlDateMathCapabilityRules.TargetValidationError(
+                      unit,
+                      TargetRuntime.provider targetRuntime,
+                      "CORE_DATE_DIFF") with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            proveTargetExpr targetRuntime expressionProofs startValue
+            proveTargetExpr targetRuntime expressionProofs finishValue
         | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
         | Binary(BinaryOperator.Concat, left, right) ->
             proveSqlServerConcat targetRuntime

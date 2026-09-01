@@ -58,6 +58,10 @@ module internal RewriteStructuralValidation =
         match expression with
         | Spanned(_, inner) -> validateNestedCteExpr targetRuntime inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            validateNestedCteExpr targetRuntime amount
+            validateNestedCteExpr targetRuntime value
         | Unary(_, operand) -> validateNestedCteExpr targetRuntime operand
         | Binary(_, left, right) ->
             validateNestedCteExpr targetRuntime left
@@ -180,6 +184,10 @@ module internal RewriteStructuralValidation =
         match expression with
         | Spanned(_, inner) -> validateNoFromExpression allowWildcard inner
         | Literal _ | Interval _ | OrderOrdinal _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            validateNoFromExpression false amount
+            validateNoFromExpression false value
         | Column identifier ->
             noFromReferenceError identifier
         | BoundColumn(_, ColumnBinding.OuterRowSource) ->
@@ -265,6 +273,10 @@ module internal RewriteStructuralValidation =
         match expression with
         | Spanned(_, inner) -> visitNestedNoFromExpression inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            visitNestedNoFromExpression amount
+            visitNestedNoFromExpression value
         | Unary(_, operand) ->
             visitNestedNoFromExpression operand
         | Binary(_, left, right) ->
