@@ -24,24 +24,24 @@ module internal RewriteCastTypes =
         | true, parsed -> parsed
         | _ -> fail ("CAST type argument '" + value + "' is outside the supported integer range.")
 
-    let private noArguments name precision scale semantic =
+    let private noArguments (name: string) (precision: int option) (scale: int option) (semantic: SqlType) =
         if precision.IsSome || scale.IsSome then
             fail ("CAST type '" + name + "' does not accept precision/scale in the Core type model.")
         semantic
 
-    let private onePositiveArgument name precision scale constructor =
+    let private onePositiveArgument (name: string) (precision: int option) (scale: int option) (constructor: int option -> SqlType) =
         if scale.IsSome then
             fail ("CAST type '" + name + "' does not accept a scale.")
         match precision with
         | Some 0 -> fail ("CAST type '" + name + "' length must be positive.")
         | value -> constructor value
 
-    let private temporalType name precision scale withTimeZone constructor =
+    let private temporalType (name: string) (precision: int option) (scale: int option) (withTimeZone: bool) (constructor: int option * bool -> SqlType) =
         if scale.IsSome then
             fail ("Temporal CAST type '" + name + "' accepts at most one precision argument.")
         constructor (precision, withTimeZone)
 
-    let private decimalType precision scale =
+    let private decimalType (precision: int option) (scale: int option) =
         if scale.IsSome && precision.IsNone then
             fail "DECIMAL/NUMERIC scale requires a precision."
         if precision = Some 0 then fail "DECIMAL/NUMERIC precision must be positive."
@@ -49,7 +49,7 @@ module internal RewriteCastTypes =
         | Some p, Some s when s > p -> fail "DECIMAL/NUMERIC scale cannot exceed precision."
         | _ -> SqlDecimal(precision, scale)
 
-    let private classify source normalized name precision scale isMax =
+    let private classify (source: SqlAgentToolType) (normalized: string) (name: string) (precision: int option) (scale: int option) (isMax: bool) =
         if isMax then
             if source <> SqlAgentToolType.MsSqlServer then
                 fail "CAST type length MAX is supported only for SQL Server source syntax."
@@ -128,7 +128,7 @@ module internal RewriteCastTypes =
         let semantic = classify source normalized name precision scale isMax
         CastType.modeled source semantic normalized
 
-    let private bounded precision maximum target =
+    let private bounded (precision: int option) (maximum: int) (target: SqlAgentToolType) =
         match precision with
         | None -> None
         | Some p when p <= maximum -> Some p
@@ -137,15 +137,15 @@ module internal RewriteCastTypes =
                 "Temporal precision " + string p + " exceeds target provider " + string target
                 + " maximum " + string maximum + " for a lossless CAST.")
 
-    let private temporal name precision =
+    let private temporal (name: string) (precision: int option) =
         match precision with None -> name | Some p -> name + "(" + string p + ")"
 
-    let private temporalWithZone name precision =
+    let private temporalWithZone (name: string) (precision: int option) =
         match precision with
         | None -> name + " WITH TIME ZONE"
         | Some p -> name + "(" + string p + ") WITH TIME ZONE"
 
-    let private firebirdTemporal name precision =
+    let private firebirdTemporal (name: string) (precision: int option) =
         match precision with
         | Some p when p > 4 ->
             fail (
@@ -153,7 +153,7 @@ module internal RewriteCastTypes =
                 + " exceeds Firebird's four fractional-second digits for a lossless CAST.")
         | _ -> name
 
-    let private renderDecimal precision scale target source =
+    let private renderDecimal (precision: int option) (scale: int option) (target: SqlAgentToolType) (source: string) =
         match precision with
         | None ->
             match target with
@@ -175,7 +175,7 @@ module internal RewriteCastTypes =
              | SqlAgentToolType.Sqlite -> "NUMERIC"
              | _ -> "DECIMAL") + suffix
 
-    let private renderString length target fixedWidth source =
+    let private renderString (length: int option) (target: SqlAgentToolType) (fixedWidth: bool) (source: string) =
         if not fixedWidth && length.IsNone then
             match target with
             | SqlAgentToolType.Postgres -> "VARCHAR"
@@ -197,7 +197,7 @@ module internal RewriteCastTypes =
             | SqlAgentToolType.Firebird -> (if fixedWidth then "CHAR" else "VARCHAR") + "(" + string length + ")"
             | _ -> fail ("CAST type '" + source + "' has no Core target mapping for provider " + string target + ".")
 
-    let private renderBinary length target source =
+    let private renderBinary (length: int option) (target: SqlAgentToolType) (source: string) =
         match length with
         | None ->
             match target with
@@ -220,7 +220,7 @@ module internal RewriteCastTypes =
                 fail "Binary string CAST requires Firebird OCTETS character-set semantics, which are not modeled yet."
             | _ -> fail ("CAST type '" + source + "' has no Core target mapping for provider " + string target + ".")
 
-    let private renderSemantic semantic target source =
+    let private renderSemantic (semantic: SqlType) (target: SqlAgentToolType) (source: string) =
         match semantic with
         | SqlBoolean ->
             match target with
@@ -370,7 +370,7 @@ module internal RewriteCastTypes =
                     "CAST type '" + spelling + "' from source dialect " + string provider
                     + " has no cross-dialect Core semantic mapping yet.")
 
-    let renderTarget target (castType: CastType) =
+    let renderTarget (target: SqlAgentToolType) (castType: CastType) =
         match CastType.semantic castType, CastType.sourceProvider castType with
         | Some semantic, Some sourceProvider when sourceProvider = target ->
             CastType.value castType
@@ -379,7 +379,7 @@ module internal RewriteCastTypes =
         | _ ->
             fail "Compatibility raw CAST type reached rendering before semantic normalization."
 
-    let normalize source target (castType: CastType) =
+    let normalize (source: SqlAgentToolType) (target: SqlAgentToolType) (castType: CastType) =
         let modeled =
             match CastType.semantic castType with
             | Some _ -> castType
