@@ -151,6 +151,48 @@ module internal CoreModel =
         | BoundedLength of int
         | MaxLength
 
+    type ProviderTypeName = private ProviderTypeName of string list
+
+    module ProviderTypeName =
+        let private safePart =
+            Regex("^[A-Z_][A-Z0-9_]*$", RegexOptions.CultureInvariant)
+
+        let create (value: string) =
+            let parts =
+                value.Split('.', StringSplitOptions.RemoveEmptyEntries)
+                |> Array.toList
+            if parts.IsEmpty
+               || parts |> List.exists (fun part -> not (safePart.IsMatch(part)))
+               || String.concat "." parts <> value then
+                invalidArg (nameof value) ("Unsafe provider-native type name '" + value + "'.")
+            ProviderTypeName parts
+
+        let parts (ProviderTypeName parts) = parts
+        let value nativeName = nativeName |> parts |> String.concat "."
+
+    type ProviderTypeQualifier = private ProviderTypeQualifier of string
+
+    module ProviderTypeQualifier =
+        let private safeQualifier =
+            Regex("^[A-Z_][A-Z0-9_]*$", RegexOptions.CultureInvariant)
+
+        let create (value: string) =
+            if String.IsNullOrWhiteSpace(value) || not (safeQualifier.IsMatch(value)) then
+                invalidArg (nameof value) ("Unsafe provider-native type qualifier '" + value + "'.")
+            ProviderTypeQualifier value
+
+        let value (ProviderTypeQualifier value) = value
+
+    type ProviderTypeArgument =
+        | ProviderTypeInteger of int
+        | ProviderTypeMax
+
+    type ProviderNativeType =
+        { Provider: SqlAgentToolType
+          Name: ProviderTypeName
+          Qualifiers: ProviderTypeQualifier list
+          Arguments: ProviderTypeArgument list }
+
     type SqlType =
         | SqlBoolean
         | SqlSmallInteger
@@ -172,7 +214,7 @@ module internal CoreModel =
         | SqlRowVersion
         | SqlUuid
         | SqlJson
-        | SqlProviderNative of provider: SqlAgentToolType * normalizedSpelling: string
+        | SqlProviderNative of ProviderNativeType
 
     type CastType =
         private
