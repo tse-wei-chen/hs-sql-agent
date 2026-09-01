@@ -170,6 +170,7 @@ jobs:
           grep -Fq '<PackageId>HsSqlAgent.SqlCore</PackageId>' "$project"
           grep -Fq '<AssemblyName>HsSqlAgent.SqlCore</AssemblyName>' "$project"
           grep -Fq 'COPY backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj ./backend/src/Modules/HsSqlAgent.SqlCore/' Dockerfile
+          stale_identity='HsSqlAgent.SqlCore''.FSharp'
           if grep -RIn \
               --exclude-dir=.git \
               --include='*.csproj' \
@@ -177,8 +178,8 @@ jobs:
               --include='*.slnx' \
               --include='*.yml' \
               --include='*.yaml' \
-              'HsSqlAgent.SqlCore.FSharp' .github backend \
-             || grep -n 'HsSqlAgent.SqlCore.FSharp' Dockerfile; then
+              "$stale_identity" .github backend \
+             || grep -n "$stale_identity" Dockerfile; then
             echo "Stale temporary SqlCore.FSharp identity remains." >&2
             exit 1
           fi
