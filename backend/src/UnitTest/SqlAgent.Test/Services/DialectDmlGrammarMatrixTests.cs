@@ -24,14 +24,20 @@ public sealed class DialectDmlGrammarMatrixTests
             });
 
     [Fact]
-    public void DmlGrammarCoverage_HasStableCommonAndNativeFloor()
+    public void DmlGrammarCoverage_HasStableCommonNativeAndCartesianFloor()
     {
+        var predicateMatrix =
+            DmlPredicateGrammarMatrixTests.UpdatePredicateGrammarMatrix().Count()
+            + DmlPredicateGrammarMatrixTests.DeletePredicateGrammarMatrix().Count();
+
         Assert.Equal(42, DmlGrammarMatrixCases.ExpectedCaseCount);
         Assert.Equal(17, DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount);
+        Assert.Equal(180, predicateMatrix);
         Assert.Equal(
-            59,
+            239,
             DmlGrammarMatrixCases.ExpectedCaseCount +
-            DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount);
+            DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount +
+            predicateMatrix);
     }
 
     [Fact]

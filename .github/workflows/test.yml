@@ -262,6 +262,13 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-compatibility-floor.json
           artifacts/parity/head-generated-dml.json
+      - name: Capture PR generated DML predicate behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-compatibility-floor.json
+          artifacts/parity/head-generated-dml-predicate.json
       - name: Enforce negative syntax failure stages
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -307,6 +314,13 @@ jobs:
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-compatibility-floor.json
           artifacts/parity/main-generated-dml.json
+      - name: Capture base main generated DML predicate behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-compatibility-floor.json
+          artifacts/parity/main-generated-dml-predicate.json
       - name: Enforce main compatibility floor
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -331,4 +345,10 @@ jobs:
           --configuration Release --no-build --
           compare artifacts/parity/main-generated-dml.json artifacts/parity/head-generated-dml.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-intentional-breaking-allowlist.json
+      - name: Enforce generated DML predicate main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-dml-predicate.json artifacts/parity/head-generated-dml-predicate.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-intentional-breaking-allowlist.json
 
