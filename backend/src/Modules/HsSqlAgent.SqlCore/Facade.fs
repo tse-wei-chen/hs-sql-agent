@@ -9,14 +9,39 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite
 
+type private SqlCoreTryState<'T> =
+    | CapturedSuccess of 'T
+    | CapturedFailure of errorCode: string * errorMessage: string * typedDiagnostics: IReadOnlyList<SqlDiagnostic>
+    | LegacyState of
+        success: bool *
+        value: 'T *
+        errorCode: string *
+        errorMessage: string *
+        typedDiagnostics: IReadOnlyList<SqlDiagnostic>
+
 [<Sealed>]
-type SqlCoreTryResult<'T>(
-    success: bool,
-    value: 'T,
-    errorCode: string,
-    errorMessage: string,
-    diagnostics: IReadOnlyList<string>,
-    typedDiagnostics: IReadOnlyList<SqlDiagnostic>) =
+type SqlCoreTryResult<'T> private (
+    state: SqlCoreTryState<'T>,
+    diagnostics: IReadOnlyList<string>) =
+
+    static let noTypedDiagnostics : IReadOnlyList<SqlDiagnostic> =
+        Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>
+
+    new(
+        success: bool,
+        value: 'T,
+        errorCode: string,
+        errorMessage: string,
+        diagnostics: IReadOnlyList<string>,
+        typedDiagnostics: IReadOnlyList<SqlDiagnostic>) =
+        SqlCoreTryResult<'T>(
+            LegacyState(
+                success,
+                value,
+                errorCode,
+                errorMessage,
+                typedDiagnostics),
+            diagnostics)
 
     new(
         success: bool,
@@ -30,14 +55,58 @@ type SqlCoreTryResult<'T>(
             errorCode,
             errorMessage,
             diagnostics,
-            Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>)
+            noTypedDiagnostics)
 
-    member _.Success = success
-    member _.Value = value
-    member _.ErrorCode = errorCode
-    member _.ErrorMessage = errorMessage
+    static member internal CapturedSuccess(
+        value: 'T,
+        diagnostics: IReadOnlyList<string>) =
+        SqlCoreTryResult<'T>(
+            CapturedSuccess value,
+            diagnostics)
+
+    static member internal CapturedFailure(
+        errorCode: string,
+        errorMessage: string,
+        diagnostics: IReadOnlyList<string>,
+        typedDiagnostics: IReadOnlyList<SqlDiagnostic>) =
+        SqlCoreTryResult<'T>(
+            CapturedFailure(
+                errorCode,
+                errorMessage,
+                typedDiagnostics),
+            diagnostics)
+
+    member _.Success =
+        match state with
+        | CapturedSuccess _ -> true
+        | CapturedFailure _ -> false
+        | LegacyState(success, _, _, _, _) -> success
+
+    member _.Value =
+        match state with
+        | CapturedSuccess value -> value
+        | CapturedFailure _ -> Unchecked.defaultof<'T>
+        | LegacyState(_, value, _, _, _) -> value
+
+    member _.ErrorCode =
+        match state with
+        | CapturedSuccess _ -> null
+        | CapturedFailure(errorCode, _, _) -> errorCode
+        | LegacyState(_, _, errorCode, _, _) -> errorCode
+
+    member _.ErrorMessage =
+        match state with
+        | CapturedSuccess _ -> null
+        | CapturedFailure(_, errorMessage, _) -> errorMessage
+        | LegacyState(_, _, _, errorMessage, _) -> errorMessage
+
     member _.Diagnostics = diagnostics
-    member _.TypedDiagnostics = typedDiagnostics
+
+    member _.TypedDiagnostics =
+        match state with
+        | CapturedSuccess _ -> noTypedDiagnostics
+        | CapturedFailure(_, _, typedDiagnostics) -> typedDiagnostics
+        | LegacyState(_, _, _, _, typedDiagnostics) -> typedDiagnostics
 
 module private FacadeResult =
     let private noDiagnostics : IReadOnlyList<string> =
@@ -118,17 +187,11 @@ module private FacadeResult =
 
     let capture<'T> (action: unit -> 'T) : SqlCoreTryResult<'T> =
         try
-            SqlCoreTryResult<'T>(
-                true,
+            SqlCoreTryResult<'T>.CapturedSuccess(
                 action(),
-                Unchecked.defaultof<string>,
-                Unchecked.defaultof<string>,
-                noDiagnostics,
-                noTypedDiagnostics)
+                noDiagnostics)
         with ex ->
-            SqlCoreTryResult<'T>(
-                false,
-                Unchecked.defaultof<'T>,
+            SqlCoreTryResult<'T>.CapturedFailure(
                 codeFor ex,
                 ex.Message,
                 noDiagnostics,
