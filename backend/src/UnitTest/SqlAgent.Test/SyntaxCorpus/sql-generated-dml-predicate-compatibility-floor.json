@@ -1078,5 +1078,1085 @@
     "dialect": "Firebird",
     "targetDialect": "Firebird",
     "sql": "DELETE FROM users WHERE id IN (SELECT user_id FROM audit_log WHERE active = 1)"
+  },
+  {
+    "name": "dml-insert-select__postgres__plain__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__postgres__plain__equality",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__postgres__plain__boolean-is-null",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__postgres__plain__in-list",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__postgres__plain__between",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__postgres__plain__exists-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__postgres__arithmetic__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__postgres__arithmetic__equality",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__postgres__arithmetic__boolean-is-null",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__postgres__arithmetic__in-list",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__postgres__arithmetic__between",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__postgres__arithmetic__exists-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__postgres__coalesce__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__postgres__coalesce__equality",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__postgres__coalesce__boolean-is-null",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__postgres__coalesce__in-list",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__postgres__coalesce__between",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__postgres__coalesce__exists-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__postgres__case__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__postgres__case__equality",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__postgres__case__boolean-is-null",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__postgres__case__in-list",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__postgres__case__between",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__postgres__case__exists-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__postgres__scalar-subquery__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__postgres__scalar-subquery__equality",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__postgres__scalar-subquery__boolean-is-null",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__postgres__scalar-subquery__in-list",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__postgres__scalar-subquery__between",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__postgres__scalar-subquery__exists-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mysql__plain__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mysql__plain__equality",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mysql__plain__boolean-is-null",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mysql__plain__in-list",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mysql__plain__between",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mysql__plain__exists-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mysql__arithmetic__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mysql__arithmetic__equality",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mysql__arithmetic__boolean-is-null",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mysql__arithmetic__in-list",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mysql__arithmetic__between",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mysql__arithmetic__exists-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mysql__coalesce__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mysql__coalesce__equality",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mysql__coalesce__boolean-is-null",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mysql__coalesce__in-list",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mysql__coalesce__between",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mysql__coalesce__exists-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mysql__case__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mysql__case__equality",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mysql__case__boolean-is-null",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mysql__case__in-list",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mysql__case__between",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mysql__case__exists-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mysql__scalar-subquery__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mysql__scalar-subquery__equality",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mysql__scalar-subquery__boolean-is-null",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mysql__scalar-subquery__in-list",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mysql__scalar-subquery__between",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mysql__scalar-subquery__exists-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__plain__none",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__plain__equality",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__plain__boolean-is-null",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__plain__in-list",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__plain__between",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__plain__exists-subquery",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__arithmetic__none",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__arithmetic__equality",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__arithmetic__boolean-is-null",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__arithmetic__in-list",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__arithmetic__between",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__arithmetic__exists-subquery",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__coalesce__none",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__coalesce__equality",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__coalesce__boolean-is-null",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__coalesce__in-list",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__coalesce__between",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__coalesce__exists-subquery",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__case__none",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__case__equality",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__case__boolean-is-null",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__case__in-list",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__case__between",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__case__exists-subquery",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__scalar-subquery__none",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__scalar-subquery__equality",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__scalar-subquery__boolean-is-null",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__scalar-subquery__in-list",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__scalar-subquery__between",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__mssqlserver__scalar-subquery__exists-subquery",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__plain__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__sqlite__plain__equality",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__sqlite__plain__boolean-is-null",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__sqlite__plain__in-list",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__plain__between",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__sqlite__plain__exists-subquery",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__arithmetic__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__sqlite__arithmetic__equality",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__sqlite__arithmetic__boolean-is-null",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__sqlite__arithmetic__in-list",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__arithmetic__between",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__sqlite__arithmetic__exists-subquery",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__coalesce__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__sqlite__coalesce__equality",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__sqlite__coalesce__boolean-is-null",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__sqlite__coalesce__in-list",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__coalesce__between",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__sqlite__coalesce__exists-subquery",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__case__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__sqlite__case__equality",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__sqlite__case__boolean-is-null",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__sqlite__case__in-list",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__case__between",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__sqlite__case__exists-subquery",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__scalar-subquery__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__sqlite__scalar-subquery__equality",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__sqlite__scalar-subquery__boolean-is-null",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__sqlite__scalar-subquery__in-list",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__sqlite__scalar-subquery__between",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__sqlite__scalar-subquery__exists-subquery",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__oracle__plain__none",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__oracle__plain__equality",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__oracle__plain__boolean-is-null",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__oracle__plain__in-list",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__oracle__plain__between",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__oracle__plain__exists-subquery",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__oracle__arithmetic__none",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__oracle__arithmetic__equality",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__oracle__arithmetic__boolean-is-null",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__oracle__arithmetic__in-list",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__oracle__arithmetic__between",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__oracle__arithmetic__exists-subquery",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__oracle__coalesce__none",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__oracle__coalesce__equality",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__oracle__coalesce__boolean-is-null",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__oracle__coalesce__in-list",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__oracle__coalesce__between",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__oracle__coalesce__exists-subquery",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__oracle__case__none",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__oracle__case__equality",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__oracle__case__boolean-is-null",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__oracle__case__in-list",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__oracle__case__between",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__oracle__case__exists-subquery",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__oracle__scalar-subquery__none",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__oracle__scalar-subquery__equality",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__oracle__scalar-subquery__boolean-is-null",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__oracle__scalar-subquery__in-list",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__oracle__scalar-subquery__between",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__oracle__scalar-subquery__exists-subquery",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__firebird__plain__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__firebird__plain__equality",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__firebird__plain__boolean-is-null",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__firebird__plain__in-list",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__firebird__plain__between",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__firebird__plain__exists-subquery",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__firebird__arithmetic__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__firebird__arithmetic__equality",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__firebird__arithmetic__boolean-is-null",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__firebird__arithmetic__in-list",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__firebird__arithmetic__between",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__firebird__arithmetic__exists-subquery",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id + 1 AS id, s.name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__firebird__coalesce__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__firebird__coalesce__equality",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__firebird__coalesce__boolean-is-null",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__firebird__coalesce__in-list",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__firebird__coalesce__between",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__firebird__coalesce__exists-subquery",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, COALESCE(s.name, 'unknown') AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__firebird__case__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__firebird__case__equality",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__firebird__case__boolean-is-null",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__firebird__case__in-list",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__firebird__case__between",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__firebird__case__exists-subquery",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, CASE WHEN s.name IS NULL THEN 'unknown' ELSE s.name END AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
+  },
+  {
+    "name": "dml-insert-select__firebird__scalar-subquery__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s"
+  },
+  {
+    "name": "dml-insert-select__firebird__scalar-subquery__equality",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.active = 1"
+  },
+  {
+    "name": "dml-insert-select__firebird__scalar-subquery__boolean-is-null",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE (s.active = 1 OR s.active = 2) AND s.deleted_at IS NULL"
+  },
+  {
+    "name": "dml-insert-select__firebird__scalar-subquery__in-list",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.id IN (1, 2, 3)"
+  },
+  {
+    "name": "dml-insert-select__firebird__scalar-subquery__between",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE s.score BETWEEN 10 AND 20"
+  },
+  {
+    "name": "dml-insert-select__firebird__scalar-subquery__exists-subquery",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT s.id, (SELECT p.name FROM profiles p WHERE p.id = s.id) AS name FROM staged_users s WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = s.id AND a.active = 1)"
   }
 ]

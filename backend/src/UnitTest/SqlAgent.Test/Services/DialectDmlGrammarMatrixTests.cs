@@ -26,18 +26,19 @@ public sealed class DialectDmlGrammarMatrixTests
     [Fact]
     public void DmlGrammarCoverage_HasStableCommonNativeAndCartesianFloor()
     {
-        var predicateMatrix =
+        var cartesianMatrix =
             DmlPredicateGrammarMatrixTests.UpdatePredicateGrammarMatrix().Count()
-            + DmlPredicateGrammarMatrixTests.DeletePredicateGrammarMatrix().Count();
+            + DmlPredicateGrammarMatrixTests.DeletePredicateGrammarMatrix().Count()
+            + DmlPredicateGrammarMatrixTests.InsertSelectGrammarMatrix().Count();
 
         Assert.Equal(42, DmlGrammarMatrixCases.ExpectedCaseCount);
         Assert.Equal(17, DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount);
-        Assert.Equal(180, predicateMatrix);
+        Assert.Equal(360, cartesianMatrix);
         Assert.Equal(
-            239,
+            419,
             DmlGrammarMatrixCases.ExpectedCaseCount +
             DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount +
-            predicateMatrix);
+            cartesianMatrix);
     }
 
     [Fact]
