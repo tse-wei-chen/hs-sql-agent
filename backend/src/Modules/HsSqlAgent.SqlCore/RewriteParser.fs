@@ -404,7 +404,7 @@ module internal RewriteParser =
         parts
         |> Seq.toList
         |> String.concat " "
-        |> CastType.create
+        |> RewriteCastTypes.parseSource (sourceDialectToolType cursor.Dialect)
 
     let private parseCastType (cursor: Cursor) =
         parseCastTypeName cursor
