@@ -284,6 +284,13 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-compatibility-floor.json
           artifacts/parity/head-generated-postgres-native.json
+      - name: Capture PR generated PostgreSQL quoted-function syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-quoted-function-compatibility-floor.json
+          artifacts/parity/head-generated-postgres-quoted-function.json
       - name: Capture PR generated Oracle native syntax behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -326,7 +333,7 @@ jobs:
           set -euo pipefail
           git fetch origin "$BASE_SHA" --depth=1
           git worktree add --detach /tmp/hs-sql-agent-main "$BASE_SHA"
-          dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj \
+          dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj \
             --configuration Release \
             --output artifacts/parity/main
       - name: Capture base main syntax behavior
@@ -357,6 +364,13 @@ jobs:
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-compatibility-floor.json
           artifacts/parity/main-generated-postgres-native.json
+      - name: Capture base main generated PostgreSQL quoted-function syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-quoted-function-compatibility-floor.json
+          artifacts/parity/main-generated-postgres-quoted-function.json
       - name: Capture base main generated Oracle native syntax behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -409,6 +423,12 @@ jobs:
           --configuration Release --no-build --
           compare artifacts/parity/main-generated-postgres-native.json artifacts/parity/head-generated-postgres-native.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-intentional-breaking-allowlist.json
+      - name: Enforce generated PostgreSQL quoted-function compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-postgres-quoted-function.json artifacts/parity/head-generated-postgres-quoted-function.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
       - name: Enforce generated Oracle native main compatibility floor
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
