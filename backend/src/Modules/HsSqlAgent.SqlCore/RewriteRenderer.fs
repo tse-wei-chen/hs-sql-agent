@@ -416,7 +416,7 @@ module internal RewriteRenderer =
                 call.Arguments
                 |> List.mapi (fun index argument ->
                     let sql = renderExpr ctx argument
-                    if ctx.Provider = PostgreSql && name = "ROUND" && call.Arguments.Length = 2 && index = 0 then
+                    if ctx.Provider = PostgreSql && dispatchName = "ROUND" && call.Arguments.Length = 2 && index = 0 then
                         "CAST(" + sql + " AS numeric)"
                     else sql)
             let args = String.concat ", " rendered
