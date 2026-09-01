@@ -1,0 +1,345 @@
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
+using Xunit;
+
+namespace SqlAgent.Test.Services;
+
+public sealed class CrossDialectCastTypeGrammarMatrixTests
+{
+    private sealed record TypeVariant(
+        string Name,
+        SqlAgentToolType Provider,
+        string TypeSql);
+
+    private sealed record ContextVariant(
+        string Name,
+        Func<string, string> Build);
+
+    private sealed record CrossTargetVariant(
+        string Name,
+        SqlAgentToolType Source,
+        SqlAgentToolType Target,
+        string SourceType,
+        string ExpectedTargetType);
+
+    private sealed record NegativeVariant(
+        string Name,
+        SqlAgentToolType Source,
+        SqlAgentToolType Target,
+        string Sql,
+        string MessageFragment);
+
+    private static readonly TypeVariant[] Types =
+    [
+        new("postgres-boolean", SqlAgentToolType.Postgres, "BOOLEAN"),
+        new("postgres-numeric", SqlAgentToolType.Postgres, "NUMERIC(18,4)"),
+        new("postgres-varchar", SqlAgentToolType.Postgres, "VARCHAR(64)"),
+        new("postgres-timestamptz", SqlAgentToolType.Postgres, "TIMESTAMP(6) WITH TIME ZONE"),
+        new("postgres-uuid", SqlAgentToolType.Postgres, "UUID"),
+
+        new("mysql-signed", SqlAgentToolType.MySQL, "SIGNED"),
+        new("mysql-unsigned", SqlAgentToolType.MySQL, "UNSIGNED"),
+        new("mysql-decimal", SqlAgentToolType.MySQL, "DECIMAL(18,4)"),
+        new("mysql-char", SqlAgentToolType.MySQL, "CHAR(64)"),
+        new("mysql-datetime", SqlAgentToolType.MySQL, "DATETIME(6)"),
+        new("mysql-json", SqlAgentToolType.MySQL, "JSON"),
+
+        new("sqlserver-bit", SqlAgentToolType.MsSqlServer, "BIT"),
+        new("sqlserver-decimal", SqlAgentToolType.MsSqlServer, "DECIMAL(18,4)"),
+        new("sqlserver-nvarchar-max", SqlAgentToolType.MsSqlServer, "NVARCHAR(MAX)"),
+        new("sqlserver-datetime2", SqlAgentToolType.MsSqlServer, "DATETIME2(7)"),
+        new("sqlserver-uniqueidentifier", SqlAgentToolType.MsSqlServer, "UNIQUEIDENTIFIER"),
+        new("sqlserver-varbinary-max", SqlAgentToolType.MsSqlServer, "VARBINARY(MAX)"),
+
+        new("sqlite-integer", SqlAgentToolType.Sqlite, "INTEGER"),
+        new("sqlite-real", SqlAgentToolType.Sqlite, "REAL"),
+        new("sqlite-text", SqlAgentToolType.Sqlite, "TEXT"),
+        new("sqlite-blob", SqlAgentToolType.Sqlite, "BLOB"),
+        new("sqlite-numeric", SqlAgentToolType.Sqlite, "NUMERIC"),
+
+        new("oracle-number", SqlAgentToolType.Oracle, "NUMBER(18,4)"),
+        new("oracle-varchar2", SqlAgentToolType.Oracle, "VARCHAR2(64)"),
+        new("oracle-date", SqlAgentToolType.Oracle, "DATE"),
+        new("oracle-timestamptz", SqlAgentToolType.Oracle, "TIMESTAMP(9) WITH TIME ZONE"),
+        new("oracle-binary-double", SqlAgentToolType.Oracle, "BINARY_DOUBLE"),
+
+        new("firebird-boolean", SqlAgentToolType.Firebird, "BOOLEAN"),
+        new("firebird-decimal", SqlAgentToolType.Firebird, "DECIMAL(18,4)"),
+        new("firebird-varchar", SqlAgentToolType.Firebird, "VARCHAR(64)"),
+        new("firebird-timestamp", SqlAgentToolType.Firebird, "TIMESTAMP"),
+        new("firebird-timestamptz", SqlAgentToolType.Firebird, "TIMESTAMP WITH TIME ZONE"),
+        new("firebird-double", SqlAgentToolType.Firebird, "DOUBLE PRECISION")
+    ];
+
+    private static readonly ContextVariant[] Contexts =
+    [
+        new(
+            "projection",
+            expression => $"SELECT {expression} AS converted FROM records"),
+        new(
+            "predicate",
+            expression => $"SELECT id FROM records WHERE {expression} IS NOT NULL"),
+        new(
+            "cte",
+            expression => $"WITH x AS (SELECT {expression} AS converted FROM records) SELECT converted FROM x")
+    ];
+
+    private static readonly string[] PostgresPostfixTypes =
+    [
+        "BOOLEAN",
+        "NUMERIC(18,4)",
+        "VARCHAR(64)",
+        "TIMESTAMP(6) WITH TIME ZONE",
+        "UUID"
+    ];
+
+    private static readonly CrossTargetVariant[] CrossTargets =
+    [
+        new("boolean-postgres-mysql", SqlAgentToolType.Postgres, SqlAgentToolType.MySQL, "BOOLEAN", "SIGNED"),
+        new("numeric-postgres-oracle", SqlAgentToolType.Postgres, SqlAgentToolType.Oracle, "NUMERIC(18,4)", "NUMBER(18,4)"),
+        new("timestamp-postgres-sqlserver", SqlAgentToolType.Postgres, SqlAgentToolType.MsSqlServer, "TIMESTAMP", "DATETIME2"),
+        new("rowversion-sqlserver-postgres", SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres, "TIMESTAMP", "BYTEA"),
+        new("nvarchar-sqlserver-postgres", SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres, "NVARCHAR(64)", "VARCHAR(64)"),
+        new("unsigned-mysql-sqlserver", SqlAgentToolType.MySQL, SqlAgentToolType.MsSqlServer, "UNSIGNED", "DECIMAL(20,0)"),
+        new("date-oracle-postgres", SqlAgentToolType.Oracle, SqlAgentToolType.Postgres, "DATE", "TIMESTAMP"),
+        new("timestamptz-firebird-postgres", SqlAgentToolType.Firebird, SqlAgentToolType.Postgres, "TIMESTAMP WITH TIME ZONE", "TIMESTAMP WITH TIME ZONE"),
+        new("uuid-postgres-sqlserver", SqlAgentToolType.Postgres, SqlAgentToolType.MsSqlServer, "UUID", "UNIQUEIDENTIFIER")
+    ];
+
+    private static readonly NegativeVariant[] Negatives =
+    [
+        new(
+            "postgres-zero-varchar",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            "SELECT CAST(value AS VARCHAR(0)) FROM records",
+            "length must be positive"),
+        new(
+            "postgres-scale-over-precision",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            "SELECT CAST(value AS NUMERIC(4,6)) FROM records",
+            "scale cannot exceed precision"),
+        new(
+            "postgres-max-length",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            "SELECT CAST(value AS VARCHAR(MAX)) FROM records",
+            "MAX is supported only for SQL Server"),
+        new(
+            "mysql-zero-decimal",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.MySQL,
+            "SELECT CAST(value AS DECIMAL(0,0)) FROM records",
+            "precision must be positive"),
+        new(
+            "sqlserver-temporal-two-args",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            "SELECT CAST(value AS DATETIME2(7,2)) FROM records",
+            "accepts at most one precision"),
+        new(
+            "oracle-scale-over-precision",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Oracle,
+            "SELECT CAST(value AS NUMBER(4,6)) FROM records",
+            "scale cannot exceed precision"),
+        new(
+            "firebird-zero-varchar",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Firebird,
+            "SELECT CAST(value AS VARCHAR(0)) FROM records",
+            "length must be positive"),
+        new(
+            "postgres-native-inet-cross-target",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL,
+            "SELECT CAST(value AS INET) FROM records",
+            "no cross-dialect Core semantic mapping"),
+        new(
+            "postgres-timezone-to-mysql",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL,
+            "SELECT CAST(value AS TIME(6) WITH TIME ZONE) FROM records",
+            "no lossless target mapping"),
+        new(
+            "oracle-precision-to-firebird",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Firebird,
+            "SELECT CAST(value AS TIMESTAMP(9)) FROM records",
+            "four fractional-second digits"),
+        new(
+            "postgres-json-to-sqlserver",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            "SELECT CAST(value AS JSON) FROM records",
+            "JSON has no version-independent"),
+        new(
+            "postgres-unbounded-numeric-to-oracle",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Oracle,
+            "SELECT CAST(value AS NUMERIC) FROM records",
+            "specify precision and scale")
+    ];
+
+    public static IEnumerable<object[]> PositiveMatrix()
+    {
+        foreach (var type in Types)
+        foreach (var context in Contexts)
+        {
+            yield return
+            [
+                SyntaxGrammarMatrix.CaseName(type.Name, context.Name),
+                type.Provider,
+                context.Build($"CAST(value AS {type.TypeSql})"),
+                type.TypeSql
+            ];
+        }
+    }
+
+    public static IEnumerable<object[]> PostgresPostfixMatrix()
+    {
+        foreach (var type in PostgresPostfixTypes)
+        foreach (var context in Contexts)
+        {
+            var normalizedName = type
+                .Replace("(", "-", StringComparison.Ordinal)
+                .Replace(")", "", StringComparison.Ordinal)
+                .Replace(",", "-", StringComparison.Ordinal)
+                .Replace(" ", "-", StringComparison.Ordinal)
+                .ToLowerInvariant();
+
+            yield return
+            [
+                SyntaxGrammarMatrix.CaseName("postgres-postfix", normalizedName, context.Name),
+                context.Build($"value::{type}"),
+                type
+            ];
+        }
+    }
+
+    public static IEnumerable<object[]> CrossProviderMatrix()
+    {
+        foreach (var item in CrossTargets)
+        {
+            yield return
+            [
+                item.Name,
+                item.Source,
+                item.Target,
+                $"SELECT CAST(value AS {item.SourceType}) FROM records",
+                item.ExpectedTargetType
+            ];
+        }
+    }
+
+    public static IEnumerable<object[]> NegativeMatrix()
+    {
+        foreach (var item in Negatives)
+        {
+            yield return
+            [
+                item.Name,
+                item.Source,
+                item.Target,
+                item.Sql,
+                item.MessageFragment
+            ];
+        }
+    }
+
+    [Fact]
+    public void Matrices_HaveStableSixProviderCoverage()
+    {
+        var positive = PositiveMatrix().ToArray();
+        var postfix = PostgresPostfixMatrix().ToArray();
+        var cross = CrossProviderMatrix().ToArray();
+        var negative = NegativeMatrix().ToArray();
+
+        Assert.Equal(99, positive.Length);
+        Assert.Equal(6, positive.Select(item => Assert.IsType<SqlAgentToolType>(item[1])).Distinct().Count());
+        Assert.Equal(15, postfix.Length);
+        Assert.Equal(9, cross.Length);
+        Assert.Equal(12, negative.Length);
+    }
+
+    [Theory]
+    [MemberData(nameof(PositiveMatrix))]
+    public void PositiveMatrix_ParsesBindsValidatesCompilesAndRenders(
+        string name,
+        SqlAgentToolType provider,
+        string sql,
+        string expectedType)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(sql, provider);
+        var facts = SqlCoreInspection.GetQueryFacts(parsed);
+
+        Assert.Contains(
+            facts.ReferencedTables,
+            table => string.Equals(table, "records", StringComparison.OrdinalIgnoreCase));
+
+        var command = Compile(sql, provider, provider);
+
+        Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
+        Assert.Contains($"AS {expectedType}", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(PostgresPostfixMatrix))]
+    public void PostgresPostfixMatrix_CanonicalizesIntoTypedCastAndRenders(
+        string name,
+        string sql,
+        string expectedType)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+        var command = Compile(sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
+
+        Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
+        Assert.DoesNotContain("::", command.Sql, StringComparison.Ordinal);
+        Assert.Contains($"AS {expectedType}", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(CrossProviderMatrix))]
+    public void CrossProviderMatrix_LowersFromCanonicalSqlType(
+        string name,
+        SqlAgentToolType source,
+        SqlAgentToolType target,
+        string sql,
+        string expectedTargetType)
+    {
+        var command = Compile(sql, source, target);
+
+        Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
+        Assert.Contains($"AS {expectedTargetType}", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(NegativeMatrix))]
+    public void NegativeMatrix_FailsClosedBeforeUnsafeRendering(
+        string name,
+        SqlAgentToolType source,
+        SqlAgentToolType target,
+        string sql,
+        string messageFragment)
+    {
+        var error = Assert.Throws<SqlCompilationException>(
+            () => Compile(sql, source, target));
+
+        Assert.Contains(messageFragment, error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(error.Message), name);
+    }
+
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType source,
+        SqlAgentToolType target) =>
+        CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(sql, source),
+            target,
+            new SqlPlanValidationContext("cross-dialect-cast-type-grammar-matrix-v1"),
+            new SqlExecutionPlanPolicy());
+}
