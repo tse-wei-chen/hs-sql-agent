@@ -56,7 +56,13 @@ public sealed class NegativeGrammarMutationMatrixTests
             expression => $"SELECT (SELECT {expression} FROM users) AS id FROM outer_users"),
         new(
             "set-branch",
-            expression => $"SELECT id FROM users UNION ALL SELECT {expression} FROM archive_users")
+            expression => $"SELECT id FROM users UNION ALL SELECT {expression} FROM archive_users"),
+        new(
+            "predicate",
+            expression => $"SELECT id FROM users WHERE {expression} = 1"),
+        new(
+            "in-subquery",
+            expression => $"SELECT id FROM users WHERE id IN (SELECT {expression} FROM archive_users)")
     ];
 
     private static readonly GrammarVariant<InvalidQueryVariant>[] WrongRowLimitForms =
@@ -103,7 +109,29 @@ public sealed class NegativeGrammarMutationMatrixTests
             query => $"WITH x AS ({query("users")}) SELECT id FROM x"),
         new(
             "scalar-subquery",
-            query => $"SELECT ({query("users")}) AS id FROM outer_users")
+            query => $"SELECT ({query("users")}) AS id FROM outer_users"),
+        new(
+            "derived-source",
+            query => $"SELECT q.id FROM ({query("users")}) q"),
+        new(
+            "in-subquery",
+            query => $"SELECT id FROM outer_users WHERE id IN ({query("users")})")
+    ];
+
+    private static readonly GrammarVariant<SqlAgentToolType>[] NoNullOrderingDialects =
+    [
+        new("mysql", SqlAgentToolType.MySQL),
+        new("sqlserver", SqlAgentToolType.MsSqlServer)
+    ];
+
+    private static readonly GrammarVariant<Func<string, string>>[] NullOrderingContexts =
+    [
+        new(
+            "root-order",
+            modifier => $"SELECT amount FROM orders ORDER BY amount {modifier}"),
+        new(
+            "window-order",
+            modifier => $"SELECT ROW_NUMBER() OVER (ORDER BY amount {modifier}) FROM orders")
     ];
 
     public static IEnumerable<object[]> UniversalMalformedGrammarMatrix()
@@ -155,21 +183,41 @@ public sealed class NegativeGrammarMutationMatrixTests
         }
     }
 
+    public static IEnumerable<object[]> WrongDialectNullOrderingMatrix()
+    {
+        foreach (var (dialect, context) in
+                 SyntaxGrammarMatrix.Product(NoNullOrderingDialects, NullOrderingContexts))
+        {
+            yield return
+            [
+                SyntaxGrammarMatrix.CaseName(
+                    dialect.Name,
+                    "nulls-first",
+                    context.Name),
+                dialect.Value,
+                context.Value("NULLS FIRST")
+            ];
+        }
+    }
+
     [Fact]
     public void NegativeGrammarMatrices_HaveStableCoverage()
     {
         var malformed = UniversalMalformedGrammarMatrix().ToArray();
         var postfix = WrongDialectPostfixCastMatrix().ToArray();
         var rowLimit = WrongDialectRowLimitMatrix().ToArray();
+        var nullOrdering = WrongDialectNullOrderingMatrix().ToArray();
 
         Assert.Equal(30, malformed.Length);
-        Assert.Equal(20, postfix.Length);
-        Assert.Equal(18, rowLimit.Length);
+        Assert.Equal(30, postfix.Length);
+        Assert.Equal(30, rowLimit.Length);
+        Assert.Equal(4, nullOrdering.Length);
         Assert.Equal(
-            68,
+            94,
             malformed
                 .Concat(postfix)
                 .Concat(rowLimit)
+                .Concat(nullOrdering)
                 .Select(item => Assert.IsType<string>(item[0]))
                 .Distinct(StringComparer.Ordinal)
                 .Count());
@@ -209,6 +257,29 @@ public sealed class NegativeGrammarMutationMatrixTests
         Assert.Equal(SqlDiagnosticCategory.DialectSyntax, diagnostic.Category);
         Assert.NotNull(diagnostic.Span);
         Assert.Equal(2, diagnostic.Span.Length);
+        Assert.Equal(
+            "::",
+            sql.Substring(diagnostic.Span.Start, diagnostic.Span.Length),
+            ignoreCase: true);
+    }
+
+    [Theory]
+    [MemberData(nameof(WrongDialectNullOrderingMatrix))]
+    public void NullOrdering_InUnsupportedSourceDialects_FailsAtSourceCapabilityBoundary(
+        string name,
+        SqlAgentToolType dialect,
+        string sql)
+    {
+        var result = TryCompile(dialect, sql);
+
+        Assert.False(result.Success, name);
+
+        var diagnostic = Assert.Single(result.TypedDiagnostics);
+        Assert.Equal("SQL_SOURCE_CAPABILITY_REJECTED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Capability, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.True(diagnostic.Span.Length > 0, name);
     }
 
     private static void AssertTypedParseGrammarFailure(
@@ -237,6 +308,6 @@ public sealed class NegativeGrammarMutationMatrixTests
             dialect,
             dialect,
             new SqlPlanValidationContext(
-                "negative-combinatorial-grammar-matrix-v1"),
+                "negative-combinatorial-grammar-matrix-v2"),
             new SqlExecutionPlanPolicy());
 }

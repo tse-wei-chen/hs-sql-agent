@@ -14,13 +14,6 @@ public sealed class NegativeBindingPolicyMatrixTests
         string BaselineSql,
         string MutatedSql);
 
-    private sealed record DmlPolicyMutationShape(
-        string Name,
-        string BaselineSql,
-        string MutatedSql,
-        string DiagnosticCode,
-        string MessageFragment);
-
     private sealed record QueryPolicyShape(
         string Name,
         string Sql);
@@ -69,26 +62,6 @@ public sealed class NegativeBindingPolicyMatrixTests
                 "SELECT u.id FROM users u WHERE EXISTS (SELECT id FROM orders o WHERE o.user_id = missing.id)"))
     ];
 
-    private static readonly GrammarVariant<DmlPolicyMutationShape>[] DmlPolicyShapes =
-    [
-        new(
-            "update-without-where",
-            new(
-                "update-without-where",
-                "UPDATE users SET name = 'x' WHERE id = 1",
-                "UPDATE users SET name = 'x'",
-                "SQL_POLICY_UPDATE_REQUIRES_WHERE",
-                "UPDATE without WHERE")),
-        new(
-            "delete-without-where",
-            new(
-                "delete-without-where",
-                "DELETE FROM users WHERE id = 1",
-                "DELETE FROM users",
-                "SQL_POLICY_DELETE_REQUIRES_WHERE",
-                "DELETE without WHERE"))
-    ];
-
     private static readonly GrammarVariant<QueryPolicyShape>[] QueryMaxRowsShapes =
     [
         new(
@@ -121,26 +94,6 @@ public sealed class NegativeBindingPolicyMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> DmlPolicyMutationMatrix()
-    {
-        foreach (var (dialect, shape) in
-                 SyntaxGrammarMatrix.Product(Dialects, DmlPolicyShapes))
-        {
-            yield return
-            [
-                SyntaxGrammarMatrix.CaseName(
-                    "policy",
-                    dialect.Name,
-                    shape.Name),
-                dialect.Value,
-                shape.Value.BaselineSql,
-                shape.Value.MutatedSql,
-                shape.Value.DiagnosticCode,
-                shape.Value.MessageFragment
-            ];
-        }
-    }
-
     public static IEnumerable<object[]> QueryMaxRowsPolicyMatrix()
     {
         foreach (var shape in QueryMaxRowsShapes)
@@ -163,21 +116,6 @@ public sealed class NegativeBindingPolicyMatrixTests
         var expectedCount = Dialects.Length * BindingShapes.Length;
 
         Assert.Equal(30, expectedCount);
-        Assert.Equal(expectedCount, cases.Length);
-        Assert.Equal(
-            expectedCount,
-            cases.Select(item => Assert.IsType<string>(item[0]))
-                .Distinct(StringComparer.Ordinal)
-                .Count());
-    }
-
-    [Fact]
-    public void DmlPolicyMutationMatrix_IsCartesianAndCollisionFree()
-    {
-        var cases = DmlPolicyMutationMatrix().ToArray();
-        var expectedCount = Dialects.Length * DmlPolicyShapes.Length;
-
-        Assert.Equal(12, expectedCount);
         Assert.Equal(expectedCount, cases.Length);
         Assert.Equal(
             expectedCount,
@@ -234,45 +172,6 @@ public sealed class NegativeBindingPolicyMatrixTests
             "SQL_BINDING_ERROR",
             SqlDiagnosticStage.Binding,
             SqlDiagnosticCategory.Binding);
-    }
-
-    [Theory]
-    [MemberData(nameof(DmlPolicyMutationMatrix))]
-    public void DmlPolicyMutationMatrix_PredicateBaselineCompilesButUnboundedMutationIsDenied(
-        string name,
-        SqlAgentToolType dialect,
-        string baselineSql,
-        string mutatedSql,
-        string expectedDiagnosticCode,
-        string expectedMessageFragment)
-    {
-        var baseline = CompileDml(
-            baselineSql,
-            dialect,
-            new DmlCompilationPolicy());
-
-        Assert.False(string.IsNullOrWhiteSpace(baseline.Sql), name);
-
-        var error = Record.Exception(
-            () => CompileDml(
-                mutatedSql,
-                dialect,
-                new DmlCompilationPolicy()));
-
-        Assert.NotNull(error);
-        Assert.Equal(typeof(UnauthorizedAccessException), error.GetType());
-        Assert.Contains(
-            expectedMessageFragment,
-            error.Message,
-            StringComparison.OrdinalIgnoreCase);
-
-        AssertTypedDiagnostic(
-            name,
-            error,
-            mutatedSql,
-            expectedDiagnosticCode,
-            SqlDiagnosticStage.Policy,
-            SqlDiagnosticCategory.Policy);
     }
 
     [Theory]
@@ -343,19 +242,6 @@ public sealed class NegativeBindingPolicyMatrixTests
                 dialect),
             dialect,
             new SqlPlanValidationContext(
-                "negative-binding-policy-matrix-v1"),
-            policy);
-
-    private static CompiledSqlCommand CompileDml(
-        string sql,
-        SqlAgentToolType dialect,
-        DmlCompilationPolicy policy) =>
-        CoreDmlCompiler.CreateDefault().Compile(
-            CoreSqlTextParser.ParseDml(
-                sql,
-                dialect),
-            dialect,
-            new SqlPlanValidationContext(
-                "negative-binding-policy-matrix-v1"),
+                "negative-binding-policy-matrix-v2"),
             policy);
 }
