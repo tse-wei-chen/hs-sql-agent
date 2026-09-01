@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Text.RegularExpressions
+open HsSqlAgent.SqlCore.Enums
 
 /// Pure F# compiler model. No compatibility AST classes are allowed below this boundary.
 module internal CoreModel =
@@ -146,19 +147,63 @@ module internal CoreModel =
             IntervalLiteral value
         let value (IntervalLiteral value) = value
 
-    type CastType = private CastType of string
+    type TypeLength =
+        | BoundedLength of int
+        | MaxLength
+
+    type SqlType =
+        | SqlBoolean
+        | SqlSmallInteger
+        | SqlInteger
+        | SqlBigInteger
+        | SqlUnsignedBigInteger
+        | SqlDecimal of precision: int option * scale: int option
+        | SqlReal
+        | SqlDouble
+        | SqlFixedString of length: int option
+        | SqlVariableString of length: TypeLength option
+        | SqlText
+        | SqlFixedBinary of length: int option
+        | SqlVariableBinary of length: TypeLength option
+        | SqlBinaryLargeObject
+        | SqlDate
+        | SqlTime of precision: int option * withTimeZone: bool
+        | SqlTimestamp of precision: int option * withTimeZone: bool
+        | SqlRowVersion
+        | SqlUuid
+        | SqlJson
+        | SqlProviderNative of provider: SqlAgentToolType * normalizedSpelling: string
+
+    type CastType =
+        private
+        | ModeledCastType of sourceProvider: SqlAgentToolType * semantic: SqlType * sourceSpelling: string
+        | CompatibilityRawCastType of sourceSpelling: string
 
     module CastType =
-        let private safeCastType =
-            Regex(
-                "^[A-Za-z_][A-Za-z0-9_.]*(?:\\s+[A-Za-z_]+)*(?:\\s*\\(\\s*(?:MAX|[0-9]+)(?:\\s*,\\s*[0-9]+)?\\s*\\))?(?:\\s+[A-Za-z_]+)*$",
-                RegexOptions.CultureInvariant ||| RegexOptions.IgnoreCase)
-        let create value =
-            if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then
-                raise (HsSqlAgent.SqlCore.Core.Compilation.SqlCompilationException(
-                    "CAST type '" + string value + "' is not a safe modeled type shape."))
-            CastType(Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant())
-        let value (CastType value) = value
+        let internal modeled sourceProvider semantic sourceSpelling =
+            if String.IsNullOrWhiteSpace(sourceSpelling) then
+                invalidArg (nameof sourceSpelling) "CAST source spelling cannot be empty."
+            ModeledCastType(sourceProvider, semantic, sourceSpelling)
+
+        let internal compatibilityRaw sourceSpelling =
+            if String.IsNullOrWhiteSpace(sourceSpelling) then
+                invalidArg (nameof sourceSpelling) "CAST source spelling cannot be empty."
+            CompatibilityRawCastType sourceSpelling
+
+        let internal semantic = function
+            | ModeledCastType(_, semantic, _) -> Some semantic
+            | CompatibilityRawCastType _ -> None
+
+        let internal sourceProvider = function
+            | ModeledCastType(sourceProvider, _, _) -> Some sourceProvider
+            | CompatibilityRawCastType _ -> None
+
+        let value = function
+            | ModeledCastType(_, _, sourceSpelling)
+            | CompatibilityRawCastType sourceSpelling -> sourceSpelling
+
+        let internal forTarget provider semantic sourceSpelling =
+            modeled provider semantic sourceSpelling
 
     type FunctionName = private FunctionName of IdentifierPart list
 
