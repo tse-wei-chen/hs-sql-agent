@@ -94,5 +94,29 @@
     "dialect": "Postgres",
     "targetDialect": "Postgres",
     "sql": "SELECT (SELECT \"pg_catalog\".\"lower\"(name) FROM users LIMIT 1) AS normalized FROM outer_users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-core-like__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT \"CORE_DATE_ADD\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-core-like__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM users WHERE \"CORE_DATE_ADD\"(name) = 'alice'"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-core-like__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT \"CORE_DATE_ADD\"(name) AS normalized FROM users) SELECT normalized FROM x"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-core-like__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT \"CORE_DATE_ADD\"(name) FROM users LIMIT 1) AS normalized FROM outer_users"
   }
 ]
