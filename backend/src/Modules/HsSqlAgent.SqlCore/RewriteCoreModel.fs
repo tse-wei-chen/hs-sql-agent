@@ -183,7 +183,7 @@ module internal CoreModel =
                     { Value = part
                       WasQuoted = false
                       PreserveSpelling = false
-                      Span = Span.Unknown }
+                      Span = { Start = -1; Length = 0 } }
                     |> validatePart)
                 |> Array.toList
             if parts.IsEmpty || String.Join(".", parts |> List.map (fun part -> part.Value)) <> value then
