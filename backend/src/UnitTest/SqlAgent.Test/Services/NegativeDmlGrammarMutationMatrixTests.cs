@@ -467,7 +467,7 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
         {
             Assert.Contains(
                 fragment,
-                result.Message,
+                result.ErrorMessage,
                 StringComparison.OrdinalIgnoreCase);
         }
 
