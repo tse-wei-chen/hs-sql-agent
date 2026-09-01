@@ -379,7 +379,10 @@ module internal RewriteCastTypes =
         | _ ->
             fail "Compatibility raw CAST type reached rendering before semantic normalization."
 
-    let normalize (source: SqlAgentToolType) (target: SqlAgentToolType) (castType: CastType) =
+    let validateTarget (target: SqlAgentToolType) (castType: CastType) =
+        renderTarget target castType |> ignore
+
+    let normalize (source: SqlAgentToolType) (_target: SqlAgentToolType) (castType: CastType) =
         let modeled =
             match CastType.semantic castType with
             | Some _ -> castType
@@ -392,5 +395,4 @@ module internal RewriteCastTypes =
                 + " but compiled from " + string source + ".")
         | _ -> ()
 
-        renderTarget target modeled |> ignore
         modeled
