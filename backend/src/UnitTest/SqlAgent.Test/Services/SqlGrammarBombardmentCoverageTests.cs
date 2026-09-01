@@ -24,7 +24,10 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeGrammarMutationMatrixTests.UniversalMalformedGrammarMatrix().Count() +
             NegativeGrammarMutationMatrixTests.WrongDialectPostfixCastMatrix().Count() +
             NegativeGrammarMutationMatrixTests.WrongDialectRowLimitMatrix().Count() +
-            NegativeGrammarMutationMatrixTests.WrongDialectNullOrderingMatrix().Count();
+            NegativeGrammarMutationMatrixTests.WrongDialectNullOrderingMatrix().Count() +
+            NegativeRecursiveCteGrammarMutationMatrixTests.CommonRecursiveShapeMutationMatrix().Count() +
+            NegativeRecursiveCteGrammarMutationMatrixTests.PortableSubsetMutationMatrix().Count() +
+            NegativeRecursiveCteGrammarMutationMatrixTests.FirebirdUnionMutationMatrix().Count();
 
         var negativeDml =
             NegativeDmlGrammarMutationMatrixTests.PolicyMutationMatrix().Count() +
@@ -38,10 +41,10 @@ public sealed class SqlGrammarBombardmentCoverageTests
 
         Assert.Equal(4613, positiveQuery);
         Assert.Equal(59, positiveDml);
-        Assert.Equal(94, negativeQuery);
+        Assert.Equal(117, negativeQuery);
         Assert.Equal(68, negativeDml);
         Assert.Equal(
-            4834,
+            4857,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }

@@ -91,7 +91,7 @@ These tests use each provider's existing integration fixture and the raw SQL pat
 - typed diagnostic category,
 - concrete source span.
 
-Generated mutation tests additionally place malformed or wrong-dialect syntax in nested positions such as CTE bodies, scalar subqueries, and set branches. DML mutation tests cover parser failures, source-capability failures, and policy denial.
+Generated mutation tests additionally place malformed or wrong-dialect syntax in nested positions such as CTE bodies, scalar subqueries, and set branches. Recursive CTE mutations add 23 typed-binding cases covering anchor self-reference, duplicate/nested-only self-reference, invalid recursive set shape, non-PostgreSQL portable-subset violations, and Firebird's UNION ALL requirement. DML mutation tests cover parser failures, source-capability failures, and policy denial.
 
 A negative case must fail at the intended compiler boundary. A later failure is not equivalent to an earlier, more precise rejection.
 
