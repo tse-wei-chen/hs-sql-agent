@@ -222,6 +222,13 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
           artifacts/parity/head.json
+      - name: Capture PR generated syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
+          artifacts/parity/head-generated.json
       - name: Enforce negative syntax failure stages
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -246,10 +253,23 @@ jobs:
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
           artifacts/parity/main.json
+      - name: Capture base main generated syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
+          artifacts/parity/main-generated.json
       - name: Enforce main compatibility floor
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
           --configuration Release --no-build --
           compare artifacts/parity/main.json artifacts/parity/head.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-intentional-breaking-allowlist.json
+      - name: Enforce generated main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated.json artifacts/parity/head-generated.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
 
