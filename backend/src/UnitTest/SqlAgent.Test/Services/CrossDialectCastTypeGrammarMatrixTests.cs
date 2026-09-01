@@ -206,6 +206,22 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
             "specify precision and scale")
     ];
 
+    public static IEnumerable<object[]> FirebirdSourceProfileNegativeMatrix()
+    {
+        yield return
+        [
+            "firebird-timezone-source-undeclared",
+            null,
+            "SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) FROM records"
+        ];
+        yield return
+        [
+            "firebird-timezone-source-v3",
+            FirebirdProfile(3),
+            "SELECT CAST(value AS TIME WITH TIME ZONE) FROM records"
+        ];
+    }
+
     public static IEnumerable<object[]> PositiveMatrix()
     {
         foreach (var type in Types)
@@ -294,6 +310,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         Assert.Equal(15, postfix.Length);
         Assert.Equal(9, cross.Length);
         Assert.Equal(12, negative.Length);
+        Assert.Equal(2, FirebirdSourceProfileNegativeMatrix().Count());
     }
 
     [Theory]
@@ -348,6 +365,29 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
         Assert.Contains($"AS {expectedTargetType}", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(FirebirdSourceProfileNegativeMatrix))]
+    public void FirebirdTimeZoneCast_SourceProfileFailsAtTypedCapabilityBoundary(
+        string name,
+        SqlProviderCapabilityProfile? sourceProfile,
+        string sql)
+    {
+        var error = Assert.Throws<SqlCompilationException>(
+            () => CoreSqlTextParser.ParseQuery(
+                sql,
+                SqlAgentToolType.Firebird,
+                sourceProfile));
+
+        Assert.Contains("temporal.firebird_time_zone_type", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("4.0", error.Message, StringComparison.OrdinalIgnoreCase);
+        var diagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(error);
+        Assert.Equal("SQL_SOURCE_CAPABILITY_REJECTED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Capability, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.True(diagnostic.Span.Length > 0, name);
     }
 
     [Theory]
