@@ -34,6 +34,13 @@ public sealed class ServerSyntaxBoundaryCoverageTests
             DmlPolicySyntaxBoundaryMatrixTests
                 .SixDialectDmlPolicyBoundaryMatrix()
                 .Count();
+        var versionGatedDml =
+            VersionGatedDmlSyntaxBoundaryTests
+                .SupportedReturningMatrix()
+                .Count() +
+            VersionGatedDmlSyntaxBoundaryTests
+                .RejectedOldReturningMatrix()
+                .Count();
 
         Assert.Equal(18, query);
         Assert.Equal(18, insertValues);
@@ -41,13 +48,15 @@ public sealed class ServerSyntaxBoundaryCoverageTests
         Assert.Equal(6, insertSelectFailClosed);
         Assert.Equal(12, negativeQuery);
         Assert.Equal(12, dmlPolicy);
+        Assert.Equal(4, versionGatedDml);
         Assert.Equal(
-            78,
+            82,
             query +
             insertValues +
             rowSetMutations +
             insertSelectFailClosed +
             negativeQuery +
-            dmlPolicy);
+            dmlPolicy +
+            versionGatedDml);
     }
 }

@@ -46,7 +46,8 @@ Compiler-level syntax acceptance is not sufficient by itself. Server tests keep 
 | Six-dialect INSERT ... SELECT fail-closed runtime | 6 |
 | Six-dialect negative query diagnostic boundary | 12 |
 | Six-dialect DML policy diagnostic boundary | 12 |
-| **Total** | **78** |
+| version-gated native DML RETURNING boundary | 4 |
+| **Total** | **82** |
 
 The INSERT VALUES cases verify runtime server-profile capture, metadata target resolution, F# DML compilation, native rendering, immutable payload preview, plan fingerprinting, and approval challenges. UPDATE/DELETE cases additionally execute the generated match query against a real SQLite rowset harness, retain strict primary-key identity, and verify row-set fingerprints. The harness substitutes only the provider-specific read-only transaction bootstrap; it does not bypass DML planning, compilation, matching, or approval semantics.
 
