@@ -7,6 +7,7 @@ These corpora are merge contracts for the SQL compiler rewrite. They are not a l
 - `sql-main-compatibility-floor.json` is the curated historical compatibility floor.
 - `sql-generated-compatibility-floor.json` is the generated six-dialect query grammar floor.
 - `sql-generated-dml-compatibility-floor.json` is the generated six-dialect common DML floor.
+- `sql-generated-recursive-compatibility-floor.json` is the version-aware recursive CTE grammar floor for PostgreSQL, MySQL, SQLite, and Firebird.
 - The differential runner compares the base `main` assembly with the PR assembly one-way:
   - `main=success, PR=failure` is a regression.
   - `main=failure, PR=success` is a capability expansion.
@@ -28,9 +29,11 @@ Current query matrix floor:
 | SQLite | 825 |
 | Oracle | 900 |
 | Firebird | 900 |
-| **Total** | **4485** |
+| **Non-recursive subtotal** | **4485** |
+| Version-aware recursive CTE matrix | 128 |
+| **Total positive query floor** | **4613** |
 
-The matrices exercise parsing, query facts/binding, validation, compilation, and native rendering. Assertions are semantic and renderer-aware: source spelling is not required to survive when a target renderer intentionally lowers it to an equivalent native form.
+The recursive matrix additionally cross-products four proven native providers, four legal recursive-member shapes, four root consumers, and root ordering, with explicit source/target server-version proofs. The matrices exercise parsing, query facts/binding, validation, compilation, and native rendering. Assertions are semantic and renderer-aware: source spelling is not required to survive when a target renderer intentionally lowers it to an equivalent native form.
 
 The DML positive floor contains 42 common six-dialect cases plus 17 explicit native/profile/assurance-gated capability cases.
 

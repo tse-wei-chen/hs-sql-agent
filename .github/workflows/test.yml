@@ -248,6 +248,13 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
           artifacts/parity/head-generated.json
+      - name: Capture PR generated recursive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-compatibility-floor.json
+          artifacts/parity/head-generated-recursive.json
       - name: Capture PR generated DML behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -286,6 +293,13 @@ jobs:
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
           artifacts/parity/main-generated.json
+      - name: Capture base main generated recursive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-compatibility-floor.json
+          artifacts/parity/main-generated-recursive.json
       - name: Capture base main generated DML behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -305,6 +319,12 @@ jobs:
           --configuration Release --no-build --
           compare artifacts/parity/main-generated.json artifacts/parity/head-generated.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
+      - name: Enforce generated recursive main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-recursive.json artifacts/parity/head-generated-recursive.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-intentional-breaking-allowlist.json
       - name: Enforce generated DML main compatibility floor
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj

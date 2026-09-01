@@ -14,6 +14,7 @@ public sealed class DialectGrammarMatrixCoverageTests
         var sqlite = SqliteGrammarMatrixTests.SqliteCteGrammarMatrix().Count();
         var oracle = OracleGrammarMatrixTests.OracleCteGrammarMatrix().Count();
         var firebird = FirebirdGrammarMatrixTests.FirebirdCteGrammarMatrix().Count();
+        var recursive = RecursiveCteGrammarMatrixTests.RecursiveCteGrammarMatrix().Count();
 
         Assert.Equal(432, postgres);
         Assert.Equal(900, mySql);
@@ -21,9 +22,10 @@ public sealed class DialectGrammarMatrixCoverageTests
         Assert.Equal(825, sqlite);
         Assert.Equal(900, oracle);
         Assert.Equal(900, firebird);
+        Assert.Equal(128, recursive);
         Assert.Equal(
-            4485,
-            postgres + mySql + sqlServer + sqlite + oracle + firebird);
+            4613,
+            postgres + mySql + sqlServer + sqlite + oracle + firebird + recursive);
     }
 
     [Fact]
@@ -105,5 +107,37 @@ public sealed class DialectGrammarMatrixCoverageTests
         Assert.Equal(825, counts["Sqlite"]);
         Assert.Equal(900, counts["Oracle"]);
         Assert.Equal(900, counts["Firebird"]);
+    }
+
+    [Fact]
+    public void GeneratedRecursiveParityCorpus_MatchesRecursiveMatrixFloor()
+    {
+        var path = Path.Combine(
+            AppContext.BaseDirectory,
+            "SyntaxCorpus",
+            "sql-generated-recursive-compatibility-floor.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var cases = document.RootElement.EnumerateArray().ToArray();
+
+        Assert.Equal(128, cases.Length);
+        Assert.Equal(
+            cases.Length,
+            cases.Select(item => item.GetProperty("name").GetString())
+                .Distinct(StringComparer.Ordinal)
+                .Count());
+
+        var counts = cases
+            .GroupBy(
+                item => item.GetProperty("dialect").GetString(),
+                StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key!,
+                group => group.Count(),
+                StringComparer.OrdinalIgnoreCase);
+
+        Assert.Equal(32, counts["Postgres"]);
+        Assert.Equal(32, counts["MySQL"]);
+        Assert.Equal(32, counts["Sqlite"]);
+        Assert.Equal(32, counts["Firebird"]);
     }
 }
