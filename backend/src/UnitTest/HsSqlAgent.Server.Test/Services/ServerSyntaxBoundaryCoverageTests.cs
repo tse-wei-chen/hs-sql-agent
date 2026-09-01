@@ -23,16 +23,25 @@ public sealed class ServerSyntaxBoundaryCoverageTests
             DmlSyntaxBoundaryMatrixTests
                 .SixDialectInsertSelectFailClosedMatrix()
                 .Count();
+        var negativeQuery =
+            NegativeQuerySyntaxBoundaryMatrixTests
+                .UniversalMalformedBoundaryMatrix()
+                .Count() +
+            NegativeQuerySyntaxBoundaryMatrixTests
+                .WrongDialectBoundaryMatrix()
+                .Count();
 
         Assert.Equal(18, query);
         Assert.Equal(18, insertValues);
         Assert.Equal(12, rowSetMutations);
         Assert.Equal(6, insertSelectFailClosed);
+        Assert.Equal(12, negativeQuery);
         Assert.Equal(
-            54,
+            66,
             query +
             insertValues +
             rowSetMutations +
-            insertSelectFailClosed);
+            insertSelectFailClosed +
+            negativeQuery);
     }
 }
