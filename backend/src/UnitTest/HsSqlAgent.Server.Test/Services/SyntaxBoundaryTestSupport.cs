@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Admin.Service.Models;
+using HsSqlAgent.Provider.Abstractions;
 using Moq;
 
 namespace HsSqlAgent.Server.Test.Services;

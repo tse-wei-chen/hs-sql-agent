@@ -604,7 +604,7 @@ module internal RewriteRenderer =
             if call.IsDistinct then fail "Canonical CORE_STRING_AGG DISTINCT semantics are not enabled."
             let value = renderExpr ctx call.Arguments[0]
             let separator =
-                if ctx.Provider = PostgreSql then
+                if ctx.Provider = PostgreSql || ctx.Provider = SqlServer then
                     ctx.Bind(box (literalText "string aggregate separator" call.Arguments[1]))
                 else
                     sqlStringLiteral call.Arguments[1] "string aggregate separator"
