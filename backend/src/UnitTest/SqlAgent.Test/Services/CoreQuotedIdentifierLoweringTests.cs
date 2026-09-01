@@ -122,6 +122,17 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
+    public void QuotedRoundLookingFunction_DoesNotReceiveBuiltinRoundArgumentCast()
+    {
+        var command = Compile(
+            "SELECT \"ROUND\"(amount, 2) FROM orders",
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("\"ROUND\"(", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("AS numeric", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void QualifiedFunction_ParsesStructurally_ThenUnknownSemanticFailsClosed()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
