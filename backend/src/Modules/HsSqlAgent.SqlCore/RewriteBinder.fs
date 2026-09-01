@@ -270,8 +270,11 @@ module internal RewriteBinder =
         | RawRegexCall(arguments, _) -> arguments |> List.exists recurse
         | FunctionCall call ->
             let name = FunctionName.value call.Name
-            SqlCanonicalFunctionRegistry.IsAggregate(name)
-            || SqlCanonicalFunctionRegistry.IsWindow(name)
+            let knownRestricted =
+                not (FunctionName.hasQuotedParts call.Name)
+                && (SqlCanonicalFunctionRegistry.IsAggregate(name)
+                    || SqlCanonicalFunctionRegistry.IsWindow(name))
+            knownRestricted
             || (call.Arguments |> List.exists recurse)
             || (call.AggregateOrderBy |> List.exists (fun item -> recurse item.Expression))
         | Windowed _ -> true
