@@ -298,6 +298,71 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     [Fact]
+    public async Task ExecuteRawQueryAsync_CteReferencedInsideSubquery_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id FROM {TestOrdersTableName}" +
+            $") SELECT u.{TestUserIdColumn} FROM {TestTableName} u " +
+            $"WHERE EXISTS (" +
+            $"SELECT r.owner_id FROM recent r " +
+            $"WHERE r.owner_id = u.{TestUserIdColumn}" +
+            $")";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteJoinedWithPhysicalTable_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id FROM {TestOrdersTableName}" +
+            $") SELECT r.owner_id FROM recent r " +
+            $"JOIN {TestTableName} u " +
+            $"ON r.owner_id = u.{TestUserIdColumn}";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteRootUnionAll_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $") SELECT item_id FROM recent " +
+            $"UNION ALL " +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Equal(6, rows.Count);
+    }
+
+    [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
         var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };

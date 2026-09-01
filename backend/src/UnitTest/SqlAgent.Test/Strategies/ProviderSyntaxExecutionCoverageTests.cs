@@ -13,7 +13,10 @@ public sealed class ProviderSyntaxExecutionCoverageTests
         nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteCorrelatedExists_ShouldCompileRenderAndExecute),
         nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteWindow_ShouldCompileRenderAndExecute),
         nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_ChainedCtes_ShouldCompileRenderAndExecute),
-        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CtePaging_ReturnsSecondRow)
+        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CtePaging_ReturnsSecondRow),
+        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteReferencedInsideSubquery_ShouldCompileRenderAndExecute),
+        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteJoinedWithPhysicalTable_ShouldCompileRenderAndExecute),
+        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteRootUnionAll_ShouldCompileRenderAndExecute)
     ];
 
     private static readonly Type[] ProviderTestTypes =
@@ -27,9 +30,9 @@ public sealed class ProviderSyntaxExecutionCoverageTests
     ];
 
     [Fact]
-    public void RealProviderCteExecution_HasStableFiftySixCaseFloor()
+    public void RealProviderCteExecution_HasStableSeventyFourCaseFloor()
     {
-        Assert.Equal(8, CommonCteExecutionMethods.Length);
+        Assert.Equal(11, CommonCteExecutionMethods.Length);
         Assert.Equal(6, ProviderTestTypes.Length);
 
         foreach (var providerType in ProviderTestTypes)
@@ -68,12 +71,12 @@ public sealed class ProviderSyntaxExecutionCoverageTests
             typeof(MySqlStrategyTests).GetMethod(
                 "ExecuteRawQueryAsync_NestedInnerCte_Executes"));
 
-        const int inheritedCommonCases = 8 * 6;
+        const int inheritedCommonCases = 11 * 6;
         const int dialectNativeCases = 6;
         const int nestedInnerCteCases = 2;
 
         Assert.Equal(
-            56,
+            74,
             inheritedCommonCases +
             dialectNativeCases +
             nestedInnerCteCases);
