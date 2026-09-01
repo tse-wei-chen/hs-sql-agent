@@ -37,7 +37,7 @@ public class TypedDmlRuntimeTests
         Assert.Equal(SqlAgentToolType.Sqlite, parsed.SourceDialect);
         Assert.NotNull(parsed.SourceProfile);
         Assert.Equal(SqlAgentToolType.Sqlite, parsed.SourceProfile.Provider);
-        Assert.Equal(new Version(3, 46), parsed.SourceProfile.ServerVersion);
+        Assert.Equal(new Version(3, 46, 0), parsed.SourceProfile.ServerVersion);
         Assert.Equal(1, connections.CreateCount);
     }
 
