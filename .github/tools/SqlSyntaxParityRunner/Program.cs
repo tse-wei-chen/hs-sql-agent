@@ -632,7 +632,7 @@ static SemanticSignature CaptureSemanticSignature(object parsed, object command)
     var returnsRowsValue = commandType
         .GetProperty("ReturnsRows", BindingFlags.Public | BindingFlags.Instance)
         ?.GetValue(command);
-    var returnsRows = returnsRowsValue is bool value ? value : null;
+    bool? returnsRows = returnsRowsValue is bool value ? value : null;
 
     return new SemanticSignature(
         StatementFamily(statement.GetType().Name),
