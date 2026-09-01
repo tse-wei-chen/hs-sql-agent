@@ -788,236 +788,245 @@ module internal RewriteStages =
             | "CURRENT_TIMESTAMP" -> Some SqlCurrentTemporalKind.Timestamp
             | _ -> None
 
-        match currentKind with
-        | Some kind ->
-            let canonical =
-                match kind with
-                | SqlCurrentTemporalKind.Date -> "CORE_CURRENT_DATE"
-                | SqlCurrentTemporalKind.Time -> "CORE_CURRENT_TIME"
-                | SqlCurrentTemporalKind.Timestamp -> "CORE_CURRENT_TIMESTAMP"
-                | value -> compilationError ("Unsupported current temporal kind '" + string value + "'.")
-            if not arguments.IsEmpty then
-                compilationError (sourceName + " does not accept arguments.")
-            canonicalCall call canonical []
-        | None when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) ->
-            if arguments.Length <> 1 then
-                compilationError (sourceName + " requires exactly 1 argument.")
-            canonicalCall call "CORE_DATE_PART" [ Literal(ScalarValue.Text sourceName); arguments.Head ]
-        | None when SqlDateOnlyCapabilityRules.IsMySqlSourceFunction(sourceTool, sourceName) ->
-            if arguments.Length <> 1 then
-                compilationError "MySQL DATE(expr) requires exactly 1 argument."
-            canonicalCall call "CORE_DATE_ONLY" arguments
-
-        | None when not (isNull sourceContract) ->
-            match (requireSourceContract ()).CanonicalizationKind with
-            | SqlSourceFunctionCanonicalizationKind.DateAdd ->
-                if arguments.Length <> 3 then compilationError "DATEADD requires exactly 3 arguments."
-                let unit =
-                    keywordValue "DATEADD date-part unit" arguments[0]
-                    |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEADD")
-                canonicalCall call "CORE_DATE_ADD" [ Literal(ScalarValue.Text unit); arguments[1]; arguments[2] ]
-
-            | SqlSourceFunctionCanonicalizationKind.DateDiff ->
-                let portableDay startValue endValue =
-                    let canonical =
-                        canonicalCall
-                            call
-                            "CORE_DATE_DIFF"
-                            [ Literal(ScalarValue.Text "DAY")
-                              dateOnlyOperand targetTool startValue
-                              dateOnlyOperand targetTool endValue ]
-                    if targetTool = SqlAgentToolType.Sqlite then
-                        Cast(canonical, CastType.create "INTEGER")
-                    else canonical
-                match arguments with
-                | [ finish; startValue ] ->
-                    portableDay startValue finish
-                | [ unitExpr; startValue; finish ] ->
-                    let unit =
-                        keywordValue "DATEDIFF date-part unit" unitExpr
-                        |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEDIFF")
-                    if (sourceTool = SqlAgentToolType.MsSqlServer || sourceTool = SqlAgentToolType.Firebird)
-                       && sourceTool = targetTool then
-                        canonicalCall call "CORE_DATE_DIFF" [ Literal(ScalarValue.Text unit); startValue; finish ]
-                    elif unit <> "DAY" then
-                        compilationError (
-                            "Cross-dialect DATEDIFF unit '" + unit + "' from " + string sourceTool + " to " + string targetTool
-                            + " is not translated: SQL capability 'core_date_diff.unit." + unit.ToLowerInvariant()
-                            + "' is not modeled losslessly. DAY is the currently modeled portable intersection.")
-                    else
-                        portableDay startValue finish
-                | values ->
-                    compilationError (
-                        "DATEDIFF requires either the portable 2-argument (end, start) shape or the "
-                        + "3-argument (unit, start, end) shape; received " + string values.Length + " arguments.")
-
-            | SqlSourceFunctionCanonicalizationKind.DateFormat ->
-                if arguments.Length <> 2 then compilationError "DATE_FORMAT/FORMAT requires exactly 2 arguments."
-                let rawFormat = textLiteral "DATE_FORMAT format" arguments[1]
-                let translated =
-                    try dateFormats.Translate(rawFormat, sourceTool, targetTool)
-                    with
-                    | :? FormatException as ex ->
-                        raise (SqlCompilationException(
-                            "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                    | :? NotSupportedException as ex ->
-                        raise (SqlCompilationException(
-                            "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                canonicalCall call "CORE_DATE_FORMAT" [ arguments[0]; Literal(ScalarValue.Text translated) ]
-
-            | SqlSourceFunctionCanonicalizationKind.DateParse ->
-                if arguments.Length <> 2 then compilationError "TO_DATE requires exactly 2 arguments."
-                let rawFormat = textLiteral "TO_DATE format" arguments[1]
-                let translated =
-                    try dateFormats.Translate(rawFormat, sourceTool, targetTool)
-                    with
-                    | :? FormatException as ex ->
-                        raise (SqlCompilationException(
-                            "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                    | :? NotSupportedException as ex ->
-                        raise (SqlCompilationException(
-                            "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                canonicalCall call "CORE_DATE_PARSE" [ arguments[0]; Literal(ScalarValue.Text translated) ]
-
-            | SqlSourceFunctionCanonicalizationKind.Position ->
-                if arguments.Length <> 2 then compilationError (sourceName + " requires exactly 2 arguments.")
-                let canonicalArguments =
-                    if sourceName = "STRPOS" || sourceName = "INSTR" then
-                        [ arguments[0]; arguments[1] ]
-                    else
-                        [ arguments[1]; arguments[0] ]
-                canonicalCall call "CORE_POSITION" canonicalArguments
-
-            | SqlSourceFunctionCanonicalizationKind.JsonExtract ->
-                if arguments.Length <> 2 then compilationError "JSON_EXTRACT requires exactly 2 arguments."
-                canonicalCall call "CORE_JSON_EXTRACT" arguments
-
-            | SqlSourceFunctionCanonicalizationKind.JsonSet ->
-                if arguments.Length <> 3 then compilationError "JSON_SET requires exactly 3 arguments."
-                canonicalCall call "CORE_JSON_SET" arguments
-
-            | SqlSourceFunctionCanonicalizationKind.RegexMatch ->
-                if arguments.Length <> 2 then
-                    compilationError ("Function 'CORE_REGEX_MATCH' requires 2 argument(s); received " + string arguments.Length + ".")
-                RegexMatch(arguments[0], arguments[1])
-
-            | SqlSourceFunctionCanonicalizationKind.CurrentTimestamp ->
-                if not arguments.IsEmpty then compilationError (sourceName + " does not accept arguments.")
-                canonicalCall call "CORE_CURRENT_TIMESTAMP" []
-
-            | SqlSourceFunctionCanonicalizationKind.OracleSysdate ->
-                if sourceTool <> SqlAgentToolType.Oracle then
-                    compilationError "SYSDATE source semantics are modeled only for Oracle."
+        if FunctionName.requiresNativeIdentifierSemantics call.Name
+           && sourceTool <> targetTool then
+            // Preserve native identifier semantics until target validation. The target proof
+            // owns the fail-closed diagnostic for cross-provider qualified/quoted functions.
+            FunctionCall call
+        else
+            match currentKind with
+            | Some kind ->
+                let canonical =
+                    match kind with
+                    | SqlCurrentTemporalKind.Date -> "CORE_CURRENT_DATE"
+                    | SqlCurrentTemporalKind.Time -> "CORE_CURRENT_TIME"
+                    | SqlCurrentTemporalKind.Timestamp -> "CORE_CURRENT_TIMESTAMP"
+                    | value -> compilationError ("Unsupported current temporal kind '" + string value + "'.")
                 if not arguments.IsEmpty then
-                    compilationError "Oracle SYSDATE does not accept arguments."
-                canonicalCall call "CORE_ORACLE_SYSDATE" []
+                    compilationError (sourceName + " does not accept arguments.")
+                canonicalCall call canonical []
+            | None when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) ->
+                if arguments.Length <> 1 then
+                    compilationError (sourceName + " requires exactly 1 argument.")
+                canonicalCall call "CORE_DATE_PART" [ Literal(ScalarValue.Text sourceName); arguments.Head ]
+            | None when SqlDateOnlyCapabilityRules.IsMySqlSourceFunction(sourceTool, sourceName) ->
+                if arguments.Length <> 1 then
+                    compilationError "MySQL DATE(expr) requires exactly 1 argument."
+                canonicalCall call "CORE_DATE_ONLY" arguments
 
-            | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
-                if sourceName = "STRING_AGG" && arguments.Length <> 2 then
-                    compilationError "STRING_AGG requires exactly 2 arguments."
-                let normalizedArguments =
-                    if sourceName = "GROUP_CONCAT" && sourceTool = SqlAgentToolType.MySQL then
-                        if arguments.Length <> 1 then
+            | None when not (isNull sourceContract) ->
+                match (requireSourceContract ()).CanonicalizationKind with
+                | SqlSourceFunctionCanonicalizationKind.DateAdd ->
+                    if arguments.Length <> 3 then compilationError "DATEADD requires exactly 3 arguments."
+                    let unit =
+                        keywordValue "DATEADD date-part unit" arguments[0]
+                        |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEADD")
+                    canonicalCall call "CORE_DATE_ADD" [ Literal(ScalarValue.Text unit); arguments[1]; arguments[2] ]
+
+                | SqlSourceFunctionCanonicalizationKind.DateDiff ->
+                    let portableDay startValue endValue =
+                        let canonical =
+                            canonicalCall
+                                call
+                                "CORE_DATE_DIFF"
+                                [ Literal(ScalarValue.Text "DAY")
+                                  dateOnlyOperand targetTool startValue
+                                  dateOnlyOperand targetTool endValue ]
+                        if targetTool = SqlAgentToolType.Sqlite then
+                            Cast(canonical, CastType.create "INTEGER")
+                        else canonical
+                    match arguments with
+                    | [ finish; startValue ] ->
+                        portableDay startValue finish
+                    | [ unitExpr; startValue; finish ] ->
+                        let unit =
+                            keywordValue "DATEDIFF date-part unit" unitExpr
+                            |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEDIFF")
+                        if (sourceTool = SqlAgentToolType.MsSqlServer || sourceTool = SqlAgentToolType.Firebird)
+                           && sourceTool = targetTool then
+                            canonicalCall call "CORE_DATE_DIFF" [ Literal(ScalarValue.Text unit); startValue; finish ]
+                        elif unit <> "DAY" then
                             compilationError (
-                                "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. "
-                                + "Core currently supports exactly one value expression; use portable STRING_AGG(value, separator) "
-                                + "or native SEPARATOR 'literal' for an explicit delimiter.")
-                        let separator = call.AggregateSeparator |> Option.defaultValue ","
-                        [ arguments.Head; Literal(ScalarValue.Text separator) ]
-                    elif arguments.Length = 1 then
-                        let separator =
-                            match sourceName with
-                            | "LISTAGG" -> ""
-                            | "GROUP_CONCAT"
-                            | "LIST" -> ","
-                            | _ -> compilationError ("String aggregate '" + sourceName + "' requires an explicit separator.")
-                        [ arguments.Head; Literal(ScalarValue.Text separator) ]
-                    else arguments
-                canonicalCall call "CORE_STRING_AGG" normalizedArguments
-
-            | value ->
-                compilationError (
-                    "Unsupported source function canonicalization kind '" + string value + "' for function '" + sourceName + "'.")
-
-        | None when sourceName = "DATE" && sourceTool = SqlAgentToolType.MySQL ->
-            if arguments.Length <> 1 then
-                compilationError "MySQL DATE(expr) requires exactly 1 argument."
-            if targetTool <> SqlAgentToolType.MySQL then
-                compilationError (
-                    "MySQL DATE(expr) is currently a native-only source capability. "
-                    + "Cross-provider lowering remains fail-closed because MySQL DATE coercion and invalid-input semantics "
-                    + "are not proven equivalent to target CAST/date functions. Target provider is "
-                    + string targetTool + ".")
-            FunctionCall { call with Name = FunctionName.create "DATE"; Arguments = arguments }
-
-        | None when sourceName = "COALESCE" ->
-            if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
-            FunctionCall { call with Name = FunctionName.create "COALESCE"; Arguments = arguments }
-
-        | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceRegistryName) ->
-            let renderedName =
-                if sourceTool = targetTool then sourceName
-                else sourceRegistryName
-            FunctionCall { call with Name = FunctionName.create renderedName; Arguments = arguments }
-
-        | None ->
-            let sourceDefinition =
-                match functionRegistry.Find(sourceTool, sourceRegistryName, arguments.Length) |> Option.ofObj with
-                | Some definition -> definition
-                | None ->
-                    compilationError (
-                        "Function '" + sourceName + "' is not registered for source dialect "
-                        + string sourceTool + "; normalization remains fail-closed.")
-            if not sourceDefinition.Semantic.HasValue then
-                compilationError ("Function '" + sourceName + "' has no portable semantic mapping from " + string sourceTool + ".")
-
-            let semantic = sourceDefinition.Semantic.Value
-            if sourceTool <> targetTool then
-                match semantic with
-                | SemanticFunction.Random ->
-                    compilationError (
-                        "Random function '" + sourceName + "' is not translated across dialects because providers differ in value range and evaluation frequency.")
-                | SemanticFunction.StringLength when sourceTool = SqlAgentToolType.MsSqlServer ->
-                    if arguments.Length <> 1 then compilationError "SQL Server LEN requires exactly 1 argument."
-                    let targetLength =
-                        match targetTool with
-                        | SqlAgentToolType.Postgres
-                        | SqlAgentToolType.Oracle
-                        | SqlAgentToolType.Sqlite -> "LENGTH"
-                        | SqlAgentToolType.MySQL
-                        | SqlAgentToolType.Firebird -> "CHAR_LENGTH"
-                        | value -> compilationError ("SQL Server LEN has no Core cross-dialect lowering for target provider " + string value + ".")
-                    let trimmed = FunctionCall(emptyFunction "RTRIM" [ arguments.Head ])
-                    FunctionCall { call with Name = FunctionName.create targetLength; Arguments = [ trimmed ] }
-                | SemanticFunction.StringLength when targetTool = SqlAgentToolType.MsSqlServer ->
-                    compilationError "Portable string length cannot be translated losslessly to SQL Server LEN because LEN excludes trailing spaces."
-                | SemanticFunction.Repeat when sourceTool = SqlAgentToolType.MsSqlServer || targetTool = SqlAgentToolType.MsSqlServer ->
-                    compilationError "REPLICATE/REPEAT is not translated across SQL Server because SQL Server REPLICATE can truncate non-MAX inputs."
-                | SemanticFunction.Coalesce when sourceName <> "COALESCE" ->
-                    compilationError (
-                        "Provider-specific null function '" + sourceName
-                        + "' is not translated across dialects because its type-conversion rules differ from COALESCE.")
-                | _ ->
-                    let targetDefinition =
-                        match functionRegistry.Find(targetTool, semantic, arguments.Length) |> Option.ofObj with
-                        | Some definition -> definition
-                        | None ->
-                            compilationError (
-                                "Semantic function '" + string semantic + "' with " + string arguments.Length
-                                + " argument(s) is not supported by " + string targetTool + ".")
-                    if targetDefinition.TranslationKind = FunctionTranslationKind.Template
-                       || targetDefinition.TranslationKind = FunctionTranslationKind.Specialized then
+                                "Cross-dialect DATEDIFF unit '" + unit + "' from " + string sourceTool + " to " + string targetTool
+                                + " is not translated: SQL capability 'core_date_diff.unit." + unit.ToLowerInvariant()
+                                + "' is not modeled losslessly. DAY is the currently modeled portable intersection.")
+                        else
+                            portableDay startValue finish
+                    | values ->
                         compilationError (
-                            "Function '" + sourceName + "' requires Core " + string targetDefinition.TranslationKind
-                            + " translation for target provider " + string targetTool
-                            + "; no lossless Core translator is registered yet.")
-                    FunctionCall { call with Name = FunctionName.create (targetDefinition.Name.Trim().ToUpperInvariant()); Arguments = arguments }
-            else
-                FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
+                            "DATEDIFF requires either the portable 2-argument (end, start) shape or the "
+                            + "3-argument (unit, start, end) shape; received " + string values.Length + " arguments.")
+
+                | SqlSourceFunctionCanonicalizationKind.DateFormat ->
+                    if arguments.Length <> 2 then compilationError "DATE_FORMAT/FORMAT requires exactly 2 arguments."
+                    let rawFormat = textLiteral "DATE_FORMAT format" arguments[1]
+                    let translated =
+                        try dateFormats.Translate(rawFormat, sourceTool, targetTool)
+                        with
+                        | :? FormatException as ex ->
+                            raise (SqlCompilationException(
+                                "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                        | :? NotSupportedException as ex ->
+                            raise (SqlCompilationException(
+                                "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                    canonicalCall call "CORE_DATE_FORMAT" [ arguments[0]; Literal(ScalarValue.Text translated) ]
+
+                | SqlSourceFunctionCanonicalizationKind.DateParse ->
+                    if arguments.Length <> 2 then compilationError "TO_DATE requires exactly 2 arguments."
+                    let rawFormat = textLiteral "TO_DATE format" arguments[1]
+                    let translated =
+                        try dateFormats.Translate(rawFormat, sourceTool, targetTool)
+                        with
+                        | :? FormatException as ex ->
+                            raise (SqlCompilationException(
+                                "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                        | :? NotSupportedException as ex ->
+                            raise (SqlCompilationException(
+                                "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                    canonicalCall call "CORE_DATE_PARSE" [ arguments[0]; Literal(ScalarValue.Text translated) ]
+
+                | SqlSourceFunctionCanonicalizationKind.Position ->
+                    if arguments.Length <> 2 then compilationError (sourceName + " requires exactly 2 arguments.")
+                    let canonicalArguments =
+                        if sourceName = "STRPOS" || sourceName = "INSTR" then
+                            [ arguments[0]; arguments[1] ]
+                        else
+                            [ arguments[1]; arguments[0] ]
+                    canonicalCall call "CORE_POSITION" canonicalArguments
+
+                | SqlSourceFunctionCanonicalizationKind.JsonExtract ->
+                    if arguments.Length <> 2 then compilationError "JSON_EXTRACT requires exactly 2 arguments."
+                    canonicalCall call "CORE_JSON_EXTRACT" arguments
+
+                | SqlSourceFunctionCanonicalizationKind.JsonSet ->
+                    if arguments.Length <> 3 then compilationError "JSON_SET requires exactly 3 arguments."
+                    canonicalCall call "CORE_JSON_SET" arguments
+
+                | SqlSourceFunctionCanonicalizationKind.RegexMatch ->
+                    if arguments.Length <> 2 then
+                        compilationError ("Function 'CORE_REGEX_MATCH' requires 2 argument(s); received " + string arguments.Length + ".")
+                    RegexMatch(arguments[0], arguments[1])
+
+                | SqlSourceFunctionCanonicalizationKind.CurrentTimestamp ->
+                    if not arguments.IsEmpty then compilationError (sourceName + " does not accept arguments.")
+                    canonicalCall call "CORE_CURRENT_TIMESTAMP" []
+
+                | SqlSourceFunctionCanonicalizationKind.OracleSysdate ->
+                    if sourceTool <> SqlAgentToolType.Oracle then
+                        compilationError "SYSDATE source semantics are modeled only for Oracle."
+                    if not arguments.IsEmpty then
+                        compilationError "Oracle SYSDATE does not accept arguments."
+                    canonicalCall call "CORE_ORACLE_SYSDATE" []
+
+                | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
+                    if sourceName = "STRING_AGG" && arguments.Length <> 2 then
+                        compilationError "STRING_AGG requires exactly 2 arguments."
+                    let normalizedArguments =
+                        if sourceName = "GROUP_CONCAT" && sourceTool = SqlAgentToolType.MySQL then
+                            if arguments.Length <> 1 then
+                                compilationError (
+                                    "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. "
+                                    + "Core currently supports exactly one value expression; use portable STRING_AGG(value, separator) "
+                                    + "or native SEPARATOR 'literal' for an explicit delimiter.")
+                            let separator = call.AggregateSeparator |> Option.defaultValue ","
+                            [ arguments.Head; Literal(ScalarValue.Text separator) ]
+                        elif arguments.Length = 1 then
+                            let separator =
+                                match sourceName with
+                                | "LISTAGG" -> ""
+                                | "GROUP_CONCAT"
+                                | "LIST" -> ","
+                                | _ -> compilationError ("String aggregate '" + sourceName + "' requires an explicit separator.")
+                            [ arguments.Head; Literal(ScalarValue.Text separator) ]
+                        else arguments
+                    canonicalCall call "CORE_STRING_AGG" normalizedArguments
+
+                | value ->
+                    compilationError (
+                        "Unsupported source function canonicalization kind '" + string value + "' for function '" + sourceName + "'.")
+
+            | None when sourceName = "DATE" && sourceTool = SqlAgentToolType.MySQL ->
+                if arguments.Length <> 1 then
+                    compilationError "MySQL DATE(expr) requires exactly 1 argument."
+                if targetTool <> SqlAgentToolType.MySQL then
+                    compilationError (
+                        "MySQL DATE(expr) is currently a native-only source capability. "
+                        + "Cross-provider lowering remains fail-closed because MySQL DATE coercion and invalid-input semantics "
+                        + "are not proven equivalent to target CAST/date functions. Target provider is "
+                        + string targetTool + ".")
+                FunctionCall { call with Name = FunctionName.create "DATE"; Arguments = arguments }
+
+            | None when sourceName = "COALESCE" ->
+                if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
+                let name =
+                if FunctionName.requiresNativeIdentifierSemantics call.Name then call.Name
+                else FunctionName.create "COALESCE"
+            FunctionCall { call with Name = name; Arguments = arguments }
+
+            | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceRegistryName) ->
+                let renderedName =
+                    if sourceTool = targetTool then sourceName
+                    else sourceRegistryName
+                FunctionCall { call with Name = FunctionName.create renderedName; Arguments = arguments }
+
+            | None ->
+                let sourceDefinition =
+                    match functionRegistry.Find(sourceTool, sourceRegistryName, arguments.Length) |> Option.ofObj with
+                    | Some definition -> definition
+                    | None ->
+                        compilationError (
+                            "Function '" + sourceName + "' is not registered for source dialect "
+                            + string sourceTool + "; normalization remains fail-closed.")
+                if not sourceDefinition.Semantic.HasValue then
+                    compilationError ("Function '" + sourceName + "' has no portable semantic mapping from " + string sourceTool + ".")
+
+                let semantic = sourceDefinition.Semantic.Value
+                if sourceTool <> targetTool then
+                    match semantic with
+                    | SemanticFunction.Random ->
+                        compilationError (
+                            "Random function '" + sourceName + "' is not translated across dialects because providers differ in value range and evaluation frequency.")
+                    | SemanticFunction.StringLength when sourceTool = SqlAgentToolType.MsSqlServer ->
+                        if arguments.Length <> 1 then compilationError "SQL Server LEN requires exactly 1 argument."
+                        let targetLength =
+                            match targetTool with
+                            | SqlAgentToolType.Postgres
+                            | SqlAgentToolType.Oracle
+                            | SqlAgentToolType.Sqlite -> "LENGTH"
+                            | SqlAgentToolType.MySQL
+                            | SqlAgentToolType.Firebird -> "CHAR_LENGTH"
+                            | value -> compilationError ("SQL Server LEN has no Core cross-dialect lowering for target provider " + string value + ".")
+                        let trimmed = FunctionCall(emptyFunction "RTRIM" [ arguments.Head ])
+                        FunctionCall { call with Name = FunctionName.create targetLength; Arguments = [ trimmed ] }
+                    | SemanticFunction.StringLength when targetTool = SqlAgentToolType.MsSqlServer ->
+                        compilationError "Portable string length cannot be translated losslessly to SQL Server LEN because LEN excludes trailing spaces."
+                    | SemanticFunction.Repeat when sourceTool = SqlAgentToolType.MsSqlServer || targetTool = SqlAgentToolType.MsSqlServer ->
+                        compilationError "REPLICATE/REPEAT is not translated across SQL Server because SQL Server REPLICATE can truncate non-MAX inputs."
+                    | SemanticFunction.Coalesce when sourceName <> "COALESCE" ->
+                        compilationError (
+                            "Provider-specific null function '" + sourceName
+                            + "' is not translated across dialects because its type-conversion rules differ from COALESCE.")
+                    | _ ->
+                        let targetDefinition =
+                            match functionRegistry.Find(targetTool, semantic, arguments.Length) |> Option.ofObj with
+                            | Some definition -> definition
+                            | None ->
+                                compilationError (
+                                    "Semantic function '" + string semantic + "' with " + string arguments.Length
+                                    + " argument(s) is not supported by " + string targetTool + ".")
+                        if targetDefinition.TranslationKind = FunctionTranslationKind.Template
+                           || targetDefinition.TranslationKind = FunctionTranslationKind.Specialized then
+                            compilationError (
+                                "Function '" + sourceName + "' requires Core " + string targetDefinition.TranslationKind
+                                + " translation for target provider " + string targetTool
+                                + "; no lossless Core translator is registered yet.")
+                        FunctionCall { call with Name = FunctionName.create (targetDefinition.Name.Trim().ToUpperInvariant()); Arguments = arguments }
+                else
+                    FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
 
     and private normalizeWindow source target (window: WindowSpec) =
         { window with
@@ -1519,7 +1528,7 @@ module internal RewriteStages =
             proveSourceFilterExpr expressionProofs value
             proveSourceFilterExpr expressionProofs pattern
         | FunctionCall call ->
-            if (FunctionName.value call.Name).Contains(".", StringComparison.Ordinal) then
+            if FunctionName.requiresNativeIdentifierSemantics call.Name then
                 requireFilterCapability expressionProofs.QualifiedFunction
             call.Arguments |> List.iter (proveSourceFilterExpr expressionProofs)
             call.AggregateOrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
@@ -1631,7 +1640,7 @@ module internal RewriteStages =
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs pattern
         | FunctionCall call ->
-            if (FunctionName.value call.Name).Contains(".", StringComparison.Ordinal) then
+            if FunctionName.requiresNativeIdentifierSemantics call.Name then
                 requireExpressionCapability expressionProofs.QualifiedFunction
             call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
             call.AggregateOrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
