@@ -359,7 +359,7 @@ module internal RewritePlanCapabilityValidation =
     let private stableProjectionNames context (query: Query) =
         query.Head.Projection
         |> List.map (fun item ->
-            match item.Alias, item.Expression with
+            match item.Alias, Expr.unspan item.Expression with
             | Some alias, _ -> alias
             | None, Column identifier
             | None, BoundColumn(identifier, _) ->

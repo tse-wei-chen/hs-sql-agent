@@ -554,7 +554,7 @@ module internal RewriteParser =
         | _ -> fail token "TIMESTAMP WITHOUT TIME ZONE requires a string literal"
 
     let private applyTypedCast (cursor: Cursor) expression target =
-        match expression, CastType.literalCoercion target with
+        match Expr.unspan expression, CastType.literalCoercion target with
         | Literal(ScalarValue.Text text), DateLiteralCoercion ->
             match DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None) with
             | true, value -> Literal(ScalarValue.Date value)
@@ -1213,14 +1213,14 @@ module internal RewriteParser =
                         fail cursor.Current "RETURNING alias requires AS"
                     | _ -> ()
 
-                match expression, alias with
+                match Expr.unspan expression, alias with
                 | Wildcard None, Some _ ->
                     fail cursor.Current "RETURNING wildcard cannot be aliased"
                 | Wildcard None, None ->
                     ReturningWildcard None
                 | Column identifier, None when Identifier.parts identifier |> List.length = 1 ->
                     ReturningColumn(identifier, None)
-                | expression, alias ->
+                | _, alias ->
                     requireSourceCapability cursor.Current cursor.SourceDml.ReturningExpression
                     ReturningExpression(expression, alias)
 
