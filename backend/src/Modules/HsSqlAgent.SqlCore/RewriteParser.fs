@@ -302,7 +302,7 @@ module internal RewriteParser =
     let private singlePartIdentifier (part: IdentifierPart) = Identifier.create [ part ]
 
     let private functionName (identifier: Identifier) : FunctionName =
-        identifier |> Identifier.text |> FunctionName.create
+        FunctionName.ofIdentifier identifier
 
     let private parseNonNegativeRowCount context (cursor: Cursor) =
         let token = cursor.Take()
@@ -900,10 +900,8 @@ module internal RewriteParser =
         Extract(field, value)
 
     and private parseFunctionExpression (name: Identifier) (cursor: Cursor) =
-        let nameParts = Identifier.parts name
-        if nameParts |> List.exists (fun part -> part.WasQuoted) then
-            fail cursor.Current "Quoted function identifiers are not yet represented with lossless identifier quoting"
-        if nameParts.Length > 1 then
+        let modeledName = functionName name
+        if FunctionName.requiresNativeIdentifierSemantics modeledName then
             requireSourceParseCapability cursor.Current cursor.SourceExpressions.QualifiedFunction
         expectSymbol '(' cursor
         let distinct = acceptKeyword "DISTINCT" cursor
@@ -949,7 +947,7 @@ module internal RewriteParser =
             RawRegexCall(values, distinct)
         else
             FunctionCall
-                { Name = functionName name
+                { Name = modeledName
                   Arguments = values
                   IsDistinct = distinct
                   AggregateOrderBy = aggregateOrderBy
