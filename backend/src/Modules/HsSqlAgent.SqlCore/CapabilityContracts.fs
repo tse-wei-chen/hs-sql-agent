@@ -434,14 +434,43 @@ module internal SqlDmlDeleteUsingCapabilityRules =
              + "; equivalent joined-delete, target-row, alias, and duplicate-match semantics are not yet proven."
 
 module internal SqlDmlReturningExpressionCapabilityRules =
-    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
-        if sourceDialect = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.returning.expression' is currently declared only for the PostgreSQL source dialect; source dialect "
-             + string sourceDialect + " remains fail-closed."
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.returning.expression' is currently lowered only for PostgreSQL targets; target provider "
-             + string provider + " remains fail-closed."
+    let SQLiteMinimumVersion = Version(3,35)
+
+    let private sqliteProfileAtLeast
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null) =
+        provider = SqlAgentToolType.Sqlite
+        && not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(SQLiteMinimumVersion) >= 0
+
+    let private validationError
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (side: string) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres -> null
+        | SqlAgentToolType.Sqlite when sqliteProfileAtLeast provider profile -> null
+        | SqlAgentToolType.Sqlite ->
+            "SQL capability 'dml.returning.expression' requires an explicit SQLite "
+            + side + " capability profile with ServerVersion 3.35 or newer."
+        | _ when side = "target" ->
+            "SQL capability 'dml.returning.expression' remains fail-closed for target provider "
+            + string provider + "; no proven rich RETURNING equivalent is declared."
+        | _ ->
+            "SQL capability 'dml.returning.expression' is not valid for source dialect "
+            + string provider + " in the current Core source grammar."
+
+    let SourceValidationError(
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError sourceDialect sourceProfile "source"
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
 
 module internal SqlDmlReturningCapabilityRules =
     let private sqliteVersion = Version(3,35)

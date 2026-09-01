@@ -201,7 +201,7 @@ module internal RewriteFacadeAdapter =
             SqlDmlReturningCapabilityRules.SourceValidationError(source, sourceVersion)
             |> sourceCapabilityProof
           ReturningExpression =
-            SqlDmlReturningExpressionCapabilityRules.SourceValidationError(source)
+            SqlDmlReturningExpressionCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
           TargetAlias =
             SqlDmlTargetAliasCapabilityRules.SourceValidationError(source)
@@ -216,7 +216,7 @@ module internal RewriteFacadeAdapter =
             SqlDmlReturningCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           ReturningExpression =
-            SqlDmlReturningExpressionCapabilityRules.TargetValidationError(target)
+            SqlDmlReturningExpressionCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           TargetAlias =
             SqlDmlTargetAliasCapabilityRules.TargetValidationError(target)

@@ -68,6 +68,11 @@ prove ServerVersion 3.33 or newer. PostgreSQL, SQL Server, and version-proven SQ
 joined-update syntax; cross-provider joined-update lowering remains fail-closed when SQL Server or
 SQLite participates because duplicate-match target-row selection is not proven equivalent.
 
+SQLite 3.35+ rich RETURNING expressions are native-only and limited to the modified target table.
+Auxiliary UPDATE FROM sources are not visible to RETURNING, and the existing proven expression subset
+continues to reject top-level aggregates, window functions, subqueries, correlated references, and
+unproven functions.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and

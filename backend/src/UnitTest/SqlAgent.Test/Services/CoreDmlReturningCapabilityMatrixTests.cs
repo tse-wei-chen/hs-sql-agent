@@ -36,6 +36,28 @@ public sealed class CoreDmlReturningCapabilityMatrixTests
     }
 
     [Fact]
+    public void Matrix_SqliteRichReturningRequiresExplicitVersion335()
+    {
+        var absent = RichReturning(SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Sqlite));
+        var old = RichReturning(SqlCapabilityMatrix.ForProvider(
+            SqlAgentToolType.Sqlite,
+            new SqlProviderCapabilityProfile(
+                SqlAgentToolType.Sqlite,
+                ServerVersion: new Version(3, 34))));
+        var current = RichReturning(SqlCapabilityMatrix.ForProvider(
+            SqlAgentToolType.Sqlite,
+            new SqlProviderCapabilityProfile(
+                SqlAgentToolType.Sqlite,
+                ServerVersion: new Version(3, 35))));
+
+        Assert.Equal(SqlCapabilityStatus.Rejected, absent.Status);
+        Assert.Equal(SqlCapabilityStatus.Rejected, old.Status);
+        Assert.Equal(SqlCapabilityStatus.Translated, current.Status);
+        Assert.Contains("target table", current.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("same-provider", current.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_FirebirdReturningRequiresExplicitVersionFive()
     {
         var old = Returning(SqlCapabilityMatrix.ForProvider(
@@ -84,4 +106,7 @@ public sealed class CoreDmlReturningCapabilityMatrixTests
 
     private static SqlCapability Returning(ProviderSqlCapabilities matrix) =>
         Assert.Single(matrix.Capabilities, item => item.Id == "dml.returning_output");
+
+    private static SqlCapability RichReturning(ProviderSqlCapabilities matrix) =>
+        Assert.Single(matrix.Capabilities, item => item.Id == "dml.returning.expression");
 }

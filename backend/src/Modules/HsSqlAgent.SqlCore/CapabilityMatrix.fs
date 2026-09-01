@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.69"
+    static member Version = "2026-09-02.70"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -199,6 +199,15 @@ type SqlCapabilityMatrix private () =
             | SqlAgentToolType.Postgres -> translated
             | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(3,35)) -> translated
             | SqlAgentToolType.Firebird when SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(5,0)) -> translated
+            | _ -> rejected
+
+        let richReturningStatus =
+            match provider with
+            | SqlAgentToolType.Postgres -> translated
+            | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(
+                                                profile,
+                                                provider,
+                                                SqlDmlReturningExpressionCapabilityRules.SQLiteMinimumVersion) -> translated
             | _ -> rejected
 
         let targetlessDoNothingStatus =
@@ -555,6 +564,20 @@ type SqlCapabilityMatrix private () =
                         | SqlAgentToolType.MySQL ->
                             "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."
                         | _ -> "DML RETURNING result rows remain fail-closed.")
+                cap("dml.returning.expression","dml",richReturningStatus,
+                    if richReturningStatus=translated then
+                        match provider with
+                        | SqlAgentToolType.Postgres ->
+                            "PostgreSQL rich RETURNING admits the proven binder-resolved local-row scalar/predicate subset, including local FROM/USING row sources. Subqueries, windows, aggregates, correlated references, and unproven functions remain fail-closed."
+                        | SqlAgentToolType.Sqlite ->
+                            "SQLite 3.35+ rich RETURNING admits the proven scalar/predicate subset only for same-provider native compilation and only over the modified target table. UPDATE FROM auxiliary tables are deliberately outside RETURNING scope. Top-level aggregates, windows, subqueries, and unproven functions remain fail-closed."
+                        | _ -> "Rich RETURNING is enabled by the declared provider/runtime contract."
+                    else
+                        match provider with
+                        | SqlAgentToolType.Sqlite ->
+                            "SQLite rich RETURNING requires an explicit target capability profile with ServerVersion 3.35 or newer."
+                        | _ ->
+                            "Rich RETURNING expressions remain fail-closed for this target provider.")
                 cap("dml.conflict_do_nothing_any","dml",targetlessDoNothingStatus,
                     if targetlessDoNothingStatus=translated then
                         match provider with

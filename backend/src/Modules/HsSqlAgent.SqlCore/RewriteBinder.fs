@@ -534,6 +534,16 @@ module internal RewriteBinder =
             | ReturningExpression(expression, alias) ->
                 ReturningExpression(bindExpr scope expression, alias))
 
+    let private bindSqliteReturningTargetOnly scope items =
+        try
+            bindReturning scope items
+        with
+        | :? InvalidOperationException as ex ->
+            raise (InvalidOperationException(
+                "SQLite RETURNING expressions may reference only the modified target table; auxiliary UPDATE FROM sources are not visible to RETURNING. "
+                + ex.Message,
+                ex))
+
     let private bindDocument dialect (document: Document) : Document =
         let statement =
             match document.Statement with
@@ -562,7 +572,11 @@ module internal RewriteBinder =
                         From = from
                         AssignmentItems = update.AssignmentItems |> NonEmpty.map (bindAssignment scope)
                         Where = update.Where |> Option.map (bindExpr scope)
-                        Returning = bindReturning scope update.Returning }
+                        Returning =
+                            if dialect = SourceDialect.SQLite then
+                                bindSqliteReturningTargetOnly baseScope update.Returning
+                            else
+                                bindReturning scope update.Returning }
             | DeleteStatement delete ->
                 let baseScope : Scope =
                     { Id = 0
