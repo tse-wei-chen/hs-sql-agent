@@ -41,11 +41,15 @@ public sealed class CoreDmlReturningExpressionTests
             new ColumnExpr(SqlIdentifier.Unquoted("id", SourceSpan.Unknown), SourceSpan.Unknown),
             "returned_id");
 
+        var firebirdProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Firebird,
+            ServerVersion: new Version(5, 0));
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(
                 parsed,
-                SqlAgentToolType.MySQL,
-                new SqlPlanValidationContext("policy-v1")));
+                SqlAgentToolType.Firebird,
+                new SqlPlanValidationContext("policy-v1"),
+                targetProfile: firebirdProfile));
 
         Assert.Contains("dml.returning.expression", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
