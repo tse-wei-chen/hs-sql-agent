@@ -27,6 +27,52 @@ public sealed class DialectGrammarMatrixCoverageTests
     }
 
     [Fact]
+    public void NegativeGrammarMatrices_HaveStableCrossLayerFloor()
+    {
+        var queryGrammar =
+            NegativeGrammarMutationMatrixTests.UniversalMalformedGrammarMatrix().Count()
+            + NegativeGrammarMutationMatrixTests.WrongDialectPostfixCastMatrix().Count()
+            + NegativeGrammarMutationMatrixTests.WrongDialectRowLimitMatrix().Count()
+            + NegativeGrammarMutationMatrixTests.WrongDialectNullOrderingMatrix().Count();
+        var dmlGrammar =
+            NegativeDmlGrammarMutationMatrixTests.PolicyMutationMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.MalformedDmlMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.UpdateFromWrongSourceMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.DeleteUsingWrongSourceMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.FirebirdUpsertWrongSourceMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.WrongDialectPostfixCastDmlMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
+        var targetCapability =
+            NegativeTargetCapabilityMatrixTests.NegativeTargetCapabilityMatrix().Count();
+        var binding =
+            NegativeBindingPolicyMatrixTests.BindingMutationMatrix().Count();
+        var queryPolicy =
+            NegativeBindingPolicyMatrixTests.QueryMaxRowsPolicyMatrix().Count();
+        var lexical =
+            NegativeLexicalMutationMatrixTests.NegativeLexicalMutationMatrix().Count();
+        var tablePolicy =
+            NegativeTablePolicyMatrixTests.TablePolicyMutationMatrix().Count();
+
+        Assert.Equal(94, queryGrammar);
+        Assert.Equal(68, dmlGrammar);
+        Assert.Equal(18, targetCapability);
+        Assert.Equal(30, binding);
+        Assert.Equal(2, queryPolicy);
+        Assert.Equal(48, lexical);
+        Assert.Equal(24, tablePolicy);
+        Assert.Equal(
+            284,
+            queryGrammar
+            + dmlGrammar
+            + targetCapability
+            + binding
+            + queryPolicy
+            + lexical
+            + tablePolicy);
+    }
+
+    [Fact]
     public void GeneratedParityCorpus_MatchesCrossDialectMatrixFloor()
     {
         var path = Path.Combine(
