@@ -367,6 +367,24 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         Assert.Contains($"AS {expectedTargetType}", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void SqlServerDistinctPaging_TreatsCastSynonymsAsTheSameTypedProjection()
+    {
+        const string sql =
+            "SELECT DISTINCT CAST(value AS INT) AS converted " +
+            "FROM records " +
+            "ORDER BY CAST(value AS INTEGER) " +
+            "OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY";
+
+        var command = Compile(
+            sql,
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer);
+
+        Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [MemberData(nameof(FirebirdSourceProfileNegativeMatrix))]
     public void FirebirdTimeZoneCast_SourceProfileFailsAtTypedCapabilityBoundary(
