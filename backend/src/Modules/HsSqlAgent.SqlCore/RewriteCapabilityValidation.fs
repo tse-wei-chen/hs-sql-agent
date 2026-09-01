@@ -316,6 +316,7 @@ module internal RewriteCapabilityValidation =
             | _, Some _ -> ()
             | _, None ->
                 invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
+            RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
             proveTargetExpr targetRuntime expressionProofs value
         | Extract(_, value) ->
             proveTargetExpr targetRuntime expressionProofs value
