@@ -54,8 +54,7 @@ module internal RewriteCastTypes =
         (first: string)
         (suffix: string)
         (precision: int option)
-        (scale: int option)
-        (isMax: bool) =
+        (scale: int option) =
         let qualifiers =
             if String.IsNullOrWhiteSpace(suffix) then []
             else
@@ -131,7 +130,7 @@ module internal RewriteCastTypes =
                 temporalType name precision scale true SqlTimestamp
             | "UUID" | "UNIQUEIDENTIFIER" -> noArguments name precision scale SqlUuid
             | "JSON" | "JSONB" -> noArguments name precision scale SqlJson
-            | _ -> providerNativeType source first suffix precision scale isMax
+            | _ -> providerNativeType source first suffix precision scale
 
     let parseSource source (raw: string) =
         let normalized = normalizeSpaces raw
