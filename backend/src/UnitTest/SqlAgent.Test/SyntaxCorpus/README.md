@@ -50,6 +50,27 @@ Compiler-level syntax acceptance is not sufficient by itself. Server tests keep 
 
 The INSERT VALUES cases verify runtime server-profile capture, metadata target resolution, F# DML compilation, native rendering, immutable payload preview, plan fingerprinting, and approval challenges. UPDATE/DELETE cases additionally execute the generated match query against a real SQLite rowset harness, retain strict primary-key identity, and verify row-set fingerprints. The harness substitutes only the provider-specific read-only transaction bootstrap; it does not bypass DML planning, compilation, matching, or approval semantics.
 
+## Real-provider execution floor
+
+The final syntax gate executes rendered SQL against the repository's real provider integration fixtures rather than stopping at string assertions.
+
+Current CTE execution floor:
+
+| Shape | Provider executions |
+| --- | ---: |
+| CTE + WHERE + ORDER | 6 |
+| CTE body UNION ALL | 6 |
+| CTE body JOIN | 6 |
+| CTE body GROUP BY / HAVING | 6 |
+| CTE + correlated EXISTS | 6 |
+| CTE + window function | 6 |
+| chained multi-CTE dependency | 6 |
+| dialect-native CTE syntax | 6 |
+| nested inner-WITH CTE (PostgreSQL / MySQL) | 2 |
+| **Total** | **50** |
+
+These tests use each provider's existing integration fixture and the raw SQL path through `SqlCoreFacade.CompileQuery` and `CompiledSqlCommandExecutor`. The harness captures the open connection's verified runtime server profile before compilation, so version-gated target capabilities are tested with runtime proof rather than an assumed version.
+
 ## Negative grammar bombardment
 
 `sql-negative-syntax-contract.json` is the curated fail-closed corpus. Every case declares and verifies:
