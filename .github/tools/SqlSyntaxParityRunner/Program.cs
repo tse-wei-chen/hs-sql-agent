@@ -77,7 +77,9 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
         var sourceProfile = CreateProviderProfile(
             profileType,
             sourceDialect,
-            item.SourceVersion);
+            item.SourceVersion,
+            item.SourceCompatibilityLevel,
+            item.SourceSessionModes);
         object parsed;
         var parsedAsDml = false;
         try
@@ -173,7 +175,9 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
             var targetProfile = CreateProviderProfile(
                 profileType,
                 targetDialect,
-                item.TargetVersion);
+                item.TargetVersion,
+                item.TargetCompatibilityLevel,
+                item.TargetSessionModes);
 
             if (parsedAsDml)
             {
@@ -580,24 +584,43 @@ static Dictionary<string, Outcome> ReadOutcomes(string path)
 static object? CreateProviderProfile(
     Type profileType,
     object provider,
-    string? versionText)
+    string? versionText,
+    int? compatibilityLevel,
+    string[]? sessionModes)
 {
-    if (string.IsNullOrWhiteSpace(versionText))
+    var hasVersion = !string.IsNullOrWhiteSpace(versionText);
+    var hasSessionModes = sessionModes is not null;
+    if (!hasVersion && !compatibilityLevel.HasValue && !hasSessionModes)
         return null;
 
-    Version version;
-    try
+    Version? version = null;
+    if (hasVersion)
     {
-        version = Version.Parse(versionText);
-    }
-    catch (Exception exception)
-    {
-        throw new InvalidOperationException(
-            $"Invalid capability profile version '{versionText}'.",
-            exception);
+        try
+        {
+            version = Version.Parse(versionText!);
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException(
+                $"Invalid capability profile version '{versionText}'.",
+                exception);
+        }
     }
 
-    return CreateWithOptionalTail(profileType, provider, version);
+    var modes = sessionModes is null
+        ? null
+        : new HashSet<string>(
+            sessionModes,
+            StringComparer.OrdinalIgnoreCase);
+
+    return CreateWithOptionalTail(
+        profileType,
+        provider,
+        version,
+        compatibilityLevel,
+        modes,
+        null);
 }
 
 static object CreateWithOptionalTail(Type type, params object?[] leading)
@@ -640,9 +663,16 @@ static bool LeadingArgumentsFit(ParameterInfo[] parameters, object?[] leading)
                 && Nullable.GetUnderlyingType(parameters[index].ParameterType) is null)
                 return false;
         }
-        else if (!parameters[index].ParameterType.IsInstanceOfType(argument))
+        else
         {
-            return false;
+            var parameterType = parameters[index].ParameterType;
+            var nullableType = Nullable.GetUnderlyingType(parameterType);
+            if (!parameterType.IsInstanceOfType(argument)
+                && (nullableType is null
+                    || !nullableType.IsInstanceOfType(argument)))
+            {
+                return false;
+            }
         }
     }
 
@@ -754,6 +784,10 @@ sealed record CorpusCase(
     string? TargetDialect = null,
     string? SourceVersion = null,
     string? TargetVersion = null,
+    int? SourceCompatibilityLevel = null,
+    int? TargetCompatibilityLevel = null,
+    string[]? SourceSessionModes = null,
+    string[]? TargetSessionModes = null,
     string? ExpectedStage = null,
     string? ExceptionTypeContains = null,
     string[]? MessageContains = null,

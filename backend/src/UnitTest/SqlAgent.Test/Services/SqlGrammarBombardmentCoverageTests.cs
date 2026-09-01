@@ -16,7 +16,9 @@ public sealed class SqlGrammarBombardmentCoverageTests
             FirebirdGrammarMatrixTests.FirebirdCteGrammarMatrix().Count() +
             RecursiveCteGrammarMatrixTests.RecursiveCteGrammarMatrix().Count() +
             PostgresNativeCapabilityGrammarMatrixTests.PostgresNativeCapabilityMatrix().Count() +
-            OracleNativeCapabilityGrammarMatrixTests.OracleNativeCapabilityMatrix().Count();
+            OracleNativeCapabilityGrammarMatrixTests.OracleNativeCapabilityMatrix().Count() +
+            MySqlSessionModeGrammarMatrixTests.ConcatSessionModeMatrix().Count() +
+            MySqlSessionModeGrammarMatrixTests.AnsiQuotesSessionModeMatrix().Count();
 
         var positiveDml =
             DmlGrammarMatrixCases.ExpectedCaseCount +
@@ -44,12 +46,12 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
 
-        Assert.Equal(4757, positiveQuery);
+        Assert.Equal(4805, positiveQuery);
         Assert.Equal(419, positiveDml);
         Assert.Equal(117, negativeQuery);
         Assert.Equal(68, negativeDml);
         Assert.Equal(
-            5361,
+            5409,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }

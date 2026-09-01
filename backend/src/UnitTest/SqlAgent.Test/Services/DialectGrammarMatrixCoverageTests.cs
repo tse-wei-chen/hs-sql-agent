@@ -19,6 +19,9 @@ public sealed class DialectGrammarMatrixCoverageTests
             PostgresNativeCapabilityGrammarMatrixTests.PostgresNativeCapabilityMatrix().Count();
         var oracleNative =
             OracleNativeCapabilityGrammarMatrixTests.OracleNativeCapabilityMatrix().Count();
+        var mySqlSession =
+            MySqlSessionModeGrammarMatrixTests.ConcatSessionModeMatrix().Count()
+            + MySqlSessionModeGrammarMatrixTests.AnsiQuotesSessionModeMatrix().Count();
 
         Assert.Equal(432, postgres);
         Assert.Equal(900, mySql);
@@ -29,9 +32,10 @@ public sealed class DialectGrammarMatrixCoverageTests
         Assert.Equal(128, recursive);
         Assert.Equal(72, postgresNative);
         Assert.Equal(72, oracleNative);
+        Assert.Equal(48, mySqlSession);
         Assert.Equal(
-            4757,
-            postgres + mySql + sqlServer + sqlite + oracle + firebird + recursive + postgresNative + oracleNative);
+            4805,
+            postgres + mySql + sqlServer + sqlite + oracle + firebird + recursive + postgresNative + oracleNative + mySqlSession);
     }
 
     [Fact]
@@ -116,6 +120,31 @@ public sealed class DialectGrammarMatrixCoverageTests
         Assert.Equal(825, counts["Sqlite"]);
         Assert.Equal(900, counts["Oracle"]);
         Assert.Equal(900, counts["Firebird"]);
+    }
+
+    [Fact]
+    public void GeneratedProfileSensitiveParityCorpus_MatchesSessionMatrixFloor()
+    {
+        var path = Path.Combine(
+            AppContext.BaseDirectory,
+            "SyntaxCorpus",
+            "sql-generated-profile-sensitive-compatibility-floor.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var cases = document.RootElement.EnumerateArray().ToArray();
+
+        Assert.Equal(48, cases.Length);
+        Assert.Equal(
+            48,
+            cases.Select(item => item.GetProperty("name").GetString())
+                .Distinct(StringComparer.Ordinal)
+                .Count());
+        Assert.All(
+            cases,
+            item => Assert.True(
+                item.TryGetProperty(
+                    "sourceSessionModes",
+                    out var modes)
+                && modes.GetArrayLength() == 1));
     }
 
     [Fact]

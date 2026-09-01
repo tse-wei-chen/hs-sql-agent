@@ -269,6 +269,13 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-compatibility-floor.json
           artifacts/parity/head-generated-oracle-native.json
+      - name: Capture PR generated profile-sensitive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-compatibility-floor.json
+          artifacts/parity/head-generated-profile-sensitive.json
       - name: Capture PR generated DML behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -335,6 +342,13 @@ jobs:
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-compatibility-floor.json
           artifacts/parity/main-generated-oracle-native.json
+      - name: Capture base main generated profile-sensitive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-compatibility-floor.json
+          artifacts/parity/main-generated-profile-sensitive.json
       - name: Capture base main generated DML behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -379,6 +393,12 @@ jobs:
           --configuration Release --no-build --
           compare artifacts/parity/main-generated-oracle-native.json artifacts/parity/head-generated-oracle-native.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-intentional-breaking-allowlist.json
+      - name: Enforce generated profile-sensitive main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-profile-sensitive.json artifacts/parity/head-generated-profile-sensitive.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-intentional-breaking-allowlist.json
       - name: Enforce generated DML main compatibility floor
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
