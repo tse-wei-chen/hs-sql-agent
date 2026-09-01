@@ -410,9 +410,12 @@ module internal SqlDmlUpdateFromCapabilityRules =
         | SqlAgentToolType.Sqlite ->
             "SQL capability 'dml.update.from' requires an explicit SQLite "
             + side + " capability profile with ServerVersion 3.33 or newer."
+        | _ when side = "target" ->
+            "SQL capability 'dml.update.from' remains fail-closed for target provider "
+            + string provider + "; equivalent joined-mutation semantics are not yet proven."
         | _ ->
-            "SQL capability 'dml.update.from' is not valid for " + side + " provider "
-            + string provider + " in the current Core capability profile."
+            "SQL capability 'dml.update.from' is not valid for source provider "
+            + string provider + " in the current Core source grammar."
 
     let SourceValidationError(
         provider: SqlAgentToolType,
