@@ -408,7 +408,7 @@ module internal RewriteRenderer =
                 "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'"
 
         let renderOrdinary () =
-            if name.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
+            if dispatchName.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
                 fail ("Canonical function '" + name + "' has no native lowering implementation; compilation was rejected.")
             if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
                 fail ("Aggregate-local modifiers are not supported for ordinary function '" + name + "'.")
