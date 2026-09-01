@@ -4,7 +4,7 @@
     <Project Path="src/Infrastructure/Infrastructure.csproj" />
     <Project Path="src/Modules/Admin.Service/Admin.Service.csproj" />
     <Project Path="src/Modules/Auth.Service/Auth.Service.csproj" /> 
-    <Project Path="src/Modules/HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj" />
+    <Project Path="src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj" />
     <Project Path="src/Modules/HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj" />
     <Project Path="src/Modules/HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj" />
     <Project Path="src/Modules/HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj" />

@@ -18,7 +18,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-<ProjectReference Include="../HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj" />
+<ProjectReference Include="../HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj" />
 		<ProjectReference Include="../HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj" />

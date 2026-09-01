@@ -166,7 +166,7 @@ jobs:
         run: |
           set -euo pipefail
           projects=(
-            backend/src/Modules/HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj
+            backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj
             backend/src/Modules/HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj
             backend/src/Modules/HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj
             backend/src/Modules/HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj
@@ -233,7 +233,7 @@ jobs:
       - name: Build differential parity runner
         run: dotnet build .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj --configuration Release
       - name: Build PR SqlCore
-        run: dotnet build backend/src/Modules/HsSqlAgent.SqlCore.FSharp/HsSqlAgent.SqlCore.FSharp.fsproj --configuration Release --output artifacts/parity/head
+        run: dotnet build backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj --configuration Release --output artifacts/parity/head
       - name: Capture PR syntax behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
