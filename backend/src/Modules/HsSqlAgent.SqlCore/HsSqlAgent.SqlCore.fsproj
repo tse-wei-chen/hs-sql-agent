@@ -50,6 +50,7 @@
     <Compile Include="RewriteSourceValidation.fs" />
     <Compile Include="RewriteCapabilityValidation.fs" />
     <Compile Include="RewritePlanCapabilityValidation.fs" />
+    <Compile Include="RewriteStructuralValidation.fs" />
     <Compile Include="RewriteCompatibilityAstAdapter.fs" />
     <Compile Include="RewriteCastTypes.fs" />
     <Compile Include="RewriteBinder.fs" />
