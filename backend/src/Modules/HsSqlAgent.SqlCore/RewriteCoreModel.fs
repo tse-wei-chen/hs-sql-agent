@@ -211,16 +211,25 @@ module internal CoreModel =
         | SqlJson
         | SqlProviderNative of ProviderNativeType
 
+    type CastLiteralCoercion =
+        | NoLiteralCoercion
+        | DateLiteralCoercion
+        | LocalDateTimeLiteralCoercion
+
     type CastType =
         private
-        | ModeledCastType of sourceProvider: SqlAgentToolType * semantic: SqlType * sourceSpelling: string
+        | ModeledCastType of
+            sourceProvider: SqlAgentToolType *
+            semantic: SqlType *
+            sourceSpelling: string *
+            literalCoercion: CastLiteralCoercion
         | CompatibilityRawCastType of sourceSpelling: string
 
     module CastType =
-        let internal modeled sourceProvider semantic sourceSpelling =
+        let internal modeled sourceProvider semantic sourceSpelling literalCoercion =
             if String.IsNullOrWhiteSpace(sourceSpelling) then
                 invalidArg (nameof sourceSpelling) "CAST source spelling cannot be empty."
-            ModeledCastType(sourceProvider, semantic, sourceSpelling)
+            ModeledCastType(sourceProvider, semantic, sourceSpelling, literalCoercion)
 
         let internal compatibilityRaw sourceSpelling =
             if String.IsNullOrWhiteSpace(sourceSpelling) then
@@ -228,19 +237,23 @@ module internal CoreModel =
             CompatibilityRawCastType sourceSpelling
 
         let internal semantic = function
-            | ModeledCastType(_, semantic, _) -> Some semantic
+            | ModeledCastType(_, semantic, _, _) -> Some semantic
             | CompatibilityRawCastType _ -> None
 
         let internal sourceProvider = function
-            | ModeledCastType(sourceProvider, _, _) -> Some sourceProvider
+            | ModeledCastType(sourceProvider, _, _, _) -> Some sourceProvider
             | CompatibilityRawCastType _ -> None
 
+        let internal literalCoercion = function
+            | ModeledCastType(_, _, _, literalCoercion) -> literalCoercion
+            | CompatibilityRawCastType _ -> NoLiteralCoercion
+
         let value = function
-            | ModeledCastType(_, _, sourceSpelling)
+            | ModeledCastType(_, _, sourceSpelling, _)
             | CompatibilityRawCastType sourceSpelling -> sourceSpelling
 
         let internal forTarget provider semantic sourceSpelling =
-            modeled provider semantic sourceSpelling
+            modeled provider semantic sourceSpelling NoLiteralCoercion
 
     type FunctionName = private FunctionName of IdentifierPart list
 
