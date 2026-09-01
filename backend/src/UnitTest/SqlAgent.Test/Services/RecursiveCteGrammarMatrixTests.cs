@@ -183,7 +183,11 @@ public sealed class RecursiveCteGrammarMatrixTests
         var head = Head(parsed.Statement);
         var cte = Assert.Single(head.Ctes);
         Assert.True(cte.RecursiveScope, name);
-        Assert.Equal("n", Assert.Single(cte.ColumnAliases).Value, ignoreCase: true);
+        var columnAlias = Assert.Single(cte.ColumnAliases);
+        Assert.Equal(
+            "n",
+            Assert.Single(columnAlias.Parts).Value,
+            ignoreCase: true);
 
         var cteQuery = Assert.IsType<QueryStatement>(cte.Query);
         var recursiveBranch = Assert.Single(cteQuery.SetOperations);
