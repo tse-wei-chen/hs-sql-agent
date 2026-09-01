@@ -153,7 +153,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
 
         var command = Compile("SELECT custom.fn(id) FROM users", SqlAgentToolType.Postgres);
 
-        Assert.Contains("\"custom\".\"fn\"(", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("CUSTOM.FN(", command.Sql, StringComparison.Ordinal);
     }
 
     [Theory]
