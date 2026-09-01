@@ -298,6 +298,13 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-distinct-from-compatibility-floor.json
           artifacts/parity/head-generated-postgres-distinct-from.json
+      - name: Capture PR generated CAST type syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-cast-type-compatibility-floor.json
+          artifacts/parity/head-generated-cast-type.json
       - name: Capture PR generated Oracle native syntax behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -385,6 +392,13 @@ jobs:
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-distinct-from-compatibility-floor.json
           artifacts/parity/main-generated-postgres-distinct-from.json
+      - name: Capture base main generated CAST type syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-cast-type-compatibility-floor.json
+          artifacts/parity/main-generated-cast-type.json
       - name: Capture base main generated Oracle native syntax behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -448,6 +462,12 @@ jobs:
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
           --configuration Release --no-build --
           compare artifacts/parity/main-generated-postgres-distinct-from.json artifacts/parity/head-generated-postgres-distinct-from.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
+      - name: Enforce generated CAST type compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-cast-type.json artifacts/parity/head-generated-cast-type.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
       - name: Enforce generated Oracle native main compatibility floor
         run: >
