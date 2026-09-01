@@ -1,0 +1,98 @@
+[
+  {
+    "name": "postgres-quoted-function__quoted-name__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT \"lower\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-name__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM users WHERE \"lower\"(name) = 'alice'"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-name__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT \"lower\"(name) AS normalized FROM users) SELECT normalized FROM x"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-name__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT \"lower\"(name) FROM users LIMIT 1) AS normalized FROM outer_users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-function__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT pg_catalog.\"lower\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-function__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM users WHERE pg_catalog.\"lower\"(name) = 'alice'"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-function__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT pg_catalog.\"lower\"(name) AS normalized FROM users) SELECT normalized FROM x"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-function__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT pg_catalog.\"lower\"(name) FROM users LIMIT 1) AS normalized FROM outer_users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-schema__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT \"pg_catalog\".lower(name) AS normalized FROM users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-schema__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM users WHERE \"pg_catalog\".lower(name) = 'alice'"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-schema__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT \"pg_catalog\".lower(name) AS normalized FROM users) SELECT normalized FROM x"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-schema__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT \"pg_catalog\".lower(name) FROM users LIMIT 1) AS normalized FROM outer_users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-both__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT \"pg_catalog\".\"lower\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-both__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM users WHERE \"pg_catalog\".\"lower\"(name) = 'alice'"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-both__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT \"pg_catalog\".\"lower\"(name) AS normalized FROM users) SELECT normalized FROM x"
+  },
+  {
+    "name": "postgres-quoted-function__quoted-both__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT \"pg_catalog\".\"lower\"(name) FROM users LIMIT 1) AS normalized FROM outer_users"
+  }
+]
