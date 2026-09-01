@@ -98,12 +98,11 @@ public sealed class DmlPredicateGrammarMatrixTests
 
     public static IEnumerable<object[]> UpdatePredicateGrammarMatrix()
     {
-        foreach (var (dialect, assignment, predicate, _) in
+        foreach (var (dialect, assignment, predicate) in
                  SyntaxGrammarMatrix.Product(
                      Dialects,
                      Assignments,
-                     Predicates,
-                     SingleTail))
+                     Predicates))
         {
             yield return
             [
@@ -149,23 +148,18 @@ public sealed class DmlPredicateGrammarMatrixTests
 
         Assert.Equal(144, updates.Length);
         Assert.Equal(36, deletes.Length);
+        var all = updates.Concat(deletes).ToArray();
+
         Assert.Equal(
             180,
-            updates
-                .Concat(deletes)
-                .Select(item => Assert.IsType<string>(item[0]))
+            all.Select(item => Assert.IsType<string>(item[0]))
                 .Distinct(StringComparer.Ordinal)
                 .Count());
         Assert.Equal(
             180,
-            updates
-                .Concat(deletes)
-                .Select(item => Assert.IsType<string>(item[2]))
-                .Select((sql, index) =>
-                    Assert.IsType<SqlAgentToolType>(
-                        updates.Concat(deletes).ElementAt(index)[1]) +
-                    "|" +
-                    sql)
+            all.Select(item =>
+                    $"{Assert.IsType<SqlAgentToolType>(item[1])}|" +
+                    Assert.IsType<string>(item[2]))
                 .Distinct(StringComparer.Ordinal)
                 .Count());
     }
@@ -276,11 +270,6 @@ public sealed class DmlPredicateGrammarMatrixTests
                         StringComparison.OrdinalIgnoreCase)));
         }
     }
-
-    private static readonly GrammarVariant<int>[] SingleTail =
-    [
-        new("base", 0)
-    ];
 
     private static CompiledSqlCommand Compile(
         string sql,
