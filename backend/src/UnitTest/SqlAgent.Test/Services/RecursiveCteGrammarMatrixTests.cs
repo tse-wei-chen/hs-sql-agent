@@ -161,8 +161,10 @@ public sealed class RecursiveCteGrammarMatrixTests
                 .Count());
         Assert.Equal(
             expectedCount,
-            cases.Select(item => Assert.IsType<string>(item[3]))
-                .Distinct(StringComparer.Ordinal)
+            cases.Select(item => (
+                    Assert.IsType<SqlAgentToolType>(item[1]),
+                    Assert.IsType<string>(item[3])))
+                .Distinct()
                 .Count());
     }
 
