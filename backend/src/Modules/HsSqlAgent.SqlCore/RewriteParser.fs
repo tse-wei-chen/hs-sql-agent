@@ -360,6 +360,7 @@ module internal RewriteParser =
             | _ -> scanning <- false
 
     let private parseCastTypeName (cursor: Cursor) =
+        let typeToken = cursor.Current
         let parts = ResizeArray<string>()
         let mutable baseName = expectCastTypeWord "Expected cast type" cursor
 
@@ -401,10 +402,29 @@ module internal RewriteParser =
 
         appendCastQualifiers parts cursor
 
-        parts
-        |> Seq.toList
-        |> String.concat " "
-        |> RewriteCastTypes.parseSource (sourceDialectToolType cursor.Dialect)
+        let sourceType =
+            parts
+            |> Seq.toList
+            |> String.concat " "
+
+        try
+            RewriteCastTypes.parseSource (sourceDialectToolType cursor.Dialect) sourceType
+        with
+        | :? SqlCompilationException as ex ->
+            let message =
+                ex.Message
+                + " Source dialect: "
+                + sourceDialectName cursor.Dialect
+                + "."
+            raise (
+                SqlParseException(
+                    message,
+                    tokenDiagnostic
+                        "SQL_SOURCE_TYPE_REJECTED"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.DialectSyntax
+                        typeToken
+                        message))
 
     let private parseCastType (cursor: Cursor) =
         parseCastTypeName cursor
