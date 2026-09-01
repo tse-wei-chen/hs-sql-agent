@@ -12,7 +12,8 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
     private sealed record TypeVariant(
         string Name,
         SqlAgentToolType Provider,
-        string TypeSql);
+        string TypeSql,
+        SqlProviderCapabilityProfile? Profile = null);
 
     private sealed record ContextVariant(
         string Name,
@@ -23,7 +24,9 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         SqlAgentToolType Source,
         SqlAgentToolType Target,
         string SourceType,
-        string ExpectedTargetType);
+        string ExpectedTargetType,
+        SqlProviderCapabilityProfile? SourceProfile = null,
+        SqlProviderCapabilityProfile? TargetProfile = null);
 
     private sealed record NegativeVariant(
         string Name,
@@ -70,7 +73,11 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         new("firebird-decimal", SqlAgentToolType.Firebird, "DECIMAL(18,4)"),
         new("firebird-varchar", SqlAgentToolType.Firebird, "VARCHAR(64)"),
         new("firebird-timestamp", SqlAgentToolType.Firebird, "TIMESTAMP"),
-        new("firebird-timestamptz", SqlAgentToolType.Firebird, "TIMESTAMP WITH TIME ZONE"),
+        new(
+            "firebird-timestamptz",
+            SqlAgentToolType.Firebird,
+            "TIMESTAMP WITH TIME ZONE",
+            FirebirdProfile(4)),
         new("firebird-double", SqlAgentToolType.Firebird, "DOUBLE PRECISION")
     ];
 
@@ -105,7 +112,13 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         new("nvarchar-sqlserver-postgres", SqlAgentToolType.MsSqlServer, SqlAgentToolType.Postgres, "NVARCHAR(64)", "VARCHAR(64)"),
         new("unsigned-mysql-sqlserver", SqlAgentToolType.MySQL, SqlAgentToolType.MsSqlServer, "UNSIGNED", "DECIMAL(20,0)"),
         new("date-oracle-postgres", SqlAgentToolType.Oracle, SqlAgentToolType.Postgres, "DATE", "TIMESTAMP"),
-        new("timestamptz-firebird-postgres", SqlAgentToolType.Firebird, SqlAgentToolType.Postgres, "TIMESTAMP WITH TIME ZONE", "TIMESTAMP WITH TIME ZONE"),
+        new(
+            "timestamptz-firebird-postgres",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Postgres,
+            "TIMESTAMP WITH TIME ZONE",
+            "TIMESTAMP WITH TIME ZONE",
+            SourceProfile: FirebirdProfile(4)),
         new("uuid-postgres-sqlserver", SqlAgentToolType.Postgres, SqlAgentToolType.MsSqlServer, "UUID", "UNIQUEIDENTIFIER")
     ];
 
@@ -194,6 +207,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
             [
                 SyntaxGrammarMatrix.CaseName(type.Name, context.Name),
                 type.Provider,
+                type.Profile,
                 context.Build($"CAST(value AS {type.TypeSql})"),
                 type.TypeSql
             ];
@@ -230,6 +244,8 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
                 item.Name,
                 item.Source,
                 item.Target,
+                item.SourceProfile,
+                item.TargetProfile,
                 $"SELECT CAST(value AS {item.SourceType}) FROM records",
                 item.ExpectedTargetType
             ];
@@ -261,6 +277,11 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
 
         Assert.Equal(99, positive.Length);
         Assert.Equal(6, positive.Select(item => Assert.IsType<SqlAgentToolType>(item[1])).Distinct().Count());
+        Assert.Equal(
+            3,
+            positive.Count(item => item[2] is SqlProviderCapabilityProfile profile
+                && profile.Provider == SqlAgentToolType.Firebird
+                && profile.ServerVersion == new Version(4, 0)));
         Assert.Equal(15, postfix.Length);
         Assert.Equal(9, cross.Length);
         Assert.Equal(12, negative.Length);
@@ -271,17 +292,18 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
     public void PositiveMatrix_ParsesBindsValidatesCompilesAndRenders(
         string name,
         SqlAgentToolType provider,
+        SqlProviderCapabilityProfile? profile,
         string sql,
         string expectedType)
     {
-        var parsed = CoreSqlTextParser.ParseQuery(sql, provider);
+        var parsed = CoreSqlTextParser.ParseQuery(sql, provider, profile);
         var facts = SqlCoreInspection.GetQueryFacts(parsed);
 
         Assert.Contains(
             facts.ReferencedTables,
             table => string.Equals(table, "records", StringComparison.OrdinalIgnoreCase));
 
-        var command = Compile(sql, provider, provider);
+        var command = Compile(sql, provider, provider, profile, profile);
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
         Assert.Contains($"AS {expectedType}", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -308,10 +330,12 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         string name,
         SqlAgentToolType source,
         SqlAgentToolType target,
+        SqlProviderCapabilityProfile? sourceProfile,
+        SqlProviderCapabilityProfile? targetProfile,
         string sql,
         string expectedTargetType)
     {
-        var command = Compile(sql, source, target);
+        var command = Compile(sql, source, target, sourceProfile, targetProfile);
 
         Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
         Assert.Contains($"AS {expectedTargetType}", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -337,9 +361,23 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         string sql,
         SqlAgentToolType source,
         SqlAgentToolType target) =>
+        Compile(sql, source, target, null, null);
+
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType source,
+        SqlAgentToolType target,
+        SqlProviderCapabilityProfile? sourceProfile,
+        SqlProviderCapabilityProfile? targetProfile) =>
         CoreSqlCompiler.CreateDefault().Compile(
-            CoreSqlTextParser.ParseQuery(sql, source),
+            CoreSqlTextParser.ParseQuery(sql, source, sourceProfile),
             target,
             new SqlPlanValidationContext("cross-dialect-cast-type-grammar-matrix-v1"),
-            new SqlExecutionPlanPolicy());
+            new SqlExecutionPlanPolicy(),
+            targetProfile);
+
+    private static SqlProviderCapabilityProfile FirebirdProfile(int majorVersion) =>
+        new(
+            SqlAgentToolType.Firebird,
+            ServerVersion: new Version(majorVersion, 0));
 }
