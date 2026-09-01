@@ -233,7 +233,7 @@ module internal RewriteLegacyAstAdapter =
             let identifier = identifierOf functionCall.Name
             let name = Identifier.text identifier
             if name.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
-               && functionCall.Name.Parts |> Seq.forall (fun part -> not part.WasQuoted) then
+               && (functionCall.Name.Parts |> Seq.forall (fun part -> not part.WasQuoted)) then
                 RawRegexCall(arguments, functionCall.IsDistinct)
             else
                 FunctionCall
