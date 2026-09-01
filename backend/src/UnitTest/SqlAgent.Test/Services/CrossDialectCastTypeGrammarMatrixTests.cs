@@ -374,7 +374,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
             "SELECT DISTINCT CAST(value AS INT) AS converted " +
             "FROM records " +
             "ORDER BY CAST(value AS INTEGER) " +
-            "OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY";
+            "OFFSET 1 ROWS FETCH NEXT 10 ROWS ONLY";
 
         var command = Compile(
             sql,
@@ -392,7 +392,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
             "SELECT DISTINCT CAST(value AS SMALLINT) AS converted " +
             "FROM records " +
             "ORDER BY CAST(value AS TINYINT) " +
-            "OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY";
+            "OFFSET 1 ROWS FETCH NEXT 10 ROWS ONLY";
 
         var error = Assert.Throws<SqlCompilationException>(
             () => Compile(
