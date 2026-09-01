@@ -66,6 +66,33 @@ public class TypedQueryRuntimeTests
     }
 
     [Fact]
+    public void Compile_WithVerifiedNativeProfile_UsesItAsSourceCapabilityProof()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = CreateProvider(SqlAgentToolType.MySQL);
+        var verifiedProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            new Version(8, 0, 36));
+
+        var command = runtime.Compile(
+            provider.Object,
+            "WITH RECURSIVE x(n) AS (" +
+            "SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3" +
+            ") SELECT n FROM x",
+            SqlAgentToolType.MySQL,
+            CreatePolicy(),
+            allowedTables: null,
+            verifiedProfile);
+
+        Assert.Equal(SqlAgentToolType.MySQL, command.TargetProvider);
+        Assert.Equal(SqlStatementKind.Select, command.Kind);
+        Assert.Contains(
+            "WITH RECURSIVE",
+            command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_WithVerifiedTargetProfile_DoesNotTreatItAsSourceProfile()
     {
         var runtime = new TypedQueryRuntime();

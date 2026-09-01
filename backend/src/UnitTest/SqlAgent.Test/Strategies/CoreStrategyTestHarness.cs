@@ -79,13 +79,25 @@ public sealed class CoreStrategyTestHarness<TStrategy>
 
         var verifiedProfile =
             RuntimeServerProfileVerifier.Capture(DbType, connection);
-        var command = SqlCoreFacade.CompileQuery(
-            sql,
-            sourceDialect,
-            DbType,
-            new SqlPlanValidationContext("provider-integration-raw"),
-            new SqlExecutionPlanPolicy(),
-            verifiedProfile.TargetProfile);
+        var validationContext =
+            new SqlPlanValidationContext("provider-integration-raw");
+        var executionPolicy = new SqlExecutionPlanPolicy();
+        var command = sourceDialect == DbType
+            ? SqlCoreFacade.CompileQuery(
+                sql,
+                sourceDialect,
+                DbType,
+                validationContext,
+                executionPolicy,
+                verifiedProfile.TargetProfile,
+                verifiedProfile.TargetProfile)
+            : SqlCoreFacade.CompileQuery(
+                sql,
+                sourceDialect,
+                DbType,
+                validationContext,
+                executionPolicy,
+                verifiedProfile.TargetProfile);
 
         try
         {

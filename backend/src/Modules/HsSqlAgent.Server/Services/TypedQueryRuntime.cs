@@ -49,6 +49,19 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             allowedTables);
         var executionPolicy = new SqlExecutionPlanPolicy(policy.QueryMaxRows);
 
+        if (targetProfile is not null
+            && sourceDialect == provider.Type)
+        {
+            return SqlCoreFacade.CompileQuery(
+                sql,
+                sourceDialect,
+                provider.Type,
+                validationContext,
+                executionPolicy,
+                targetProfile,
+                targetProfile);
+        }
+
         return SqlCoreFacade.CompileQuery(
             sql,
             sourceDialect,
