@@ -34,10 +34,10 @@ public sealed class CoreDateMathCapabilityContractTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.Postgres, "MONTH", false, "core_date_add.unit.month")]
-    [InlineData(SqlAgentToolType.Oracle, "MONTH", false, "core_date_add.unit.month")]
-    [InlineData(SqlAgentToolType.Sqlite, "MONTH", false, "core_date_add.unit.month")]
-    [InlineData(SqlAgentToolType.Firebird, "QUARTER", false, "core_date_add.unit.quarter")]
+    [InlineData(SqlAgentToolType.Postgres, "MONTH", true, "INTERVAL '1 month'")]
+    [InlineData(SqlAgentToolType.Oracle, "MONTH", true, "NUMTOYMINTERVAL")]
+    [InlineData(SqlAgentToolType.Sqlite, "MONTH", true, "month")]
+    [InlineData(SqlAgentToolType.Firebird, "QUARTER", true, "DATEADD(MONTH")]
     [InlineData(SqlAgentToolType.Firebird, "WEEK", true, "DATEADD(WEEK")]
     [InlineData(SqlAgentToolType.MySQL, "QUARTER", true, "TIMESTAMPADD(QUARTER")]
     [InlineData(SqlAgentToolType.MsSqlServer, "QUARTER", true, "DATEADD(QUARTER")]
