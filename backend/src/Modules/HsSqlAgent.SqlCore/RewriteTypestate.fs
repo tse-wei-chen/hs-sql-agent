@@ -50,6 +50,7 @@ module internal Typestate =
 
     type ExpressionProofs =
         { ILike: CapabilityProof
+          DistinctFrom: CapabilityProof
           IntervalLiteral: CapabilityProof
           RegexMatch: CapabilityProof
           AggregateFilter: CapabilityProof

@@ -81,6 +81,8 @@ module internal RewriteCompatibilityAstAdapter =
         | BinaryOperator.LessThan -> "<"
         | BinaryOperator.GreaterThanOrEqual -> ">="
         | BinaryOperator.LessThanOrEqual -> "<="
+        | BinaryOperator.DistinctFrom -> "IS DISTINCT FROM"
+        | BinaryOperator.NotDistinctFrom -> "IS NOT DISTINCT FROM"
         | BinaryOperator.And -> "AND"
         | BinaryOperator.Or -> "OR"
 

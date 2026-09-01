@@ -113,6 +113,9 @@ module internal RewriteFacadeAdapter =
         { ILike =
             SqlIlikeCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
+          DistinctFrom =
+            SqlDistinctFromCapabilityRules.SourceValidationError(source)
+            |> sourceCapabilityProof
           IntervalLiteral =
             SqlIntervalLiteralCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
@@ -145,6 +148,9 @@ module internal RewriteFacadeAdapter =
                     "PostgreSQL-specific ILIKE cannot be lowered here: SQL capability 'operator.ilike' is not supported by provider "
                     + providerName target
                     + " for this Core plan.")
+          DistinctFrom =
+            SqlDistinctFromCapabilityRules.TargetValidationError(target)
+            |> targetCapabilityProof
           IntervalLiteral =
             if SqlIntervalLiteralCapabilityRules.IsTargetSupported(target) then
                 CapabilityProof.ProvenCapability

@@ -216,6 +216,19 @@ module internal SqlIlikeCapabilityRules =
         if sourceDialect = SqlAgentToolType.Postgres then null
         else "ILIKE is PostgreSQL-specific and is not valid for source dialect " + string sourceDialect + "."
 
+module internal SqlDistinctFromCapabilityRules =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        if sourceDialect = SqlAgentToolType.Postgres then null
+        else
+            "SQL capability 'operator.is_distinct_from' is currently declared only for the PostgreSQL source dialect; source dialect "
+            + string sourceDialect + " remains fail-closed."
+
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+        if provider = SqlAgentToolType.Postgres then null
+        else
+            "SQL capability 'operator.is_distinct_from' currently has a declared lossless lowering only for PostgreSQL targets; target provider "
+            + string provider + " remains fail-closed."
+
 module internal SqlIntervalLiteralCapabilityRules =
     let IsTargetSupported(provider: SqlAgentToolType) = provider = SqlAgentToolType.Postgres
     let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =

@@ -45,6 +45,7 @@ module internal RewriteParser =
 
         let private permissiveExpressions =
             { ILike = ProvenCapability
+              DistinctFrom = ProvenCapability
               IntervalLiteral = ProvenCapability
               RegexMatch = ProvenCapability
               AggregateFilter = ProvenCapability
@@ -572,10 +573,19 @@ module internal RewriteParser =
                 cursor.Advance()
                 parseLikeTail cursor left false true
             | Keyword "IS" ->
+                let token = cursor.Current
                 cursor.Advance()
                 let negated = acceptKeyword "NOT" cursor
-                expectKeyword "NULL" cursor
-                IsNull(left, negated)
+                if acceptKeyword "DISTINCT" cursor then
+                    requireSourceCapability token cursor.SourceExpressions.DistinctFrom
+                    expectKeyword "FROM" cursor
+                    let operator =
+                        if negated then BinaryOperator.NotDistinctFrom
+                        else BinaryOperator.DistinctFrom
+                    Binary(operator, left, parseAdd cursor)
+                else
+                    expectKeyword "NULL" cursor
+                    IsNull(left, negated)
             | Keyword "IN" -> cursor.Advance(); parseInTail cursor left false
             | Keyword "BETWEEN" -> cursor.Advance(); parseBetweenTail cursor left false
             | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseInTail cursor left true

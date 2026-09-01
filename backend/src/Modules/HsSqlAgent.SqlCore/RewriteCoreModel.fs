@@ -84,6 +84,7 @@ module internal CoreModel =
     type BinaryOperator =
         | Add | Subtract | Multiply | Divide | Modulo | Concat
         | Equal | NotEqual | GreaterThan | LessThan | GreaterThanOrEqual | LessThanOrEqual
+        | DistinctFrom | NotDistinctFrom
         | And | Or
 
     type JoinKind = Inner | Left | Right | Full | Cross

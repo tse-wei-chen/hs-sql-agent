@@ -168,6 +168,7 @@ module internal RewriteRenderer =
         | BinaryOperator.Divide -> "/" | BinaryOperator.Modulo -> "%" | BinaryOperator.Concat -> "||"
         | BinaryOperator.Equal -> "=" | BinaryOperator.NotEqual -> "<>" | BinaryOperator.GreaterThan -> ">"
         | BinaryOperator.LessThan -> "<" | BinaryOperator.GreaterThanOrEqual -> ">=" | BinaryOperator.LessThanOrEqual -> "<="
+        | BinaryOperator.DistinctFrom -> "IS DISTINCT FROM" | BinaryOperator.NotDistinctFrom -> "IS NOT DISTINCT FROM"
         | BinaryOperator.And -> "AND" | BinaryOperator.Or -> "OR"
 
     let private joinText = function
@@ -214,6 +215,8 @@ module internal RewriteRenderer =
                  | BinaryOperator.LessThan
                  | BinaryOperator.GreaterThanOrEqual
                  | BinaryOperator.LessThanOrEqual
+                 | BinaryOperator.DistinctFrom
+                 | BinaryOperator.NotDistinctFrom
                  | BinaryOperator.And
                  | BinaryOperator.Or), _, _) -> true
         | SimpleCase(_, branches, fallback) ->

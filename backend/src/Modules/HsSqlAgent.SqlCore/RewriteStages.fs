@@ -1539,6 +1539,10 @@ module internal RewriteStages =
             requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
         | Unary(_, operand) ->
             proveFilterExpr capabilityMessage expressionProofs operand
+        | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
+            requireFilterCapability capabilityMessage expressionProofs.DistinctFrom
+            proveFilterExpr capabilityMessage expressionProofs left
+            proveFilterExpr capabilityMessage expressionProofs right
         | Binary(_, left, right) ->
             proveFilterExpr capabilityMessage expressionProofs left
             proveFilterExpr capabilityMessage expressionProofs right
@@ -1648,6 +1652,10 @@ module internal RewriteStages =
         | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
         | Binary(BinaryOperator.Concat, left, right) ->
             proveSqlServerConcat targetRuntime
+            proveTargetExpr targetRuntime expressionProofs left
+            proveTargetExpr targetRuntime expressionProofs right
+        | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
+            requireExpressionCapability expressionProofs.DistinctFrom
             proveTargetExpr targetRuntime expressionProofs left
             proveTargetExpr targetRuntime expressionProofs right
         | Binary(_, left, right) ->
@@ -1953,6 +1961,8 @@ module internal RewriteStages =
                  | BinaryOperator.LessThan
                  | BinaryOperator.GreaterThanOrEqual
                  | BinaryOperator.LessThanOrEqual
+                 | BinaryOperator.DistinctFrom
+                 | BinaryOperator.NotDistinctFrom
                  | BinaryOperator.And
                  | BinaryOperator.Or), _, _)
         | Like _
@@ -1977,7 +1987,9 @@ module internal RewriteStages =
                  | BinaryOperator.GreaterThan
                  | BinaryOperator.LessThan
                  | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual), left, right) ->
+                 | BinaryOperator.LessThanOrEqual
+                 | BinaryOperator.DistinctFrom
+                 | BinaryOperator.NotDistinctFrom), left, right) ->
             validateRichReturningExpression left
             validateRichReturningExpression right
         | Like(value, pattern, _, _, _) ->
@@ -2657,6 +2669,7 @@ module internal RewriteStages =
             | BinaryOperator.Equal | BinaryOperator.NotEqual
             | BinaryOperator.GreaterThan | BinaryOperator.LessThan
             | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
+            | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom
             | BinaryOperator.And | BinaryOperator.Or -> true
             | _ -> false
         | SimpleCase(_, branches, fallback) ->

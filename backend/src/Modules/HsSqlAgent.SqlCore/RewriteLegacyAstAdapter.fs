@@ -133,6 +133,8 @@ module internal RewriteLegacyAstAdapter =
         | "<" -> Some BinaryOperator.LessThan
         | ">=" -> Some BinaryOperator.GreaterThanOrEqual
         | "<=" -> Some BinaryOperator.LessThanOrEqual
+        | "IS DISTINCT FROM" -> Some BinaryOperator.DistinctFrom
+        | "IS NOT DISTINCT FROM" -> Some BinaryOperator.NotDistinctFrom
         | "AND" -> Some BinaryOperator.And
         | "OR" -> Some BinaryOperator.Or
         | _ -> None
