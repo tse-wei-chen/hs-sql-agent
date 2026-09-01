@@ -90,7 +90,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
-    public void QuotedCanonicalLookingFunction_PreservesIdentity_AndDoesNotBecomeInternalCanonical()
+    public void QuotedCanonicalLookingFunction_PreservesIdentity_AndStaysOnNativePath()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
@@ -102,13 +102,12 @@ public sealed class CoreQuotedIdentifierLoweringTests
         Assert.Equal("CORE_DATE_ADD", part.Value);
         Assert.True(part.WasQuoted);
 
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            Compile(
-                "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
-                SqlAgentToolType.Postgres));
+        var command = Compile(
+            "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("not registered", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("normalization", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"CORE_DATE_ADD\"(", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("INTERVAL", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
