@@ -229,4 +229,23 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
         Assert.NotEqual("[]", json);
     }
 
+    [Fact]
+    public async Task ExecuteRawQueryAsync_RecursiveCte_UsesVerifiedSourceVersion()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH RECURSIVE x(n) AS (" +
+            "SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3" +
+            ") SELECT n FROM x ORDER BY n",
+            SqlAgentToolType.MySQL,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var values = document.RootElement
+            .EnumerateArray()
+            .Select(row => row.EnumerateObject().Single().Value.GetDecimal())
+            .ToArray();
+        Assert.Equal([1m, 2m, 3m], values);
+    }
+
 }
