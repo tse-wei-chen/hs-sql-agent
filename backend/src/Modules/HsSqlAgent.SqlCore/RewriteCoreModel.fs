@@ -204,10 +204,14 @@ module internal CoreModel =
             |> List.map (fun part -> part.Value)
             |> String.concat "."
 
+        let hasQuotedParts functionName =
+            functionName
+            |> parts
+            |> List.exists (fun part -> part.WasQuoted || part.PreserveSpelling)
+
         let requiresNativeIdentifierSemantics functionName =
             let values = parts functionName
-            values.Length > 1
-            || values |> List.exists (fun part -> part.WasQuoted || part.PreserveSpelling)
+            values.Length > 1 || hasQuotedParts functionName
 
     type ExtractField = private ExtractField of string
 
