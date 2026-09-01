@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Ast;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
@@ -19,12 +20,18 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
         Func<string, string> Build,
         string Tables);
 
+    private sealed record SourceDialectVariant(
+        string Name,
+        SqlAgentToolType Dialect,
+        string FunctionSql);
+
     private static readonly IdentifierVariant[] Identifiers =
     [
         new("quoted-name", "\"lower\"", "\"lower\""),
         new("quoted-function", "pg_catalog.\"lower\"", "PG_CATALOG.\"lower\""),
         new("quoted-schema", "\"pg_catalog\".lower", "\"pg_catalog\".LOWER"),
-        new("quoted-both", "\"pg_catalog\".\"lower\"", "\"pg_catalog\".\"lower\"")
+        new("quoted-both", "\"pg_catalog\".\"lower\"", "\"pg_catalog\".\"lower\""),
+        new("quoted-core-like", "\"CORE_DATE_ADD\"", "\"CORE_DATE_ADD\"")
     ];
 
     private static readonly ContextVariant[] Contexts =
@@ -47,6 +54,15 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
             "outer_users,users")
     ];
 
+    private static readonly SourceDialectVariant[] UnsupportedSources =
+    [
+        new("mysql-backtick", SqlAgentToolType.MySQL, "`analytics`.`NormalizeName`"),
+        new("sqlserver-bracket", SqlAgentToolType.MsSqlServer, "[analytics].[NormalizeName]"),
+        new("sqlite-double-quote", SqlAgentToolType.Sqlite, "\"analytics\".\"NormalizeName\""),
+        new("oracle-double-quote", SqlAgentToolType.Oracle, "\"analytics\".\"NormalizeName\""),
+        new("firebird-double-quote", SqlAgentToolType.Firebird, "\"analytics\".\"NormalizeName\"")
+    ];
+
     public static IEnumerable<object[]> Matrix()
     {
         foreach (var identifier in Identifiers)
@@ -67,12 +83,82 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
     {
         var cases = Matrix().ToArray();
 
-        Assert.Equal(16, cases.Length);
+        Assert.Equal(20, cases.Length);
         Assert.Equal(
-            16,
+            20,
             cases.Select(item => Assert.IsType<string>(item[0]))
                 .Distinct(StringComparer.Ordinal)
                 .Count());
+    }
+
+    public static IEnumerable<object[]> UnsupportedSourceMatrix()
+    {
+        foreach (var source in UnsupportedSources)
+        {
+            yield return
+            [
+                source.Name,
+                source.Dialect,
+                $"SELECT {source.FunctionSql}(name) FROM users"
+            ];
+        }
+    }
+
+    [Fact]
+    public void UnsupportedSourceMatrix_HasStableCoverage()
+    {
+        var cases = UnsupportedSourceMatrix().ToArray();
+
+        Assert.Equal(5, cases.Length);
+        Assert.Equal(
+            5,
+            cases.Select(item => Assert.IsType<string>(item[0]))
+                .Distinct(StringComparer.Ordinal)
+                .Count());
+    }
+
+    [Fact]
+    public void Parser_PreservesQuotedFunctionIdentifierParts()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT \"analytics\".\"NormalizeName\"(name) FROM users",
+            SqlAgentToolType.Postgres);
+
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var call = Assert.IsType<FunctionCallExpr>(Assert.Single(select.Select).Expression);
+
+        Assert.Collection(
+            call.Name.Parts,
+            schema =>
+            {
+                Assert.Equal("analytics", schema.Value);
+                Assert.True(schema.WasQuoted);
+            },
+            function =>
+            {
+                Assert.Equal("NormalizeName", function.Value);
+                Assert.True(function.WasQuoted);
+            });
+    }
+
+    [Theory]
+    [MemberData(nameof(UnsupportedSourceMatrix))]
+    public void UnsupportedSourceDialects_FailAtSourceCapabilityBoundary(
+        string name,
+        SqlAgentToolType dialect,
+        string sql)
+    {
+        var error = Assert.Throws<SqlParseException>(
+            () => CoreSqlTextParser.ParseQuery(sql, dialect));
+
+        Assert.Contains("function.qualified", error.Message, StringComparison.OrdinalIgnoreCase);
+        var diagnostic = Assert.IsType<SqlDiagnostic>(error.Diagnostic);
+        Assert.Equal("SQL_SOURCE_CAPABILITY_REJECTED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Capability, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.True(diagnostic.Span.Start >= 0, name);
+        Assert.True(diagnostic.Span.Length > 0, name);
     }
 
     [Theory]
