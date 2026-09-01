@@ -67,7 +67,8 @@ Current CTE execution floor:
 | chained multi-CTE dependency | 6 |
 | dialect-native CTE syntax | 6 |
 | nested inner-WITH CTE (PostgreSQL / MySQL) | 2 |
-| **Total** | **50** |
+| dialect-native CTE paging | 6 |
+| **Total** | **56** |
 
 These tests use each provider's existing integration fixture and the raw SQL path through `SqlCoreFacade.CompileQuery` and `CompiledSqlCommandExecutor`. The harness captures the open connection's verified runtime server profile before compilation, so version-gated target capabilities are tested with runtime proof rather than an assumed version.
 

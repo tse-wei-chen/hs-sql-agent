@@ -12,7 +12,8 @@ public sealed class ProviderSyntaxExecutionCoverageTests
         nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteGroupHaving_ShouldCompileRenderAndExecute),
         nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteCorrelatedExists_ShouldCompileRenderAndExecute),
         nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CteWindow_ShouldCompileRenderAndExecute),
-        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_ChainedCtes_ShouldCompileRenderAndExecute)
+        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_ChainedCtes_ShouldCompileRenderAndExecute),
+        nameof(BaseStrategyTests<ISqlStrategy, IDbFixture>.ExecuteRawQueryAsync_CtePaging_ReturnsSecondRow)
     ];
 
     private static readonly Type[] ProviderTestTypes =
@@ -26,9 +27,9 @@ public sealed class ProviderSyntaxExecutionCoverageTests
     ];
 
     [Fact]
-    public void RealProviderCteExecution_HasStableFiftyCaseFloor()
+    public void RealProviderCteExecution_HasStableFiftySixCaseFloor()
     {
-        Assert.Equal(7, CommonCteExecutionMethods.Length);
+        Assert.Equal(8, CommonCteExecutionMethods.Length);
         Assert.Equal(6, ProviderTestTypes.Length);
 
         foreach (var providerType in ProviderTestTypes)
@@ -67,12 +68,12 @@ public sealed class ProviderSyntaxExecutionCoverageTests
             typeof(MySqlStrategyTests).GetMethod(
                 "ExecuteRawQueryAsync_NestedInnerCte_Executes"));
 
-        const int inheritedCommonCases = 7 * 6;
+        const int inheritedCommonCases = 8 * 6;
         const int dialectNativeCases = 6;
         const int nestedInnerCteCases = 2;
 
         Assert.Equal(
-            50,
+            56,
             inheritedCommonCases +
             dialectNativeCases +
             nestedInnerCteCases);

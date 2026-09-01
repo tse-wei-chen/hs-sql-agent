@@ -262,6 +262,42 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     [Fact]
+    public async Task ExecuteRawQueryAsync_CtePaging_ReturnsSecondRow()
+    {
+        var paging = Strategy.DbType switch
+        {
+            SqlAgentToolType.Postgres
+                or SqlAgentToolType.MySQL
+                or SqlAgentToolType.Sqlite =>
+                " LIMIT 1 OFFSET 1",
+            SqlAgentToolType.MsSqlServer
+                or SqlAgentToolType.Oracle
+                or SqlAgentToolType.Firebird =>
+                " OFFSET 1 ROWS FETCH NEXT 1 ROWS ONLY",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(Strategy.DbType),
+                Strategy.DbType,
+                "Unsupported SQL dialect.")
+        };
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $") SELECT item_id FROM recent ORDER BY item_id" +
+            paging;
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var row = Assert.Single(document.RootElement.EnumerateArray());
+        var value = row.EnumerateObject().Single().Value.GetDecimal();
+        Assert.Equal(2m, value);
+    }
+
+    [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
         var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };
