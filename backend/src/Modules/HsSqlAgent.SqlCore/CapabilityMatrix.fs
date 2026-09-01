@@ -402,9 +402,9 @@ type SqlCapabilityMatrix private () =
                     "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available.")
                 cap("function.qualified","function",(if provider=SqlAgentToolType.Postgres then supported else rejected),
                     if provider=SqlAgentToolType.Postgres then
-                        "Unquoted schema-qualified PostgreSQL function names are preserved structurally across the CLR compatibility AST and emitted natively. Quoted function identifier parts remain fail-closed until FunctionName carries identifier quoting metadata."
+                        "PostgreSQL native function identifiers preserve qualification and per-part quote intent structurally through parsing, the closed F# model, compatibility projection, normalization, validation, and native rendering. Quoted and schema-qualified calls remain target-gated rather than being flattened into portable function names."
                     else
-                        "Schema-qualified source function names remain target-gated until an equivalent provider-specific namespace contract is declared.")
+                        "Qualified or quote-sensitive PostgreSQL function identifiers remain target-gated until an equivalent provider-specific namespace and identifier-folding contract is declared.")
                 cap("expression.cast","expression",translated,
                     "Standard CAST input is normalized through a source-aware Core type model before provider-specific CAST spelling is emitted. Raw PostgreSQL :: cast spelling is accepted only when the declared source dialect is PostgreSQL; non-PostgreSQL raw sources fail before AST canonicalization. Unknown cross-dialect vendor types fail closed.")
                 cap("expression.interval","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),
