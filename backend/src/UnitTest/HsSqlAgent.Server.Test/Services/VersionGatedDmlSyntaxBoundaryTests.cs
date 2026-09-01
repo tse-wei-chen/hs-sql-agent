@@ -12,7 +12,7 @@ public sealed class VersionGatedDmlSyntaxBoundaryTests
         [
             SqlAgentToolType.Sqlite,
             "3.46.0",
-            new Version(3, 46)
+            new Version(3, 46, 0)
         ];
         yield return
         [
