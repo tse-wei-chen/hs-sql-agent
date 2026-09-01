@@ -75,17 +75,11 @@ module internal RewriteStages =
         | SelectDistinct.AllRows -> SelectDistinct.AllRows
         | SelectDistinct.DistinctRows -> SelectDistinct.DistinctRows
 
-    let private sourceCapabilityMessage rejection =
-        match CapabilityRejection.side rejection with
-        | CapabilitySide.SourceCapability -> CapabilityRejection.message rejection
-        | CapabilitySide.TargetCapability ->
-            invalidOp "Target capability proof reached source semantic validation."
+    let private sourceCapabilityMessage =
+        RewriteCapabilityProvenance.sourceMessage "source semantic validation"
 
-    let private targetCapabilityMessage rejection =
-        match CapabilityRejection.side rejection with
-        | CapabilitySide.TargetCapability -> CapabilityRejection.message rejection
-        | CapabilitySide.SourceCapability ->
-            invalidOp "Source capability proof reached target capability validation."
+    let private targetCapabilityMessage =
+        RewriteCapabilityProvenance.targetMessage "target capability validation"
 
     let private requireSourceRegexCapability = function
         | ProvenCapability -> ()

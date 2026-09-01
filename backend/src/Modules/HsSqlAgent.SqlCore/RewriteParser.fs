@@ -183,11 +183,8 @@ module internal RewriteParser =
                     token
                     detail))
 
-    let private sourceCapabilityMessage rejection =
-        match CapabilityRejection.side rejection with
-        | CapabilitySide.SourceCapability -> CapabilityRejection.message rejection
-        | CapabilitySide.TargetCapability ->
-            invalidOp "Target capability proof reached the source parser."
+    let private sourceCapabilityMessage =
+        RewriteCapabilityProvenance.sourceMessage "the source parser"
 
     let private requireSourceCapability (token: Token) = function
         | ProvenCapability -> ()
