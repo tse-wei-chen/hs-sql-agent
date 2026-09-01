@@ -54,6 +54,7 @@ module internal Typestate =
           IntervalLiteral: CapabilityProof
           RegexMatch: CapabilityProof
           AggregateFilter: CapabilityProof
+          QuotedFunction: CapabilityProof
           QualifiedFunction: CapabilityProof
           OffsetTimestamp: CapabilityProof
           FirebirdTimeZoneType: CapabilityProof

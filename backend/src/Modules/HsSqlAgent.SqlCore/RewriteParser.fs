@@ -50,6 +50,7 @@ module internal RewriteParser =
               IntervalLiteral = ProvenCapability
               RegexMatch = ProvenCapability
               AggregateFilter = ProvenCapability
+              QuotedFunction = ProvenCapability
               QualifiedFunction = ProvenCapability
               OffsetTimestamp = ProvenCapability
               FirebirdTimeZoneType = ProvenCapability
@@ -917,7 +918,9 @@ module internal RewriteParser =
 
     and private parseFunctionExpression (name: Identifier) (cursor: Cursor) =
         let modeledName = functionName name
-        if FunctionName.requiresNativeIdentifierSemantics modeledName then
+        if FunctionName.hasQuotedParts modeledName then
+            requireSourceParseCapability cursor.Current cursor.SourceExpressions.QuotedFunction
+        if FunctionName.isQualified modeledName then
             requireSourceParseCapability cursor.Current cursor.SourceExpressions.QualifiedFunction
         expectSymbol '(' cursor
         let distinct = acceptKeyword "DISTINCT" cursor

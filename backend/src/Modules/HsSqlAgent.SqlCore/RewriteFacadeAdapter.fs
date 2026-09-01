@@ -119,6 +119,9 @@ module internal RewriteFacadeAdapter =
             |> sourceCapabilityProof
           RegexMatch = sourceRegexProof source
           AggregateFilter = filterError |> sourceCapabilityProof
+          QuotedFunction =
+            SqlQuotedFunctionCapabilityRules.SourceValidationError(source)
+            |> sourceCapabilityProof
           QualifiedFunction =
             SqlQualifiedFunctionCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
@@ -137,7 +140,7 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> "Firebird"
         | value -> string value
 
-    let private targetExpressionProofs target (targetProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
+    let private targetExpressionProofs source target (targetProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
         { ILike =
             if SqlIlikeCapabilityRules.SupportsTarget(target) then
                 CapabilityProof.ProvenCapability
@@ -163,8 +166,11 @@ module internal RewriteFacadeAdapter =
           AggregateFilter =
             SqlAggregateFilterCapabilityRules.ValidationError(target, targetProfile, "target")
             |> targetCapabilityProof
+          QuotedFunction =
+            SqlQuotedFunctionCapabilityRules.TargetValidationError(source, target)
+            |> targetCapabilityProof
           QualifiedFunction =
-            SqlQualifiedFunctionCapabilityRules.TargetValidationError(target)
+            SqlQualifiedFunctionCapabilityRules.TargetValidationError(source, target)
             |> targetCapabilityProof
           OffsetTimestamp =
             SqlOffsetTimestampCapabilityRules.TargetValidationError(target, targetProfile)
@@ -422,11 +428,11 @@ module internal RewriteFacadeAdapter =
             semantics
             sourceProfile
 
-    let private verifiedTarget target targetProfile =
+    let private verifiedTarget source target targetProfile =
         RewritePipeline.VerifiedTarget.create
             (targetRuntime target targetProfile)
             targetProfile
-            (targetExpressionProofs target targetProfile)
+            (targetExpressionProofs source target targetProfile)
             (targetJoinProofs target targetProfile)
             (targetNullOrdering target)
             (targetDmlProofs target targetProfile)
@@ -434,7 +440,7 @@ module internal RewriteFacadeAdapter =
     let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance policy allowed =
         RewritePipeline.createOptions
             (verifiedSource source semantics sourceProfile)
-            (verifiedTarget target targetProfile)
+            (verifiedTarget source target targetProfile)
             (conflictProofs source target targetProfile conflictTargetAssurance)
             policy
             allowed

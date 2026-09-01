@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.66"
+    static member Version = "2026-09-01.67"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -425,11 +425,13 @@ type SqlCapabilityMatrix private () =
                         "Oracle uses a CASE-based null-safe comparison built from ordinary target equality and IS NULL semantics. The lowering is allowed only for repeatable scalar operands so Core never duplicates volatile/subquery evaluation."
                     | _ ->
                         "Canonical null-safe comparison follows the provider-specific proven lowering.")
-                cap("function.qualified","function",(if provider=SqlAgentToolType.Postgres then supported else rejected),
-                    if provider=SqlAgentToolType.Postgres then
-                        "PostgreSQL native function identifiers preserve qualification and per-part quote intent structurally through parsing, the closed F# model, compatibility projection, normalization, validation, and native rendering. Quoted and schema-qualified calls remain target-gated rather than being flattened into portable function names."
+                cap("function.quoted_identifier","function",supported,
+                    "Provider-native quoted function identifiers preserve per-part quote intent and case-sensitive identity for same-provider compilation. Cross-provider quoted function identity remains fail-closed because delimiter, case-folding, and namespace semantics are provider-bound.")
+                cap("function.qualified","function",(if provider=SqlAgentToolType.Sqlite then rejected else supported),
+                    if provider=SqlAgentToolType.Sqlite then
+                        "SQLite scalar function-call grammar uses an unqualified function-name; schema-qualified scalar function calls remain fail-closed."
                     else
-                        "Qualified or quote-sensitive PostgreSQL function identifiers remain target-gated until an equivalent provider-specific namespace and identifier-folding contract is declared.")
+                        "Provider-native qualified function identifiers preserve database/schema/package qualification for same-provider compilation. Cross-provider namespace identity remains fail-closed rather than being silently reinterpreted.")
                 cap("expression.cast","expression",translated,
                     "Standard CAST input is normalized through a source-aware Core type model before provider-specific CAST spelling is emitted. Raw PostgreSQL :: cast spelling is accepted only when the declared source dialect is PostgreSQL; non-PostgreSQL raw sources fail before AST canonicalization. Unknown cross-dialect vendor types fail closed.")
                 cap("expression.interval","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),

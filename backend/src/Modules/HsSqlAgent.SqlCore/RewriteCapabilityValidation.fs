@@ -157,7 +157,9 @@ module internal RewriteCapabilityValidation =
             proveFilterExpr capabilityMessage expressionProofs value
             proveFilterExpr capabilityMessage expressionProofs pattern
         | FunctionCall call ->
-            if FunctionName.requiresNativeIdentifierSemantics call.Name then
+            if FunctionName.hasQuotedParts call.Name then
+                requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
+            if FunctionName.isQualified call.Name then
                 requireFilterCapability capabilityMessage expressionProofs.QualifiedFunction
             call.Arguments |> List.iter (proveFilterExpr capabilityMessage expressionProofs)
             call.AggregateOrderBy |> List.iter (fun order -> proveFilterExpr capabilityMessage expressionProofs order.Expression)
@@ -293,7 +295,9 @@ module internal RewriteCapabilityValidation =
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs pattern
         | FunctionCall call ->
-            if FunctionName.requiresNativeIdentifierSemantics call.Name then
+            if FunctionName.hasQuotedParts call.Name then
+                requireExpressionCapability expressionProofs.QuotedFunction
+            if FunctionName.isQualified call.Name then
                 requireExpressionCapability expressionProofs.QualifiedFunction
             call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
             call.AggregateOrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)

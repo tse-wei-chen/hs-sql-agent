@@ -210,9 +210,11 @@ module internal CoreModel =
             |> parts
             |> List.exists (fun part -> part.WasQuoted || part.PreserveSpelling)
 
+        let isQualified functionName =
+            functionName |> parts |> List.length |> fun length -> length > 1
+
         let requiresNativeIdentifierSemantics functionName =
-            let values = parts functionName
-            values.Length > 1 || hasQuotedParts functionName
+            isQualified functionName || hasQuotedParts functionName
 
     type ExtractField = private ExtractField of string
 

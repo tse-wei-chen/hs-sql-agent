@@ -20,16 +20,17 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
         Func<string, string> Build,
         string Tables);
 
-    private sealed record SourceDialectVariant(
+    private sealed record NativeFunctionVariant(
         string Name,
         SqlAgentToolType Dialect,
-        string FunctionSql);
+        string FunctionSql,
+        string Rendered);
 
     private static readonly IdentifierVariant[] Identifiers =
     [
         new("quoted-name", "\"lower\"", "\"lower\""),
-        new("quoted-function", "pg_catalog.\"lower\"", "PG_CATALOG.\"lower\""),
-        new("quoted-schema", "\"pg_catalog\".lower", "\"pg_catalog\".LOWER"),
+        new("quoted-function", "pg_catalog.\"lower\"", "pg_catalog.\"lower\""),
+        new("quoted-schema", "\"pg_catalog\".lower", "\"pg_catalog\".lower"),
         new("quoted-both", "\"pg_catalog\".\"lower\"", "\"pg_catalog\".\"lower\""),
         new("quoted-core-like", "\"CORE_DATE_ADD\"", "\"CORE_DATE_ADD\"")
     ];
@@ -54,13 +55,23 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
             "outer_users,users")
     ];
 
-    private static readonly SourceDialectVariant[] UnsupportedSources =
+    private static readonly NativeFunctionVariant[] NativeQuotedSources =
     [
-        new("mysql-backtick", SqlAgentToolType.MySQL, "`analytics`.`NormalizeName`"),
-        new("sqlserver-bracket", SqlAgentToolType.MsSqlServer, "[analytics].[NormalizeName]"),
-        new("sqlite-double-quote", SqlAgentToolType.Sqlite, "\"analytics\".\"NormalizeName\""),
-        new("oracle-double-quote", SqlAgentToolType.Oracle, "\"analytics\".\"NormalizeName\""),
-        new("firebird-double-quote", SqlAgentToolType.Firebird, "\"analytics\".\"NormalizeName\"")
+        new("postgres-double-quote", SqlAgentToolType.Postgres, "\"NormalizeName\"", "\"NormalizeName\""),
+        new("mysql-backtick", SqlAgentToolType.MySQL, "`NormalizeName`", "`NormalizeName`"),
+        new("sqlserver-bracket-qualified", SqlAgentToolType.MsSqlServer, "[dbo].[NormalizeName]", "[dbo].[NormalizeName]"),
+        new("sqlite-double-quote", SqlAgentToolType.Sqlite, "\"NormalizeName\"", "\"NormalizeName\""),
+        new("oracle-double-quote", SqlAgentToolType.Oracle, "\"NormalizeName\"", "\"NormalizeName\""),
+        new("firebird-double-quote", SqlAgentToolType.Firebird, "\"NormalizeName\"", "\"NormalizeName\"")
+    ];
+
+    private static readonly NativeFunctionVariant[] NativeQualifiedSources =
+    [
+        new("postgres-qualified", SqlAgentToolType.Postgres, "analytics.NormalizeName", "analytics.normalizename"),
+        new("mysql-qualified", SqlAgentToolType.MySQL, "analytics.NormalizeName", "analytics.NormalizeName"),
+        new("sqlserver-qualified", SqlAgentToolType.MsSqlServer, "dbo.NormalizeName", "dbo.NormalizeName"),
+        new("oracle-qualified", SqlAgentToolType.Oracle, "analytics.NormalizeName", "ANALYTICS.NORMALIZENAME"),
+        new("firebird-qualified", SqlAgentToolType.Firebird, "analytics.NormalizeName", "ANALYTICS.NORMALIZENAME")
     ];
 
     public static IEnumerable<object[]> Matrix()
@@ -78,6 +89,34 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
         }
     }
 
+    public static IEnumerable<object[]> NativeQuotedSourceMatrix()
+    {
+        foreach (var source in NativeQuotedSources)
+        {
+            yield return
+            [
+                source.Name,
+                source.Dialect,
+                $"SELECT {source.FunctionSql}(name) AS normalized FROM users",
+                source.Rendered
+            ];
+        }
+    }
+
+    public static IEnumerable<object[]> NativeQualificationMatrix()
+    {
+        foreach (var source in NativeQualifiedSources)
+        {
+            yield return
+            [
+                source.Name,
+                source.Dialect,
+                $"SELECT {source.FunctionSql}(name) AS normalized FROM users",
+                source.Rendered
+            ];
+        }
+    }
+
     [Fact]
     public void Matrix_HasStableCombinatorialCoverage()
     {
@@ -89,6 +128,20 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
             cases.Select(item => Assert.IsType<string>(item[0]))
                 .Distinct(StringComparer.Ordinal)
                 .Count());
+    }
+
+    [Fact]
+    public void NativeSourceMatrices_HaveStableSixProviderCoverage()
+    {
+        var quoted = NativeQuotedSourceMatrix().ToArray();
+        var qualified = NativeQualificationMatrix().ToArray();
+
+        Assert.Equal(6, quoted.Length);
+        Assert.Equal(6, quoted.Select(item => Assert.IsType<SqlAgentToolType>(item[1])).Distinct().Count());
+        Assert.Equal(5, qualified.Length);
+        Assert.DoesNotContain(
+            qualified,
+            item => Assert.IsType<SqlAgentToolType>(item[1]) == SqlAgentToolType.Sqlite);
     }
 
     public static IEnumerable<object[]> OpaqueModifierNegativeMatrix()
@@ -121,15 +174,12 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
 
     public static IEnumerable<object[]> UnsupportedSourceMatrix()
     {
-        foreach (var source in UnsupportedSources)
-        {
-            yield return
-            [
-                source.Name,
-                source.Dialect,
-                $"SELECT {source.FunctionSql}(name) FROM users"
-            ];
-        }
+        yield return
+        [
+            "sqlite-qualified",
+            SqlAgentToolType.Sqlite,
+            "SELECT analytics.NormalizeName(name) FROM users"
+        ];
     }
 
     [Fact]
@@ -170,12 +220,7 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
     {
         var cases = UnsupportedSourceMatrix().ToArray();
 
-        Assert.Equal(5, cases.Length);
-        Assert.Equal(
-            5,
-            cases.Select(item => Assert.IsType<string>(item[0]))
-                .Distinct(StringComparer.Ordinal)
-                .Count());
+        Assert.Single(cases);
     }
 
     [Fact]
@@ -223,6 +268,42 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
     }
 
     [Theory]
+    [MemberData(nameof(NativeQuotedSourceMatrix))]
+    public void NativeQuotedSources_ParseCompileAndRenderOnTheirOwnProvider(
+        string name,
+        SqlAgentToolType dialect,
+        string sql,
+        string expectedRenderedFunction)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect);
+        var facts = SqlCoreInspection.GetQueryFacts(parsed);
+
+        Assert.Contains(
+            facts.ReferencedTables,
+            actual => string.Equals(actual, "users", StringComparison.OrdinalIgnoreCase));
+
+        var command = Compile(sql, dialect, dialect);
+
+        Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
+        Assert.Contains(expectedRenderedFunction, command.Sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(NativeQualificationMatrix))]
+    public void NativeQualifiedSources_ParseCompileAndRenderOnTheirOwnProvider(
+        string name,
+        SqlAgentToolType dialect,
+        string sql,
+        string expectedRenderedFunction)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect);
+        var command = Compile(sql, dialect, dialect);
+
+        Assert.False(string.IsNullOrWhiteSpace(command.Sql), name);
+        Assert.Contains(expectedRenderedFunction, command.Sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [MemberData(nameof(Matrix))]
     public void Matrix_ParsesBindsValidatesCompilesAndRenders(
         string name,
@@ -261,8 +342,7 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
         var error = Assert.Throws<SqlCompilationException>(
             () => Compile(sql, SqlAgentToolType.Sqlite));
 
-        Assert.Contains("function.qualified", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Sqlite", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("provider-bound", error.Message, StringComparison.OrdinalIgnoreCase);
 
         var diagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(error);
         Assert.Equal("SQL_TARGET_CAPABILITY_REJECTED", diagnostic.Code);
@@ -272,15 +352,37 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
         Assert.True(diagnostic.Span.Start >= 0, name);
     }
 
+    [Fact]
+    public void UnquotedQualifiedFunction_CrossProviderTargetFailsAtQualifiedCapabilityBoundary()
+    {
+        var error = Assert.Throws<SqlCompilationException>(
+            () => Compile(
+                "SELECT pg_catalog.lower(name) FROM users",
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.MySQL));
+
+        Assert.Contains("function.qualified", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("provider-bound", error.Message, StringComparison.OrdinalIgnoreCase);
+
+        var diagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(error);
+        Assert.Equal("SQL_TARGET_CAPABILITY_REJECTED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.TargetCapability, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Capability, diagnostic.Category);
+    }
+
     private static CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType target) =>
+        Compile(sql, SqlAgentToolType.Postgres, target);
+
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType source,
+        SqlAgentToolType target) =>
         CoreSqlCompiler.CreateDefault().Compile(
-            CoreSqlTextParser.ParseQuery(
-                sql,
-                SqlAgentToolType.Postgres),
+            CoreSqlTextParser.ParseQuery(sql, source),
             target,
             new SqlPlanValidationContext(
-                "postgres-quoted-function-grammar-matrix-v1"),
+                "cross-dialect-native-function-grammar-matrix-v2"),
             new SqlExecutionPlanPolicy());
 }

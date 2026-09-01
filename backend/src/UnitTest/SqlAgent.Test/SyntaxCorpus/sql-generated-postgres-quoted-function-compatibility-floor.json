@@ -118,5 +118,71 @@
     "dialect": "Postgres",
     "targetDialect": "Postgres",
     "sql": "SELECT (SELECT \"CORE_DATE_ADD\"(name) FROM users LIMIT 1) AS normalized FROM outer_users"
+  },
+  {
+    "name": "native-function-identity__postgres__quoted",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT \"NormalizeName\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__mysql__quoted",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT `NormalizeName`(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__sqlserver__quoted-qualified",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT [dbo].[NormalizeName](name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__sqlite__quoted",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT \"NormalizeName\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__oracle__quoted",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT \"NormalizeName\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__firebird__quoted",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT \"NormalizeName\"(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__postgres__qualified",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT analytics.NormalizeName(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__mysql__qualified",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT analytics.NormalizeName(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__sqlserver__qualified",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT dbo.NormalizeName(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__oracle__qualified",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT analytics.NormalizeName(name) AS normalized FROM users"
+  },
+  {
+    "name": "native-function-identity__firebird__qualified",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT analytics.NormalizeName(name) AS normalized FROM users"
   }
 ]

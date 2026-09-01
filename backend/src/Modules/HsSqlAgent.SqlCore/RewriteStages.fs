@@ -509,12 +509,10 @@ module internal RewriteStages =
             | "CURRENT_TIMESTAMP" -> Some SqlCurrentTemporalKind.Timestamp
             | _ -> None
 
-        if FunctionName.hasQuotedParts call.Name
-           || (FunctionName.requiresNativeIdentifierSemantics call.Name
-               && sourceTool <> targetTool) then
-            // Quoted names remain opaque even on the native provider so case-sensitive custom
-            // function identity is never canonicalized into an unrelated built-in. Qualified
-            // names crossing providers remain intact until target capability validation rejects.
+        if FunctionName.requiresNativeIdentifierSemantics call.Name then
+            // Native quoted or qualified names are opaque identities. They are never canonicalized
+            // into portable built-ins; same-provider compilation preserves them, while cross-provider
+            // compilation remains intact until the typed target capability boundary rejects it.
             FunctionCall call
         else
             match currentKind with
@@ -1188,7 +1186,7 @@ module internal RewriteStages =
 
     let private canonicalFunctionKind (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-        if FunctionName.hasQuotedParts call.Name then
+        if FunctionName.requiresNativeIdentifierSemantics call.Name then
             name, false, false
         else
             name, SqlCanonicalFunctionRegistry.IsAggregate(name), SqlCanonicalFunctionRegistry.IsWindow(name)
@@ -1230,14 +1228,14 @@ module internal RewriteStages =
     let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
         let provider = TargetRuntime.provider targetRuntime
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-        let quotedNative = FunctionName.hasQuotedParts call.Name
-        if quotedNative
+        let nativeIdentifierIdentity = FunctionName.requiresNativeIdentifierSemantics call.Name
+        if nativeIdentifierIdentity
            && (call.IsDistinct || not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome) then
             raise (SqlCompilationException(
-                "Quoted native function '" + name
+                "Native quoted or qualified function '" + name
                 + "' cannot use DISTINCT or aggregate-local modifiers until its aggregate semantics are explicitly modeled."))
         let contract =
-            if quotedNative then None
+            if nativeIdentifierIdentity then None
             else SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj
         match contract with
         | None ->
@@ -1425,9 +1423,9 @@ module internal RewriteStages =
     let private validateFilterTarget = function
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            if FunctionName.hasQuotedParts call.Name then
+            if FunctionName.requiresNativeIdentifierSemantics call.Name then
                 raise (SqlCompilationException(
-                    "Quoted native function '" + name
+                    "Native quoted or qualified function '" + name
                     + "' cannot use FILTER until its aggregate semantics are explicitly modeled."))
             match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
             | Some contract when contract.AllowFilter -> ()
@@ -1445,9 +1443,9 @@ module internal RewriteStages =
                     "OVER must modify a directly modeled aggregate or window function."))
         | Some call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            if FunctionName.hasQuotedParts call.Name then
+            if FunctionName.requiresNativeIdentifierSemantics call.Name then
                 raise (SqlCompilationException(
-                    "Quoted native function '" + name
+                    "Native quoted or qualified function '" + name
                     + "' cannot use OVER until its aggregate/window semantics are explicitly modeled."))
             let contract =
                 match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with

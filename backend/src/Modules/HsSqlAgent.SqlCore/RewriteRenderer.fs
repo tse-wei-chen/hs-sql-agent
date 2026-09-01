@@ -86,7 +86,10 @@ module internal RewriteRenderer =
             if part.WasQuoted || part.PreserveSpelling then
                 quotePart provider part
             else
-                part.Value.ToUpperInvariant())
+                match provider with
+                | PostgreSql -> part.Value.ToLowerInvariant()
+                | Oracle | Firebird -> part.Value.ToUpperInvariant()
+                | MySql | SqlServer | SQLite -> part.Value)
         |> String.concat "."
     let private tableAliasPrefix = function Oracle -> " " | _ -> " AS "
     let private providerName = function

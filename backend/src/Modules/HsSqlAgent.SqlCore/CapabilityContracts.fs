@@ -272,15 +272,45 @@ module internal SqlIntervalLiteralCapabilityRules =
             "INTERVAL 'literal' is not valid for declared source dialect " + string sourceDialect
             + " in the Core source capability profile. Core models this interval-literal shape as PostgreSQL source syntax; other dialect interval forms require their own structured translation contract."
 
+module internal SqlQuotedFunctionCapabilityRules =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        match sourceDialect with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.MsSqlServer
+        | SqlAgentToolType.Sqlite
+        | SqlAgentToolType.Oracle
+        | SqlAgentToolType.Firebird -> null
+        | value -> "Quoted function identifiers are not modeled for source dialect " + string value + "."
+
+    let TargetValidationError(sourceDialect: SqlAgentToolType, provider: SqlAgentToolType) : string | null =
+        if sourceDialect = provider then null
+        else
+            "SQL capability 'function.quoted_identifier' preserves provider-native quoted function identity only when source and target providers match. "
+            + "Quoted function identity is provider-bound because delimiter, case-folding, and namespace resolution semantics differ across providers. "
+            + "Source provider is " + string sourceDialect + "; target provider is " + string provider + "."
+
 module internal SqlQualifiedFunctionCapabilityRules =
     let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
-        if sourceDialect = SqlAgentToolType.Postgres then null
-        else "SQL capability 'function.qualified' is currently declared only for the PostgreSQL source dialect; source dialect "
-             + string sourceDialect + " remains fail-closed."
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'function.qualified' currently has a declared lossless lowering only for PostgreSQL targets; target provider "
-             + string provider + " remains fail-closed."
+        match sourceDialect with
+        | SqlAgentToolType.Sqlite ->
+            "SQL capability 'function.qualified' is not valid for SQLite source grammar; scalar function calls use an unqualified function-name."
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.MsSqlServer
+        | SqlAgentToolType.Oracle
+        | SqlAgentToolType.Firebird -> null
+        | value ->
+            "SQL capability 'function.qualified' is not modeled for source dialect " + string value + "."
+
+    let TargetValidationError(sourceDialect: SqlAgentToolType, provider: SqlAgentToolType) : string | null =
+        if provider = SqlAgentToolType.Sqlite then
+            "SQL capability 'function.qualified' is not supported by SQLite target grammar; scalar function calls use an unqualified function-name."
+        elif sourceDialect = provider then null
+        else
+            "SQL capability 'function.qualified' preserves provider-native function namespace identity only when source and target providers match. "
+            + "Qualified function identity is provider-bound and is not silently reinterpreted across database/schema/package namespaces. "
+            + "Source provider is " + string sourceDialect + "; target provider is " + string provider + "."
 
 module internal SqlModuloCapabilityRules =
     let private usesFunction provider = provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird
