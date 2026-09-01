@@ -111,6 +111,17 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
+    public void QuotedRegexLookingFunction_PreservesIdentity_AndDoesNotBecomeRegexOperator()
+    {
+        var command = Compile(
+            "SELECT \"REGEXP_LIKE\"(name) FROM users",
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("\"REGEXP_LIKE\"(", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain(" ~ ", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void QualifiedFunction_ParsesStructurally_ThenUnknownSemanticFailsClosed()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
