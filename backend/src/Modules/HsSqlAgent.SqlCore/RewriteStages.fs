@@ -42,6 +42,12 @@ module internal RewriteStages =
     let private compilationError message =
         raise (SqlCompilationException(message))
 
+    let private sourceCapabilityMessage =
+        RewriteCapabilityProvenance.sourceMessage "source semantic validation"
+
+    let private targetCapabilityMessage =
+        RewriteCapabilityProvenance.targetMessage "target capability validation"
+
     let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
 
     let private stageDiagnostic code stage category (span: Span) message =
