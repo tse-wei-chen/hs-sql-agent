@@ -196,7 +196,7 @@ module internal RewriteRenderer =
         | WindowFrameBound.UnboundedFollowing -> "UNBOUNDED FOLLOWING"
 
     let private projectionOutputName (item: SelectItem) =
-        match item.Alias, item.Expression with
+        match item.Alias, Expr.unspan item.Expression with
         | Some alias, _ -> alias
         | None, Column identifier
         | None, BoundColumn(identifier, _) -> Identifier.parts identifier |> List.last
