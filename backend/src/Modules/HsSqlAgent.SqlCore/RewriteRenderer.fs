@@ -377,6 +377,9 @@ module internal RewriteRenderer =
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        let dispatchName =
+            if FunctionName.hasQuotedParts call.Name then String.Empty
+            else name
         let nativeName = renderFunctionName ctx.Provider call.Name
         let tool = providerTool ctx.Provider
 
@@ -419,7 +422,7 @@ module internal RewriteRenderer =
             let args = String.concat ", " rendered
             nativeName + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
 
-        match name with
+        match dispatchName with
         | "CORE_DATE_ADD" ->
             requireCount 3
             let unit = literalKeyword "DATEADD unit" call.Arguments[0]
