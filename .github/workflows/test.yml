@@ -291,6 +291,13 @@ jobs:
           run artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-quoted-function-compatibility-floor.json
           artifacts/parity/head-generated-postgres-quoted-function.json
+      - name: Capture PR generated PostgreSQL distinct-from syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-distinct-from-compatibility-floor.json
+          artifacts/parity/head-generated-postgres-distinct-from.json
       - name: Capture PR generated Oracle native syntax behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -371,6 +378,13 @@ jobs:
           run artifacts/parity/main/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-quoted-function-compatibility-floor.json
           artifacts/parity/main-generated-postgres-quoted-function.json
+      - name: Capture base main generated PostgreSQL distinct-from syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-distinct-from-compatibility-floor.json
+          artifacts/parity/main-generated-postgres-distinct-from.json
       - name: Capture base main generated Oracle native syntax behavior
         run: >
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
@@ -428,6 +442,12 @@ jobs:
           dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
           --configuration Release --no-build --
           compare artifacts/parity/main-generated-postgres-quoted-function.json artifacts/parity/head-generated-postgres-quoted-function.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
+      - name: Enforce generated PostgreSQL distinct-from compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-postgres-distinct-from.json artifacts/parity/head-generated-postgres-distinct-from.json
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
       - name: Enforce generated Oracle native main compatibility floor
         run: >

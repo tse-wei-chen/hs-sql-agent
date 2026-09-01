@@ -1,0 +1,194 @@
+[
+  {
+    "name": "postgres-distinct-from__distinct__column-column__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT a IS DISTINCT FROM b AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__column-column__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE a IS DISTINCT FROM b"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__column-column__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, a IS DISTINCT FROM b AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__column-column__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT a IS DISTINCT FROM b FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__column-null__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT a IS DISTINCT FROM NULL AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__column-null__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE a IS DISTINCT FROM NULL"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__column-null__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, a IS DISTINCT FROM NULL AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__column-null__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT a IS DISTINCT FROM NULL FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__literal-null__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT 1 IS DISTINCT FROM NULL AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__literal-null__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE 1 IS DISTINCT FROM NULL"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__literal-null__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, 1 IS DISTINCT FROM NULL AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__literal-null__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT 1 IS DISTINCT FROM NULL FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__coalesce-column__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT COALESCE(a, 0) IS DISTINCT FROM b AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__coalesce-column__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE COALESCE(a, 0) IS DISTINCT FROM b"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__coalesce-column__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, COALESCE(a, 0) IS DISTINCT FROM b AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__distinct__coalesce-column__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT COALESCE(a, 0) IS DISTINCT FROM b FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-column__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT a IS NOT DISTINCT FROM b AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-column__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE a IS NOT DISTINCT FROM b"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-column__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, a IS NOT DISTINCT FROM b AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-column__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT a IS NOT DISTINCT FROM b FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-null__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT a IS NOT DISTINCT FROM NULL AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-null__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE a IS NOT DISTINCT FROM NULL"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-null__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, a IS NOT DISTINCT FROM NULL AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__column-null__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT a IS NOT DISTINCT FROM NULL FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__literal-null__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT 1 IS NOT DISTINCT FROM NULL AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__literal-null__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE 1 IS NOT DISTINCT FROM NULL"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__literal-null__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, 1 IS NOT DISTINCT FROM NULL AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__literal-null__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT 1 IS NOT DISTINCT FROM NULL FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__coalesce-column__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT COALESCE(a, 0) IS NOT DISTINCT FROM b AS different FROM comparisons"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__coalesce-column__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM comparisons WHERE COALESCE(a, 0) IS NOT DISTINCT FROM b"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__coalesce-column__cte-body",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT id, COALESCE(a, 0) IS NOT DISTINCT FROM b AS different FROM comparisons) SELECT id FROM x WHERE different = TRUE"
+  },
+  {
+    "name": "postgres-distinct-from__not-distinct__coalesce-column__scalar-subquery",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT (SELECT COALESCE(a, 0) IS NOT DISTINCT FROM b FROM comparisons LIMIT 1) AS different FROM outer_rows"
+  }
+]
