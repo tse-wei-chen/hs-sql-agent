@@ -153,6 +153,17 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             false,
             "ON CONFLICT;DO UPDATE;excluded"),
         new(
+            "sqlite-update-from-333",
+            "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Sqlite,
+            new Version(3, 33),
+            new Version(3, 33),
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            false,
+            "UPDATE; FROM ;profiles"),
+        new(
             "firebird-insert-returning-5",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') RETURNING id",
             SqlAgentToolType.Firebird,
@@ -238,15 +249,15 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     [Fact]
     public void NativeDmlMatrix_HasStableCapabilityCoverage()
     {
-        Assert.Equal(17, Cases.Length);
+        Assert.Equal(18, Cases.Length);
         Assert.Equal(
-            17,
+            18,
             Cases.Select(item => item.Name)
                 .Distinct(StringComparer.Ordinal)
                 .Count());
 
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Postgres));
-        Assert.Equal(4, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
+        Assert.Equal(5, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
         Assert.Equal(4, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MsSqlServer);
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MySQL);
