@@ -182,9 +182,16 @@ module internal RewriteParser =
                     token
                     detail))
 
+    let private sourceCapabilityMessage rejection =
+        match CapabilityRejection.side rejection with
+        | CapabilitySide.SourceCapability -> CapabilityRejection.message rejection
+        | CapabilitySide.TargetCapability ->
+            invalidOp "Target capability proof reached the source parser."
+
     let private requireSourceCapability (token: Token) = function
         | ProvenCapability -> ()
-        | RejectedCapability message ->
+        | RejectedCapability rejection ->
+            let message = sourceCapabilityMessage rejection
             raise (
                 SqlCompilationException(
                     message,
@@ -197,7 +204,8 @@ module internal RewriteParser =
 
     let private requireSourceParseCapability (token: Token) = function
         | ProvenCapability -> ()
-        | RejectedCapability message ->
+        | RejectedCapability rejection ->
+            let message = sourceCapabilityMessage rejection
             let finish = token.Start + max token.Length 1
             let detail =
                 message
