@@ -16,6 +16,7 @@ public sealed class SqlGrammarBombardmentCoverageTests
             FirebirdGrammarMatrixTests.FirebirdCteGrammarMatrix().Count() +
             RecursiveCteGrammarMatrixTests.RecursiveCteGrammarMatrix().Count() +
             PostgresNativeCapabilityGrammarMatrixTests.PostgresNativeCapabilityMatrix().Count() +
+            PostgresQuotedFunctionGrammarMatrixTests.Matrix().Count() +
             OracleNativeCapabilityGrammarMatrixTests.OracleNativeCapabilityMatrix().Count() +
             MySqlSessionModeGrammarMatrixTests.ConcatSessionModeMatrix().Count() +
             MySqlSessionModeGrammarMatrixTests.AnsiQuotesSessionModeMatrix().Count() +
@@ -33,6 +34,8 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeGrammarMutationMatrixTests.WrongDialectPostfixCastMatrix().Count() +
             NegativeGrammarMutationMatrixTests.WrongDialectRowLimitMatrix().Count() +
             NegativeGrammarMutationMatrixTests.WrongDialectNullOrderingMatrix().Count() +
+            PostgresQuotedFunctionGrammarMatrixTests.UnsupportedSourceMatrix().Count() +
+            PostgresQuotedFunctionGrammarMatrixTests.Matrix().Count() +
             NegativeRecursiveCteGrammarMutationMatrixTests.CommonRecursiveShapeMutationMatrix().Count() +
             NegativeRecursiveCteGrammarMutationMatrixTests.PortableSubsetMutationMatrix().Count() +
             NegativeRecursiveCteGrammarMutationMatrixTests.FirebirdUnionMutationMatrix().Count();
@@ -47,12 +50,12 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
 
-        Assert.Equal(4841, positiveQuery);
+        Assert.Equal(4861, positiveQuery);
         Assert.Equal(419, positiveDml);
-        Assert.Equal(117, negativeQuery);
+        Assert.Equal(142, negativeQuery);
         Assert.Equal(68, negativeDml);
         Assert.Equal(
-            5445,
+            5490,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }
