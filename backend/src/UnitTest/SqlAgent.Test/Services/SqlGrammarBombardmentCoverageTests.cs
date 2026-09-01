@@ -28,7 +28,8 @@ public sealed class SqlGrammarBombardmentCoverageTests
             SqlServerProfileSensitiveGrammarMatrixTests.SqlServerStringAggregateProfileMatrix().Count() +
             CrossDialectCastTypeGrammarMatrixTests.PositiveMatrix().Count() +
             CrossDialectCastTypeGrammarMatrixTests.PostgresPostfixMatrix().Count() +
-            CrossDialectCastTypeGrammarMatrixTests.CrossProviderMatrix().Count();
+            CrossDialectCastTypeGrammarMatrixTests.CrossProviderMatrix().Count() +
+            TemporalDateMathGrammarMatrixTests.ExpectedPositiveCaseCount;
 
         var positiveDml =
             DmlGrammarMatrixCases.ExpectedCaseCount +
@@ -51,7 +52,8 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeRecursiveCteGrammarMutationMatrixTests.PortableSubsetMutationMatrix().Count() +
             NegativeRecursiveCteGrammarMutationMatrixTests.FirebirdUnionMutationMatrix().Count() +
             CrossDialectCastTypeGrammarMatrixTests.NegativeMatrix().Count() +
-            CrossDialectCastTypeGrammarMatrixTests.FirebirdSourceProfileNegativeMatrix().Count();
+            CrossDialectCastTypeGrammarMatrixTests.FirebirdSourceProfileNegativeMatrix().Count() +
+            NegativeTemporalGrammarMutationMatrixTests.ExpectedCaseCount;
 
         var negativeDml =
             NegativeDmlGrammarMutationMatrixTests.PolicyMutationMatrix().Count() +
@@ -63,12 +65,12 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
 
-        Assert.Equal(5055, positiveQuery);
+        Assert.Equal(5189, positiveQuery);
         Assert.Equal(419, positiveDml);
-        Assert.Equal(173, negativeQuery);
+        Assert.Equal(196, negativeQuery);
         Assert.Equal(68, negativeDml);
         Assert.Equal(
-            5715,
+            5872,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }

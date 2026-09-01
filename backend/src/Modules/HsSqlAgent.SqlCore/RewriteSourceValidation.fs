@@ -32,6 +32,10 @@ module internal RewriteSourceValidation =
         match expression with
         | Spanned(_, inner) -> verifySourceRegexExpr regexProof inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            verifySourceRegexExpr regexProof amount
+            verifySourceRegexExpr regexProof value
         | RawRegexCall(arguments, _) ->
             arguments |> List.iter (verifySourceRegexExpr regexProof)
             requireSourceRegexCapability regexProof
@@ -182,6 +186,10 @@ module internal RewriteSourceValidation =
         match expression with
         | Spanned(_, inner) -> validateRawSourceExpr source orderingProofs mySqlPipes inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            validateRawSourceExpr source orderingProofs mySqlPipes amount
+            validateRawSourceExpr source orderingProofs mySqlPipes value
         | Unary(_, operand) -> validateRawSourceExpr source orderingProofs mySqlPipes operand
         | Binary(BinaryOperator.Concat, left, right) ->
             validateRawConcat source mySqlPipes
@@ -220,7 +228,12 @@ module internal RewriteSourceValidation =
             |> List.iter (fun order ->
                 validateRawSourceOrder orderingProofs order
                 validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
+        | Cast(value, _) ->
+            validateRawSourceExpr source orderingProofs mySqlPipes value
+        | Extract(_, value) ->
+            match SqlExtractSourceCapabilityRules.SourceValidationError(source) with
+            | null -> ()
+            | message -> compilationError message
             validateRawSourceExpr source orderingProofs mySqlPipes value
         | SimpleCase(input, branches, fallback) ->
             validateRawSourceExpr source orderingProofs mySqlPipes input

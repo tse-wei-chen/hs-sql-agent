@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open System.Text.RegularExpressions
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 
 /// Pure F# compiler model. No compatibility AST classes are allowed below this boundary.
 module internal CoreModel =
@@ -385,6 +386,8 @@ module internal CoreModel =
         | OrderOrdinal of PositiveRowCount
         | Literal of ScalarValue
         | Interval of IntervalLiteral
+        | DateAdd of unit: SqlDateMathUnit * amount: Expr * value: Expr
+        | DateDiff of unit: SqlDateMathUnit * startValue: Expr * finishValue: Expr
         | Unary of UnaryOperator * Expr
         | Binary of BinaryOperator * Expr * Expr
         | Like of value: Expr * pattern: Expr * escape: LikeEscape option * negated: bool * caseInsensitive: bool
@@ -630,6 +633,14 @@ module internal CoreModel =
                 leftValue = rightValue
             | Interval leftValue, Interval rightValue ->
                 IntervalLiteral.value leftValue = IntervalLiteral.value rightValue
+            | DateAdd(leftUnit, leftAmount, leftValue), DateAdd(rightUnit, rightAmount, rightValue) ->
+                leftUnit = rightUnit
+                && equivalent leftAmount rightAmount
+                && equivalent leftValue rightValue
+            | DateDiff(leftUnit, leftStart, leftFinish), DateDiff(rightUnit, rightStart, rightFinish) ->
+                leftUnit = rightUnit
+                && equivalent leftStart rightStart
+                && equivalent leftFinish rightFinish
             | Unary(leftOperator, leftValue), Unary(rightOperator, rightValue) ->
                 leftOperator = rightOperator && equivalent leftValue rightValue
             | Binary(leftOperator, leftLeft, leftRight), Binary(rightOperator, rightLeft, rightRight) ->

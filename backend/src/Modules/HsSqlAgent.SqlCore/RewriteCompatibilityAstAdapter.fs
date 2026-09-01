@@ -150,6 +150,30 @@ module internal RewriteCompatibilityAstAdapter =
         | Expr.Interval literal ->
             HsSqlAgent.SqlCore.Core.Ast.IntervalExpr(IntervalLiteral.value literal, expressionSpan)
 
+        | Expr.DateAdd(unit, amount, value) ->
+            HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
+                identifierFromText "CORE_DATE_ADD",
+                [ HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
+                      SqlDateMathUnit.Keyword unit,
+                      expressionSpan) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+                  exprOf amount
+                  exprOf value ]
+                |> ImmutableArray.CreateRange,
+                false,
+                expressionSpan)
+
+        | Expr.DateDiff(unit, startValue, finishValue) ->
+            HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
+                identifierFromText "CORE_DATE_DIFF",
+                [ HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
+                      SqlDateMathUnit.Keyword unit,
+                      expressionSpan) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+                  exprOf startValue
+                  exprOf finishValue ]
+                |> ImmutableArray.CreateRange,
+                false,
+                expressionSpan)
+
         | Expr.Unary(operator, operand) ->
             let text =
                 match operator with

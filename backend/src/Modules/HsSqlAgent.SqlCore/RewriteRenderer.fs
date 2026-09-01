@@ -269,6 +269,90 @@ module internal RewriteRenderer =
             match ctx.Provider with
             | PostgreSql -> "CAST(" + ctx.Bind(box (IntervalLiteral.value literal)) + " AS interval)"
             | _ -> invalidOp "INTERVAL lowering is not available for this provider."
+        | Expr.DateAdd(unit, amountExpression, valueExpression) ->
+            match SqlDateMathCapabilityRules.TargetValidationError(unit, providerTool ctx.Provider, "CORE_DATE_ADD") with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            let amount = renderExpr ctx amountExpression
+            let value = renderExpr ctx valueExpression
+            let keyword = SqlDateMathUnit.Keyword unit
+            match ctx.Provider with
+            | SqlServer ->
+                "DATEADD(" + keyword + ", " + amount + ", " + value + ")"
+            | MySql ->
+                "TIMESTAMPADD(" + keyword + ", " + amount + ", " + value + ")"
+            | Firebird ->
+                match unit with
+                | SqlDateMathUnit.Quarter ->
+                    "DATEADD(MONTH, (" + amount + " * 3), " + value + ")"
+                | _ ->
+                    "DATEADD(" + keyword + ", " + amount + ", " + value + ")"
+            | PostgreSql ->
+                let interval =
+                    match unit with
+                    | SqlDateMathUnit.Day -> "INTERVAL '1 day'"
+                    | SqlDateMathUnit.Week -> "INTERVAL '1 week'"
+                    | SqlDateMathUnit.Month -> "INTERVAL '1 month'"
+                    | SqlDateMathUnit.Quarter -> "INTERVAL '3 months'"
+                    | SqlDateMathUnit.Year -> "INTERVAL '1 year'"
+                    | SqlDateMathUnit.Hour -> "INTERVAL '1 hour'"
+                    | SqlDateMathUnit.Minute -> "INTERVAL '1 minute'"
+                    | SqlDateMathUnit.Second -> "INTERVAL '1 second'"
+                "(" + value + " + (" + interval + " * " + amount + "))"
+            | Oracle ->
+                let interval =
+                    match unit with
+                    | SqlDateMathUnit.Year
+                    | SqlDateMathUnit.Quarter
+                    | SqlDateMathUnit.Month ->
+                        invalidOp "Oracle calendar-unit DATEADD reached rendering without a lossless rollover proof."
+                    | SqlDateMathUnit.Week ->
+                        "NUMTODSINTERVAL((" + amount + " * 7), 'DAY')"
+                    | SqlDateMathUnit.Day ->
+                        "NUMTODSINTERVAL(" + amount + ", 'DAY')"
+                    | SqlDateMathUnit.Hour ->
+                        "NUMTODSINTERVAL(" + amount + ", 'HOUR')"
+                    | SqlDateMathUnit.Minute ->
+                        "NUMTODSINTERVAL(" + amount + ", 'MINUTE')"
+                    | SqlDateMathUnit.Second ->
+                        "NUMTODSINTERVAL(" + amount + ", 'SECOND')"
+                "(" + value + " + " + interval + ")"
+            | SQLite ->
+                let multiplier, modifier =
+                    match unit with
+                    | SqlDateMathUnit.Month
+                    | SqlDateMathUnit.Quarter
+                    | SqlDateMathUnit.Year ->
+                        invalidOp "SQLite calendar-unit DATEADD reached rendering without a versioned floor-modifier proof."
+                    | SqlDateMathUnit.Week -> 7, "day"
+                    | SqlDateMathUnit.Day -> 1, "day"
+                    | SqlDateMathUnit.Hour -> 1, "hour"
+                    | SqlDateMathUnit.Minute -> 1, "minute"
+                    | SqlDateMathUnit.Second -> 1, "second"
+                let adjusted =
+                    if multiplier = 1 then amount
+                    else "(" + amount + " * " + string multiplier + ")"
+                "DATETIME(" + value + ", PRINTF('%+d " + modifier + "', " + adjusted + "))"
+        | Expr.DateDiff(unit, startExpression, finishExpression) ->
+            match SqlDateMathCapabilityRules.TargetValidationError(unit, providerTool ctx.Provider, "CORE_DATE_DIFF") with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            let keyword = SqlDateMathUnit.Keyword unit
+            let startValue = renderExpr ctx startExpression
+            let finish = renderExpr ctx finishExpression
+            match ctx.Provider with
+            | PostgreSql ->
+                "(CAST(" + finish + " AS date) - CAST(" + startValue + " AS date))"
+            | Oracle ->
+                "(CAST(" + finish + " AS DATE) - CAST(" + startValue + " AS DATE))"
+            | SQLite ->
+                "(JULIANDAY(" + finish + ") - JULIANDAY(" + startValue + "))"
+            | SqlServer ->
+                "DATEDIFF(" + keyword + ", " + startValue + ", " + finish + ")"
+            | MySql ->
+                "TIMESTAMPDIFF(" + keyword + ", " + startValue + ", " + finish + ")"
+            | Firebird ->
+                "DATEDIFF(" + keyword + " FROM " + startValue + " TO " + finish + ")"
         | Expr.Unary(UnaryOperator.Not, operand) -> "NOT (" + renderExpr ctx operand + ")"
         | Expr.Unary(UnaryOperator.Negate, operand) -> "(-" + renderExpr ctx operand + ")"
         | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
@@ -339,6 +423,11 @@ module internal RewriteRenderer =
                 | "YEAR" -> "CAST(STRFTIME('%Y', " + rendered + ") AS INTEGER)"
                 | "MONTH" -> "CAST(STRFTIME('%m', " + rendered + ") AS INTEGER)"
                 | "DAY" -> "CAST(STRFTIME('%d', " + rendered + ") AS INTEGER)"
+                | "HOUR" -> "CAST(STRFTIME('%H', " + rendered + ") AS INTEGER)"
+                | "MINUTE" -> "CAST(STRFTIME('%M', " + rendered + ") AS INTEGER)"
+                | "SECOND" -> "CAST(STRFTIME('%S', " + rendered + ") AS INTEGER)"
+                | "QUARTER" ->
+                    "CAST(((CAST(STRFTIME('%m', " + rendered + ") AS INTEGER) + 2) / 3) AS INTEGER)"
                 | _ -> raise (SqlCompilationException("SQLite does not support date part " + part + "."))
         | Expr.SimpleCase(input, branches, fallback) ->
             let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> String.concat ""
@@ -457,71 +546,22 @@ module internal RewriteRenderer =
         match dispatchName with
         | "CORE_DATE_ADD" ->
             requireCount 3
-            let unit = literalKeyword "DATEADD unit" call.Arguments[0]
-            match SqlDateMathCapabilityRules.TargetValidationError(unit, tool, "CORE_DATE_ADD") with
-            | null -> ()
-            | message -> fail message
-            let amount = renderExpr ctx call.Arguments[1]
-            let value = renderExpr ctx call.Arguments[2]
-            match ctx.Provider with
-            | SqlServer -> "DATEADD(" + unit + ", " + amount + ", " + value + ")"
-            | MySql -> "TIMESTAMPADD(" + unit + ", " + amount + ", " + value + ")"
-            | PostgreSql -> "(" + value + " + (" + amount + " * INTERVAL '1 day'))"
-            | Oracle -> "(" + value + " + " + amount + ")"
-            | SQLite -> "DATETIME(" + value + ", PRINTF('%+d day', " + amount + "))"
-            | Firebird -> "DATEADD(" + unit + ", " + amount + ", " + value + ")"
+            let unit =
+                literalKeyword "DATEADD unit" call.Arguments[0]
+                |> fun value -> SqlDateMathUnit.Parse(value, "DATEADD")
+            renderExpr ctx (DateAdd(unit, call.Arguments[1], call.Arguments[2]))
 
         | "CORE_DATE_DIFF" ->
             requireCount 3
-            let unit = literalKeyword "DATEDIFF unit" call.Arguments[0]
-            match SqlDateMathCapabilityRules.TargetValidationError(unit, tool, "CORE_DATE_DIFF") with
-            | null -> ()
-            | message -> fail message
-            match ctx.Provider with
-            | PostgreSql ->
-                let finish = renderExpr ctx call.Arguments[2]
-                let startValue = renderExpr ctx call.Arguments[1]
-                "(CAST(" + finish + " AS date) - CAST(" + startValue + " AS date))"
-            | Oracle ->
-                let finish = renderExpr ctx call.Arguments[2]
-                let startValue = renderExpr ctx call.Arguments[1]
-                "(CAST(" + finish + " AS DATE) - CAST(" + startValue + " AS DATE))"
-            | SQLite ->
-                let finish = renderExpr ctx call.Arguments[2]
-                let startValue = renderExpr ctx call.Arguments[1]
-                "(JULIANDAY(" + finish + ") - JULIANDAY(" + startValue + "))"
-            | SqlServer ->
-                let startValue = renderExpr ctx call.Arguments[1]
-                let finish = renderExpr ctx call.Arguments[2]
-                "DATEDIFF(" + unit + ", " + startValue + ", " + finish + ")"
-            | MySql ->
-                let startValue = renderExpr ctx call.Arguments[1]
-                let finish = renderExpr ctx call.Arguments[2]
-                "TIMESTAMPDIFF(" + unit + ", " + startValue + ", " + finish + ")"
-            | Firebird ->
-                let startValue = renderExpr ctx call.Arguments[1]
-                let finish = renderExpr ctx call.Arguments[2]
-                "DATEDIFF(" + unit + " FROM " + startValue + " TO " + finish + ")"
+            let unit =
+                literalKeyword "DATEDIFF unit" call.Arguments[0]
+                |> fun value -> SqlDateMathUnit.Parse(value, "DATEDIFF")
+            renderExpr ctx (DateDiff(unit, call.Arguments[1], call.Arguments[2]))
 
         | "CORE_DATE_PART" ->
             requireCount 2
             let part = literalKeyword "date part" call.Arguments[0]
-            match SqlDatePartCapabilityRules.TargetValidationError(part, tool) with
-            | null -> ()
-            | message -> fail message
-            let value = renderExpr ctx call.Arguments[1]
-            match ctx.Provider with
-            | SqlServer
-            | MySql -> part + "(" + value + ")"
-            | PostgreSql
-            | Oracle -> "EXTRACT(" + part + " FROM " + value + ")"
-            | Firebird -> "EXTRACT(" + part + " FROM CAST(" + value + " AS DATE))"
-            | SQLite ->
-                match part with
-                | "YEAR" -> "CAST(STRFTIME('%Y', " + value + ") AS INTEGER)"
-                | "MONTH" -> "CAST(STRFTIME('%m', " + value + ") AS INTEGER)"
-                | "DAY" -> "CAST(STRFTIME('%d', " + value + ") AS INTEGER)"
-                | _ -> fail ("SQLite does not support date part " + part + ".")
+            renderExpr ctx (Extract(ExtractField.create part, call.Arguments[1]))
 
         | "CORE_DATE_FORMAT" ->
             requireCount 2

@@ -21,7 +21,7 @@ public sealed class CoreCanonicalTargetCapabilityRegistryTests
         SqlAgentToolType.Sqlite,
         "regex_match")]
     [InlineData(
-        "SELECT DATEADD(WEEK, 1, created_at) FROM orders",
+        "SELECT DATEDIFF(WEEK, created_at, updated_at) FROM orders",
         SqlAgentToolType.MsSqlServer,
         SqlAgentToolType.Postgres,
         "WEEK")]

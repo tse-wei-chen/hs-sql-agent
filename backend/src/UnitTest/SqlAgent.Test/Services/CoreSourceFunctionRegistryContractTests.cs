@@ -10,6 +10,22 @@ public sealed class CoreSourceFunctionRegistryContractTests
         SqlAgentToolType.MsSqlServer,
         "DATEADD")]
     [InlineData(
+        "SELECT TIMESTAMPADD(HOUR, 1) FROM orders",
+        SqlAgentToolType.MySQL,
+        "TIMESTAMPADD")]
+    [InlineData(
+        "SELECT TIMESTAMPDIFF(HOUR, created_at) FROM orders",
+        SqlAgentToolType.MySQL,
+        "TIMESTAMPDIFF")]
+    [InlineData(
+        "SELECT DATEPART(HOUR) FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        "DATEPART")]
+    [InlineData(
+        "SELECT DATE_PART('HOUR') FROM orders",
+        SqlAgentToolType.Postgres,
+        "DATE_PART")]
+    [InlineData(
         "SELECT DATEDIFF(created_at, completed_at) FROM orders",
         SqlAgentToolType.MsSqlServer,
         "DATEDIFF")]
@@ -49,6 +65,22 @@ public sealed class CoreSourceFunctionRegistryContractTests
     }
 
     [Theory]
+    [InlineData(
+        "SELECT TIMESTAMPADD(HOUR, 1, created_at) FROM orders",
+        SqlAgentToolType.Postgres,
+        "TIMESTAMPADD")]
+    [InlineData(
+        "SELECT TIMESTAMPDIFF(HOUR, created_at, completed_at) FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        "TIMESTAMPDIFF")]
+    [InlineData(
+        "SELECT DATEPART(HOUR, created_at) FROM orders",
+        SqlAgentToolType.Postgres,
+        "DATEPART")]
+    [InlineData(
+        "SELECT DATE_PART('HOUR', created_at) FROM orders",
+        SqlAgentToolType.MySQL,
+        "DATE_PART")]
     [InlineData(
         "SELECT DATE_FORMAT(created_at, '%Y') FROM orders",
         SqlAgentToolType.Postgres,
@@ -131,6 +163,26 @@ public sealed class CoreSourceFunctionRegistryContractTests
         SqlAgentToolType.MsSqlServer,
         SqlAgentToolType.MsSqlServer,
         "DATEDIFF(")]
+    [InlineData(
+        "SELECT TIMESTAMPADD(HOUR, 1, created_at) FROM orders",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MySQL,
+        "TIMESTAMPADD(HOUR")]
+    [InlineData(
+        "SELECT TIMESTAMPDIFF(HOUR, created_at, completed_at) FROM orders",
+        SqlAgentToolType.MySQL,
+        SqlAgentToolType.MySQL,
+        "TIMESTAMPDIFF(HOUR")]
+    [InlineData(
+        "SELECT DATEPART(HOUR, created_at) FROM orders",
+        SqlAgentToolType.MsSqlServer,
+        SqlAgentToolType.MsSqlServer,
+        "DATEPART(HOUR")]
+    [InlineData(
+        "SELECT DATE_PART('HOUR', created_at) FROM orders",
+        SqlAgentToolType.Postgres,
+        SqlAgentToolType.MsSqlServer,
+        "DATEPART(HOUR")]
     [InlineData(
         "SELECT DATE_FORMAT(created_at, '%Y-%m-%d') FROM orders",
         SqlAgentToolType.MySQL,

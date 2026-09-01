@@ -146,6 +146,8 @@ module internal RewriteBinder =
                 ("Wildcard '" + qualifier + ".*'")
             expression
         | Wildcard None | OrderOrdinal _ | Literal _ | Interval _ -> expression
+        | DateAdd(unit, amount, value) -> DateAdd(unit, bindExpr scope amount, bindExpr scope value)
+        | DateDiff(unit, startValue, finishValue) -> DateDiff(unit, bindExpr scope startValue, bindExpr scope finishValue)
         | Unary(op, operand) -> Unary(op, bindExpr scope operand)
         | Binary(op, left, right) -> Binary(op, bindExpr scope left, bindExpr scope right)
         | Like(value, pattern, escape, negated, caseInsensitive) ->
@@ -230,7 +232,9 @@ module internal RewriteBinder =
         | IsNull(operand, _) -> recurse operand
         | Binary(_, left, right)
         | RegexMatch(left, right)
-        | FilteredAggregate(left, right) -> recurse left + recurse right
+        | FilteredAggregate(left, right)
+        | DateAdd(_, left, right)
+        | DateDiff(_, left, right) -> recurse left + recurse right
         | Like(value, pattern, _, _, _) -> recurse value + recurse pattern
         | RawRegexCall(arguments, _) -> arguments |> List.sumBy recurse
         | FunctionCall call ->
@@ -272,7 +276,9 @@ module internal RewriteBinder =
         | Extract(_, operand)
         | IsNull(operand, _) -> recurse operand
         | Binary(_, left, right)
-        | RegexMatch(left, right) -> recurse left || recurse right
+        | RegexMatch(left, right)
+        | DateAdd(_, left, right)
+        | DateDiff(_, left, right) -> recurse left || recurse right
         | FilteredAggregate _ -> true
         | Like(value, pattern, _, _, _) -> recurse value || recurse pattern
         | RawRegexCall(arguments, _) -> arguments |> List.exists recurse

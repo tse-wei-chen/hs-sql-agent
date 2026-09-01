@@ -75,6 +75,8 @@ module internal RewritePlanCapabilityValidation =
         | OrderOrdinal _ -> "OrderByOrdinalExpr"
         | Literal _ -> "LiteralExpr"
         | Interval _ -> "IntervalExpr"
+        | DateAdd _ -> "DateAddExpr"
+        | DateDiff _ -> "DateDiffExpr"
         | Unary _ -> "UnaryExpr"
         | Binary _ -> "BinaryExpr"
         | Like _ -> "BinaryExpr"
@@ -112,6 +114,9 @@ module internal RewritePlanCapabilityValidation =
         | Column _ ->
             returningExpressionError "requires every column reference to bind to a local DML row source"
         | Literal _ -> ()
+        | DateAdd _
+        | DateDiff _ ->
+            returningExpressionError "does not admit temporal date-math expressions yet"
         | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
             validateRichReturningExpression operand
         | Binary((BinaryOperator.Add
@@ -273,6 +278,10 @@ module internal RewritePlanCapabilityValidation =
         match expression with
         | Spanned(_, inner) -> proveOrderingExpr targetRuntime targetOrdering inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            proveOrderingExpr targetRuntime targetOrdering amount
+            proveOrderingExpr targetRuntime targetOrdering value
         | Unary(_, value) -> proveOrderingExpr targetRuntime targetOrdering value
         | Binary(_, left, right) ->
             proveOrderingExpr targetRuntime targetOrdering left

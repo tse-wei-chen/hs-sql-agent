@@ -24,6 +24,41 @@ type internal SqlCurrentTemporalKind =
     | Time = 1
     | Timestamp = 2
 
+type internal SqlDateMathUnit =
+    | Day
+    | Week
+    | Month
+    | Quarter
+    | Year
+    | Hour
+    | Minute
+    | Second
+
+module internal SqlDateMathUnit =
+    let Keyword = function
+        | SqlDateMathUnit.Day -> "DAY"
+        | SqlDateMathUnit.Week -> "WEEK"
+        | SqlDateMathUnit.Month -> "MONTH"
+        | SqlDateMathUnit.Quarter -> "QUARTER"
+        | SqlDateMathUnit.Year -> "YEAR"
+        | SqlDateMathUnit.Hour -> "HOUR"
+        | SqlDateMathUnit.Minute -> "MINUTE"
+        | SqlDateMathUnit.Second -> "SECOND"
+
+    let Parse(rawUnit: string, surfaceName: string) =
+        match rawUnit.Trim().ToUpperInvariant() with
+        | "DAY" | "DD" | "D" -> SqlDateMathUnit.Day
+        | "WEEK" | "WK" | "WW" -> SqlDateMathUnit.Week
+        | "MONTH" | "MM" | "M" -> SqlDateMathUnit.Month
+        | "QUARTER" | "QQ" | "Q" -> SqlDateMathUnit.Quarter
+        | "YEAR" | "YY" | "YYYY" -> SqlDateMathUnit.Year
+        | "HOUR" | "HH" -> SqlDateMathUnit.Hour
+        | "MINUTE" | "MI" | "N" -> SqlDateMathUnit.Minute
+        | "SECOND" | "SS" | "S" -> SqlDateMathUnit.Second
+        | _ ->
+            raise (SqlCompilationException(
+                "Unsupported " + surfaceName + " date-part unit '" + rawUnit + "'."))
+
 [<Flags>]
 type internal SqlSourceLexicalFeatures =
     | None = 0
@@ -867,6 +902,22 @@ module internal SqlDatePartCapabilityRules =
     let private portableParts =
         set [ "YEAR"; "MONTH"; "DAY" ]
 
+    let private quarterTargets =
+        set [
+            SqlAgentToolType.Postgres
+            SqlAgentToolType.MySQL
+            SqlAgentToolType.MsSqlServer
+            SqlAgentToolType.Sqlite
+        ]
+
+    let private clockPartTargets =
+        set [
+            SqlAgentToolType.Postgres
+            SqlAgentToolType.MySQL
+            SqlAgentToolType.MsSqlServer
+            SqlAgentToolType.Sqlite
+        ]
+
     let private postgresNativeParts =
         set [
             "QUARTER"
@@ -885,6 +936,9 @@ module internal SqlDatePartCapabilityRules =
         let part = normalize rawPart
         let supported =
             Set.contains part portableParts
+            || (part = "QUARTER" && Set.contains provider quarterTargets)
+            || (Set.contains part (set [ "HOUR"; "MINUTE"; "SECOND" ])
+                && Set.contains provider clockPartTargets)
             || (provider = SqlAgentToolType.Postgres && Set.contains part postgresNativeParts)
         if supported then null
         elif not (IsRepresentedPart part) then
@@ -896,31 +950,49 @@ module internal SqlDatePartCapabilityRules =
             + string provider + "."
 
 module internal SqlDateMathCapabilityRules =
-    let NormalizeUnit(rawUnit: string, surfaceName: string) =
-        match rawUnit.Trim().ToUpperInvariant() with
-        | "DAY" | "DD" | "D" -> "DAY"
-        | "WEEK" | "WK" | "WW" -> "WEEK"
-        | "MONTH" | "MM" | "M" -> "MONTH"
-        | "QUARTER" | "QQ" | "Q" -> "QUARTER"
-        | "YEAR" | "YY" | "YYYY" -> "YEAR"
-        | "HOUR" | "HH" -> "HOUR"
-        | "MINUTE" | "MI" | "N" -> "MINUTE"
-        | "SECOND" | "SS" | "S" -> "SECOND"
-        | _ -> raise (SqlCompilationException("Unsupported " + surfaceName + " date-part unit '" + rawUnit + "'."))
-
-    let TargetValidationError(rawUnit: string, provider: SqlAgentToolType, functionName: string) : string | null =
-        let surface = if functionName = "CORE_DATE_ADD" then "DATEADD" elif functionName = "CORE_DATE_DIFF" then "DATEDIFF" else functionName
-        let unit = NormalizeUnit(rawUnit, surface)
+    let TargetValidationError(unit: SqlDateMathUnit, provider: SqlAgentToolType, functionName: string) : string | null =
+        let surface =
+            if functionName = "CORE_DATE_ADD" then "DATEADD"
+            elif functionName = "CORE_DATE_DIFF" then "DATEDIFF"
+            else functionName
         let supported =
-            match provider with
-            | SqlAgentToolType.Postgres | SqlAgentToolType.Oracle | SqlAgentToolType.Sqlite -> unit = "DAY"
-            | SqlAgentToolType.Firebird -> unit <> "QUARTER"
-            | SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer -> true
+            match functionName, provider, unit with
+            | "CORE_DATE_ADD", (SqlAgentToolType.Postgres
+                              | SqlAgentToolType.MySQL
+                              | SqlAgentToolType.MsSqlServer
+                              | SqlAgentToolType.Firebird), _ -> true
+            | "CORE_DATE_ADD", (SqlAgentToolType.Oracle | SqlAgentToolType.Sqlite),
+                (SqlDateMathUnit.Day
+                | SqlDateMathUnit.Week
+                | SqlDateMathUnit.Hour
+                | SqlDateMathUnit.Minute
+                | SqlDateMathUnit.Second) -> true
+            | "CORE_DATE_DIFF", (SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer), _ -> true
+            | "CORE_DATE_DIFF", SqlAgentToolType.Firebird, SqlDateMathUnit.Quarter -> false
+            | "CORE_DATE_DIFF", SqlAgentToolType.Firebird, _ -> true
+            | "CORE_DATE_DIFF", (SqlAgentToolType.Postgres | SqlAgentToolType.Oracle | SqlAgentToolType.Sqlite), SqlDateMathUnit.Day -> true
             | _ -> false
         if supported then null
-        else surface + " unit " + unit + " is not supported by " + string provider + ". SQL capability '"
-             + functionName.ToLowerInvariant() + ".unit." + unit.ToLowerInvariant() + "' is not supported by provider "
-             + string provider + " for this Core plan."
+        else
+            let keyword = SqlDateMathUnit.Keyword unit
+            surface + " unit " + keyword + " is not supported by " + string provider + ". SQL capability '"
+            + functionName.ToLowerInvariant() + ".unit." + keyword.ToLowerInvariant() + "' is not supported by provider "
+            + string provider + " for this Core plan."
+
+module internal SqlExtractSourceCapabilityRules =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        match sourceDialect with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.Oracle
+        | SqlAgentToolType.Firebird -> null
+        | SqlAgentToolType.MsSqlServer
+        | SqlAgentToolType.Sqlite ->
+            "EXTRACT(... FROM ...) is not valid for declared source dialect "
+            + string sourceDialect
+            + " in the Core source capability profile; use the provider-native date-part surface."
+        | value ->
+            "EXTRACT source grammar is not modeled for " + string value + "."
 
 [<Struct>]
 type internal SqlDecimalShape =
@@ -1122,6 +1194,7 @@ type internal SqlSourceFunctionCanonicalizationKind =
     | CurrentTimestamp = 8
     | StringAggregate = 9
     | OracleSysdate = 10
+    | DatePart = 11
 
 [<Sealed>]
 type internal SqlSourceFunctionDialectRule(dialect, minArguments, maxArguments: Nullable<int>, supportsSeparator: bool) =
@@ -1153,7 +1226,11 @@ module internal SqlSourceFunctionRegistry =
         SqlSourceFunctionContract(name,kind,detail,List<SqlSourceFunctionDialectRule>(rules :> seq<SqlSourceFunctionDialectRule>) :> IReadOnlyList<_>)
     let private data =
         [ contract "DATEADD" SqlSourceFunctionCanonicalizationKind.DateAdd "DATEADD is modeled as a three-argument SQL Server/Firebird source function." [exact SqlAgentToolType.MsSqlServer 3; exact SqlAgentToolType.Firebird 3]
+          contract "TIMESTAMPADD" SqlSourceFunctionCanonicalizationKind.DateAdd "TIMESTAMPADD(unit, amount, datetime) is modeled as MySQL source syntax." [exact SqlAgentToolType.MySQL 3]
           contract "DATEDIFF" SqlSourceFunctionCanonicalizationKind.DateDiff "DATEDIFF is modeled as SQL Server/Firebird (3 arguments) or MySQL (2 arguments) source syntax." [exact SqlAgentToolType.MsSqlServer 3; exact SqlAgentToolType.Firebird 3; exact SqlAgentToolType.MySQL 2]
+          contract "TIMESTAMPDIFF" SqlSourceFunctionCanonicalizationKind.DateDiff "TIMESTAMPDIFF(unit, start, end) is modeled as MySQL source syntax." [exact SqlAgentToolType.MySQL 3]
+          contract "DATEPART" SqlSourceFunctionCanonicalizationKind.DatePart "DATEPART(part, datetime) is modeled as SQL Server source syntax." [exact SqlAgentToolType.MsSqlServer 2]
+          contract "DATE_PART" SqlSourceFunctionCanonicalizationKind.DatePart "DATE_PART('part', datetime) is modeled as PostgreSQL source syntax." [exact SqlAgentToolType.Postgres 2]
           contract "DATE_FORMAT" SqlSourceFunctionCanonicalizationKind.DateFormat "DATE_FORMAT is modeled as MySQL source syntax." [any SqlAgentToolType.MySQL]
           contract "FORMAT" SqlSourceFunctionCanonicalizationKind.DateFormat "Core models FORMAT as SQL Server date-format syntax; MySQL/SQLite FORMAT functions have different semantics." [any SqlAgentToolType.MsSqlServer]
           contract "TO_DATE" SqlSourceFunctionCanonicalizationKind.DateParse "TO_DATE is modeled only for PostgreSQL and Oracle source syntax." [any SqlAgentToolType.Postgres; any SqlAgentToolType.Oracle]

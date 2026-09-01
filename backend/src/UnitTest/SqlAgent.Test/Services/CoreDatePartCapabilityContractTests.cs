@@ -6,9 +6,9 @@ public sealed class CoreDatePartCapabilityContractTests
 {
     [Theory]
     [InlineData(SqlAgentToolType.Postgres, true)]
-    [InlineData(SqlAgentToolType.MySQL, false)]
-    [InlineData(SqlAgentToolType.Sqlite, false)]
-    [InlineData(SqlAgentToolType.MsSqlServer, false)]
+    [InlineData(SqlAgentToolType.MySQL, true)]
+    [InlineData(SqlAgentToolType.Sqlite, true)]
+    [InlineData(SqlAgentToolType.MsSqlServer, true)]
     [InlineData(SqlAgentToolType.Oracle, false)]
     [InlineData(SqlAgentToolType.Firebird, false)]
     public void QuarterFacade_StaysAlignedWithCapabilityMatrix(

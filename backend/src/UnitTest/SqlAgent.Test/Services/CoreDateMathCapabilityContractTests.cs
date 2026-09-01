@@ -34,10 +34,12 @@ public sealed class CoreDateMathCapabilityContractTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.Postgres, "MONTH", false, "core_date_add.unit.month")]
+    [InlineData(SqlAgentToolType.Postgres, "MONTH", true, "INTERVAL '1 month'")]
     [InlineData(SqlAgentToolType.Oracle, "MONTH", false, "core_date_add.unit.month")]
     [InlineData(SqlAgentToolType.Sqlite, "MONTH", false, "core_date_add.unit.month")]
-    [InlineData(SqlAgentToolType.Firebird, "QUARTER", false, "core_date_add.unit.quarter")]
+    [InlineData(SqlAgentToolType.Oracle, "HOUR", true, "NUMTODSINTERVAL")]
+    [InlineData(SqlAgentToolType.Sqlite, "HOUR", true, "hour")]
+    [InlineData(SqlAgentToolType.Firebird, "QUARTER", true, "DATEADD(MONTH")]
     [InlineData(SqlAgentToolType.Firebird, "WEEK", true, "DATEADD(WEEK")]
     [InlineData(SqlAgentToolType.MySQL, "QUARTER", true, "TIMESTAMPADD(QUARTER")]
     [InlineData(SqlAgentToolType.MsSqlServer, "QUARTER", true, "DATEADD(QUARTER")]
@@ -99,7 +101,11 @@ public sealed class CoreDateMathCapabilityContractTests
 
         Assert.Equal(SqlCapabilityStatus.Translated, capability.Status);
         Assert.Contains(
-            "target-specific unit restrictions",
+            "typed in the closed F# AST",
+            capability.Detail,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "non-DAY date difference remains fail-closed",
             capability.Detail,
             StringComparison.OrdinalIgnoreCase);
     }

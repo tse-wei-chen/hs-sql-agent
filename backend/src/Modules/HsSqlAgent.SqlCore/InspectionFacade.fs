@@ -50,6 +50,10 @@ module private Inspection =
         | OrderOrdinal _
         | Literal _
         | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            inspectExpr state amount
+            inspectExpr state value
         | Unary(_, value) -> inspectExpr state value
         | Binary(_, left, right) ->
             inspectExpr state left

@@ -8,12 +8,15 @@ open HsSqlAgent.SqlCore.Enums
 type SqlQuarterDatePartCapabilityRules private () =
     static member SupportsTarget(provider: SqlAgentToolType) =
         provider = SqlAgentToolType.Postgres
+        || provider = SqlAgentToolType.MySQL
+        || provider = SqlAgentToolType.MsSqlServer
+        || provider = SqlAgentToolType.Sqlite
     static member TargetValidationError(provider: SqlAgentToolType) =
         SqlDatePartCapabilityRules.TargetValidationError("QUARTER", provider)
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-01.67"
+    static member Version = "2026-09-01.68"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -217,6 +220,14 @@ type SqlCapabilityMatrix private () =
         let standaloneTime = if provider = SqlAgentToolType.Oracle then rejected else translated
         let currentTemporal = if provider = SqlAgentToolType.Oracle then translated else supported
         let postgresNativeDateParts = if provider = SqlAgentToolType.Postgres then supported else rejected
+        let sharedQuarterDatePart =
+            if SqlQuarterDatePartCapabilityRules.SupportsTarget(provider) then supported else rejected
+        let sharedClockDateParts =
+            if provider = SqlAgentToolType.Postgres
+               || provider = SqlAgentToolType.MySQL
+               || provider = SqlAgentToolType.MsSqlServer
+               || provider = SqlAgentToolType.Sqlite then supported
+            else rejected
         let modulo = if provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird then translated else supported
         let nullOrdering = if provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.MsSqlServer then translated else supported
 
@@ -448,12 +459,14 @@ type SqlCapabilityMatrix private () =
                 cap("temporal.standalone_time","temporal",standaloneTime,"Standalone TIME follows provider type capability.")
                 cap("temporal.offset_timestamp","temporal",offsetStatus,offsetDetail)
                 cap("temporal.current_keywords","temporal",currentTemporal,"CURRENT_DATE/TIME/TIMESTAMP use provider translation where required.")
-                cap("temporal.date_part.quarter","temporal",postgresNativeDateParts,
-                    "QUARTER is represented canonically and currently has a declared lossless native lowering only for PostgreSQL targets.")
+                cap("temporal.date_part.quarter","temporal",sharedQuarterDatePart,
+                    "QUARTER is represented canonically. PostgreSQL emits native EXTRACT, MySQL and SQL Server use native quarter/datepart semantics, and SQLite derives the quarter from the numeric month. Oracle and Firebird remain fail-closed until operand-type and provider-specific extraction semantics are proven.")
+                cap("temporal.date_part.clock","temporal",sharedClockDateParts,
+                    "HOUR, MINUTE, and SECOND are represented canonically for PostgreSQL, MySQL, SQL Server, and SQLite. Oracle and Firebird remain target-gated because the Core expression model does not yet prove the operand temporal type needed for their EXTRACT restrictions.")
                 cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
-                    "PostgreSQL-native EXTRACT fields HOUR, MINUTE, SECOND, DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE are represented structurally. They render natively for PostgreSQL; other targets remain capability-gated until a lossless lowering is declared.")
+                    "PostgreSQL-native EXTRACT fields DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE remain represented structurally and native-only for PostgreSQL targets.")
                 cap("temporal.date_arithmetic","temporal",translated,
-                    "Raw SQL DATEADD/DATEDIFF input is accepted only in declared source-dialect forms, while structured Core input can use the portable date-arithmetic shapes independently of source-native syntax. Cross-dialect semantics and target-specific unit restrictions are validated before lowering.")
+                    "Date-add units DAY, WEEK, MONTH, QUARTER, YEAR, HOUR, MINUTE, and SECOND are typed in the closed F# AST. PostgreSQL, MySQL, SQL Server, and Firebird have declared lowering for all eight units. Oracle and SQLite currently admit DAY, WEEK, HOUR, MINUTE, and SECOND only; MONTH, QUARTER, and YEAR remain fail-closed because Oracle YEAR-TO-MONTH interval arithmetic can reject invalid rollover dates while SQLite defaults to ceiling rollover and its semantics-preserving floor modifier requires a separately proven SQLite 3.46+ target profile. Raw source grammar includes SQL Server/Firebird DATEADD, MySQL TIMESTAMPADD, SQL Server DATEPART, PostgreSQL DATE_PART, and the existing DATEDIFF families. Cross-provider non-DAY date difference remains fail-closed because provider boundary-counting semantics are not proven equivalent.")
                 cap("temporal.date_only","temporal",(if provider=SqlAgentToolType.MySQL then supported else rejected),
                     if provider = SqlAgentToolType.MySQL then
                         "MySQL DATE(expr) is canonicalized explicitly and lowered back to native DATE(expr)."

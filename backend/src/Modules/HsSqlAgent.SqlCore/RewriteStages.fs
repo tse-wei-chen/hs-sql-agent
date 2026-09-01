@@ -160,6 +160,9 @@ module internal RewriteStages =
         match expression with
         | Spanned(_, inner) -> expressionReferencesColumn inner
         | Column _ | BoundColumn _ -> true
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            expressionReferencesColumn amount || expressionReferencesColumn value
         | Unary(_, value) | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
             expressionReferencesColumn value
         | Binary(_, left, right) | RegexMatch(left, right) ->
@@ -269,6 +272,10 @@ module internal RewriteStages =
             validateAggregateExpr enforceSource source sourceProfile target targetProfile upper
         | ScalarSubquery query | Exists(query, _) ->
             validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile amount
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
 
     and private validateAggregateSource enforceSource source sourceProfile target targetProfile table =
@@ -425,6 +432,10 @@ module internal RewriteStages =
         match expression with
         | Spanned(span, inner) -> normalizeExpr source target inner |> Expr.withSpan span
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
+        | DateAdd(unit, amount, value) ->
+            DateAdd(unit, normalizeExpr source target amount, normalizeExpr source target value)
+        | DateDiff(unit, startValue, finishValue) ->
+            DateDiff(unit, normalizeExpr source target startValue, normalizeExpr source target finishValue)
         | Unary(Positive, operand) -> normalizeExpr source target operand
         | Unary(op, operand) -> Unary(op, normalizeExpr source target operand)
         | Binary(op, left, right) -> Binary(op, normalizeExpr source target left, normalizeExpr source target right)
@@ -544,21 +555,28 @@ module internal RewriteStages =
             | None when not (isNull sourceContract) ->
                 match (requireSourceContract ()).CanonicalizationKind with
                 | SqlSourceFunctionCanonicalizationKind.DateAdd ->
-                    if arguments.Length <> 3 then compilationError "DATEADD requires exactly 3 arguments."
+                    if call.IsDistinct then
+                        compilationError "CORE_DATE_ADD does not support DISTINCT."
+                    if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
+                        compilationError "CORE_DATE_ADD does not support aggregate-local modifiers."
+                    if arguments.Length <> 3 then
+                        compilationError (sourceName + " requires exactly 3 arguments.")
                     let unit =
-                        keywordValue "DATEADD date-part unit" arguments[0]
-                        |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEADD")
-                    canonicalCall call "CORE_DATE_ADD" [ Literal(ScalarValue.Text unit); arguments[1]; arguments[2] ]
+                        keywordValue (sourceName + " date-part unit") arguments[0]
+                        |> fun value -> SqlDateMathUnit.Parse(value, sourceName)
+                    DateAdd(unit, arguments[1], arguments[2])
 
                 | SqlSourceFunctionCanonicalizationKind.DateDiff ->
+                    if call.IsDistinct then
+                        compilationError "CORE_DATE_DIFF does not support DISTINCT."
+                    if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
+                        compilationError "CORE_DATE_DIFF does not support aggregate-local modifiers."
                     let portableDay startValue endValue =
                         let canonical =
-                            canonicalCall
-                                call
-                                "CORE_DATE_DIFF"
-                                [ Literal(ScalarValue.Text "DAY")
-                                  dateOnlyOperand targetTool startValue
-                                  dateOnlyOperand targetTool endValue ]
+                            DateDiff(
+                                SqlDateMathUnit.Day,
+                                dateOnlyOperand targetTool startValue,
+                                dateOnlyOperand targetTool endValue)
                         if targetTool = SqlAgentToolType.Sqlite then
                             Cast(canonical, CastType.forTarget targetTool SqlType.SqlInteger "INTEGER")
                         else canonical
@@ -567,22 +585,44 @@ module internal RewriteStages =
                         portableDay startValue finish
                     | [ unitExpr; startValue; finish ] ->
                         let unit =
-                            keywordValue "DATEDIFF date-part unit" unitExpr
-                            |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEDIFF")
-                        if (sourceTool = SqlAgentToolType.MsSqlServer || sourceTool = SqlAgentToolType.Firebird)
+                            keywordValue (sourceName + " date-part unit") unitExpr
+                            |> fun value -> SqlDateMathUnit.Parse(value, sourceName)
+                        if (sourceTool = SqlAgentToolType.MsSqlServer
+                            || sourceTool = SqlAgentToolType.Firebird
+                            || (sourceTool = SqlAgentToolType.MySQL && sourceName = "TIMESTAMPDIFF"))
                            && sourceTool = targetTool then
-                            canonicalCall call "CORE_DATE_DIFF" [ Literal(ScalarValue.Text unit); startValue; finish ]
-                        elif unit <> "DAY" then
+                            DateDiff(unit, startValue, finish)
+                        elif unit <> SqlDateMathUnit.Day then
+                            let keyword = SqlDateMathUnit.Keyword unit
                             compilationError (
-                                "Cross-dialect DATEDIFF unit '" + unit + "' from " + string sourceTool + " to " + string targetTool
-                                + " is not translated: SQL capability 'core_date_diff.unit." + unit.ToLowerInvariant()
+                                "Cross-dialect DATEDIFF unit '" + keyword + "' from " + string sourceTool + " to " + string targetTool
+                                + " is not translated: SQL capability 'core_date_diff.unit." + keyword.ToLowerInvariant()
                                 + "' is not modeled losslessly. DAY is the currently modeled portable intersection.")
                         else
                             portableDay startValue finish
                     | values ->
                         compilationError (
-                            "DATEDIFF requires either the portable 2-argument (end, start) shape or the "
+                            sourceName + " requires either the portable 2-argument (end, start) shape or the "
                             + "3-argument (unit, start, end) shape; received " + string values.Length + " arguments.")
+
+                | SqlSourceFunctionCanonicalizationKind.DatePart ->
+                    if call.IsDistinct then
+                        compilationError "CORE_DATE_PART does not support DISTINCT."
+                    if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
+                        compilationError "CORE_DATE_PART does not support aggregate-local modifiers."
+                    if arguments.Length <> 2 then
+                        compilationError (sourceName + " requires exactly 2 arguments.")
+                    let rawPart =
+                        if sourceName = "DATE_PART" then
+                            textLiteral "DATE_PART field" arguments[0]
+                        else
+                            keywordValue "DATEPART field" arguments[0]
+                    let part = rawPart.Trim().ToUpperInvariant()
+                    if not (SqlDatePartCapabilityRules.IsRepresentedPart(part)) then
+                        compilationError (
+                            "Date part " + part
+                            + " is outside the declared Core date-part family.")
+                    Extract(ExtractField.create part, arguments[1])
 
                 | SqlSourceFunctionCanonicalizationKind.DateFormat ->
                     if arguments.Length <> 2 then compilationError "DATE_FORMAT/FORMAT requires exactly 2 arguments."
@@ -959,6 +999,10 @@ module internal RewriteStages =
         match expression with
         | Spanned(_, inner) -> validateExpr allowedTables inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            validateExpr allowedTables amount
+            validateExpr allowedTables value
         | Unary(_, operand) -> validateExpr allowedTables operand
         | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
         | Like(value, pattern, _, _, _) ->
@@ -1049,6 +1093,10 @@ module internal RewriteStages =
         match expression with
         | Spanned(_, inner) -> validateInsertValueScope inner
         | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            validateInsertValueScope amount
+            validateInsertValueScope value
         | ScalarSubquery _ | Exists _ -> ()
         | Column identifier
         | BoundColumn(identifier, _) ->
@@ -1354,7 +1402,8 @@ module internal RewriteStages =
             | SqlCanonicalTargetCapabilityFamily.DateMath ->
                 match call.Arguments |> List.tryHead with
                 | Some(Literal(ScalarValue.Text rawUnit)) ->
-                    match SqlDateMathCapabilityRules.TargetValidationError(rawUnit, provider, contract.Name) with
+                    let unit = SqlDateMathUnit.Parse(rawUnit, contract.Name)
+                    match SqlDateMathCapabilityRules.TargetValidationError(unit, provider, contract.Name) with
                     | null -> ()
                     | message -> raise (SqlCompilationException(message))
                 | _ -> raise (SqlCompilationException(
@@ -1536,6 +1585,10 @@ module internal RewriteStages =
         | Spanned(_, inner) ->
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow amount
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
         | Unary(_, operand) ->
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow operand
         | Binary(_, left, right) ->
@@ -1764,6 +1817,9 @@ module internal RewriteStages =
     let rec private containsVolatileRandom expression =
         match expression with
         | Spanned(_, inner) -> containsVolatileRandom inner
+        | DateAdd(_, amount, value)
+        | DateDiff(_, amount, value) ->
+            containsVolatileRandom amount || containsVolatileRandom value
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
             let isKnownRandom =

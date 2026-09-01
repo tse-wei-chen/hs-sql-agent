@@ -81,26 +81,41 @@ public class CoreProviderCapabilityValidationTests
         Assert.Contains("function.regex_match", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Compile_NonDayDateAddForPostgres_FailsBeforeLowering()
+    [Theory]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_CalendarDateAddWithoutRolloverProof_FailsBeforeLowering(
+        SqlAgentToolType targetProvider)
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "SELECT DATEADD(month, 1, created_at) FROM events",
             SqlAgentToolType.MsSqlServer,
-            SqlAgentToolType.Postgres));
+            targetProvider));
 
         Assert.Contains("core_date_add.unit.month", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Compile_QuarterDateAddForFirebird_FailsBeforeLowering()
+    public void Compile_NonDayDateAddForPostgres_UsesTypedIntervalLowering()
     {
-        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+        var command = Compile(
+            "SELECT DATEADD(month, 1, created_at) FROM events",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("INTERVAL '1 month'", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_QuarterDateAddForFirebird_LowersToThreeMonths()
+    {
+        var command = Compile(
             "SELECT DATEADD(quarter, 1, created_at) FROM events",
             SqlAgentToolType.MsSqlServer,
-            SqlAgentToolType.Firebird));
+            SqlAgentToolType.Firebird);
 
-        Assert.Contains("core_date_add.unit.quarter", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DATEADD(MONTH", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("* 3", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
