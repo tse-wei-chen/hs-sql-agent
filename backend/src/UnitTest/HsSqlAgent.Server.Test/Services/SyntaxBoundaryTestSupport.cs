@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using Microsoft.Data.Sqlite;
 using Admin.Service.Models;
 using Moq;
 
@@ -30,6 +31,60 @@ internal static class SyntaxBoundaryTestSupport
                 ',',
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public static RowSetBoundaryProvider DmlRowSetProvider(
+        SqlAgentToolType type)
+    {
+        const string schema = "main";
+        const string table = "users";
+
+        var metadata = new Mock<IProviderMetadataReader>(MockBehavior.Strict);
+        metadata
+            .Setup(x => x.GetSchemasAsync(
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([schema]);
+        metadata
+            .Setup(x => x.GetTablesAsync(
+                It.IsAny<string>(),
+                schema,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([table]);
+        metadata
+            .Setup(x => x.GetColumnsAsync(
+                It.IsAny<string>(),
+                schema,
+                table,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new DatabaseColumnMetadata(
+                    schema,
+                    table,
+                    "id",
+                    "integer",
+                    true,
+                    1),
+                new DatabaseColumnMetadata(
+                    schema,
+                    table,
+                    "name",
+                    "text",
+                    false)
+            ]);
+
+        var connections = new SqliteBoundaryConnectionFactory();
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(type);
+        provider.SetupGet(x => x.Metadata).Returns(metadata.Object);
+        provider.SetupGet(x => x.Connections).Returns(connections);
+
+        return new RowSetBoundaryProvider(
+            provider,
+            metadata,
+            connections,
+            schema,
+            table);
+    }
 
     public static DmlBoundaryProvider DmlProvider(SqlAgentToolType type)
     {
@@ -81,6 +136,40 @@ internal static class SyntaxBoundaryTestSupport
             table,
             version);
     }
+}
+
+internal sealed record RowSetBoundaryProvider(
+    Mock<ISqlProvider> Provider,
+    Mock<IProviderMetadataReader> Metadata,
+    SqliteBoundaryConnectionFactory Connections,
+    string Schema,
+    string Table)
+{
+    public string QualifiedTable => Schema + "." + Table;
+}
+
+internal sealed class SqliteBoundaryConnectionFactory : IDbConnectionFactory
+{
+    public int CreateCount { get; private set; }
+
+    public DbConnection Create(string connectionString)
+    {
+        CreateCount++;
+        return new SqliteConnection(connectionString);
+    }
+}
+
+internal sealed class SqliteBoundaryPreviewTransactionFactory :
+    IDmlPreviewTransactionFactory
+{
+    public async Task<DbTransaction> BeginAsync(
+        DbConnection connection,
+        SqlAgentToolType provider,
+        IsolationLevel isolationLevel,
+        CancellationToken cancellationToken = default) =>
+        await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
 }
 
 internal sealed record DmlBoundaryProvider(
