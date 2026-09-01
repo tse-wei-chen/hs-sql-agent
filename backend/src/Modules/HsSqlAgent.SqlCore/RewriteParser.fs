@@ -407,24 +407,33 @@ module internal RewriteParser =
             |> Seq.toList
             |> String.concat " "
 
-        try
-            RewriteCastTypes.parseSource (sourceDialectToolType cursor.Dialect) sourceType
-        with
-        | :? SqlCompilationException as ex ->
-            let message =
-                ex.Message
-                + " Source dialect: "
-                + sourceDialectName cursor.Dialect
-                + "."
-            raise (
-                SqlParseException(
-                    message,
-                    tokenDiagnostic
-                        "SQL_SOURCE_TYPE_REJECTED"
-                        SqlDiagnosticStage.SourceValidation
-                        SqlDiagnosticCategory.DialectSyntax
-                        typeToken
-                        message))
+        let parsedType =
+            try
+                RewriteCastTypes.parseSource (sourceDialectToolType cursor.Dialect) sourceType
+            with
+            | :? SqlCompilationException as ex ->
+                let message =
+                    ex.Message
+                    + " Source dialect: "
+                    + sourceDialectName cursor.Dialect
+                    + "."
+                raise (
+                    SqlParseException(
+                        message,
+                        tokenDiagnostic
+                            "SQL_SOURCE_TYPE_REJECTED"
+                            SqlDiagnosticStage.SourceValidation
+                            SqlDiagnosticCategory.DialectSyntax
+                            typeToken
+                            message))
+
+        match cursor.Dialect, CastType.semantic parsedType with
+        | SourceDialect.Firebird, Some(SqlTime(_, true))
+        | SourceDialect.Firebird, Some(SqlTimestamp(_, true)) ->
+            requireSourceCapability typeToken cursor.SourceExpressions.FirebirdTimeZoneType
+        | _ -> ()
+
+        parsedType
 
     let private parseCastType (cursor: Cursor) =
         parseCastTypeName cursor
