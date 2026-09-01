@@ -34,6 +34,20 @@ The matrices exercise parsing, query facts/binding, validation, compilation, and
 
 The DML positive floor contains 42 common six-dialect cases plus 17 explicit native/profile/assurance-gated capability cases.
 
+## Server-boundary grammar bombardment
+
+Compiler-level syntax acceptance is not sufficient by itself. Server tests keep a separate boundary floor that exercises the production runtime entry points and the F# compiler/native renderer path:
+
+| Boundary | Cases |
+| --- | ---: |
+| Six-dialect query runtime | 18 |
+| Six-dialect INSERT VALUES approval runtime | 18 |
+| Six-dialect UPDATE/DELETE row-set preview runtime | 12 |
+| Six-dialect INSERT ... SELECT fail-closed runtime | 6 |
+| **Total** | **54** |
+
+The INSERT VALUES cases verify runtime server-profile capture, metadata target resolution, F# DML compilation, native rendering, immutable payload preview, plan fingerprinting, and approval challenges. UPDATE/DELETE cases additionally execute the generated match query against a real SQLite rowset harness, retain strict primary-key identity, and verify row-set fingerprints. The harness substitutes only the provider-specific read-only transaction bootstrap; it does not bypass DML planning, compilation, matching, or approval semantics.
+
 ## Negative grammar bombardment
 
 `sql-negative-syntax-contract.json` is the curated fail-closed corpus. Every case declares and verifies:
