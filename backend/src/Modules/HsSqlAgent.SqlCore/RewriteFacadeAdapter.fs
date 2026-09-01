@@ -114,7 +114,7 @@ module internal RewriteFacadeAdapter =
             SqlIlikeCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
           DistinctFrom =
-            SqlDistinctFromCapabilityRules.SourceValidationError(source)
+            SqlDistinctFromCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
           IntervalLiteral =
             SqlIntervalLiteralCapabilityRules.SourceValidationError(source)
@@ -149,7 +149,7 @@ module internal RewriteFacadeAdapter =
                     + providerName target
                     + " for this Core plan.")
           DistinctFrom =
-            SqlDistinctFromCapabilityRules.TargetValidationError(target)
+            SqlDistinctFromCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           IntervalLiteral =
             if SqlIntervalLiteralCapabilityRules.IsTargetSupported(target) then

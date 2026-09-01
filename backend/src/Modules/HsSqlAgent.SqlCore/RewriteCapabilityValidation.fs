@@ -245,6 +245,22 @@ module internal RewriteCapabilityValidation =
             delete.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
             delete.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
 
+    let rec private isRepeatableDistinctOperand expression =
+        match expression with
+        | Column _ | BoundColumn _ | OrderOrdinal _ | Literal _ -> true
+        | Unary(_, operand)
+        | Cast(operand, _)
+        | Extract(_, operand) ->
+            isRepeatableDistinctOperand operand
+        | Binary((BinaryOperator.Add
+                 | BinaryOperator.Subtract
+                 | BinaryOperator.Multiply
+                 | BinaryOperator.Divide
+                 | BinaryOperator.Modulo
+                 | BinaryOperator.Concat), left, right) ->
+            isRepeatableDistinctOperand left && isRepeatableDistinctOperand right
+        | _ -> false
+
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ -> ()
@@ -257,6 +273,10 @@ module internal RewriteCapabilityValidation =
             proveTargetExpr targetRuntime expressionProofs right
         | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
             requireExpressionCapability expressionProofs.DistinctFrom
+            if TargetRuntime.provider targetRuntime = SqlAgentToolType.Oracle
+               && (not (isRepeatableDistinctOperand left) || not (isRepeatableDistinctOperand right)) then
+                raise (SqlCompilationException(
+                    "Oracle null-safe distinct lowering requires repeatable scalar operands because the proven CASE lowering may reference each operand more than once; volatile functions, windows, and subqueries remain fail-closed."))
             proveTargetExpr targetRuntime expressionProofs left
             proveTargetExpr targetRuntime expressionProofs right
         | Binary(_, left, right) ->

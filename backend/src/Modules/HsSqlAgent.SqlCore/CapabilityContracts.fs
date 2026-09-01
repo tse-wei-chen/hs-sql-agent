@@ -217,17 +217,52 @@ module internal SqlIlikeCapabilityRules =
         else "ILIKE is PostgreSQL-specific and is not valid for source dialect " + string sourceDialect + "."
 
 module internal SqlDistinctFromCapabilityRules =
-    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
-        if sourceDialect = SqlAgentToolType.Postgres then null
-        else
-            "SQL capability 'operator.is_distinct_from' is currently declared only for the PostgreSQL source dialect; source dialect "
-            + string sourceDialect + " remains fail-closed."
+    let private sqlServerMinimumVersion = Version(16, 0)
 
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else
-            "SQL capability 'operator.is_distinct_from' currently has a declared lossless lowering only for PostgreSQL targets; target provider "
-            + string provider + " remains fail-closed."
+    let private profileAtLeast
+        (profile: SqlProviderCapabilityProfile | null)
+        provider
+        (minimum: Version) =
+        not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(minimum) >= 0
+
+    let SourceValidationError(
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        match sourceDialect with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.Sqlite
+        | SqlAgentToolType.Firebird -> null
+        | SqlAgentToolType.MsSqlServer when
+            profileAtLeast sourceProfile SqlAgentToolType.MsSqlServer sqlServerMinimumVersion ->
+            null
+        | SqlAgentToolType.MsSqlServer ->
+            "SQL capability 'operator.is_distinct_from' requires SQL Server source ServerVersion 16.0+ (SQL Server 2022) for native IS [NOT] DISTINCT FROM syntax."
+        | SqlAgentToolType.MySQL ->
+            "MySQL source uses the native NULL-safe equality operator <=> instead of IS [NOT] DISTINCT FROM."
+        | SqlAgentToolType.Oracle ->
+            "Oracle source SQL has no declared native IS [NOT] DISTINCT FROM spelling in the Core source grammar."
+        | value ->
+            "SQL capability 'operator.is_distinct_from' is not declared for source dialect " + string value + "."
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.Sqlite
+        | SqlAgentToolType.Oracle
+        | SqlAgentToolType.Firebird -> null
+        | SqlAgentToolType.MsSqlServer when
+            profileAtLeast targetProfile SqlAgentToolType.MsSqlServer sqlServerMinimumVersion ->
+            null
+        | SqlAgentToolType.MsSqlServer ->
+            "SQL capability 'operator.is_distinct_from' requires SQL Server target ServerVersion 16.0+ (SQL Server 2022) for native IS [NOT] DISTINCT FROM lowering."
+        | value ->
+            "SQL capability 'operator.is_distinct_from' is not supported by target provider " + string value + "."
 
 module internal SqlIntervalLiteralCapabilityRules =
     let IsTargetSupported(provider: SqlAgentToolType) = provider = SqlAgentToolType.Postgres

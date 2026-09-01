@@ -564,6 +564,11 @@ module internal RewriteParser =
             | Operator "<" -> cursor.Advance(); Binary(BinaryOperator.LessThan, left, parseAdd cursor)
             | Operator ">=" -> cursor.Advance(); Binary(BinaryOperator.GreaterThanOrEqual, left, parseAdd cursor)
             | Operator "<=" -> cursor.Advance(); Binary(BinaryOperator.LessThanOrEqual, left, parseAdd cursor)
+            | Operator "<=>" ->
+                if cursor.Dialect <> SourceDialect.MySql then
+                    fail cursor.Current "The <=> NULL-safe equality operator is valid only for the MySQL source dialect."
+                cursor.Advance()
+                Binary(BinaryOperator.NotDistinctFrom, left, parseAdd cursor)
             | Keyword "LIKE" -> cursor.Advance(); parseLikeTail cursor left false false
             | Keyword "ILIKE" ->
                 requireSourceCapability cursor.Current cursor.SourceExpressions.ILike

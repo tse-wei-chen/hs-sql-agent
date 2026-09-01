@@ -269,6 +269,18 @@ module internal RewriteRenderer =
                 "(" + leftSql + " + " + rightSql + ")"
             | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Unproven message) ->
                 invalidOp ("Validated SQL reached rendering without SQL Server concat proof: " + message)
+            | BinaryOperator.NotDistinctFrom, MySql, _ ->
+                "(" + leftSql + " <=> " + rightSql + ")"
+            | BinaryOperator.DistinctFrom, MySql, _ ->
+                "NOT (" + leftSql + " <=> " + rightSql + ")"
+            | (BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), Oracle, _ ->
+                let equal =
+                    "CASE WHEN " + leftSql + " IS NULL THEN CASE WHEN " + rightSql
+                    + " IS NULL THEN 1 ELSE 0 END WHEN " + rightSql
+                    + " IS NULL THEN 0 WHEN " + leftSql + " = " + rightSql
+                    + " THEN 1 ELSE 0 END"
+                "(" + equal
+                + (if operator = BinaryOperator.NotDistinctFrom then " = 1)" else " = 0)")
             | _ -> "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
         | Expr.Like(value, pattern, escape, negated, caseInsensitive) ->
             if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp (capabilityError ctx.Provider "operator.ilike")

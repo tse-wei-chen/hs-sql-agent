@@ -400,11 +400,26 @@ type SqlCapabilityMatrix private () =
                 cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
                 cap("expression.boolean_literal_source","expression",translated,
                     "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available.")
-                cap("operator.is_distinct_from","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),
-                    if provider=SqlAgentToolType.Postgres then
-                        "PostgreSQL IS DISTINCT FROM and IS NOT DISTINCT FROM are represented as dedicated null-safe comparison operators, preserved through compatibility projection, and emitted natively. The operator is source- and target-capability gated so ordinary equality is never substituted for its two-valued NULL semantics."
-                    else
-                        "PostgreSQL null-safe IS [NOT] DISTINCT FROM currently remains fail-closed for this target provider until an equivalent null and type-comparison contract is proven.")
+                cap("operator.is_distinct_from","expression",
+                    (match provider with
+                     | SqlAgentToolType.MsSqlServer ->
+                         match profileServerVersion with
+                         | Some version when version.CompareTo(Version(16, 0)) >= 0 -> translated
+                         | _ -> rejected
+                     | _ -> translated),
+                    match provider with
+                    | SqlAgentToolType.Postgres
+                    | SqlAgentToolType.Sqlite
+                    | SqlAgentToolType.Firebird ->
+                        "Canonical null-safe distinct comparison is emitted with native IS [NOT] DISTINCT FROM syntax."
+                    | SqlAgentToolType.MySQL ->
+                        "Canonical IS NOT DISTINCT FROM lowers to MySQL <=>; IS DISTINCT FROM lowers to NOT (<=>), preserving two-valued NULL-safe comparison semantics."
+                    | SqlAgentToolType.MsSqlServer ->
+                        "SQL Server 2022 / ServerVersion 16.0+ emits native IS [NOT] DISTINCT FROM. Older or undeclared SQL Server targets remain fail-closed."
+                    | SqlAgentToolType.Oracle ->
+                        "Oracle uses a CASE-based null-safe comparison built from ordinary target equality and IS NULL semantics. The lowering is allowed only for repeatable scalar operands so Core never duplicates volatile/subquery evaluation."
+                    | _ ->
+                        "Canonical null-safe comparison follows the provider-specific proven lowering.")
                 cap("function.qualified","function",(if provider=SqlAgentToolType.Postgres then supported else rejected),
                     if provider=SqlAgentToolType.Postgres then
                         "PostgreSQL native function identifiers preserve qualification and per-part quote intent structurally through parsing, the closed F# model, compatibility projection, normalization, validation, and native rendering. Quoted and schema-qualified calls remain target-gated rather than being flattened into portable function names."
