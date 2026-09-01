@@ -217,6 +217,24 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
                 $"SELECT id FROM comparisons WHERE a {op.Value.Sql} b"
             ];
         }
+
+        foreach (var source in new[]
+                 {
+                     SqlAgentToolType.Postgres,
+                     SqlAgentToolType.Sqlite,
+                     SqlAgentToolType.MsSqlServer,
+                     SqlAgentToolType.Oracle,
+                     SqlAgentToolType.Firebird
+                 })
+        {
+            yield return
+            [
+                SyntaxGrammarMatrix.CaseName(source.ToString(), "mysql-null-safe-spelling"),
+                source,
+                null,
+                "SELECT id FROM comparisons WHERE a <=> b"
+            ];
+        }
     }
 
     public static IEnumerable<object[]> UnsupportedTargetMatrix()
@@ -256,7 +274,7 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
         Assert.Equal(32, PositiveMatrix().Count());
         Assert.Equal(8, NativeSourceMatrix().Count());
         Assert.Equal(20, CrossProviderTargetMatrix().Count());
-        Assert.Equal(6, UnsupportedSourceMatrix().Count());
+        Assert.Equal(11, UnsupportedSourceMatrix().Count());
         Assert.Equal(6, UnsupportedTargetMatrix().Count());
     }
 

@@ -247,6 +247,13 @@ module internal SqlDistinctFromCapabilityRules =
         | value ->
             "SQL capability 'operator.is_distinct_from' is not declared for source dialect " + string value + "."
 
+    let MySqlNullSafeEqualitySourceSyntaxValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        if sourceDialect = SqlAgentToolType.MySQL then null
+        else
+            "MySQL native <=> NULL-safe equality spelling is not valid for declared source dialect "
+            + string sourceDialect
+            + "; the canonical null-safe comparison semantic must enter through that dialect's declared source grammar."
+
     let TargetValidationError(
         provider: SqlAgentToolType,
         targetProfile: SqlProviderCapabilityProfile | null) : string | null =

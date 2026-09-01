@@ -60,10 +60,10 @@ public sealed class SqlGrammarBombardmentCoverageTests
 
         Assert.Equal(4932, positiveQuery);
         Assert.Equal(419, positiveDml);
-        Assert.Equal(154, negativeQuery);
+        Assert.Equal(159, negativeQuery);
         Assert.Equal(68, negativeDml);
         Assert.Equal(
-            5573,
+            5578,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }

@@ -22,6 +22,7 @@ module internal RewriteParser =
         { EnforceDialectSyntax: bool
           MySqlPipes: MySqlPipesSemantics
           MySqlNoBackslashEscapes: bool
+          MySqlNullSafeEqualitySyntax: CapabilityProof
           DistinctFromSyntax: CapabilityProof
           Joins: JoinProofs
           Expressions: ExpressionProofs
@@ -73,6 +74,7 @@ module internal RewriteParser =
             { EnforceDialectSyntax = false
               MySqlPipes = RejectAmbiguousPipes
               MySqlNoBackslashEscapes = false
+              MySqlNullSafeEqualitySyntax = ProvenCapability
               DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
@@ -89,6 +91,7 @@ module internal RewriteParser =
             { EnforceDialectSyntax = true
               MySqlPipes = PipesAsConcat
               MySqlNoBackslashEscapes = false
+              MySqlNullSafeEqualitySyntax = ProvenCapability
               DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
@@ -114,6 +117,7 @@ module internal RewriteParser =
         member _.Dialect = dialect
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
         member _.MySqlNoBackslashEscapes = semantics.MySqlNoBackslashEscapes
+        member _.SourceMySqlNullSafeEqualitySyntax = semantics.MySqlNullSafeEqualitySyntax
         member _.SourceDistinctFromSyntax = semantics.DistinctFromSyntax
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
@@ -570,8 +574,8 @@ module internal RewriteParser =
             | Operator ">=" -> cursor.Advance(); Binary(BinaryOperator.GreaterThanOrEqual, left, parseAdd cursor)
             | Operator "<=" -> cursor.Advance(); Binary(BinaryOperator.LessThanOrEqual, left, parseAdd cursor)
             | Operator "<=>" ->
-                if cursor.Dialect <> SourceDialect.MySql then
-                    fail cursor.Current "The <=> NULL-safe equality operator is valid only for the MySQL source dialect."
+                let token = cursor.Current
+                requireSourceCapability token cursor.SourceMySqlNullSafeEqualitySyntax
                 cursor.Advance()
                 Binary(BinaryOperator.NotDistinctFrom, left, parseAdd cursor)
             | Keyword "LIKE" -> cursor.Advance(); parseLikeTail cursor left false false

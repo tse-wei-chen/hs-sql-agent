@@ -281,6 +281,9 @@ module internal RewriteFacadeAdapter =
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
           MySqlNoBackslashEscapes =
             SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(source, sourceProfile)
+          MySqlNullSafeEqualitySyntax =
+            SqlDistinctFromCapabilityRules.MySqlNullSafeEqualitySourceSyntaxValidationError(source)
+            |> sourceCapabilityProof
           DistinctFromSyntax =
             SqlDistinctFromCapabilityRules.SourceSyntaxValidationError(source, sourceProfile)
             |> sourceCapabilityProof
