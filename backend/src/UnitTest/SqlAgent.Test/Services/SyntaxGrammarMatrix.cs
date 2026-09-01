@@ -35,6 +35,18 @@ internal static class SyntaxGrammarMatrix
             _ => false
         };
 
+    public static SqlDiagnostic RequireTypedDiagnostic(Exception error)
+    {
+        var diagnostic = error switch
+        {
+            SqlParseException parse => parse.Diagnostic,
+            SqlCompilationException compilation => compilation.Diagnostic,
+            _ => error.Data["HsSqlAgent.SqlCore.Diagnostic"] as SqlDiagnostic
+        };
+
+        return Xunit.Assert.IsType<SqlDiagnostic>(diagnostic);
+    }
+
     public static (int? Limit, int? Offset) CanonicalPaging(
         HsSqlAgent.SqlCore.Core.Ast.SqlStatement statement,
         string caseName) =>

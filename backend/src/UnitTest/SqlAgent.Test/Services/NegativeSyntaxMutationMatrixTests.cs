@@ -249,7 +249,7 @@ public sealed class NegativeSyntaxMutationMatrixTests
             error.Message,
             StringComparison.OrdinalIgnoreCase);
 
-        var diagnostic = RequireTypedDiagnostic(error);
+        var diagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(error);
 
         Assert.Equal(expectedDiagnosticCode, diagnostic.Code);
         Assert.Equal(expectedDiagnosticStage, diagnostic.Stage);
@@ -267,17 +267,5 @@ public sealed class NegativeSyntaxMutationMatrixTests
             expectedSpanText,
             actualSpanText,
             ignoreCase: true);
-    }
-
-    private static SqlDiagnostic RequireTypedDiagnostic(Exception error)
-    {
-        var diagnostic = error switch
-        {
-            SqlParseException parse => parse.Diagnostic,
-            SqlCompilationException compilation => compilation.Diagnostic,
-            _ => error.Data["HsSqlAgent.SqlCore.Diagnostic"] as SqlDiagnostic
-        };
-
-        return Assert.IsType<SqlDiagnostic>(diagnostic);
     }
 }
