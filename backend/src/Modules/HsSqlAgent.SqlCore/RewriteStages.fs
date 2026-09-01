@@ -81,6 +81,12 @@ module internal RewriteStages =
         | CapabilitySide.TargetCapability ->
             invalidOp "Target capability proof reached source semantic validation."
 
+    let private targetCapabilityMessage rejection =
+        match CapabilityRejection.side rejection with
+        | CapabilitySide.TargetCapability -> CapabilityRejection.message rejection
+        | CapabilitySide.SourceCapability ->
+            invalidOp "Source capability proof reached target capability validation."
+
     let private requireSourceRegexCapability = function
         | ProvenCapability -> ()
         | RejectedCapability rejection ->
@@ -1412,7 +1418,8 @@ module internal RewriteStages =
         let requireProof proof =
             match proof with
             | ProvenCapability -> ()
-            | RejectedCapability message -> raise (SqlCompilationException(message))
+            | RejectedCapability rejection ->
+                raise (SqlCompilationException(targetCapabilityMessage rejection))
         match targetRuntime, value with
         | FirebirdRuntime, ScalarValue.Text text when text.Length > 8191 ->
             raise (SqlCompilationException(
@@ -1443,11 +1450,12 @@ module internal RewriteStages =
 
     let private requireExpressionCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> invalidOp message
+        | RejectedCapability rejection -> invalidOp (targetCapabilityMessage rejection)
 
     let private requireFilterCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
+        | RejectedCapability rejection ->
+            raise (SqlCompilationException(sourceCapabilityMessage rejection))
 
     let rec private proveFilterPredicate (proofs: FilterPredicateProofs) expression =
         match expression with
@@ -1806,7 +1814,8 @@ module internal RewriteStages =
 
     let private requireCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
+        | RejectedCapability rejection ->
+            raise (SqlCompilationException(targetCapabilityMessage rejection))
 
     let private proveJoinKind (proofs: JoinProofs) = function
         | JoinKind.Right -> requireCapability proofs.RightJoin
@@ -1845,7 +1854,8 @@ module internal RewriteStages =
 
     let private requireDmlCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
+        | RejectedCapability rejection ->
+            raise (SqlCompilationException(targetCapabilityMessage rejection))
 
     let private returningNodeName = function
         | Column _ -> "ColumnExpr"
@@ -2388,7 +2398,8 @@ module internal RewriteStages =
 
     let private requireConflictCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
+        | RejectedCapability rejection ->
+            raise (SqlCompilationException(targetCapabilityMessage rejection))
 
     let private validateMySqlConflict (proofs: ConflictProofs) (conflict: InsertConflict) =
         match conflict.Action with
