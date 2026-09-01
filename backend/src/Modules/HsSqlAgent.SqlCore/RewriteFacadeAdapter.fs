@@ -126,7 +126,9 @@ module internal RewriteFacadeAdapter =
             SqlQualifiedFunctionCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
           OffsetTimestamp = CapabilityProof.ProvenCapability
-          FirebirdTimeZoneType = CapabilityProof.ProvenCapability
+          FirebirdTimeZoneType =
+            SqlFirebirdTimeZoneTypeCapabilityRules.CastSourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           FirebirdExtendedDecimal = CapabilityProof.ProvenCapability
           StandaloneTime = CapabilityProof.ProvenCapability
           FilterPredicate = filterPredicateProofs source "source" sourceCapabilityProof }
