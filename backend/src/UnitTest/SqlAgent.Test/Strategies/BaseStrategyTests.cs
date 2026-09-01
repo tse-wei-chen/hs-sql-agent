@@ -101,6 +101,50 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     [Fact]
+    public async Task ExecuteRawQueryAsync_CteWhereOrder_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id " +
+            $"FROM {TestTableName} " +
+            $"WHERE {TestUserIdColumn} > 0" +
+            $") SELECT item_id FROM recent ORDER BY item_id";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteUnionAllBody_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName} " +
+            $"UNION ALL " +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $") SELECT item_id FROM recent";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.True(
+            rows.Count >= 2,
+            $"Expected CTE UNION ALL to return multiple rows for {Strategy.DbType}.");
+    }
+
+    [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
         var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };
