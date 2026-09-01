@@ -253,7 +253,7 @@ module internal RewriteLegacyAstAdapter =
             Windowed(exprOf windowed.Expression, windowOf windowed.Window)
 
         | :? HsSqlAgent.SqlCore.Core.Ast.CastExpr as cast ->
-            Cast(exprOf cast.Expression, CastType.create cast.TypeName)
+            Cast(exprOf cast.Expression, CastType.compatibilityRaw cast.TypeName)
 
         | :? HsSqlAgent.SqlCore.Core.Ast.ExtractExpr as extract ->
             Extract(ExtractField.create extract.Field, exprOf extract.Expression)

@@ -397,14 +397,14 @@ module internal RewriteStages =
     let private dateOnlyOperand target expression =
         match target with
         | SqlAgentToolType.Oracle ->
-            FunctionCall(emptyFunction "TRUNC" [ Cast(expression, CastType.create "DATE") ])
+            FunctionCall(emptyFunction "TRUNC" [ Cast(expression, CastType.forTarget target SqlType.SqlDate "DATE") ])
         | SqlAgentToolType.MySQL
         | SqlAgentToolType.Sqlite ->
             FunctionCall(emptyFunction "DATE" [ expression ])
         | SqlAgentToolType.Postgres
         | SqlAgentToolType.MsSqlServer
         | SqlAgentToolType.Firebird ->
-            Cast(expression, CastType.create "DATE")
+            Cast(expression, CastType.forTarget target SqlType.SqlDate "DATE")
         | value ->
             compilationError ("Unsupported target provider '" + string value + "' for portable DATEDIFF DAY normalization.")
 
@@ -554,7 +554,7 @@ module internal RewriteStages =
                                   dateOnlyOperand targetTool startValue
                                   dateOnlyOperand targetTool endValue ]
                         if targetTool = SqlAgentToolType.Sqlite then
-                            Cast(canonical, CastType.create "INTEGER")
+                            Cast(canonical, CastType.forTarget targetTool SqlType.SqlInteger "INTEGER")
                         else canonical
                     match arguments with
                     | [ finish; startValue ] ->

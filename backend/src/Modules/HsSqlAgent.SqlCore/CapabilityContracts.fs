@@ -734,15 +734,15 @@ module internal SqlFirebirdTimeZoneTypeCapabilityRules =
         && not (isNull targetProfile.ServerVersion)
         && targetProfile.ServerVersion.CompareTo(MinimumVersion) >= 0
 
-    let CastTargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null, typeName: string) : string | null =
-        let normalized = String.Join(" ", typeName.Trim().ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries))
-        let timezoneType =
-            normalized.EndsWith(" WITH TIME ZONE", StringComparison.Ordinal)
-            && (normalized.StartsWith("TIME", StringComparison.Ordinal) || normalized.StartsWith("TIMESTAMP", StringComparison.Ordinal))
-        if provider <> SqlAgentToolType.Firebird || not timezoneType || SupportsTargetProfile(targetProfile) then null
+    let CastSourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        if provider <> SqlAgentToolType.Firebird || SupportsTargetProfile(sourceProfile) then null
         else
-            "SQL capability 'temporal.firebird_time_zone_type' requires an explicit Firebird target capability profile with ServerVersion 4.0 or newer for CAST target type '"
-            + typeName + "' because TIME WITH TIME ZONE and TIMESTAMP WITH TIME ZONE were introduced in Firebird 4.0."
+            "SQL capability 'temporal.firebird_time_zone_type' requires an explicit Firebird source capability profile with ServerVersion 4.0 or newer for TIME/TIMESTAMP WITH TIME ZONE CAST source syntax."
+
+    let CastTargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        if provider <> SqlAgentToolType.Firebird || SupportsTargetProfile(targetProfile) then null
+        else
+            "SQL capability 'temporal.firebird_time_zone_type' requires an explicit Firebird target capability profile with ServerVersion 4.0 or newer because TIME WITH TIME ZONE and TIMESTAMP WITH TIME ZONE were introduced in Firebird 4.0."
 
 module internal SqlOffsetTimestampCapabilityRules =
     let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =

@@ -126,7 +126,9 @@ module internal RewriteFacadeAdapter =
             SqlQualifiedFunctionCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
           OffsetTimestamp = CapabilityProof.ProvenCapability
-          FirebirdTimeZoneType = CapabilityProof.ProvenCapability
+          FirebirdTimeZoneType =
+            SqlFirebirdTimeZoneTypeCapabilityRules.CastSourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           FirebirdExtendedDecimal = CapabilityProof.ProvenCapability
           StandaloneTime = CapabilityProof.ProvenCapability
           FilterPredicate = filterPredicateProofs source "source" sourceCapabilityProof }
@@ -176,10 +178,7 @@ module internal RewriteFacadeAdapter =
             SqlOffsetTimestampCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           FirebirdTimeZoneType =
-            SqlFirebirdTimeZoneTypeCapabilityRules.CastTargetValidationError(
-                target,
-                targetProfile,
-                "TIMESTAMP WITH TIME ZONE")
+            SqlFirebirdTimeZoneTypeCapabilityRules.CastTargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           FirebirdExtendedDecimal =
             if target <> SqlAgentToolType.Firebird

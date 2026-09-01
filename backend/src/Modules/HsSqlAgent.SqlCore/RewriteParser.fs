@@ -360,6 +360,7 @@ module internal RewriteParser =
             | _ -> scanning <- false
 
     let private parseCastTypeName (cursor: Cursor) =
+        let typeToken = cursor.Current
         let parts = ResizeArray<string>()
         let mutable baseName = expectCastTypeWord "Expected cast type" cursor
 
@@ -401,10 +402,38 @@ module internal RewriteParser =
 
         appendCastQualifiers parts cursor
 
-        parts
-        |> Seq.toList
-        |> String.concat " "
-        |> CastType.create
+        let sourceType =
+            parts
+            |> Seq.toList
+            |> String.concat " "
+
+        let parsedType =
+            try
+                RewriteCastTypes.parseSource (sourceDialectToolType cursor.Dialect) sourceType
+            with
+            | :? SqlCompilationException as ex ->
+                let message =
+                    ex.Message
+                    + " Source dialect: "
+                    + sourceDialectName cursor.Dialect
+                    + "."
+                raise (
+                    SqlParseException(
+                        message,
+                        tokenDiagnostic
+                            "SQL_SOURCE_TYPE_REJECTED"
+                            SqlDiagnosticStage.SourceValidation
+                            SqlDiagnosticCategory.DialectSyntax
+                            typeToken
+                            message))
+
+        match cursor.Dialect, CastType.semantic parsedType with
+        | SourceDialect.Firebird, Some(SqlTime(_, true))
+        | SourceDialect.Firebird, Some(SqlTimestamp(_, true)) ->
+            requireSourceCapability typeToken cursor.SourceExpressions.FirebirdTimeZoneType
+        | _ -> ()
+
+        parsedType
 
     let private parseCastType (cursor: Cursor) =
         parseCastTypeName cursor
@@ -527,18 +556,15 @@ module internal RewriteParser =
         | _ -> fail token "TIMESTAMP WITHOUT TIME ZONE requires a string literal"
 
     let private applyTypedCast (cursor: Cursor) expression target =
-        match expression, CastType.value target with
-        | Literal(ScalarValue.Text text), typeName when typeName.Equals("DATE", StringComparison.OrdinalIgnoreCase) ->
+        match expression, CastType.literalCoercion target with
+        | Literal(ScalarValue.Text text), DateLiteralCoercion ->
             match DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None) with
             | true, value -> Literal(ScalarValue.Date value)
             | _ -> fail cursor.Current "Invalid DATE literal in CAST"
-        | Literal(ScalarValue.Text text), typeName
-            when typeName.Equals("DATETIME", StringComparison.OrdinalIgnoreCase)
-              || typeName.Equals("DATETIME2", StringComparison.OrdinalIgnoreCase)
-              || typeName.Equals("SMALLDATETIME", StringComparison.OrdinalIgnoreCase) ->
+        | Literal(ScalarValue.Text text), LocalDateTimeLiteralCoercion ->
             match DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces) with
             | true, value -> Literal(ScalarValue.LocalDateTime(DateTime.SpecifyKind(value, DateTimeKind.Unspecified)))
-            | _ -> fail cursor.Current ("Invalid " + typeName + " literal in CAST")
+            | _ -> fail cursor.Current "Invalid local DATETIME literal in CAST"
         | _ -> Cast(expression, target)
 
     let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor

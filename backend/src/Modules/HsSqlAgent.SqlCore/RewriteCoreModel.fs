@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Text.RegularExpressions
+open HsSqlAgent.SqlCore.Enums
 
 /// Pure F# compiler model. No compatibility AST classes are allowed below this boundary.
 module internal CoreModel =
@@ -146,19 +147,142 @@ module internal CoreModel =
             IntervalLiteral value
         let value (IntervalLiteral value) = value
 
-    type CastType = private CastType of string
+    type ProviderTypeName = private ProviderTypeName of string list
+
+    module ProviderTypeName =
+        let private safePart =
+            Regex("^[A-Z_][A-Z0-9_]*$", RegexOptions.CultureInvariant)
+
+        let create (value: string) =
+            let parts =
+                value.Split('.', StringSplitOptions.RemoveEmptyEntries)
+                |> Array.toList
+            if parts.IsEmpty
+               || parts |> List.exists (fun part -> not (safePart.IsMatch(part)))
+               || String.concat "." parts <> value then
+                invalidArg (nameof value) ("Unsafe provider-native type name '" + value + "'.")
+            ProviderTypeName parts
+
+        let parts (ProviderTypeName parts) = parts
+        let value nativeName = nativeName |> parts |> String.concat "."
+
+    type ProviderTypeQualifier = private ProviderTypeQualifier of string
+
+    module ProviderTypeQualifier =
+        let private safeQualifier =
+            Regex("^[A-Z_][A-Z0-9_]*$", RegexOptions.CultureInvariant)
+
+        let create (value: string) =
+            if String.IsNullOrWhiteSpace(value) || not (safeQualifier.IsMatch(value)) then
+                invalidArg (nameof value) ("Unsafe provider-native type qualifier '" + value + "'.")
+            ProviderTypeQualifier value
+
+        let value (ProviderTypeQualifier value) = value
+
+    type ProviderTypeArgument =
+        | ProviderTypeInteger of int
+
+    type ProviderNativeType =
+        { Provider: SqlAgentToolType
+          Name: ProviderTypeName
+          Qualifiers: ProviderTypeQualifier list
+          Arguments: ProviderTypeArgument list }
+
+    type SqlType =
+        | SqlBoolean
+        | SqlSmallInteger
+        | SqlInteger
+        | SqlBigInteger
+        | SqlUnsignedBigInteger
+        | SqlDecimal of precision: int option * scale: int option
+        | SqlReal
+        | SqlDouble
+        | SqlFixedString of length: int option
+        | SqlVariableString of length: int option
+        | SqlText
+        | SqlFixedBinary of length: int option
+        | SqlVariableBinary of length: int option
+        | SqlBinaryLargeObject
+        | SqlDate
+        | SqlTime of precision: int option * withTimeZone: bool
+        | SqlTimestamp of precision: int option * withTimeZone: bool
+        | SqlRowVersion
+        | SqlUuid
+        | SqlJson
+        | SqlProviderNative of ProviderNativeType
+
+    type CastLiteralCoercion =
+        | NoLiteralCoercion
+        | DateLiteralCoercion
+        | LocalDateTimeLiteralCoercion
+
+    type CastType =
+        private
+        | ModeledCastType of
+            sourceProvider: SqlAgentToolType *
+            semantic: SqlType *
+            sourceSpelling: string *
+            literalCoercion: CastLiteralCoercion
+        | CompatibilityRawCastType of sourceSpelling: string
 
     module CastType =
-        let private safeCastType =
-            Regex(
-                "^[A-Za-z_][A-Za-z0-9_.]*(?:\\s+[A-Za-z_]+)*(?:\\s*\\(\\s*(?:MAX|[0-9]+)(?:\\s*,\\s*[0-9]+)?\\s*\\))?(?:\\s+[A-Za-z_]+)*$",
-                RegexOptions.CultureInvariant ||| RegexOptions.IgnoreCase)
-        let create value =
-            if String.IsNullOrWhiteSpace(value) || not (safeCastType.IsMatch(value)) then
-                raise (HsSqlAgent.SqlCore.Core.Compilation.SqlCompilationException(
-                    "CAST type '" + string value + "' is not a safe modeled type shape."))
-            CastType(Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant())
-        let value (CastType value) = value
+        let internal modeled sourceProvider semantic sourceSpelling literalCoercion =
+            if String.IsNullOrWhiteSpace(sourceSpelling) then
+                invalidArg (nameof sourceSpelling) "CAST source spelling cannot be empty."
+            ModeledCastType(sourceProvider, semantic, sourceSpelling, literalCoercion)
+
+        let internal compatibilityRaw sourceSpelling =
+            if String.IsNullOrWhiteSpace(sourceSpelling) then
+                invalidArg (nameof sourceSpelling) "CAST source spelling cannot be empty."
+            CompatibilityRawCastType sourceSpelling
+
+        let internal semantic = function
+            | ModeledCastType(_, semantic, _, _) -> Some semantic
+            | CompatibilityRawCastType _ -> None
+
+        let internal sourceProvider = function
+            | ModeledCastType(sourceProvider, _, _, _) -> Some sourceProvider
+            | CompatibilityRawCastType _ -> None
+
+        let internal literalCoercion = function
+            | ModeledCastType(_, _, _, literalCoercion) -> literalCoercion
+            | CompatibilityRawCastType _ -> NoLiteralCoercion
+
+        let private normalizeRawSpelling (value: string) =
+            Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant()
+
+        let private sourceEquivalenceKey provider spelling =
+            let normalized = normalizeRawSpelling spelling
+            match provider, normalized with
+            | SqlAgentToolType.MsSqlServer, "INT"
+            | SqlAgentToolType.MsSqlServer, "INTEGER" -> "INTEGER"
+            | SqlAgentToolType.Postgres, "INT"
+            | SqlAgentToolType.Postgres, "INT4"
+            | SqlAgentToolType.Postgres, "INTEGER" -> "INTEGER"
+            | SqlAgentToolType.Postgres, "INT2"
+            | SqlAgentToolType.Postgres, "SMALLINT" -> "SMALLINT"
+            | SqlAgentToolType.Postgres, "INT8"
+            | SqlAgentToolType.Postgres, "BIGINT" -> "BIGINT"
+            | _ -> normalized
+
+        let internal equivalent left right =
+            match left, right with
+            | ModeledCastType(leftProvider, leftSemantic, leftSpelling, _),
+              ModeledCastType(rightProvider, rightSemantic, rightSpelling, _) ->
+                leftProvider = rightProvider
+                && leftSemantic = rightSemantic
+                && sourceEquivalenceKey leftProvider leftSpelling
+                   = sourceEquivalenceKey rightProvider rightSpelling
+            | CompatibilityRawCastType leftSpelling, CompatibilityRawCastType rightSpelling ->
+                normalizeRawSpelling leftSpelling = normalizeRawSpelling rightSpelling
+            | _ -> false
+
+        let value = function
+            | ModeledCastType(_, _, sourceSpelling, _)
+            | CompatibilityRawCastType sourceSpelling -> sourceSpelling
+
+        let internal forTarget provider semantic sourceSpelling =
+            modeled provider semantic sourceSpelling NoLiteralCoercion
 
     type FunctionName = private FunctionName of IdentifierPart list
 
@@ -513,7 +637,7 @@ module internal CoreModel =
                 && listEquivalent orderEquivalent leftWindow.OrderBy rightWindow.OrderBy
                 && leftWindow.Frame = rightWindow.Frame
             | Cast(leftValue, leftType), Cast(rightValue, rightType) ->
-                leftType = rightType && equivalent leftValue rightValue
+                CastType.equivalent leftType rightType && equivalent leftValue rightValue
             | Extract(leftField, leftValue), Extract(rightField, rightValue) ->
                 leftField = rightField && equivalent leftValue rightValue
             | SimpleCase(leftInput, leftBranches, leftFallback),

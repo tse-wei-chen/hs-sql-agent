@@ -25,7 +25,10 @@ public sealed class SqlGrammarBombardmentCoverageTests
             OracleNativeCapabilityGrammarMatrixTests.OracleNativeCapabilityMatrix().Count() +
             MySqlSessionModeGrammarMatrixTests.ConcatSessionModeMatrix().Count() +
             MySqlSessionModeGrammarMatrixTests.AnsiQuotesSessionModeMatrix().Count() +
-            SqlServerProfileSensitiveGrammarMatrixTests.SqlServerStringAggregateProfileMatrix().Count();
+            SqlServerProfileSensitiveGrammarMatrixTests.SqlServerStringAggregateProfileMatrix().Count() +
+            CrossDialectCastTypeGrammarMatrixTests.PositiveMatrix().Count() +
+            CrossDialectCastTypeGrammarMatrixTests.PostgresPostfixMatrix().Count() +
+            CrossDialectCastTypeGrammarMatrixTests.CrossProviderMatrix().Count();
 
         var positiveDml =
             DmlGrammarMatrixCases.ExpectedCaseCount +
@@ -46,7 +49,9 @@ public sealed class SqlGrammarBombardmentCoverageTests
             CrossDialectDistinctFromGrammarMatrixTests.UnsupportedTargetMatrix().Count() +
             NegativeRecursiveCteGrammarMutationMatrixTests.CommonRecursiveShapeMutationMatrix().Count() +
             NegativeRecursiveCteGrammarMutationMatrixTests.PortableSubsetMutationMatrix().Count() +
-            NegativeRecursiveCteGrammarMutationMatrixTests.FirebirdUnionMutationMatrix().Count();
+            NegativeRecursiveCteGrammarMutationMatrixTests.FirebirdUnionMutationMatrix().Count() +
+            CrossDialectCastTypeGrammarMatrixTests.NegativeMatrix().Count() +
+            CrossDialectCastTypeGrammarMatrixTests.FirebirdSourceProfileNegativeMatrix().Count();
 
         var negativeDml =
             NegativeDmlGrammarMutationMatrixTests.PolicyMutationMatrix().Count() +
@@ -58,12 +63,12 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
 
-        Assert.Equal(4932, positiveQuery);
+        Assert.Equal(5055, positiveQuery);
         Assert.Equal(419, positiveDml);
-        Assert.Equal(159, negativeQuery);
+        Assert.Equal(173, negativeQuery);
         Assert.Equal(68, negativeDml);
         Assert.Equal(
-            5578,
+            5715,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }
