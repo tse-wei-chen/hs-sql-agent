@@ -1133,6 +1133,26 @@ module internal RewriteRenderer =
             + " * FROM (" + body + ")"
             + tableAliasPrefix ctx.Provider + alias
             + renderOrderClause ctx true query.OrderBy
+        | Firebird, None, Some limit ->
+            let first = ctx.Bind(box (NonNegativeRowCount.value limit))
+            let prefix = renderCtes ctx query.Head.Ctes
+            let body = renderSetBody ctx query
+            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            prefix
+            + "SELECT FIRST " + first
+            + " * FROM (" + body + ")"
+            + tableAliasPrefix ctx.Provider + alias
+            + renderOrderClause ctx true query.OrderBy
+        | Firebird, Some offset, None when NonNegativeRowCount.value offset > 0 ->
+            let skip = ctx.Bind(box (NonNegativeRowCount.value offset))
+            let prefix = renderCtes ctx query.Head.Ctes
+            let body = renderSetBody ctx query
+            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            prefix
+            + "SELECT SKIP " + skip
+            + " * FROM (" + body + ")"
+            + tableAliasPrefix ctx.Provider + alias
+            + renderOrderClause ctx true query.OrderBy
         | _ ->
             let prefix = renderCtes ctx query.Head.Ctes
             let body = renderSetBody ctx query

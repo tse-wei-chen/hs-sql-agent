@@ -54,8 +54,8 @@ public sealed class FirebirdGrammarMatrixTests
             "SELECT id FROM orders UNION ALL SELECT id FROM archive_orders",
             "UNION ALL", ["orders", "archive_orders"])),
         new("quoted-identifiers", new BodyVariant(
-            "SELECT "ID" AS id FROM "ORDERS"",
-            ""ORDERS"", ["ORDERS"])),
+            "SELECT \"ID\" AS id FROM \"ORDERS\"",
+            "\"ORDERS\"", ["ORDERS"])),
         new("typed-date", new BodyVariant(
             "SELECT DATE '2026-08-24' AS id FROM events",
             "EVENTS", ["events"])),
@@ -193,7 +193,7 @@ public sealed class FirebirdGrammarMatrixTests
             Assert.Contains(table, command.Sql, StringComparison.OrdinalIgnoreCase);
 
         if (name.Contains("__quoted-identifiers__", StringComparison.Ordinal))
-            Assert.Contains(""ORDERS"", command.Sql, StringComparison.Ordinal);
+            Assert.Contains("\"ORDERS\"", command.Sql, StringComparison.Ordinal);
 
         if (name.Contains("__typed-date__", StringComparison.Ordinal))
         {
