@@ -56,6 +56,7 @@ module internal RewriteStructuralValidation =
 
     let rec private validateNestedCteExpr targetRuntime expression =
         match expression with
+        | Spanned(_, inner) -> validateNestedCteExpr targetRuntime inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) -> validateNestedCteExpr targetRuntime operand
         | Binary(_, left, right) ->
@@ -132,8 +133,9 @@ module internal RewriteStructuralValidation =
            && not query.Head.Ctes.IsEmpty
            && not query.SetOperations.IsEmpty
            && not query.OrderBy.IsEmpty then
-            let portableSetTailOrder expression =
+            let rec portableSetTailOrder expression =
                 match expression with
+                | Spanned(_, inner) -> portableSetTailOrder inner
                 | OrderOrdinal _ -> true
                 | Column identifier
                 | BoundColumn(identifier, ProjectionAlias) ->
@@ -176,6 +178,7 @@ module internal RewriteStructuralValidation =
 
     let rec private validateNoFromExpression allowWildcard expression =
         match expression with
+        | Spanned(_, inner) -> validateNoFromExpression allowWildcard inner
         | Literal _ | Interval _ | OrderOrdinal _ -> ()
         | Column identifier ->
             noFromReferenceError identifier
@@ -212,7 +215,7 @@ module internal RewriteStructuralValidation =
                     not (FunctionName.hasQuotedParts call.Name)
                     && name = "COUNT"
                     && index = 0
-                    && (match argument with
+                    && (match Expr.unspan argument with
                         | Wildcard None -> true
                         | _ -> false)
                 validateNoFromExpression allowFunctionWildcard argument)
@@ -260,6 +263,7 @@ module internal RewriteStructuralValidation =
 
     and private visitNestedNoFromExpression expression =
         match expression with
+        | Spanned(_, inner) -> visitNestedNoFromExpression inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) ->
             visitNestedNoFromExpression operand
@@ -361,7 +365,7 @@ module internal RewriteStructuralValidation =
             validateNoFromQuery branch.Query)
         query.OrderBy
         |> List.iter (fun order ->
-            match order.Expression with
+            match Expr.unspan order.Expression with
             | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
             | _ ->
                 if query.Head.From.IsNone then

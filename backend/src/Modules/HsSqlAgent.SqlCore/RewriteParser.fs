@@ -129,14 +129,12 @@ module internal RewriteParser =
         member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
         member _.SourceRecursiveCte = semantics.RecursiveCte
 
-    let private rememberNodeSpan start (cursor: Cursor) (node: obj | null) =
-        Parsed.rememberSpan node
-            { Start = start
-              Length = max 0 (cursor.Current.Start - start) }
+    let private parsedSpan start (cursor: Cursor) =
+        { Start = start
+          Length = max 0 (cursor.Current.Start - start) }
 
     let private markExpr start cursor expression =
-        rememberNodeSpan start cursor (box expression)
-        expression
+        expression |> Expr.withSpan (parsedSpan start cursor)
 
     let private sourceDialectName = function
         | SourceDialect.PostgreSql -> "Postgres"
@@ -556,7 +554,7 @@ module internal RewriteParser =
         | _ -> fail token "TIMESTAMP WITHOUT TIME ZONE requires a string literal"
 
     let private applyTypedCast (cursor: Cursor) expression target =
-        match expression, CastType.literalCoercion target with
+        match Expr.unspan expression, CastType.literalCoercion target with
         | Literal(ScalarValue.Text text), DateLiteralCoercion ->
             match DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None) with
             | true, value -> Literal(ScalarValue.Date value)
@@ -1215,14 +1213,14 @@ module internal RewriteParser =
                         fail cursor.Current "RETURNING alias requires AS"
                     | _ -> ()
 
-                match expression, alias with
+                match Expr.unspan expression, alias with
                 | Wildcard None, Some _ ->
                     fail cursor.Current "RETURNING wildcard cannot be aliased"
                 | Wildcard None, None ->
                     ReturningWildcard None
                 | Column identifier, None when Identifier.parts identifier |> List.length = 1 ->
                     ReturningColumn(identifier, None)
-                | expression, alias ->
+                | _, alias ->
                     requireSourceCapability cursor.Current cursor.SourceDml.ReturningExpression
                     ReturningExpression(expression, alias)
 
@@ -1390,13 +1388,11 @@ module internal RewriteParser =
                 expectSymbol '(' cursor
                 let query = parseQuery cursor
                 expectSymbol ')' cursor
-                let cte =
-                    { Name = name
-                      ColumnAliases = aliases |> Seq.toList
-                      Query = query
-                      RecursiveScope = recursiveScope }
-                rememberNodeSpan start cursor (box cte)
-                cte
+                { Name = name
+                  ColumnAliases = aliases |> Seq.toList
+                  Query = query
+                  RecursiveScope = recursiveScope
+                  Span = parsedSpan start cursor }
             ctes.Add(parseOne())
             while acceptSymbol ',' cursor do ctes.Add(parseOne())
             ctes |> Seq.toList
@@ -1450,8 +1446,8 @@ module internal RewriteParser =
               Joins = joins |> Seq.toList
               Where = where
               GroupBy = groupBy |> Seq.toList
-              Having = having }
-        rememberNodeSpan start cursor (box select)
+              Having = having
+              Span = parsedSpan start cursor }
         select, top
 
     and private parseOrderItem allowOrdinal (cursor: Cursor) =
@@ -1679,7 +1675,8 @@ module internal RewriteParser =
                   Limit = branchTop
                   Offset = None
                   FetchPercent = None
-                  FetchWithTies = false }
+                  FetchWithTies = false
+                  Span = branchHead.Span }
 
         let appendIntersectChain (baseQuery: Query) =
             let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
@@ -1702,7 +1699,8 @@ module internal RewriteParser =
               Limit = top
               Offset = None
               FetchPercent = None
-              FetchWithTies = false }
+              FetchWithTies = false
+              Span = head.Span }
             |> appendIntersectChain
 
         let lowerBranches = ResizeArray<SetBranch>()
@@ -1723,16 +1721,14 @@ module internal RewriteParser =
             | Some value, None -> Some value
             | None, value -> value
             | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
-        let query =
-            { initial with
-                SetOperations = initial.SetOperations @ (lowerBranches |> Seq.toList)
-                OrderBy = orderBy
-                Limit = limit
-                Offset = offset
-                FetchPercent = fetchPercent
-                FetchWithTies = fetchWithTies }
-        rememberNodeSpan start cursor (box query)
-        query
+        { initial with
+            SetOperations = initial.SetOperations @ (lowerBranches |> Seq.toList)
+            OrderBy = orderBy
+            Limit = limit
+            Offset = offset
+            FetchPercent = fetchPercent
+            FetchWithTies = fetchWithTies
+            Span = parsedSpan start cursor }
 
     and private ensureUniqueInsertColumns (cursor: Cursor) (columns: IdentifierPart list) =
         let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)

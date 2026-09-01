@@ -1,7 +1,6 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
-open System.Runtime.CompilerServices
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 
@@ -115,23 +114,6 @@ module internal Typestate =
     type CanonicalSql = private CanonicalSql of Document
 
     module Parsed =
-        let private sourceSpans = ConditionalWeakTable<obj, StrongBox<Span>>()
-
-        let internal rememberSpan (node: obj | null) span =
-            match node with
-            | null -> ()
-            | value ->
-                sourceSpans.Remove(value) |> ignore
-                sourceSpans.Add(value, StrongBox<Span>(span))
-
-        let internal trySpan (node: obj | null) =
-            match node with
-            | null -> None
-            | value ->
-                match sourceSpans.TryGetValue(value) with
-                | true, span -> Some span.Value
-                | _ -> None
-
         let internal create document = ParsedSql document
         let internal value (ParsedSql document) = document
 

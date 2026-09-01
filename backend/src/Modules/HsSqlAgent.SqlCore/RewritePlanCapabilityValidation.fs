@@ -67,7 +67,8 @@ module internal RewritePlanCapabilityValidation =
         | RejectedCapability rejection ->
             raise (SqlCompilationException(capabilityMessage rejection))
 
-    let private returningNodeName = function
+    let rec private returningNodeName = function
+        | Spanned(_, inner) -> returningNodeName inner
         | Column _ -> "ColumnExpr"
         | BoundColumn _ -> "BoundColumnExpr"
         | Wildcard _ -> "WildcardExpr"
@@ -105,6 +106,7 @@ module internal RewritePlanCapabilityValidation =
                 returningExpressionError "does not admit projection-alias bindings"
 
         match expression with
+        | Spanned(_, inner) -> validateRichReturningExpression inner
         | BoundColumn(_, binding) ->
             validateBoundColumn binding
         | Column _ ->
@@ -173,6 +175,7 @@ module internal RewritePlanCapabilityValidation =
 
     and private validateRichReturningPredicate expression =
         match expression with
+        | Spanned(_, inner) -> validateRichReturningPredicate inner
         | Unary(UnaryOperator.Not, operand) ->
             validateRichReturningPredicate operand
         | Binary((BinaryOperator.And | BinaryOperator.Or), left, right) ->
@@ -259,7 +262,7 @@ module internal RewritePlanCapabilityValidation =
         | RewriteNullOrdering, _ ->
             if isStatementTail && (isDistinct || isSetTail) then
                 raise (nullOrderingCapabilityError targetRuntime)
-            match order.Expression with
+            match Expr.unspan order.Expression with
             | BoundColumn(_, LocalRowSource)
             | BoundColumn(_, OuterRowSource) -> ()
             | Column _
@@ -268,6 +271,7 @@ module internal RewritePlanCapabilityValidation =
 
     let rec private proveOrderingExpr targetRuntime targetOrdering expression =
         match expression with
+        | Spanned(_, inner) -> proveOrderingExpr targetRuntime targetOrdering inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, value) -> proveOrderingExpr targetRuntime targetOrdering value
         | Binary(_, left, right) ->
@@ -355,7 +359,7 @@ module internal RewritePlanCapabilityValidation =
     let private stableProjectionNames context (query: Query) =
         query.Head.Projection
         |> List.map (fun item ->
-            match item.Alias, item.Expression with
+            match item.Alias, Expr.unspan item.Expression with
             | Some alias, _ -> alias
             | None, Column identifier
             | None, BoundColumn(identifier, _) ->
@@ -374,7 +378,7 @@ module internal RewritePlanCapabilityValidation =
                     context + " requires unique set-result output names before the legacy ROW_NUMBER wrapper.")))
 
     let private projectionOrderIndex (projection: SelectItem list) (order: OrderBy) =
-        match order.Expression with
+        match Expr.unspan order.Expression with
         | OrderOrdinal ordinal ->
             let index = PositiveRowCount.value ordinal - 1
             if index >= 0 && index < projection.Length then Some index else None
@@ -416,7 +420,7 @@ module internal RewritePlanCapabilityValidation =
         let names = stableProjectionNames context query
         ensureUniqueOutputNames context names
         for order in query.OrderBy do
-            match order.Expression with
+            match Expr.unspan order.Expression with
             | OrderOrdinal ordinal ->
                 let index = PositiveRowCount.value ordinal - 1
                 if index < 0 || index >= names.Length then

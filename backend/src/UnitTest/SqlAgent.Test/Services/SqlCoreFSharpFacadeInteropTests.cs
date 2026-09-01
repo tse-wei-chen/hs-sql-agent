@@ -310,6 +310,33 @@ public sealed class SqlCoreFSharpFacadeInteropTests
     }
 
     [Fact]
+    public void RewriteCore_SourceSpans_DoNotUseObjectIdentitySideChannels()
+    {
+        var assembly = typeof(SqlCoreFacade).Assembly;
+        var offenders = assembly
+            .GetTypes()
+            .Where(type =>
+                type.FullName?.StartsWith(
+                    "HsSqlAgent.SqlCore.Rewrite.",
+                    StringComparison.Ordinal) == true)
+            .SelectMany(type => type.GetFields(
+                BindingFlags.Public |
+                BindingFlags.NonPublic |
+                BindingFlags.Static |
+                BindingFlags.Instance))
+            .Where(field =>
+                (field.FieldType.FullName ?? field.FieldType.Name)
+                    .StartsWith(
+                        "System.Runtime.CompilerServices.ConditionalWeakTable`2",
+                        StringComparison.Ordinal))
+            .Select(field => $"{field.DeclaringType?.FullName}.{field.Name}")
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
     public void CompiledCommand_ReturnsRows_IsReadOnly()
     {
         var property = typeof(CompiledSqlCommand).GetProperty(nameof(CompiledSqlCommand.ReturnsRows));

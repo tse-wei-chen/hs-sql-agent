@@ -43,6 +43,7 @@ module private Inspection =
 
     let rec inspectExpr (state: State) (expression: Expr) =
         match expression with
+        | Spanned(_, inner) -> inspectExpr state inner
         | Column _
         | BoundColumn _
         | Wildcard _

@@ -196,7 +196,7 @@ module internal RewriteRenderer =
         | WindowFrameBound.UnboundedFollowing -> "UNBOUNDED FOLLOWING"
 
     let private projectionOutputName (item: SelectItem) =
-        match item.Alias, item.Expression with
+        match item.Alias, Expr.unspan item.Expression with
         | Some alias, _ -> alias
         | None, Column identifier
         | None, BoundColumn(identifier, _) -> Identifier.parts identifier |> List.last
@@ -208,6 +208,7 @@ module internal RewriteRenderer =
 
     let rec private isBooleanExpression expression =
         match expression with
+        | Spanned(_, inner) -> isBooleanExpression inner
         | Literal(ScalarValue.Boolean _) -> true
         | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ | RegexMatch _ -> true
         | Unary(UnaryOperator.Not, _) -> true
@@ -225,18 +226,29 @@ module internal RewriteRenderer =
             let values =
                 (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
                 @ (fallback |> Option.toList)
-            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            let nonNull =
+                values
+                |> List.filter (fun value ->
+                    match Expr.unspan value with
+                    | Literal ScalarValue.Null -> false
+                    | _ -> true)
             not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
         | SearchedCase(branches, fallback) ->
             let values =
                 (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
                 @ (fallback |> Option.toList)
-            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            let nonNull =
+                values
+                |> List.filter (fun value ->
+                    match Expr.unspan value with
+                    | Literal ScalarValue.Null -> false
+                    | _ -> true)
             not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
         | _ -> false
 
-    let private renderBooleanTruthValue expression =
+    let rec private renderBooleanTruthValue expression =
         match expression with
+        | Spanned(_, inner) -> renderBooleanTruthValue inner
         | Literal(ScalarValue.Boolean true) -> "1"
         | Literal(ScalarValue.Boolean false) -> "0"
         | Literal ScalarValue.Null -> "NULL"
@@ -246,6 +258,7 @@ module internal RewriteRenderer =
 
     let rec private renderExpr (ctx: RenderContext) expression =
         match expression with
+        | Expr.Spanned(_, inner) -> renderExpr ctx inner
         | Expr.Column identifier
         | Expr.BoundColumn(identifier, _) -> renderIdentifier ctx.Provider identifier
         | Expr.Wildcard None -> "*"
@@ -354,6 +367,7 @@ module internal RewriteRenderer =
         match ctx.Provider with
         | Oracle | SqlServer ->
             match expression with
+            | Spanned(_, inner) -> renderPredicate ctx inner
             | Literal(ScalarValue.Boolean true) -> "(1 = 1)"
             | Literal(ScalarValue.Boolean false) -> "(1 = 0)"
             | Unary(UnaryOperator.Not, operand) ->
@@ -405,8 +419,9 @@ module internal RewriteRenderer =
             if call.Arguments.Length <> count then
                 fail ("Canonical function '" + name + "' requires " + string count + " argument(s).")
 
-        let literalText label expression =
+        let rec literalText label expression =
             match expression with
+            | Spanned(_, inner) -> literalText label inner
             | Literal(ScalarValue.Text value) -> value
             | _ -> fail (label + " must be a string literal.")
 
@@ -684,7 +699,7 @@ module internal RewriteRenderer =
             let targetDefault = (not order.Descending && explicitNulls = NullOrdering.NullsFirst) || (order.Descending && explicitNulls = NullOrdering.NullsLast)
             if targetDefault then [ expression + direction ]
             else
-                match order.Expression with
+                match Expr.unspan order.Expression with
                 | BoundColumn(_, LocalRowSource)
                 | BoundColumn(_, OuterRowSource) ->
                     let nullRank, nonNullRank = if explicitNulls = NullOrdering.NullsLast then 1, 0 else 0, 1
@@ -918,7 +933,7 @@ module internal RewriteRenderer =
             baseProjection.Add(renderExpr ctx item.Expression + " AS " + renderAlias ctx.Provider alias))
 
         let projectionIndex (order: OrderBy) =
-            match order.Expression with
+            match Expr.unspan order.Expression with
             | OrderOrdinal ordinal ->
                 let index = PositiveRowCount.value ordinal - 1
                 if index >= 0 && index < projection.Length then Some index else None
@@ -1058,7 +1073,7 @@ module internal RewriteRenderer =
 
         let resolveOrder (order: OrderBy) =
             let index =
-                match order.Expression with
+                match Expr.unspan order.Expression with
                 | OrderOrdinal ordinal -> PositiveRowCount.value ordinal - 1
                 | Column identifier
                 | BoundColumn(identifier, _) when Identifier.parts identifier |> List.length = 1 ->

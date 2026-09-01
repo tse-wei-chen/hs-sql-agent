@@ -134,6 +134,7 @@ module internal RewriteBinder =
 
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
         match expression with
+        | Spanned(span, inner) -> bindExpr scope inner |> Expr.withSpan span
         | Column identifier -> bindColumn scope identifier
         | BoundColumn _ -> expression
         | Wildcard(Some identifier) ->
@@ -174,8 +175,9 @@ module internal RewriteBinder =
         | Exists(query, negated) -> Exists(bindQuery scope.Dialect (Some scope) scope.VisibleCtes query, negated)
 
     and private bindOrderBy (scope: Scope) projectionAliases (orderBy: OrderBy) : OrderBy =
+        let sourceSpan = Expr.span orderBy.Expression
         let expression =
-            match orderBy.Expression with
+            match Expr.unspan orderBy.Expression with
             | Column identifier when identifierParts identifier |> List.length = 1 ->
                 let reference = identifierParts identifier |> List.head
                 let name = reference.Value
@@ -192,7 +194,11 @@ module internal RewriteBinder =
                     else
                         invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
                 | [] -> bindExpr scope orderBy.Expression
+            | Spanned _ -> invalidOp "Expr.unspan returned a spanned expression."
             | _ -> bindExpr scope orderBy.Expression
+        let expression =
+            if Span.isKnown sourceSpan then Expr.withSpan sourceSpan expression
+            else expression
         { orderBy with Expression = expression }
 
     and private bindWindow (scope: Scope) (window: WindowSpec) : WindowSpec =
@@ -211,6 +217,7 @@ module internal RewriteBinder =
     and private countRecursiveReferencesExpr dialect cteKey expression =
         let recurse = countRecursiveReferencesExpr dialect cteKey
         match expression with
+        | Spanned(_, inner) -> recurse inner
         | Column _
         | BoundColumn _
         | Wildcard _
@@ -253,6 +260,7 @@ module internal RewriteBinder =
     and private hasRestrictedRecursiveExpr expression =
         let recurse = hasRestrictedRecursiveExpr
         match expression with
+        | Spanned(_, inner) -> recurse inner
         | Column _
         | BoundColumn _
         | Wildcard _
@@ -485,7 +493,7 @@ module internal RewriteBinder =
         let setOutputNames =
             head.Projection
             |> List.choose (fun item ->
-                match item.Alias, item.Expression with
+                match item.Alias, Expr.unspan item.Expression with
                 | Some alias, _ -> Some alias
                 | None, Column identifier
                 | None, BoundColumn(identifier, _) ->

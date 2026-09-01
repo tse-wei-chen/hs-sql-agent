@@ -123,6 +123,17 @@ public class CoreOrderBySemanticsTests
         Assert.Equal(1, command.Parameters[0].Value);
     }
 
+    [Fact]
+    public void Compile_SqlServerOffsetNamedProjection_RemainsStableThroughStructuralSpans()
+    {
+        var command = Compile(
+            "SELECT id FROM users ORDER BY id OFFSET 5 ROWS",
+            SqlAgentToolType.MsSqlServer);
+
+        Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("id", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider)
     {
         var parsed = CoreSqlTextParser.ParseQuery(sql, provider);
