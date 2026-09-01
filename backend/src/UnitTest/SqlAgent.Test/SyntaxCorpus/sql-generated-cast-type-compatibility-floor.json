@@ -1,0 +1,740 @@
+[
+  {
+    "name": "cast-type__postgres-boolean__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS BOOLEAN) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-boolean__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE CAST(value AS BOOLEAN) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-boolean__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT CAST(value AS BOOLEAN) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-numeric__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS NUMERIC(18,4)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-numeric__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE CAST(value AS NUMERIC(18,4)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-numeric__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT CAST(value AS NUMERIC(18,4)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-varchar__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS VARCHAR(64)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-varchar__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE CAST(value AS VARCHAR(64)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-varchar__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT CAST(value AS VARCHAR(64)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-timestamptz__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS TIMESTAMP(6) WITH TIME ZONE) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-timestamptz__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE CAST(value AS TIMESTAMP(6) WITH TIME ZONE) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-timestamptz__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT CAST(value AS TIMESTAMP(6) WITH TIME ZONE) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-uuid__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS UUID) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-uuid__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE CAST(value AS UUID) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-uuid__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT CAST(value AS UUID) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__mysql-signed__projection",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT CAST(value AS SIGNED) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__mysql-signed__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM records WHERE CAST(value AS SIGNED) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__mysql-signed__cte",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "WITH x AS (SELECT CAST(value AS SIGNED) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__mysql-unsigned__projection",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT CAST(value AS UNSIGNED) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__mysql-unsigned__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM records WHERE CAST(value AS UNSIGNED) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__mysql-unsigned__cte",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "WITH x AS (SELECT CAST(value AS UNSIGNED) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__mysql-decimal__projection",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT CAST(value AS DECIMAL(18,4)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__mysql-decimal__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM records WHERE CAST(value AS DECIMAL(18,4)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__mysql-decimal__cte",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "WITH x AS (SELECT CAST(value AS DECIMAL(18,4)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__mysql-char__projection",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT CAST(value AS CHAR(64)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__mysql-char__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM records WHERE CAST(value AS CHAR(64)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__mysql-char__cte",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "WITH x AS (SELECT CAST(value AS CHAR(64)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__mysql-datetime__projection",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT CAST(value AS DATETIME(6)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__mysql-datetime__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM records WHERE CAST(value AS DATETIME(6)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__mysql-datetime__cte",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "WITH x AS (SELECT CAST(value AS DATETIME(6)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__mysql-json__projection",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT CAST(value AS JSON) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__mysql-json__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM records WHERE CAST(value AS JSON) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__mysql-json__cte",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sql": "WITH x AS (SELECT CAST(value AS JSON) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlserver-bit__projection",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS BIT) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlserver-bit__predicate",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM records WHERE CAST(value AS BIT) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlserver-bit__cte",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "WITH x AS (SELECT CAST(value AS BIT) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlserver-decimal__projection",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS DECIMAL(18,4)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlserver-decimal__predicate",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM records WHERE CAST(value AS DECIMAL(18,4)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlserver-decimal__cte",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "WITH x AS (SELECT CAST(value AS DECIMAL(18,4)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlserver-nvarchar-max__projection",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS NVARCHAR(MAX)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlserver-nvarchar-max__predicate",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM records WHERE CAST(value AS NVARCHAR(MAX)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlserver-nvarchar-max__cte",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "WITH x AS (SELECT CAST(value AS NVARCHAR(MAX)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlserver-datetime2__projection",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS DATETIME2(7)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlserver-datetime2__predicate",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM records WHERE CAST(value AS DATETIME2(7)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlserver-datetime2__cte",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "WITH x AS (SELECT CAST(value AS DATETIME2(7)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlserver-uniqueidentifier__projection",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS UNIQUEIDENTIFIER) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlserver-uniqueidentifier__predicate",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM records WHERE CAST(value AS UNIQUEIDENTIFIER) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlserver-uniqueidentifier__cte",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "WITH x AS (SELECT CAST(value AS UNIQUEIDENTIFIER) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlserver-varbinary-max__projection",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS VARBINARY(MAX)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlserver-varbinary-max__predicate",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM records WHERE CAST(value AS VARBINARY(MAX)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlserver-varbinary-max__cte",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sql": "WITH x AS (SELECT CAST(value AS VARBINARY(MAX)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlite-integer__projection",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT CAST(value AS INTEGER) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlite-integer__predicate",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT id FROM records WHERE CAST(value AS INTEGER) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlite-integer__cte",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "WITH x AS (SELECT CAST(value AS INTEGER) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlite-real__projection",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT CAST(value AS REAL) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlite-real__predicate",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT id FROM records WHERE CAST(value AS REAL) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlite-real__cte",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "WITH x AS (SELECT CAST(value AS REAL) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlite-text__projection",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT CAST(value AS TEXT) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlite-text__predicate",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT id FROM records WHERE CAST(value AS TEXT) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlite-text__cte",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "WITH x AS (SELECT CAST(value AS TEXT) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlite-blob__projection",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT CAST(value AS BLOB) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlite-blob__predicate",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT id FROM records WHERE CAST(value AS BLOB) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlite-blob__cte",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "WITH x AS (SELECT CAST(value AS BLOB) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__sqlite-numeric__projection",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT CAST(value AS NUMERIC) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__sqlite-numeric__predicate",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "SELECT id FROM records WHERE CAST(value AS NUMERIC) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__sqlite-numeric__cte",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sql": "WITH x AS (SELECT CAST(value AS NUMERIC) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__oracle-number__projection",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT CAST(value AS NUMBER(18,4)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__oracle-number__predicate",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT id FROM records WHERE CAST(value AS NUMBER(18,4)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__oracle-number__cte",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "WITH x AS (SELECT CAST(value AS NUMBER(18,4)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__oracle-varchar2__projection",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT CAST(value AS VARCHAR2(64)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__oracle-varchar2__predicate",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT id FROM records WHERE CAST(value AS VARCHAR2(64)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__oracle-varchar2__cte",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "WITH x AS (SELECT CAST(value AS VARCHAR2(64)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__oracle-date__projection",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT CAST(value AS DATE) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__oracle-date__predicate",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT id FROM records WHERE CAST(value AS DATE) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__oracle-date__cte",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "WITH x AS (SELECT CAST(value AS DATE) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__oracle-timestamptz__projection",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT CAST(value AS TIMESTAMP(9) WITH TIME ZONE) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__oracle-timestamptz__predicate",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT id FROM records WHERE CAST(value AS TIMESTAMP(9) WITH TIME ZONE) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__oracle-timestamptz__cte",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "WITH x AS (SELECT CAST(value AS TIMESTAMP(9) WITH TIME ZONE) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__oracle-binary-double__projection",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT CAST(value AS BINARY_DOUBLE) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__oracle-binary-double__predicate",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "SELECT id FROM records WHERE CAST(value AS BINARY_DOUBLE) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__oracle-binary-double__cte",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sql": "WITH x AS (SELECT CAST(value AS BINARY_DOUBLE) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__firebird-boolean__projection",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT CAST(value AS BOOLEAN) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__firebird-boolean__predicate",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT id FROM records WHERE CAST(value AS BOOLEAN) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__firebird-boolean__cte",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "WITH x AS (SELECT CAST(value AS BOOLEAN) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__firebird-decimal__projection",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT CAST(value AS DECIMAL(18,4)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__firebird-decimal__predicate",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT id FROM records WHERE CAST(value AS DECIMAL(18,4)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__firebird-decimal__cte",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "WITH x AS (SELECT CAST(value AS DECIMAL(18,4)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__firebird-varchar__projection",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT CAST(value AS VARCHAR(64)) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__firebird-varchar__predicate",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT id FROM records WHERE CAST(value AS VARCHAR(64)) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__firebird-varchar__cte",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "WITH x AS (SELECT CAST(value AS VARCHAR(64)) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__firebird-timestamp__projection",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT CAST(value AS TIMESTAMP) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__firebird-timestamp__predicate",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT id FROM records WHERE CAST(value AS TIMESTAMP) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__firebird-timestamp__cte",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "WITH x AS (SELECT CAST(value AS TIMESTAMP) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__firebird-timestamptz__projection",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__firebird-timestamptz__predicate",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT id FROM records WHERE CAST(value AS TIMESTAMP WITH TIME ZONE) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__firebird-timestamptz__cte",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "WITH x AS (SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__firebird-double__projection",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT CAST(value AS DOUBLE PRECISION) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__firebird-double__predicate",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "SELECT id FROM records WHERE CAST(value AS DOUBLE PRECISION) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__firebird-double__cte",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sql": "WITH x AS (SELECT CAST(value AS DOUBLE PRECISION) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-postfix__boolean__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT value::BOOLEAN AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-postfix__boolean__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE value::BOOLEAN IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-postfix__boolean__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT value::BOOLEAN AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-postfix__numeric-18-4__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT value::NUMERIC(18,4) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-postfix__numeric-18-4__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE value::NUMERIC(18,4) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-postfix__numeric-18-4__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT value::NUMERIC(18,4) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-postfix__varchar-64__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT value::VARCHAR(64) AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-postfix__varchar-64__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE value::VARCHAR(64) IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-postfix__varchar-64__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT value::VARCHAR(64) AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-postfix__timestamp-6-with-time-zone__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT value::TIMESTAMP(6) WITH TIME ZONE AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-postfix__timestamp-6-with-time-zone__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE value::TIMESTAMP(6) WITH TIME ZONE IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-postfix__timestamp-6-with-time-zone__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT value::TIMESTAMP(6) WITH TIME ZONE AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__postgres-postfix__uuid__projection",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT value::UUID AS converted FROM records"
+  },
+  {
+    "name": "cast-type__postgres-postfix__uuid__predicate",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "SELECT id FROM records WHERE value::UUID IS NOT NULL"
+  },
+  {
+    "name": "cast-type__postgres-postfix__uuid__cte",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sql": "WITH x AS (SELECT value::UUID AS converted FROM records) SELECT converted FROM x"
+  },
+  {
+    "name": "cast-type__cross__boolean-postgres-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT CAST(value AS BOOLEAN) FROM records"
+  },
+  {
+    "name": "cast-type__cross__numeric-postgres-oracle",
+    "dialect": "Postgres",
+    "targetDialect": "Oracle",
+    "sql": "SELECT CAST(value AS NUMERIC(18,4)) FROM records"
+  },
+  {
+    "name": "cast-type__cross__timestamp-postgres-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS TIMESTAMP) FROM records"
+  },
+  {
+    "name": "cast-type__cross__rowversion-sqlserver-postgres",
+    "dialect": "MsSqlServer",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS TIMESTAMP) FROM records"
+  },
+  {
+    "name": "cast-type__cross__nvarchar-sqlserver-postgres",
+    "dialect": "MsSqlServer",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS NVARCHAR(64)) FROM records"
+  },
+  {
+    "name": "cast-type__cross__unsigned-mysql-sqlserver",
+    "dialect": "MySQL",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS UNSIGNED) FROM records"
+  },
+  {
+    "name": "cast-type__cross__date-oracle-postgres",
+    "dialect": "Oracle",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS DATE) FROM records"
+  },
+  {
+    "name": "cast-type__cross__timestamptz-firebird-postgres",
+    "dialect": "Firebird",
+    "targetDialect": "Postgres",
+    "sql": "SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) FROM records"
+  },
+  {
+    "name": "cast-type__cross__uuid-postgres-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT CAST(value AS UUID) FROM records"
+  }
+]
