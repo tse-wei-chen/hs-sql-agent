@@ -561,19 +561,25 @@
     "name": "cast-type__firebird-timestamptz__projection",
     "dialect": "Firebird",
     "targetDialect": "Firebird",
-    "sql": "SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) AS converted FROM records"
+    "sql": "SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) AS converted FROM records",
+    "sourceVersion": "4.0",
+    "targetVersion": "4.0"
   },
   {
     "name": "cast-type__firebird-timestamptz__predicate",
     "dialect": "Firebird",
     "targetDialect": "Firebird",
-    "sql": "SELECT id FROM records WHERE CAST(value AS TIMESTAMP WITH TIME ZONE) IS NOT NULL"
+    "sql": "SELECT id FROM records WHERE CAST(value AS TIMESTAMP WITH TIME ZONE) IS NOT NULL",
+    "sourceVersion": "4.0",
+    "targetVersion": "4.0"
   },
   {
     "name": "cast-type__firebird-timestamptz__cte",
     "dialect": "Firebird",
     "targetDialect": "Firebird",
-    "sql": "WITH x AS (SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) AS converted FROM records) SELECT converted FROM x"
+    "sql": "WITH x AS (SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) AS converted FROM records) SELECT converted FROM x",
+    "sourceVersion": "4.0",
+    "targetVersion": "4.0"
   },
   {
     "name": "cast-type__firebird-double__projection",
@@ -729,7 +735,8 @@
     "name": "cast-type__cross__timestamptz-firebird-postgres",
     "dialect": "Firebird",
     "targetDialect": "Postgres",
-    "sql": "SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) FROM records"
+    "sql": "SELECT CAST(value AS TIMESTAMP WITH TIME ZONE) FROM records",
+    "sourceVersion": "4.0"
   },
   {
     "name": "cast-type__cross__uuid-postgres-sqlserver",
