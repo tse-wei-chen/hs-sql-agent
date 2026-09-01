@@ -1236,7 +1236,7 @@ module internal RewriteStages =
 
     let private validateJsonPath provider arguments =
         let path =
-            match arguments |> List.tryItem 1 with
+            match arguments |> List.tryItem 1 |> Option.map Expr.unspan with
             | Some(Literal(ScalarValue.Text value)) -> value
             | _ -> raise (targetCapabilityError provider "json.path.constant")
         if not (System.Text.RegularExpressions.Regex.IsMatch(

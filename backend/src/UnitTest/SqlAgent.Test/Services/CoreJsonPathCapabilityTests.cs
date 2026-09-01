@@ -59,6 +59,17 @@ public class CoreJsonPathCapabilityTests
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
     }
 
+    [Fact]
+    public void Compile_StaticJsonPath_RemainsConstantAfterStructuralSpanAnnotation()
+    {
+        var command = Compile(
+            "SELECT JSON_EXTRACT(payload, '$.id') FROM events",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.MySQL);
+
+        Assert.Contains("JSON_EXTRACT", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType sourceDialect,
