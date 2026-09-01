@@ -63,20 +63,18 @@ module internal RewriteCastTypes =
                 |> Array.map ProviderTypeQualifier.create
                 |> Array.toList
         let arguments =
-            if isMax then [ ProviderTypeMax ]
-            else
-                match precision, scale with
-                | None, None -> []
-                | Some p, None -> [ ProviderTypeInteger p ]
-                | Some p, Some s -> [ ProviderTypeInteger p; ProviderTypeInteger s ]
-                | None, Some _ -> fail "Provider-native CAST scale requires a leading type argument."
+            match precision, scale with
+            | None, None -> []
+            | Some p, None -> [ ProviderTypeInteger p ]
+            | Some p, Some s -> [ ProviderTypeInteger p; ProviderTypeInteger s ]
+            | None, Some _ -> fail "Provider-native CAST scale requires a leading type argument."
         SqlProviderNative
             { Provider = source
               Name = ProviderTypeName.create first
               Qualifiers = qualifiers
               Arguments = arguments }
 
-    let private classify (source: SqlAgentToolType) (normalized: string) (first: string) (suffix: string) (name: string) (precision: int option) (scale: int option) (isMax: bool) =
+    let private classify (source: SqlAgentToolType) (first: string) (suffix: string) (name: string) (precision: int option) (scale: int option) (isMax: bool) =
         if isMax then
             if source <> SqlAgentToolType.MsSqlServer then
                 fail "CAST type length MAX is supported only for SQL Server source syntax."
@@ -110,13 +108,13 @@ module internal RewriteCastTypes =
                 onePositiveArgument name precision scale SqlFixedString
             | "VARCHAR" | "CHAR VARYING" | "CHARACTER VARYING" | "VARCHAR2" | "NVARCHAR" | "NVARCHAR2" ->
                 onePositiveArgument name precision scale (fun length ->
-                    SqlVariableString(length |> Option.map BoundedLength))
+                    SqlVariableString length)
             | "TEXT" | "NTEXT" | "CLOB" | "NCLOB" ->
                 noArguments name precision scale SqlText
             | "BINARY" -> onePositiveArgument name precision scale SqlFixedBinary
             | "VARBINARY" | "BYTEA" | "RAW" ->
                 onePositiveArgument name precision scale (fun length ->
-                    SqlVariableBinary(length |> Option.map BoundedLength))
+                    SqlVariableBinary length)
             | "BLOB" | "IMAGE" -> noArguments name precision scale SqlBinaryLargeObject
             | "DATE" when source = SqlAgentToolType.Oracle ->
                 noArguments name precision scale (SqlTimestamp(None, false))
@@ -152,7 +150,7 @@ module internal RewriteCastTypes =
         let scale =
             if m.Groups["s"].Success then Some(parseInt m.Groups["s"].Value) else None
 
-        let semantic = classify source normalized first suffix name precision scale isMax
+        let semantic = classify source first suffix name precision scale isMax
         CastType.modeled source semantic normalized
 
     let private bounded (precision: int option) (maximum: int) (target: SqlAgentToolType) =
@@ -294,10 +292,7 @@ module internal RewriteCastTypes =
             | _ -> fail ("CAST type '" + source + "' has no Core target mapping for provider " + string target + ".")
         | SqlFixedString length -> renderString length target true source
         | SqlVariableString length ->
-            let boundedLength =
-                length
-                |> Option.bind (function BoundedLength value -> Some value | MaxLength -> None)
-            renderString boundedLength target false source
+            renderString length target false source
         | SqlText ->
             match target with
             | SqlAgentToolType.Postgres -> "TEXT"
@@ -310,10 +305,7 @@ module internal RewriteCastTypes =
             | _ -> fail ("CAST type '" + source + "' has no Core target mapping for provider " + string target + ".")
         | SqlFixedBinary length -> renderBinary length target source
         | SqlVariableBinary length ->
-            let boundedLength =
-                length
-                |> Option.bind (function BoundedLength value -> Some value | MaxLength -> None)
-            renderBinary boundedLength target source
+            renderBinary length target source
         | SqlBinaryLargeObject ->
             match target with
             | SqlAgentToolType.Postgres -> "BYTEA"
