@@ -388,18 +388,41 @@ module internal SqlDmlTargetAliasCapabilityRules =
              + string provider + " remains fail-closed."
 
 module internal SqlDmlUpdateFromCapabilityRules =
-    let private supported provider =
-        provider = SqlAgentToolType.Postgres || provider = SqlAgentToolType.MsSqlServer
+    let SQLiteMinimumVersion = Version(3,33)
 
-    let SourceValidationError(provider: SqlAgentToolType) : string | null =
-        if supported provider then null
-        else "SQL capability 'dml.update.from' is not valid for source provider " + string provider
-             + " in the current Core source grammar."
+    let private sqliteProfileAtLeast
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null) =
+        provider = SqlAgentToolType.Sqlite
+        && not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(SQLiteMinimumVersion) >= 0
 
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if supported provider then null
-        else "SQL capability 'dml.update.from' remains fail-closed for provider " + string provider
-             + "; equivalent joined-mutation semantics are not yet proven."
+    let private validationError
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (side: string) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MsSqlServer -> null
+        | SqlAgentToolType.Sqlite when sqliteProfileAtLeast provider profile -> null
+        | SqlAgentToolType.Sqlite ->
+            "SQL capability 'dml.update.from' requires an explicit SQLite "
+            + side + " capability profile with ServerVersion 3.33 or newer."
+        | _ ->
+            "SQL capability 'dml.update.from' is not valid for " + side + " provider "
+            + string provider + " in the current Core capability profile."
+
+    let SourceValidationError(
+        provider: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
 
 module internal SqlDmlDeleteUsingCapabilityRules =
     let TargetValidationError(provider: SqlAgentToolType) : string | null =

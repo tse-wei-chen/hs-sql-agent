@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-01.68"
+    static member Version = "2026-09-02.69"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -504,12 +504,24 @@ type SqlCapabilityMatrix private () =
                 cap("dml.update.from","dml",
                     (if provider=SqlAgentToolType.Postgres then translated
                      elif provider=SqlAgentToolType.MsSqlServer then supported
+                     elif provider=SqlAgentToolType.Sqlite
+                          && SqlCapabilityMatrix.VersionAtLeast(
+                              profile,
+                              provider,
+                              SqlDmlUpdateFromCapabilityRules.SQLiteMinimumVersion) then supported
                      else rejected),
                     match provider with
                     | SqlAgentToolType.Postgres ->
                         "PostgreSQL UPDATE ... FROM is represented structurally and emitted natively."
                     | SqlAgentToolType.MsSqlServer ->
                         "SQL Server UPDATE <object> SET ... FROM <table_source> is preserved natively for source=target SQL Server when no Core target alias is present. Cross-provider UPDATE ... FROM remains fail-closed because duplicate-match and target-row selection semantics are not proven equivalent."
+                    | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(
+                                                        profile,
+                                                        provider,
+                                                        SqlDmlUpdateFromCapabilityRules.SQLiteMinimumVersion) ->
+                        "SQLite 3.33+ UPDATE ... FROM is represented structurally and emitted natively when the target profile proves ServerVersion 3.33+. Cross-provider lowering remains fail-closed because duplicate-match row selection is not proven equivalent."
+                    | SqlAgentToolType.Sqlite ->
+                        "SQLite UPDATE ... FROM remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.33 or newer."
                     | _ ->
                         "UPDATE ... FROM remains fail-closed for this target provider.")
                 cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")

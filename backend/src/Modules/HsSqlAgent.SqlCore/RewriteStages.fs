@@ -370,9 +370,12 @@ module internal RewriteStages =
         | UpdateStatement update ->
             if not update.From.IsEmpty
                && source <> target
-               && (source = SqlAgentToolType.MsSqlServer || target = SqlAgentToolType.MsSqlServer) then
+               && (source = SqlAgentToolType.MsSqlServer
+                   || target = SqlAgentToolType.MsSqlServer
+                   || source = SqlAgentToolType.Sqlite
+                   || target = SqlAgentToolType.Sqlite) then
                 raise (SqlCompilationException(
-                    "SQL capability 'dml.update.from' is native-only when SQL Server participates because duplicate-match and target-row selection semantics are not proven equivalent across providers. Source provider "
+                    "SQL capability 'dml.update.from' is native-only when SQL Server or SQLite participates because duplicate-match and target-row selection semantics are not proven equivalent across providers. Source provider "
                     + string source + ", target provider " + string target + "."))
             update.AssignmentItems |> NonEmpty.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Value)
             update.From |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)

@@ -61,6 +61,13 @@ MINUTE, and SECOND only. MONTH, QUARTER, and YEAR remain fail-closed for Oracle 
 their calendar rollover behavior is not yet proven equivalent to the canonical source semantics.
 Cross-provider non-DAY DATEDIFF also remains fail-closed because provider boundary-counting rules differ.
 
+## DML capability boundary
+
+SQLite UPDATE ... FROM is enabled only when both source and target capability profiles explicitly
+prove ServerVersion 3.33 or newer. PostgreSQL, SQL Server, and version-proven SQLite keep their native
+joined-update syntax; cross-provider joined-update lowering remains fail-closed when SQL Server or
+SQLite participates because duplicate-match target-row selection is not proven equivalent.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and
