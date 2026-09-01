@@ -91,6 +91,34 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
                 .Count());
     }
 
+    public static IEnumerable<object[]> OpaqueModifierNegativeMatrix()
+    {
+        yield return
+        [
+            "quoted-distinct",
+            "SELECT \"SUM\"(DISTINCT amount) FROM orders",
+            "DISTINCT"
+        ];
+        yield return
+        [
+            "quoted-aggregate-order",
+            "SELECT \"STRING_AGG\"(name ORDER BY name) FROM users",
+            "aggregate-local"
+        ];
+        yield return
+        [
+            "quoted-filter",
+            "SELECT \"SUM\"(amount) FILTER (WHERE status = 'open') FROM orders",
+            "FILTER"
+        ];
+        yield return
+        [
+            "quoted-over",
+            "SELECT \"ROW_NUMBER\"() OVER (ORDER BY id) FROM users",
+            "OVER"
+        ];
+    }
+
     public static IEnumerable<object[]> UnsupportedSourceMatrix()
     {
         foreach (var source in UnsupportedSources)
@@ -102,6 +130,39 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
                 $"SELECT {source.FunctionSql}(name) FROM users"
             ];
         }
+    }
+
+    [Fact]
+    public void OpaqueModifierNegativeMatrix_HasStableCoverage()
+    {
+        var cases = OpaqueModifierNegativeMatrix().ToArray();
+
+        Assert.Equal(4, cases.Length);
+        Assert.Equal(
+            4,
+            cases.Select(item => Assert.IsType<string>(item[0]))
+                .Distinct(StringComparer.Ordinal)
+                .Count());
+    }
+
+    [Theory]
+    [MemberData(nameof(OpaqueModifierNegativeMatrix))]
+    public void QuotedFunctionModifiers_WithoutModeledAggregateSemantics_FailClosed(
+        string name,
+        string sql,
+        string messageFragment)
+    {
+        var error = Assert.Throws<SqlCompilationException>(
+            () => Compile(sql, SqlAgentToolType.Postgres));
+
+        Assert.Contains(messageFragment, error.Message, StringComparison.OrdinalIgnoreCase);
+
+        var diagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(error);
+        Assert.Equal("SQL_SEMANTIC_VALIDATION_FAILED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.SemanticValidation, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Semantic, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.True(diagnostic.Span.Start >= 0, name);
     }
 
     [Fact]
