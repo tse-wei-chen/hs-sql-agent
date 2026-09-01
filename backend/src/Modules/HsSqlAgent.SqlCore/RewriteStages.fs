@@ -75,9 +75,16 @@ module internal RewriteStages =
         | SelectDistinct.AllRows -> SelectDistinct.AllRows
         | SelectDistinct.DistinctRows -> SelectDistinct.DistinctRows
 
+    let private sourceCapabilityMessage rejection =
+        match CapabilityRejection.side rejection with
+        | CapabilitySide.SourceCapability -> CapabilityRejection.message rejection
+        | CapabilitySide.TargetCapability ->
+            invalidOp "Target capability proof reached source semantic validation."
+
     let private requireSourceRegexCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
+        | RejectedCapability rejection ->
+            raise (SqlCompilationException(sourceCapabilityMessage rejection))
 
     let rec private verifySourceRegexExpr regexProof expression =
         match expression with
@@ -203,7 +210,8 @@ module internal RewriteStages =
 
     let private requireSourceOrderingCapability = function
         | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
+        | RejectedCapability rejection ->
+            raise (SqlCompilationException(sourceCapabilityMessage rejection))
 
     let private validateRawSourceOrder orderingProofs (order: OrderBy) =
         match order.NullOrdering with
