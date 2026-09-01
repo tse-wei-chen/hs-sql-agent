@@ -77,12 +77,15 @@ public sealed class CoreStrategyTestHarness<TStrategy>
             throw _provider.Errors.Map(ex, "query");
         }
 
+        var verifiedProfile =
+            RuntimeServerProfileVerifier.Capture(DbType, connection);
         var command = SqlCoreFacade.CompileQuery(
             sql,
             sourceDialect,
             DbType,
             new SqlPlanValidationContext("provider-integration-raw"),
-            new SqlExecutionPlanPolicy());
+            new SqlExecutionPlanPolicy(),
+            verifiedProfile.TargetProfile);
 
         try
         {
