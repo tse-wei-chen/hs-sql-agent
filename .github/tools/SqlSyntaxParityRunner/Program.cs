@@ -179,6 +179,8 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                 item.TargetCompatibilityLevel,
                 item.TargetSessionModes);
 
+            object compiledCommand;
+
             if (parsedAsDml)
             {
                 var compileMethods = dmlCompilerType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -210,7 +212,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                             : "Compile(parsed, target, validation, targetProfile[, optional...])");
                 }
 
-                _ = targetProfile is null
+                compiledCommand = (targetProfile is null
                     ? InvokeWithOptionalTail(
                         compile,
                         dmlCompiler,
@@ -223,7 +225,8 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                         parsed,
                         targetDialect,
                         validation,
-                        targetProfile);
+                        targetProfile))
+                    ?? throw new InvalidOperationException("DML Compile returned null.");
             }
             else
             {
@@ -256,7 +259,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                             : "Compile(parsed, target, validation, policy, targetProfile)");
                 }
 
-                _ = targetProfile is null
+                compiledCommand = (targetProfile is null
                     ? InvokeWithOptionalTail(
                         compile,
                         compiler,
@@ -271,10 +274,17 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                         targetDialect,
                         validation,
                         policy,
-                        targetProfile);
+                        targetProfile))
+                    ?? throw new InvalidOperationException("Query Compile returned null.");
             }
 
-            outcomes.Add(new Outcome(item.Name, true, "success", null, null));
+            outcomes.Add(new Outcome(
+                item.Name,
+                true,
+                "success",
+                null,
+                null,
+                Semantic: CaptureSemanticSignature(parsed, compiledCommand)));
         }
         catch (Exception exception)
         {
@@ -518,6 +528,15 @@ static int Compare(string mainPath, string headPath, string allowListPath)
         {
             expansions.Add(name);
         }
+        else if (mainOutcome.Success && headOutcome.Success
+                 && SemanticRegression(mainOutcome.Semantic, headOutcome.Semantic) is { } semanticRegression)
+        {
+            var detail = $"{name}: semantic compatibility floor regressed: {semanticRegression}";
+            if (allowList.Contains(name))
+                intentional.Add(detail);
+            else
+                regressions.Add(detail);
+        }
     }
 
     var staleAllowList = allowList
@@ -555,6 +574,176 @@ static int Compare(string mainPath, string headPath, string allowListPath)
     foreach (var regression in regressions)
         Console.Error.WriteLine($"  - {regression}");
     return 1;
+}
+
+static string? SemanticRegression(
+    SemanticSignature? main,
+    SemanticSignature? head)
+{
+    if (main is null || head is null)
+        return "successful outcome did not expose a semantic signature";
+
+    if (!string.Equals(main.StatementFamily, head.StatementFamily, StringComparison.Ordinal))
+        return $"statement family changed from {main.StatementFamily} to {head.StatementFamily}";
+
+    if (head.CteCount < main.CteCount)
+        return $"CTE count shrank from {main.CteCount} to {head.CteCount}";
+    if (head.SetOperationCount < main.SetOperationCount)
+        return $"set-operation count shrank from {main.SetOperationCount} to {head.SetOperationCount}";
+    if (head.SubqueryCount < main.SubqueryCount)
+        return $"subquery count shrank from {main.SubqueryCount} to {head.SubqueryCount}";
+
+    var headTables = head.NamedTableReferences.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var missingTables = main.NamedTableReferences
+        .Where(table => !headTables.Contains(table))
+        .OrderBy(table => table, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (missingTables.Length > 0)
+        return "named table/source references were dropped: " + string.Join(", ", missingTables);
+
+    if (!string.Equals(main.CommandKind, head.CommandKind, StringComparison.Ordinal))
+        return $"compiled command kind changed from {main.CommandKind ?? "<none>"} to {head.CommandKind ?? "<none>"}";
+
+    if (main.ReturnsRows.HasValue
+        && head.ReturnsRows.HasValue
+        && main.ReturnsRows.Value != head.ReturnsRows.Value)
+    {
+        return $"ReturnsRows changed from {main.ReturnsRows.Value} to {head.ReturnsRows.Value}";
+    }
+
+    return null;
+}
+
+static SemanticSignature CaptureSemanticSignature(object parsed, object command)
+{
+    var statement = parsed.GetType()
+        .GetProperty("Statement", BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(parsed)
+        ?? throw new InvalidOperationException("ParsedStatement.Statement was not available.");
+
+    var state = new SemanticWalkState();
+    WalkSemantic(statement, state, 0);
+
+    var commandType = command.GetType();
+    var commandKind = commandType
+        .GetProperty("Kind", BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(command)
+        ?.ToString();
+    var returnsRowsValue = commandType
+        .GetProperty("ReturnsRows", BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(command);
+    var returnsRows = returnsRowsValue is bool value ? value : null;
+
+    return new SemanticSignature(
+        StatementFamily(statement.GetType().Name),
+        state.CteCount,
+        state.SetOperationCount,
+        state.SubqueryCount,
+        state.NamedTables.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
+        commandKind,
+        returnsRows);
+}
+
+static string StatementFamily(string typeName) =>
+    typeName switch
+    {
+        "SelectStatement" or "QueryStatement" => "Query",
+        "InsertStatement" => "Insert",
+        "UpdateStatement" => "Update",
+        "DeleteStatement" => "Delete",
+        _ => typeName
+    };
+
+static void WalkSemantic(object? value, SemanticWalkState state, int depth)
+{
+    if (value is null || depth > 96 || value is string)
+        return;
+
+    if (value is System.Collections.IEnumerable sequence)
+    {
+        foreach (var item in sequence)
+            WalkSemantic(item, state, depth + 1);
+        return;
+    }
+
+    var type = value.GetType();
+    if (type.IsPrimitive
+        || type.IsEnum
+        || type == typeof(decimal)
+        || type == typeof(DateTime)
+        || type == typeof(DateTimeOffset)
+        || type == typeof(TimeSpan)
+        || type == typeof(Guid))
+    {
+        return;
+    }
+
+    var typeName = type.Name;
+    if (typeName == "CteDefinition")
+        state.CteCount++;
+    if (typeName == "SetOperation")
+        state.SetOperationCount++;
+    if (typeName.Contains("Subquery", StringComparison.Ordinal)
+        || typeName == "DerivedTableSource"
+        || typeName == "InsertQuerySource")
+    {
+        state.SubqueryCount++;
+    }
+
+    if (typeName == "NamedTableSource")
+    {
+        var identifier = type.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance)?.GetValue(value);
+        var text = IdentifierText(identifier);
+        if (!string.IsNullOrWhiteSpace(text))
+            state.NamedTables.Add(text);
+    }
+
+    foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+    {
+        if (!property.CanRead
+            || property.GetIndexParameters().Length != 0
+            || property.Name is "Span" or "RawSql" or "SourceProfile")
+        {
+            continue;
+        }
+
+        object? child;
+        try
+        {
+            child = property.GetValue(value);
+        }
+        catch
+        {
+            continue;
+        }
+
+        WalkSemantic(child, state, depth + 1);
+    }
+}
+
+static string? IdentifierText(object? identifier)
+{
+    if (identifier is null)
+        return null;
+
+    var parts = identifier.GetType()
+        .GetProperty("Parts", BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(identifier) as System.Collections.IEnumerable;
+    if (parts is null)
+        return identifier.ToString();
+
+    var values = new List<string>();
+    foreach (var part in parts)
+    {
+        var text = part?.GetType()
+            .GetProperty("Value", BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(part)
+            ?.ToString();
+        if (!string.IsNullOrWhiteSpace(text))
+            values.Add(text);
+    }
+
+    return values.Count == 0 ? null : string.Join(".", values);
 }
 
 static bool IsHarnessFailure(Outcome outcome)
@@ -796,6 +985,23 @@ sealed record CorpusCase(
     string? ExpectedDiagnosticCategory = null,
     bool RequireDiagnosticSpan = false,
     bool RequireTypedDiagnostic = false);
+sealed record SemanticSignature(
+    string StatementFamily,
+    int CteCount,
+    int SetOperationCount,
+    int SubqueryCount,
+    string[] NamedTableReferences,
+    string? CommandKind,
+    bool? ReturnsRows);
+
+sealed class SemanticWalkState
+{
+    public int CteCount { get; set; }
+    public int SetOperationCount { get; set; }
+    public int SubqueryCount { get; set; }
+    public HashSet<string> NamedTables { get; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
 sealed record Outcome(
     string Name,
     bool Success,
@@ -806,7 +1012,8 @@ sealed record Outcome(
     string? DiagnosticStage = null,
     string? DiagnosticCategory = null,
     int? DiagnosticSpanStart = null,
-    int? DiagnosticSpanLength = null);
+    int? DiagnosticSpanLength = null,
+    SemanticSignature? Semantic = null);
 
 sealed class SqlCoreLoadContext(string assemblyPath) : AssemblyLoadContext(isCollectible: true)
 {
