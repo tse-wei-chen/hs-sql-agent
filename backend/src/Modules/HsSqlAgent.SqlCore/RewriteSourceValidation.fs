@@ -23,9 +23,6 @@ module internal RewriteSourceValidation =
     let private sourceCapabilityMessage =
         RewriteCapabilityProvenance.sourceMessage "source semantic validation"
 
-    let private targetCapabilityMessage =
-        RewriteCapabilityProvenance.targetMessage "target capability validation"
-
     let private requireSourceRegexCapability = function
         | ProvenCapability -> ()
         | RejectedCapability rejection ->
