@@ -251,10 +251,28 @@ module internal CoreModel =
         let private normalizeRawSpelling (value: string) =
             Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant()
 
+        let private sourceEquivalenceKey provider spelling =
+            let normalized = normalizeRawSpelling spelling
+            match provider, normalized with
+            | SqlAgentToolType.MsSqlServer, "INT"
+            | SqlAgentToolType.MsSqlServer, "INTEGER" -> "INTEGER"
+            | SqlAgentToolType.Postgres, "INT"
+            | SqlAgentToolType.Postgres, "INT4"
+            | SqlAgentToolType.Postgres, "INTEGER" -> "INTEGER"
+            | SqlAgentToolType.Postgres, "INT2"
+            | SqlAgentToolType.Postgres, "SMALLINT" -> "SMALLINT"
+            | SqlAgentToolType.Postgres, "INT8"
+            | SqlAgentToolType.Postgres, "BIGINT" -> "BIGINT"
+            | _ -> normalized
+
         let internal equivalent left right =
             match left, right with
-            | ModeledCastType(_, leftSemantic, _, _), ModeledCastType(_, rightSemantic, _, _) ->
-                leftSemantic = rightSemantic
+            | ModeledCastType(leftProvider, leftSemantic, leftSpelling, _),
+              ModeledCastType(rightProvider, rightSemantic, rightSpelling, _) ->
+                leftProvider = rightProvider
+                && leftSemantic = rightSemantic
+                && sourceEquivalenceKey leftProvider leftSpelling
+                   = sourceEquivalenceKey rightProvider rightSpelling
             | CompatibilityRawCastType leftSpelling, CompatibilityRawCastType rightSpelling ->
                 normalizeRawSpelling leftSpelling = normalizeRawSpelling rightSpelling
             | _ -> false
