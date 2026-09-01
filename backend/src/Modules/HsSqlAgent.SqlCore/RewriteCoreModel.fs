@@ -147,10 +147,6 @@ module internal CoreModel =
             IntervalLiteral value
         let value (IntervalLiteral value) = value
 
-    type TypeLength =
-        | BoundedLength of int
-        | MaxLength
-
     type ProviderTypeName = private ProviderTypeName of string list
 
     module ProviderTypeName =
@@ -185,7 +181,6 @@ module internal CoreModel =
 
     type ProviderTypeArgument =
         | ProviderTypeInteger of int
-        | ProviderTypeMax
 
     type ProviderNativeType =
         { Provider: SqlAgentToolType
@@ -203,10 +198,10 @@ module internal CoreModel =
         | SqlReal
         | SqlDouble
         | SqlFixedString of length: int option
-        | SqlVariableString of length: TypeLength option
+        | SqlVariableString of length: int option
         | SqlText
         | SqlFixedBinary of length: int option
-        | SqlVariableBinary of length: TypeLength option
+        | SqlVariableBinary of length: int option
         | SqlBinaryLargeObject
         | SqlDate
         | SqlTime of precision: int option * withTimeZone: bool
