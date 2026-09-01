@@ -30,18 +30,24 @@ public sealed class ServerSyntaxBoundaryCoverageTests
             NegativeQuerySyntaxBoundaryMatrixTests
                 .WrongDialectBoundaryMatrix()
                 .Count();
+        var dmlPolicy =
+            DmlPolicySyntaxBoundaryMatrixTests
+                .SixDialectDmlPolicyBoundaryMatrix()
+                .Count();
 
         Assert.Equal(18, query);
         Assert.Equal(18, insertValues);
         Assert.Equal(12, rowSetMutations);
         Assert.Equal(6, insertSelectFailClosed);
         Assert.Equal(12, negativeQuery);
+        Assert.Equal(12, dmlPolicy);
         Assert.Equal(
-            66,
+            78,
             query +
             insertValues +
             rowSetMutations +
             insertSelectFailClosed +
-            negativeQuery);
+            negativeQuery +
+            dmlPolicy);
     }
 }
