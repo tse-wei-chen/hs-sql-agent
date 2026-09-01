@@ -402,11 +402,16 @@ type SqlCapabilityMatrix private () =
                     "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available.")
                 cap("operator.is_distinct_from","expression",
                     (match provider with
+                     | SqlAgentToolType.Postgres
+                     | SqlAgentToolType.Sqlite
+                     | SqlAgentToolType.Firebird -> supported
+                     | SqlAgentToolType.MySQL
+                     | SqlAgentToolType.Oracle -> translated
                      | SqlAgentToolType.MsSqlServer ->
                          match profileServerVersion with
-                         | Some version when version.CompareTo(Version(16, 0)) >= 0 -> translated
+                         | Some version when version.CompareTo(Version(16, 0)) >= 0 -> supported
                          | _ -> rejected
-                     | _ -> translated),
+                     | _ -> rejected),
                     match provider with
                     | SqlAgentToolType.Postgres
                     | SqlAgentToolType.Sqlite
