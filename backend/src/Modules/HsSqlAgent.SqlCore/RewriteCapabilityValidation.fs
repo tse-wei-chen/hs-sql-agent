@@ -309,11 +309,13 @@ module internal RewriteCapabilityValidation =
             window.PartitionBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
             window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
         | Cast(value, targetType) ->
-            let targetTypeName = CastType.value targetType
-            match targetRuntime with
-            | FirebirdRuntime when targetTypeName.Contains(" WITH TIME ZONE", StringComparison.OrdinalIgnoreCase) ->
+            match targetRuntime, CastType.semantic targetType with
+            | FirebirdRuntime, Some(SqlTime(_, true))
+            | FirebirdRuntime, Some(SqlTimestamp(_, true)) ->
                 requireExpressionCapability expressionProofs.FirebirdTimeZoneType
-            | _ -> ()
+            | _, Some _ -> ()
+            | _, None ->
+                invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
             proveTargetExpr targetRuntime expressionProofs value
         | Extract(_, value) ->
             proveTargetExpr targetRuntime expressionProofs value
