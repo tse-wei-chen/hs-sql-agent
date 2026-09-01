@@ -1,3 +1,4 @@
+using System.Text.Json;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Ast;
 using HsSqlAgent.SqlCore.Core.Pipeline;
@@ -155,5 +156,35 @@ public sealed class DialectDmlGrammarMatrixTests
         }
 
         return Equals(actual, expected);
+    }
+
+    [Fact]
+    public void GeneratedDmlParityCorpus_MatchesCommonDmlMatrixFloor()
+    {
+        var path = Path.Combine(
+            AppContext.BaseDirectory,
+            "SyntaxCorpus",
+            "sql-generated-dml-compatibility-floor.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var cases = document.RootElement.EnumerateArray().ToArray();
+
+        Assert.Equal(42, cases.Length);
+        Assert.Equal(
+            cases.Length,
+            cases.Select(item => item.GetProperty("name").GetString())
+                .Distinct(StringComparer.Ordinal)
+                .Count());
+
+        var counts = cases
+            .GroupBy(
+                item => item.GetProperty("dialect").GetString(),
+                StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key!,
+                group => group.Count(),
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var dialect in Enum.GetValues<SqlAgentToolType>())
+            Assert.Equal(7, counts[dialect.ToString()]);
     }
 }
