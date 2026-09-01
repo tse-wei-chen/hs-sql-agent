@@ -78,6 +78,18 @@ module internal RewriteRenderer =
 
     let private renderIdentifier provider identifier = identifier |> Identifier.parts |> List.map (quotePart provider) |> String.concat "."
     let private renderAlias provider alias = quotePart provider alias
+
+    let private renderFunctionName provider functionName =
+        functionName
+        |> FunctionName.parts
+        |> List.map (fun part ->
+            if part.WasQuoted || part.PreserveSpelling then
+                quotePart provider part
+            else
+                match provider with
+                | PostgreSql | Oracle | Firebird -> part.Value.ToUpperInvariant()
+                | MySql | SqlServer | SQLite -> part.Value)
+        |> String.concat "."
     let private tableAliasPrefix = function Oracle -> " " | _ -> " AS "
     let private providerName = function
         | PostgreSql -> "Postgres"
@@ -158,6 +170,7 @@ module internal RewriteRenderer =
         | BinaryOperator.Divide -> "/" | BinaryOperator.Modulo -> "%" | BinaryOperator.Concat -> "||"
         | BinaryOperator.Equal -> "=" | BinaryOperator.NotEqual -> "<>" | BinaryOperator.GreaterThan -> ">"
         | BinaryOperator.LessThan -> "<" | BinaryOperator.GreaterThanOrEqual -> ">=" | BinaryOperator.LessThanOrEqual -> "<="
+        | BinaryOperator.DistinctFrom -> "IS DISTINCT FROM" | BinaryOperator.NotDistinctFrom -> "IS NOT DISTINCT FROM"
         | BinaryOperator.And -> "AND" | BinaryOperator.Or -> "OR"
 
     let private joinText = function
@@ -204,6 +217,8 @@ module internal RewriteRenderer =
                  | BinaryOperator.LessThan
                  | BinaryOperator.GreaterThanOrEqual
                  | BinaryOperator.LessThanOrEqual
+                 | BinaryOperator.DistinctFrom
+                 | BinaryOperator.NotDistinctFrom
                  | BinaryOperator.And
                  | BinaryOperator.Or), _, _) -> true
         | SimpleCase(_, branches, fallback) ->
@@ -256,6 +271,18 @@ module internal RewriteRenderer =
                 "(" + leftSql + " + " + rightSql + ")"
             | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Unproven message) ->
                 invalidOp ("Validated SQL reached rendering without SQL Server concat proof: " + message)
+            | BinaryOperator.NotDistinctFrom, MySql, _ ->
+                "(" + leftSql + " <=> " + rightSql + ")"
+            | BinaryOperator.DistinctFrom, MySql, _ ->
+                "NOT (" + leftSql + " <=> " + rightSql + ")"
+            | (BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), Oracle, _ ->
+                let equal =
+                    "CASE WHEN " + leftSql + " IS NULL THEN CASE WHEN " + rightSql
+                    + " IS NULL THEN 1 ELSE 0 END WHEN " + rightSql
+                    + " IS NULL THEN 0 WHEN " + leftSql + " = " + rightSql
+                    + " THEN 1 ELSE 0 END"
+                "(" + equal
+                + (if operator = BinaryOperator.NotDistinctFrom then " = 1)" else " = 0)")
             | _ -> "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
         | Expr.Like(value, pattern, escape, negated, caseInsensitive) ->
             if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp (capabilityError ctx.Provider "operator.ilike")
@@ -367,6 +394,10 @@ module internal RewriteRenderer =
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        let dispatchName =
+            if FunctionName.hasQuotedParts call.Name then String.Empty
+            else name
+        let nativeName = renderFunctionName ctx.Provider call.Name
         let tool = providerTool ctx.Provider
 
         let fail message = raise (SqlCompilationException(message))
@@ -394,7 +425,7 @@ module internal RewriteRenderer =
                 "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'"
 
         let renderOrdinary () =
-            if name.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
+            if dispatchName.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
                 fail ("Canonical function '" + name + "' has no native lowering implementation; compilation was rejected.")
             if not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome then
                 fail ("Aggregate-local modifiers are not supported for ordinary function '" + name + "'.")
@@ -402,13 +433,13 @@ module internal RewriteRenderer =
                 call.Arguments
                 |> List.mapi (fun index argument ->
                     let sql = renderExpr ctx argument
-                    if ctx.Provider = PostgreSql && name = "ROUND" && call.Arguments.Length = 2 && index = 0 then
+                    if ctx.Provider = PostgreSql && dispatchName = "ROUND" && call.Arguments.Length = 2 && index = 0 then
                         "CAST(" + sql + " AS numeric)"
                     else sql)
             let args = String.concat ", " rendered
-            name + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
+            nativeName + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
 
-        match name with
+        match dispatchName with
         | "CORE_DATE_ADD" ->
             requireCount 3
             let unit = literalKeyword "DATEADD unit" call.Arguments[0]

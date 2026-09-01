@@ -90,19 +90,50 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
-    public void Parse_QuotedCanonicalLookingFunction_FailsBeforeNormalization()
+    public void QuotedCanonicalLookingFunction_PreservesIdentity_AndStaysOnNativePath()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(
-                "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
-                SqlAgentToolType.Postgres));
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
+            SqlAgentToolType.Postgres);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+        var function = Assert.IsType<FunctionCallExpr>(Assert.Single(select.Select).Expression);
 
-        Assert.Contains("Quoted function identifiers", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("lossless identifier quoting", error.Message, StringComparison.OrdinalIgnoreCase);
+        var part = Assert.Single(function.Name.Parts);
+        Assert.Equal("CORE_DATE_ADD", part.Value);
+        Assert.True(part.WasQuoted);
+
+        var command = Compile(
+            "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("\"CORE_DATE_ADD\"(", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("INTERVAL", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void QualifiedFunction_ParsesStructurally_ThenUnknownSemanticFailsClosed()
+    public void QuotedRegexLookingFunction_PreservesIdentity_AndDoesNotBecomeRegexOperator()
+    {
+        var command = Compile(
+            "SELECT \"REGEXP_LIKE\"(name) FROM users",
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("\"REGEXP_LIKE\"(", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain(" ~ ", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QuotedRoundLookingFunction_DoesNotReceiveBuiltinRoundArgumentCast()
+    {
+        var command = Compile(
+            "SELECT \"ROUND\"(amount, 2) FROM orders",
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("\"ROUND\"(", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("AS numeric", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void QualifiedFunction_ParsesStructurally_AndPreservesNativePostgresIdentity()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT custom.fn(id) FROM users",
@@ -120,11 +151,9 @@ public sealed class CoreQuotedIdentifierLoweringTests
         Assert.Equal("custom", function.Name.Parts[0].Value);
         Assert.Equal("fn", function.Name.Parts[1].Value);
 
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            Compile("SELECT custom.fn(id) FROM users", SqlAgentToolType.Postgres));
+        var command = Compile("SELECT custom.fn(id) FROM users", SqlAgentToolType.Postgres);
 
-        Assert.Contains("not registered", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("normalization", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CUSTOM.FN(", command.Sql, StringComparison.Ordinal);
     }
 
     [Theory]

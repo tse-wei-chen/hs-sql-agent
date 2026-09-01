@@ -8,9 +8,28 @@ open HsSqlAgent.SqlCore.Rewrite.CoreModel
 /// Unforgeable compiler-stage wrappers. Construction is intentionally centralized here.
 module internal Typestate =
 
+    type CapabilitySide =
+        | SourceCapability
+        | TargetCapability
+
+    type CapabilityRejection =
+        private
+            { Side: CapabilitySide
+              Message: string }
+
+    module CapabilityRejection =
+        let internal create side message =
+            if String.IsNullOrWhiteSpace(message) then
+                invalidArg "message" "Capability rejection message cannot be empty."
+            { Side = side
+              Message = message }
+
+        let internal side rejection = rejection.Side
+        let internal message rejection = rejection.Message
+
     type CapabilityProof =
         | ProvenCapability
-        | RejectedCapability of string
+        | RejectedCapability of CapabilityRejection
 
     type JoinProofs =
         { RightJoin: CapabilityProof
@@ -31,9 +50,11 @@ module internal Typestate =
 
     type ExpressionProofs =
         { ILike: CapabilityProof
+          DistinctFrom: CapabilityProof
           IntervalLiteral: CapabilityProof
           RegexMatch: CapabilityProof
           AggregateFilter: CapabilityProof
+          QuotedFunction: CapabilityProof
           QualifiedFunction: CapabilityProof
           OffsetTimestamp: CapabilityProof
           FirebirdTimeZoneType: CapabilityProof
@@ -79,6 +100,15 @@ module internal Typestate =
         | SQLiteRuntime
         | OracleRuntime
         | FirebirdRuntime
+
+    module TargetRuntime =
+        let provider = function
+            | PostgreSqlRuntime -> SqlAgentToolType.Postgres
+            | MySqlRuntime -> SqlAgentToolType.MySQL
+            | SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
+            | SQLiteRuntime -> SqlAgentToolType.Sqlite
+            | OracleRuntime -> SqlAgentToolType.Oracle
+            | FirebirdRuntime -> SqlAgentToolType.Firebird
 
     type ParsedSql = private ParsedSql of Document
     type BoundSql = private BoundSql of Document

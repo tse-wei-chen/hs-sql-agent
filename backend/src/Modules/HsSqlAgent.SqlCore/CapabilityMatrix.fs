@@ -13,7 +13,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-08-31.66"
+    static member Version = "2026-09-01.67"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -400,11 +400,38 @@ type SqlCapabilityMatrix private () =
                 cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
                 cap("expression.boolean_literal_source","expression",translated,
                     "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available.")
-                cap("function.qualified","function",(if provider=SqlAgentToolType.Postgres then supported else rejected),
-                    if provider=SqlAgentToolType.Postgres then
-                        "Unquoted schema-qualified PostgreSQL function names are preserved structurally across the CLR compatibility AST and emitted natively. Quoted function identifier parts remain fail-closed until FunctionName carries identifier quoting metadata."
+                cap("operator.is_distinct_from","expression",
+                    (match provider with
+                     | SqlAgentToolType.Postgres
+                     | SqlAgentToolType.Sqlite
+                     | SqlAgentToolType.Firebird -> supported
+                     | SqlAgentToolType.MySQL
+                     | SqlAgentToolType.Oracle -> translated
+                     | SqlAgentToolType.MsSqlServer ->
+                         match profileServerVersion with
+                         | Some version when version.CompareTo(Version(16, 0)) >= 0 -> supported
+                         | _ -> rejected
+                     | _ -> rejected),
+                    match provider with
+                    | SqlAgentToolType.Postgres
+                    | SqlAgentToolType.Sqlite
+                    | SqlAgentToolType.Firebird ->
+                        "Canonical null-safe distinct comparison is emitted with native IS [NOT] DISTINCT FROM syntax."
+                    | SqlAgentToolType.MySQL ->
+                        "Canonical IS NOT DISTINCT FROM lowers to MySQL <=>; IS DISTINCT FROM lowers to NOT (<=>), preserving two-valued NULL-safe comparison semantics."
+                    | SqlAgentToolType.MsSqlServer ->
+                        "SQL Server 2022 / ServerVersion 16.0+ emits native IS [NOT] DISTINCT FROM. Older or undeclared SQL Server targets remain fail-closed."
+                    | SqlAgentToolType.Oracle ->
+                        "Oracle uses a CASE-based null-safe comparison built from ordinary target equality and IS NULL semantics. The lowering is allowed only for repeatable scalar operands so Core never duplicates volatile/subquery evaluation."
+                    | _ ->
+                        "Canonical null-safe comparison follows the provider-specific proven lowering.")
+                cap("function.quoted_identifier","function",supported,
+                    "Provider-native quoted function identifiers preserve per-part quote intent and case-sensitive identity for same-provider compilation. Cross-provider quoted function identity remains fail-closed because delimiter, case-folding, and namespace semantics are provider-bound.")
+                cap("function.qualified","function",(if provider=SqlAgentToolType.Sqlite then rejected else supported),
+                    if provider=SqlAgentToolType.Sqlite then
+                        "SQLite scalar function-call grammar uses an unqualified function-name; schema-qualified scalar function calls remain fail-closed."
                     else
-                        "Schema-qualified source function names remain target-gated until an equivalent provider-specific namespace contract is declared.")
+                        "Provider-native qualified function identifiers preserve database/schema/package qualification for same-provider compilation. Cross-provider namespace identity remains fail-closed rather than being silently reinterpreted.")
                 cap("expression.cast","expression",translated,
                     "Standard CAST input is normalized through a source-aware Core type model before provider-specific CAST spelling is emitted. Raw PostgreSQL :: cast spelling is accepted only when the declared source dialect is PostgreSQL; non-PostgreSQL raw sources fail before AST canonicalization. Unknown cross-dialect vendor types fail closed.")
                 cap("expression.interval","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),

@@ -22,6 +22,8 @@ module internal RewriteParser =
         { EnforceDialectSyntax: bool
           MySqlPipes: MySqlPipesSemantics
           MySqlNoBackslashEscapes: bool
+          MySqlNullSafeEqualitySyntax: CapabilityProof
+          DistinctFromSyntax: CapabilityProof
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
@@ -45,9 +47,11 @@ module internal RewriteParser =
 
         let private permissiveExpressions =
             { ILike = ProvenCapability
+              DistinctFrom = ProvenCapability
               IntervalLiteral = ProvenCapability
               RegexMatch = ProvenCapability
               AggregateFilter = ProvenCapability
+              QuotedFunction = ProvenCapability
               QualifiedFunction = ProvenCapability
               OffsetTimestamp = ProvenCapability
               FirebirdTimeZoneType = ProvenCapability
@@ -70,6 +74,8 @@ module internal RewriteParser =
             { EnforceDialectSyntax = false
               MySqlPipes = RejectAmbiguousPipes
               MySqlNoBackslashEscapes = false
+              MySqlNullSafeEqualitySyntax = ProvenCapability
+              DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
@@ -85,6 +91,8 @@ module internal RewriteParser =
             { EnforceDialectSyntax = true
               MySqlPipes = PipesAsConcat
               MySqlNoBackslashEscapes = false
+              MySqlNullSafeEqualitySyntax = ProvenCapability
+              DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
@@ -109,6 +117,8 @@ module internal RewriteParser =
         member _.Dialect = dialect
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
         member _.MySqlNoBackslashEscapes = semantics.MySqlNoBackslashEscapes
+        member _.SourceMySqlNullSafeEqualitySyntax = semantics.MySqlNullSafeEqualitySyntax
+        member _.SourceDistinctFromSyntax = semantics.DistinctFromSyntax
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
@@ -182,9 +192,13 @@ module internal RewriteParser =
                     token
                     detail))
 
+    let private sourceCapabilityMessage =
+        RewriteCapabilityProvenance.sourceMessage "the source parser"
+
     let private requireSourceCapability (token: Token) = function
         | ProvenCapability -> ()
-        | RejectedCapability message ->
+        | RejectedCapability rejection ->
+            let message = sourceCapabilityMessage rejection
             raise (
                 SqlCompilationException(
                     message,
@@ -197,7 +211,8 @@ module internal RewriteParser =
 
     let private requireSourceParseCapability (token: Token) = function
         | ProvenCapability -> ()
-        | RejectedCapability message ->
+        | RejectedCapability rejection ->
+            let message = sourceCapabilityMessage rejection
             let finish = token.Start + max token.Length 1
             let detail =
                 message
@@ -294,7 +309,7 @@ module internal RewriteParser =
     let private singlePartIdentifier (part: IdentifierPart) = Identifier.create [ part ]
 
     let private functionName (identifier: Identifier) : FunctionName =
-        identifier |> Identifier.text |> FunctionName.create
+        FunctionName.ofIdentifier identifier
 
     let private parseNonNegativeRowCount context (cursor: Cursor) =
         let token = cursor.Take()
@@ -558,16 +573,30 @@ module internal RewriteParser =
             | Operator "<" -> cursor.Advance(); Binary(BinaryOperator.LessThan, left, parseAdd cursor)
             | Operator ">=" -> cursor.Advance(); Binary(BinaryOperator.GreaterThanOrEqual, left, parseAdd cursor)
             | Operator "<=" -> cursor.Advance(); Binary(BinaryOperator.LessThanOrEqual, left, parseAdd cursor)
+            | Operator "<=>" ->
+                let token = cursor.Current
+                requireSourceCapability token cursor.SourceMySqlNullSafeEqualitySyntax
+                cursor.Advance()
+                Binary(BinaryOperator.NotDistinctFrom, left, parseAdd cursor)
             | Keyword "LIKE" -> cursor.Advance(); parseLikeTail cursor left false false
             | Keyword "ILIKE" ->
                 requireSourceCapability cursor.Current cursor.SourceExpressions.ILike
                 cursor.Advance()
                 parseLikeTail cursor left false true
             | Keyword "IS" ->
+                let token = cursor.Current
                 cursor.Advance()
                 let negated = acceptKeyword "NOT" cursor
-                expectKeyword "NULL" cursor
-                IsNull(left, negated)
+                if acceptKeyword "DISTINCT" cursor then
+                    requireSourceCapability token cursor.SourceDistinctFromSyntax
+                    expectKeyword "FROM" cursor
+                    let operator =
+                        if negated then BinaryOperator.NotDistinctFrom
+                        else BinaryOperator.DistinctFrom
+                    Binary(operator, left, parseAdd cursor)
+                else
+                    expectKeyword "NULL" cursor
+                    IsNull(left, negated)
             | Keyword "IN" -> cursor.Advance(); parseInTail cursor left false
             | Keyword "BETWEEN" -> cursor.Advance(); parseBetweenTail cursor left false
             | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseInTail cursor left true
@@ -892,10 +921,10 @@ module internal RewriteParser =
         Extract(field, value)
 
     and private parseFunctionExpression (name: Identifier) (cursor: Cursor) =
-        let nameParts = Identifier.parts name
-        if nameParts |> List.exists (fun part -> part.WasQuoted) then
-            fail cursor.Current "Quoted function identifiers are not yet represented with lossless identifier quoting"
-        if nameParts.Length > 1 then
+        let modeledName = functionName name
+        if FunctionName.hasQuotedParts modeledName then
+            requireSourceParseCapability cursor.Current cursor.SourceExpressions.QuotedFunction
+        if FunctionName.isQualified modeledName then
             requireSourceParseCapability cursor.Current cursor.SourceExpressions.QualifiedFunction
         expectSymbol '(' cursor
         let distinct = acceptKeyword "DISTINCT" cursor
@@ -933,7 +962,8 @@ module internal RewriteParser =
         let isRawRegex =
             Identifier.parts name
             |> function
-                | [ part ] -> part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
+                | [ part ] when not part.WasQuoted && not part.PreserveSpelling ->
+                    part.Value.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
                 | _ -> false
         if isRawRegex then
             if not aggregateOrderBy.IsEmpty || aggregateSeparator.IsSome then
@@ -941,7 +971,7 @@ module internal RewriteParser =
             RawRegexCall(values, distinct)
         else
             FunctionCall
-                { Name = functionName name
+                { Name = modeledName
                   Arguments = values
                   IsDistinct = distinct
                   AggregateOrderBy = aggregateOrderBy
@@ -1212,7 +1242,8 @@ module internal RewriteParser =
         let requireJoinProof proof =
             match proof with
             | ProvenCapability -> ()
-            | RejectedCapability message -> raise (SqlCompilationException(message))
+            | RejectedCapability rejection ->
+                raise (SqlCompilationException(sourceCapabilityMessage rejection))
 
         if acceptKeyword "NATURAL" cursor then
             match SqlNaturalJoinCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with

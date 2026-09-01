@@ -216,6 +216,61 @@ module internal SqlIlikeCapabilityRules =
         if sourceDialect = SqlAgentToolType.Postgres then null
         else "ILIKE is PostgreSQL-specific and is not valid for source dialect " + string sourceDialect + "."
 
+module internal SqlDistinctFromCapabilityRules =
+    let private sqlServerMinimumVersion = Version(16, 0)
+
+    let private profileAtLeast
+        (profile: SqlProviderCapabilityProfile | null)
+        provider
+        (minimum: Version) =
+        not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(minimum) >= 0
+
+    let SourceSyntaxValidationError(
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        match sourceDialect with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.Sqlite
+        | SqlAgentToolType.Firebird -> null
+        | SqlAgentToolType.MsSqlServer when
+            profileAtLeast sourceProfile SqlAgentToolType.MsSqlServer sqlServerMinimumVersion ->
+            null
+        | SqlAgentToolType.MsSqlServer ->
+            "SQL capability 'operator.is_distinct_from' requires SQL Server source ServerVersion 16.0+ (SQL Server 2022) for native IS [NOT] DISTINCT FROM syntax."
+        | SqlAgentToolType.MySQL ->
+            "MySQL source uses the native NULL-safe equality operator <=> instead of IS [NOT] DISTINCT FROM."
+        | SqlAgentToolType.Oracle ->
+            "Oracle source SQL has no declared native IS [NOT] DISTINCT FROM spelling in the Core source grammar."
+        | value ->
+            "SQL capability 'operator.is_distinct_from' is not declared for source dialect " + string value + "."
+
+    let MySqlNullSafeEqualitySourceSyntaxValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        if sourceDialect = SqlAgentToolType.MySQL then null
+        else
+            "MySQL native <=> NULL-safe equality spelling is not valid for declared source dialect "
+            + string sourceDialect
+            + "; the canonical null-safe comparison semantic must enter through that dialect's declared source grammar."
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.Sqlite
+        | SqlAgentToolType.Oracle
+        | SqlAgentToolType.Firebird -> null
+        | SqlAgentToolType.MsSqlServer when
+            profileAtLeast targetProfile SqlAgentToolType.MsSqlServer sqlServerMinimumVersion ->
+            null
+        | SqlAgentToolType.MsSqlServer ->
+            "SQL capability 'operator.is_distinct_from' requires SQL Server target ServerVersion 16.0+ (SQL Server 2022) for native IS [NOT] DISTINCT FROM lowering."
+        | value ->
+            "SQL capability 'operator.is_distinct_from' is not supported by target provider " + string value + "."
+
 module internal SqlIntervalLiteralCapabilityRules =
     let IsTargetSupported(provider: SqlAgentToolType) = provider = SqlAgentToolType.Postgres
     let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
@@ -224,15 +279,45 @@ module internal SqlIntervalLiteralCapabilityRules =
             "INTERVAL 'literal' is not valid for declared source dialect " + string sourceDialect
             + " in the Core source capability profile. Core models this interval-literal shape as PostgreSQL source syntax; other dialect interval forms require their own structured translation contract."
 
+module internal SqlQuotedFunctionCapabilityRules =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        match sourceDialect with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.MsSqlServer
+        | SqlAgentToolType.Sqlite
+        | SqlAgentToolType.Oracle
+        | SqlAgentToolType.Firebird -> null
+        | value -> "Quoted function identifiers are not modeled for source dialect " + string value + "."
+
+    let TargetValidationError(sourceDialect: SqlAgentToolType, provider: SqlAgentToolType) : string | null =
+        if sourceDialect = provider then null
+        else
+            "SQL capability 'function.quoted_identifier' preserves provider-native quoted function identity only when source and target providers match. "
+            + "Quoted function identity is provider-bound because delimiter, case-folding, and namespace resolution semantics differ across providers. "
+            + "Source provider is " + string sourceDialect + "; target provider is " + string provider + "."
+
 module internal SqlQualifiedFunctionCapabilityRules =
     let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
-        if sourceDialect = SqlAgentToolType.Postgres then null
-        else "SQL capability 'function.qualified' is currently declared only for the PostgreSQL source dialect; source dialect "
-             + string sourceDialect + " remains fail-closed."
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'function.qualified' currently has a declared lossless lowering only for PostgreSQL targets; target provider "
-             + string provider + " remains fail-closed."
+        match sourceDialect with
+        | SqlAgentToolType.Sqlite ->
+            "SQL capability 'function.qualified' is not valid for SQLite source grammar; scalar function calls use an unqualified function-name."
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MySQL
+        | SqlAgentToolType.MsSqlServer
+        | SqlAgentToolType.Oracle
+        | SqlAgentToolType.Firebird -> null
+        | value ->
+            "SQL capability 'function.qualified' is not modeled for source dialect " + string value + "."
+
+    let TargetValidationError(sourceDialect: SqlAgentToolType, provider: SqlAgentToolType) : string | null =
+        if provider = SqlAgentToolType.Sqlite then
+            "SQL capability 'function.qualified' is not supported by SQLite target grammar; scalar function calls use an unqualified function-name."
+        elif sourceDialect = provider then null
+        else
+            "SQL capability 'function.qualified' preserves provider-native function namespace identity only when source and target providers match. "
+            + "Qualified function identity is provider-bound and is not silently reinterpreted across database/schema/package namespaces. "
+            + "Source provider is " + string sourceDialect + "; target provider is " + string provider + "."
 
 module internal SqlModuloCapabilityRules =
     let private usesFunction provider = provider = SqlAgentToolType.Oracle || provider = SqlAgentToolType.Firebird

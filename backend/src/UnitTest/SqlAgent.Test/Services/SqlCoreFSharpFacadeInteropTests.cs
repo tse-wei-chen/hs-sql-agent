@@ -106,6 +106,67 @@ public sealed class SqlCoreFSharpFacadeInteropTests
 
 
     [Fact]
+    public void Facade_TryCompileQuery_SuccessUsesTypedCapturedStateWithoutLegacyErrorPayload()
+    {
+        var result = SqlCoreFacade.TryCompileQuery(
+            "SELECT 1",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("fsharp-try-result-success-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Value);
+        Assert.Null(result.ErrorCode);
+        Assert.Null(result.ErrorMessage);
+        Assert.Empty(result.TypedDiagnostics);
+    }
+
+    [Fact]
+    public void Facade_TryCompileQuery_FailureKeepsLegacyDefaultValueContractAtClrBoundary()
+    {
+        var result = SqlCoreFacade.TryCompileQuery(
+            "SELECT FROM",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("fsharp-try-result-failure-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.False(result.Success);
+        Assert.Null(result.Value);
+        Assert.Equal("SQL_PARSE_ERROR", result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage));
+        Assert.Single(result.TypedDiagnostics);
+    }
+
+    [Fact]
+    public void SqlCoreTryResult_PublicLegacyConstructorsPreserveSuppliedFailureValue()
+    {
+        var diagnostics = Array.Empty<string>();
+        var typedDiagnostics = Array.Empty<SqlDiagnostic>();
+
+        var fiveArgument = new SqlCoreTryResult<string>(
+            false,
+            "legacy-five",
+            "LEGACY",
+            "legacy message",
+            diagnostics);
+
+        var sixArgument = new SqlCoreTryResult<string>(
+            false,
+            "legacy-six",
+            "LEGACY",
+            "legacy message",
+            diagnostics,
+            typedDiagnostics);
+
+        Assert.Equal("legacy-five", fiveArgument.Value);
+        Assert.Equal("legacy-six", sixArgument.Value);
+        Assert.Equal("LEGACY", fiveArgument.ErrorCode);
+        Assert.Equal("LEGACY", sixArgument.ErrorCode);
+    }
+
+    [Fact]
     public void Facade_TryCompileQuery_ReportsWhitelistDenialAsTypedPolicyDiagnostic()
     {
         var result = SqlCoreFacade.TryCompileQuery(

@@ -27,38 +27,50 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> RewriteParser.SourceDialect.Firebird
         | value -> invalidArg "sourceDialect" ("Unsupported source dialect '" + string value + "'.")
 
-    let private capabilityProof (message: string | null) =
+    let private capabilityProof side (message: string | null) =
         match message with
         | null -> CapabilityProof.ProvenCapability
-        | value -> CapabilityProof.RejectedCapability value
+        | value ->
+            CapabilityProof.RejectedCapability(
+                CapabilityRejection.create side value)
+
+    let private sourceCapabilityProof message =
+        capabilityProof CapabilitySide.SourceCapability message
+
+    let private targetCapabilityProof message =
+        capabilityProof CapabilitySide.TargetCapability message
+
+    let private rejectedTarget message =
+        CapabilityProof.RejectedCapability(
+            CapabilityRejection.create CapabilitySide.TargetCapability message)
 
     let private sourceJoinProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : JoinProofs =
         { RightJoin =
             SqlJoinCapabilityRules.SourceValidationError("RIGHT", source, sourceProfile)
-            |> capabilityProof
+            |> sourceCapabilityProof
           FullJoin =
             SqlJoinCapabilityRules.SourceValidationError("FULL", source, sourceProfile)
-            |> capabilityProof }
+            |> sourceCapabilityProof }
 
     let private targetJoinProofs target (targetProfile: SqlProviderCapabilityProfile | null) : JoinProofs =
         { RightJoin =
             SqlJoinCapabilityRules.TargetValidationError("RIGHT", target, targetProfile)
-            |> capabilityProof
+            |> targetCapabilityProof
           FullJoin =
             SqlJoinCapabilityRules.TargetValidationError("FULL", target, targetProfile)
-            |> capabilityProof }
+            |> targetCapabilityProof }
 
     let private sourceOrderingProofs source : SourceOrderingProofs =
         { NullsFirst =
             SqlNullOrderingCapabilityRules.SourceValidationError(
                 source,
                 HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind.First)
-            |> capabilityProof
+            |> sourceCapabilityProof
           NullsLast =
             SqlNullOrderingCapabilityRules.SourceValidationError(
                 source,
                 HsSqlAgent.SqlCore.Core.Ast.NullOrderingKind.Last)
-            |> capabilityProof }
+            |> sourceCapabilityProof }
 
     let private targetNullOrdering target =
         if SqlNullOrderingCapabilityRules.RequiresTargetRewrite(target) then
@@ -66,32 +78,32 @@ module internal RewriteFacadeAdapter =
         else
             TargetNullOrdering.NativeNullOrdering
 
-    let private filterPredicateProofs provider side : FilterPredicateProofs =
+    let private filterPredicateProofs provider side proof : FilterPredicateProofs =
         { OuterReference =
             SqlAggregateFilterCapabilityRules.PredicateValidationError(
                 provider,
                 side,
                 SqlAggregateFilterPredicateFeature.OuterReference)
-            |> capabilityProof
+            |> proof
           Subquery =
             SqlAggregateFilterCapabilityRules.PredicateValidationError(
                 provider,
                 side,
                 SqlAggregateFilterPredicateFeature.Subquery)
-            |> capabilityProof
+            |> proof
           WindowFunction =
             SqlAggregateFilterCapabilityRules.PredicateValidationError(
                 provider,
                 side,
                 SqlAggregateFilterPredicateFeature.WindowFunction)
-            |> capabilityProof }
+            |> proof }
 
     let private sourceRegexProof source =
         match SqlSourceFunctionRegistry.Find("REGEXP_LIKE") with
         | null -> invalidOp "REGEXP_LIKE source function contract is missing."
         | contract ->
             contract.ValidationError(source, 2)
-            |> capabilityProof
+            |> sourceCapabilityProof
 
     let private sourceExpressionProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
         let filterError =
@@ -100,20 +112,24 @@ module internal RewriteFacadeAdapter =
             | value -> value
         { ILike =
             SqlIlikeCapabilityRules.SourceValidationError(source)
-            |> capabilityProof
+            |> sourceCapabilityProof
+          DistinctFrom = CapabilityProof.ProvenCapability
           IntervalLiteral =
             SqlIntervalLiteralCapabilityRules.SourceValidationError(source)
-            |> capabilityProof
+            |> sourceCapabilityProof
           RegexMatch = sourceRegexProof source
-          AggregateFilter = filterError |> capabilityProof
+          AggregateFilter = filterError |> sourceCapabilityProof
+          QuotedFunction =
+            SqlQuotedFunctionCapabilityRules.SourceValidationError(source)
+            |> sourceCapabilityProof
           QualifiedFunction =
             SqlQualifiedFunctionCapabilityRules.SourceValidationError(source)
-            |> capabilityProof
+            |> sourceCapabilityProof
           OffsetTimestamp = CapabilityProof.ProvenCapability
           FirebirdTimeZoneType = CapabilityProof.ProvenCapability
           FirebirdExtendedDecimal = CapabilityProof.ProvenCapability
           StandaloneTime = CapabilityProof.ProvenCapability
-          FilterPredicate = filterPredicateProofs source "source" }
+          FilterPredicate = filterPredicateProofs source "source" sourceCapabilityProof }
 
     let private providerName = function
         | SqlAgentToolType.Postgres -> "Postgres"
@@ -124,52 +140,58 @@ module internal RewriteFacadeAdapter =
         | SqlAgentToolType.Firebird -> "Firebird"
         | value -> string value
 
-    let private targetExpressionProofs target (targetProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
+    let private targetExpressionProofs source target (targetProfile: SqlProviderCapabilityProfile | null) : ExpressionProofs =
         { ILike =
             if SqlIlikeCapabilityRules.SupportsTarget(target) then
                 CapabilityProof.ProvenCapability
             else
-                CapabilityProof.RejectedCapability(
+                rejectedTarget (
                     "PostgreSQL-specific ILIKE cannot be lowered here: SQL capability 'operator.ilike' is not supported by provider "
                     + providerName target
                     + " for this Core plan.")
+          DistinctFrom =
+            SqlDistinctFromCapabilityRules.TargetValidationError(target, targetProfile)
+            |> targetCapabilityProof
           IntervalLiteral =
             if SqlIntervalLiteralCapabilityRules.IsTargetSupported(target) then
                 CapabilityProof.ProvenCapability
             else
-                CapabilityProof.RejectedCapability(
+                rejectedTarget (
                     "SQL capability 'expression.interval' is not supported by provider "
                     + providerName target
                     + " for this Core plan.")
           RegexMatch =
             SqlRegexCapabilityRules.TargetValidationError(target, targetProfile)
-            |> capabilityProof
+            |> targetCapabilityProof
           AggregateFilter =
             SqlAggregateFilterCapabilityRules.ValidationError(target, targetProfile, "target")
-            |> capabilityProof
+            |> targetCapabilityProof
+          QuotedFunction =
+            SqlQuotedFunctionCapabilityRules.TargetValidationError(source, target)
+            |> targetCapabilityProof
           QualifiedFunction =
-            SqlQualifiedFunctionCapabilityRules.TargetValidationError(target)
-            |> capabilityProof
+            SqlQualifiedFunctionCapabilityRules.TargetValidationError(source, target)
+            |> targetCapabilityProof
           OffsetTimestamp =
             SqlOffsetTimestampCapabilityRules.TargetValidationError(target, targetProfile)
-            |> capabilityProof
+            |> targetCapabilityProof
           FirebirdTimeZoneType =
             SqlFirebirdTimeZoneTypeCapabilityRules.CastTargetValidationError(
                 target,
                 targetProfile,
                 "TIMESTAMP WITH TIME ZONE")
-            |> capabilityProof
+            |> targetCapabilityProof
           FirebirdExtendedDecimal =
             if target <> SqlAgentToolType.Firebird
                || SqlFirebirdTimeZoneTypeCapabilityRules.SupportsTargetProfile(targetProfile) then
                 CapabilityProof.ProvenCapability
             else
-                CapabilityProof.RejectedCapability(
+                rejectedTarget (
                     "SQL capability 'numeric.decimal_extended' requires an explicit Firebird target capability profile with ServerVersion 4.0 or newer.")
           StandaloneTime =
             SqlStandaloneTimeCapabilityRules.TargetValidationError(target)
-            |> capabilityProof
-          FilterPredicate = filterPredicateProofs target "target" }
+            |> targetCapabilityProof
+          FilterPredicate = filterPredicateProofs target "target" targetCapabilityProof }
 
     let private sourceDmlProofs source (sourceProfile: SqlProviderCapabilityProfile | null) : DmlProofs =
         let sourceVersion : Version | null =
@@ -178,34 +200,34 @@ module internal RewriteFacadeAdapter =
             | value -> value.ServerVersion
         { Returning =
             SqlDmlReturningCapabilityRules.SourceValidationError(source, sourceVersion)
-            |> capabilityProof
+            |> sourceCapabilityProof
           ReturningExpression =
             SqlDmlReturningExpressionCapabilityRules.SourceValidationError(source)
-            |> capabilityProof
+            |> sourceCapabilityProof
           TargetAlias =
             SqlDmlTargetAliasCapabilityRules.SourceValidationError(source)
-            |> capabilityProof
+            |> sourceCapabilityProof
           UpdateFrom =
             SqlDmlUpdateFromCapabilityRules.SourceValidationError(source)
-            |> capabilityProof
+            |> sourceCapabilityProof
           DeleteUsing = CapabilityProof.ProvenCapability }
 
     let private targetDmlProofs target (targetProfile: SqlProviderCapabilityProfile | null) : DmlProofs =
         { Returning =
             SqlDmlReturningCapabilityRules.TargetValidationError(target, targetProfile)
-            |> capabilityProof
+            |> targetCapabilityProof
           ReturningExpression =
             SqlDmlReturningExpressionCapabilityRules.TargetValidationError(target)
-            |> capabilityProof
+            |> targetCapabilityProof
           TargetAlias =
             SqlDmlTargetAliasCapabilityRules.TargetValidationError(target)
-            |> capabilityProof
+            |> targetCapabilityProof
           UpdateFrom =
             SqlDmlUpdateFromCapabilityRules.TargetValidationError(target)
-            |> capabilityProof
+            |> targetCapabilityProof
           DeleteUsing =
             SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target)
-            |> capabilityProof }
+            |> targetCapabilityProof }
 
     let private sourceOnConflictProof source (sourceProfile: SqlProviderCapabilityProfile | null) =
         let sourceVersion : Version | null =
@@ -213,7 +235,7 @@ module internal RewriteFacadeAdapter =
             | null -> null
             | value -> value.ServerVersion
         SqlDmlUpsertCapabilityRules.OnConflictSourceValidationError(source, sourceVersion)
-        |> capabilityProof
+        |> sourceCapabilityProof
 
     let private sourceLexicalSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteLexer.LexicalSemantics =
         let grammar = SqlSourceDialectGrammarRules.For(source)
@@ -259,6 +281,12 @@ module internal RewriteFacadeAdapter =
                 RewriteParser.MySqlPipesSemantics.RejectAmbiguousPipes
           MySqlNoBackslashEscapes =
             SqlSourceDialectGrammarRules.UsesMySqlNoBackslashEscapes(source, sourceProfile)
+          MySqlNullSafeEqualitySyntax =
+            SqlDistinctFromCapabilityRules.MySqlNullSafeEqualitySourceSyntaxValidationError(source)
+            |> sourceCapabilityProof
+          DistinctFromSyntax =
+            SqlDistinctFromCapabilityRules.SourceSyntaxValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile
@@ -266,16 +294,16 @@ module internal RewriteFacadeAdapter =
           Ordering = sourceOrderingProofs source
           FetchPercent =
             SqlFetchPercentCapabilityRules.SourceValidationError(source, sourceProfile)
-            |> capabilityProof
+            |> sourceCapabilityProof
           FetchWithTies =
             SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile)
-            |> capabilityProof
+            |> sourceCapabilityProof
           LateralDerivedTable =
             SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile)
-            |> capabilityProof
+            |> sourceCapabilityProof
           RecursiveCte =
             SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile)
-            |> capabilityProof
+            |> sourceCapabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
 
     let parseSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
@@ -333,10 +361,10 @@ module internal RewriteFacadeAdapter =
         { SourceProvider = source
           DirectTarget =
             SqlDmlUpsertCapabilityRules.DirectTargetValidationError(target, targetProfile)
-            |> capabilityProof
+            |> targetCapabilityProof
           MySqlConditionalTarget =
             SqlDmlUpsertCapabilityRules.MySqlConditionalTargetValidationError(targetProfile)
-            |> capabilityProof
+            |> targetCapabilityProof
           FirebirdPrimaryKey = firebirdPrimaryKey
           MySqlUniqueKey = mySqlUniqueKeyAssurance assurance
           SourceRowsUniqueByInsertColumns = sourceRows }
@@ -403,11 +431,11 @@ module internal RewriteFacadeAdapter =
             semantics
             sourceProfile
 
-    let private verifiedTarget target targetProfile =
+    let private verifiedTarget source target targetProfile =
         RewritePipeline.VerifiedTarget.create
             (targetRuntime target targetProfile)
             targetProfile
-            (targetExpressionProofs target targetProfile)
+            (targetExpressionProofs source target targetProfile)
             (targetJoinProofs target targetProfile)
             (targetNullOrdering target)
             (targetDmlProofs target targetProfile)
@@ -415,7 +443,7 @@ module internal RewriteFacadeAdapter =
     let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance policy allowed =
         RewritePipeline.createOptions
             (verifiedSource source semantics sourceProfile)
-            (verifiedTarget target targetProfile)
+            (verifiedTarget source target targetProfile)
             (conflictProofs source target targetProfile conflictTargetAssurance)
             policy
             allowed

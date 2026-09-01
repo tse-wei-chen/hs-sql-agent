@@ -458,6 +458,9 @@ module internal RewriteLexer =
                 let upper = text.ToUpperInvariant()
                 if keywords.Contains upper then add (Keyword upper) start i
                 else add (Identifier(text, false)) start i
+            elif i + 2 < length && sql.Substring(i, 3) = "<=>" then
+                add (Operator "<=>") i (i + 3)
+                i <- i + 3
             elif i + 1 < length then
                 let pair = sql.Substring(i, 2)
                 match pair with

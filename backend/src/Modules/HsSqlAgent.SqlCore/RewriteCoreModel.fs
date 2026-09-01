@@ -84,6 +84,7 @@ module internal CoreModel =
     type BinaryOperator =
         | Add | Subtract | Multiply | Divide | Modulo | Concat
         | Equal | NotEqual | GreaterThan | LessThan | GreaterThanOrEqual | LessThanOrEqual
+        | DistinctFrom | NotDistinctFrom
         | And | Or
 
     type JoinKind = Inner | Left | Right | Full | Cross
@@ -159,14 +160,61 @@ module internal CoreModel =
             CastType(Regex.Replace(value.Trim(), "\\s+", " ").ToUpperInvariant())
         let value (CastType value) = value
 
-    type FunctionName = private FunctionName of string
+    type FunctionName = private FunctionName of IdentifierPart list
 
     module FunctionName =
-        let private safeFunctionName = Regex("^[A-Za-z_][A-Za-z0-9_$.]*$", RegexOptions.CultureInvariant)
-        let create value =
-            if String.IsNullOrWhiteSpace(value) || not (safeFunctionName.IsMatch(value)) then invalidArg (nameof value) ("Unsafe function name '" + string value + "'.")
-            FunctionName value
-        let value (FunctionName value) = value
+        let private safeUnquotedPart =
+            Regex("^[A-Za-z_][A-Za-z0-9_$]*$", RegexOptions.CultureInvariant)
+
+        let private validatePart (part: IdentifierPart) =
+            if String.IsNullOrWhiteSpace(part.Value) then
+                invalidArg "part" "Function identifier parts cannot be empty."
+            if part.Value.IndexOf('\000') >= 0 then
+                invalidArg "part" "Function identifier parts cannot contain NUL."
+            if not part.WasQuoted && not (safeUnquotedPart.IsMatch(part.Value)) then
+                invalidArg "part" ("Unsafe unquoted function identifier part '" + part.Value + "'.")
+            part
+
+        let create (value: string) =
+            if String.IsNullOrWhiteSpace(value) then
+                invalidArg (nameof value) "Function name cannot be empty."
+            let parts =
+                value.Split('.', StringSplitOptions.RemoveEmptyEntries)
+                |> Array.map (fun part ->
+                    { Value = part
+                      WasQuoted = false
+                      PreserveSpelling = false
+                      Span = { Start = -1; Length = 0 } }
+                    |> validatePart)
+                |> Array.toList
+            if parts.IsEmpty || String.Join(".", parts |> List.map (fun part -> part.Value)) <> value then
+                invalidArg (nameof value) ("Unsafe function name '" + value + "'.")
+            FunctionName parts
+
+        let ofIdentifier identifier =
+            identifier
+            |> Identifier.parts
+            |> List.map validatePart
+            |> FunctionName
+
+        let parts (FunctionName parts) = parts
+
+        let value functionName =
+            functionName
+            |> parts
+            |> List.map (fun part -> part.Value)
+            |> String.concat "."
+
+        let hasQuotedParts functionName =
+            functionName
+            |> parts
+            |> List.exists (fun part -> part.WasQuoted || part.PreserveSpelling)
+
+        let isQualified functionName =
+            functionName |> parts |> List.length |> fun length -> length > 1
+
+        let requiresNativeIdentifierSemantics functionName =
+            isQualified functionName || hasQuotedParts functionName
 
     type ExtractField = private ExtractField of string
 

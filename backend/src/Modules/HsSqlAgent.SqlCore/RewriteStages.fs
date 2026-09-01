@@ -31,16 +31,14 @@ module internal RewriteStages =
         | RewriteParser.SourceDialect.Oracle -> SqlAgentToolType.Oracle
         | RewriteParser.SourceDialect.Firebird -> SqlAgentToolType.Firebird
 
-    let private targetProvider = function
-        | TargetRuntime.PostgreSqlRuntime -> SqlAgentToolType.Postgres
-        | TargetRuntime.MySqlRuntime -> SqlAgentToolType.MySQL
-        | TargetRuntime.SqlServerRuntime _ -> SqlAgentToolType.MsSqlServer
-        | TargetRuntime.SQLiteRuntime -> SqlAgentToolType.Sqlite
-        | TargetRuntime.OracleRuntime -> SqlAgentToolType.Oracle
-        | TargetRuntime.FirebirdRuntime -> SqlAgentToolType.Firebird
-
     let private compilationError message =
         raise (SqlCompilationException(message))
+
+    let private sourceCapabilityMessage =
+        RewriteCapabilityProvenance.sourceMessage "source semantic validation"
+
+    let private targetCapabilityMessage =
+        RewriteCapabilityProvenance.targetMessage "target capability validation"
 
     let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
 
@@ -74,275 +72,6 @@ module internal RewriteStages =
             expressions |> NonEmpty.map action |> SelectDistinct.DistinctOn
         | SelectDistinct.AllRows -> SelectDistinct.AllRows
         | SelectDistinct.DistinctRows -> SelectDistinct.DistinctRows
-
-    let private requireSourceRegexCapability = function
-        | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
-
-    let rec private verifySourceRegexExpr regexProof expression =
-        match expression with
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (verifySourceRegexExpr regexProof)
-            requireSourceRegexCapability regexProof
-        | RegexMatch(value, pattern) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof pattern
-        | Unary(_, operand) -> verifySourceRegexExpr regexProof operand
-        | Binary(_, left, right) ->
-            verifySourceRegexExpr regexProof left
-            verifySourceRegexExpr regexProof right
-        | Like(value, pattern, _, _, _) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof pattern
-        | FunctionCall call ->
-            call.Arguments |> List.iter (verifySourceRegexExpr regexProof)
-        | FilteredAggregate(value, predicate) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof predicate
-        | Windowed(value, window) ->
-            verifySourceRegexExpr regexProof value
-            window.PartitionBy |> List.iter (verifySourceRegexExpr regexProof)
-            window.OrderBy |> List.iter (fun order -> verifySourceRegexExpr regexProof order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            verifySourceRegexExpr regexProof value
-        | SimpleCase(input, branches, fallback) ->
-            verifySourceRegexExpr regexProof input
-            branches |> NonEmpty.iter (fun branch ->
-                verifySourceRegexExpr regexProof branch.Match
-                verifySourceRegexExpr regexProof branch.Result)
-            fallback |> Option.iter (verifySourceRegexExpr regexProof)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                verifySourceRegexExpr regexProof branch.Condition
-                verifySourceRegexExpr regexProof branch.Result)
-            fallback |> Option.iter (verifySourceRegexExpr regexProof)
-        | InList(value, items, _) ->
-            verifySourceRegexExpr regexProof value
-            items |> NonEmpty.iter (verifySourceRegexExpr regexProof)
-        | InSubquery(value, query, _) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexQuery regexProof query
-        | Between(value, lower, upper, _) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof lower
-            verifySourceRegexExpr regexProof upper
-        | IsNull(value, _) ->
-            verifySourceRegexExpr regexProof value
-        | ScalarSubquery query | Exists(query, _) ->
-            verifySourceRegexQuery regexProof query
-
-    and private verifySourceRegexSource regexProof source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> verifySourceRegexQuery regexProof query
-
-    and private verifySourceRegexSelect regexProof select =
-        select.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
-        iterDistinctOn (verifySourceRegexExpr regexProof) select
-        select.Projection |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
-        select.From |> Option.iter (verifySourceRegexSource regexProof)
-        select.Joins |> List.iter (fun join ->
-            verifySourceRegexSource regexProof join.Source
-            join.Predicate |> Option.iter (verifySourceRegexExpr regexProof))
-        select.Where |> Option.iter (verifySourceRegexExpr regexProof)
-        select.GroupBy |> List.iter (verifySourceRegexExpr regexProof)
-        select.Having |> Option.iter (verifySourceRegexExpr regexProof)
-
-    and private verifySourceRegexQuery regexProof query =
-        verifySourceRegexSelect regexProof query.Head
-        query.SetOperations |> List.iter (fun branch -> verifySourceRegexQuery regexProof branch.Query)
-        query.OrderBy |> List.iter (fun order -> verifySourceRegexExpr regexProof order.Expression)
-
-    let private verifySourceRegexDocument regexProof document =
-        match document.Statement with
-        | QueryStatement query -> verifySourceRegexQuery regexProof query
-        | InsertStatement insert ->
-            match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (verifySourceRegexExpr regexProof))
-            | QuerySource query -> verifySourceRegexQuery regexProof query
-            | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
-        | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> verifySourceRegexExpr regexProof assignment.Value)
-            update.From |> List.iter (verifySourceRegexSource regexProof)
-            update.Where |> Option.iter (verifySourceRegexExpr regexProof)
-            update.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter (verifySourceRegexSource regexProof)
-            delete.Where |> Option.iter (verifySourceRegexExpr regexProof)
-            delete.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
-
-    let private validateRawSourceFunction source expression =
-        match expression with
-        | FunctionCall call ->
-            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            match SqlDateOnlyCapabilityRules.SourceValidationError(source, name, call.Arguments.Length) with
-            | null -> ()
-            | message -> compilationError message
-            match SqlSourceFunctionRegistry.Find(name) |> Option.ofObj with
-            | Some contract ->
-                match contract.ValidationError(source, call.Arguments.Length) with
-                | null -> ()
-                | message -> compilationError message
-            | None ->
-                let currentKind =
-                    match name with
-                    | "CURRENT_DATE" -> Some SqlCurrentTemporalKind.Date
-                    | "CURRENT_TIME" -> Some SqlCurrentTemporalKind.Time
-                    | "CURRENT_TIMESTAMP" -> Some SqlCurrentTemporalKind.Timestamp
-                    | _ -> None
-                match currentKind with
-                | Some kind ->
-                    match SqlCurrentTemporalCapabilityRules.SourceValidationError(kind, source) with
-                    | null -> ()
-                    | message -> compilationError message
-                | None -> ()
-        | _ -> ()
-
-    let private requireSourceOrderingCapability = function
-        | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
-
-    let private validateRawSourceOrder orderingProofs (order: OrderBy) =
-        match order.NullOrdering with
-        | NullOrdering.Default -> ()
-        | NullOrdering.NullsFirst -> requireSourceOrderingCapability orderingProofs.NullsFirst
-        | NullOrdering.NullsLast -> requireSourceOrderingCapability orderingProofs.NullsLast
-
-    let private validateRawConcat source mySqlPipes =
-        if source = SqlAgentToolType.MySQL
-           && mySqlPipes <> RewriteParser.MySqlPipesSemantics.PipesAsConcat then
-            match SqlConcatCapabilityRules.SourceSemanticValidationError(source) with
-            | null -> ()
-            | message -> compilationError message
-        elif source = SqlAgentToolType.MsSqlServer then
-            match SqlConcatCapabilityRules.RawSourceSyntaxError(source) with
-            | null -> ()
-            | message -> compilationError message
-
-    let rec private validateRawSourceExpr source orderingProofs mySqlPipes expression =
-        validateRawSourceFunction source expression
-        match expression with
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | Unary(_, operand) -> validateRawSourceExpr source orderingProofs mySqlPipes operand
-        | Binary(BinaryOperator.Concat, left, right) ->
-            validateRawConcat source mySqlPipes
-            validateRawSourceExpr source orderingProofs mySqlPipes left
-            validateRawSourceExpr source orderingProofs mySqlPipes right
-        | Binary(BinaryOperator.Modulo, left, right) ->
-            match SqlModuloCapabilityRules.SourceValidationError(source) with
-            | null -> ()
-            | message -> compilationError message
-            validateRawSourceExpr source orderingProofs mySqlPipes left
-            validateRawSourceExpr source orderingProofs mySqlPipes right
-        | Binary(_, left, right) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes left
-            validateRawSourceExpr source orderingProofs mySqlPipes right
-        | Like(value, pattern, _, _, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | RegexMatch(value, pattern) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes pattern
-        | FunctionCall call ->
-            call.Arguments |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                validateRawSourceOrder orderingProofs order
-                validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes predicate
-        | Windowed(value, window) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            window.PartitionBy |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-            window.OrderBy
-            |> List.iter (fun order ->
-                validateRawSourceOrder orderingProofs order
-                validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-        | SimpleCase(input, branches, fallback) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes input
-            branches |> NonEmpty.iter (fun branch ->
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Match
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Result)
-            fallback |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Condition
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Result)
-            fallback |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | InList(value, items, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            items |> NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | InSubquery(value, query, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceQuery source orderingProofs mySqlPipes query
-        | Between(value, lower, upper, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes lower
-            validateRawSourceExpr source orderingProofs mySqlPipes upper
-        | IsNull(value, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateRawSourceQuery source orderingProofs mySqlPipes query
-
-    and private validateRawSourceTable source orderingProofs mySqlPipes table =
-        match table with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> validateRawSourceQuery source orderingProofs mySqlPipes query
-
-    and private validateRawSourceSelect source orderingProofs mySqlPipes select =
-        select.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
-        match select.DistinctMode with
-        | SelectDistinct.DistinctOn _ ->
-            match SqlDistinctOnCapabilityRules.SourceValidationError(source) with
-            | null -> ()
-            | message -> compilationError message
-        | SelectDistinct.AllRows
-        | SelectDistinct.DistinctRows -> ()
-        iterDistinctOn (validateRawSourceExpr source orderingProofs mySqlPipes) select
-        select.Projection |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
-        select.From |> Option.iter (validateRawSourceTable source orderingProofs mySqlPipes)
-        select.Joins |> List.iter (fun join ->
-            validateRawSourceTable source orderingProofs mySqlPipes join.Source
-            join.Predicate |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
-        select.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        select.GroupBy |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        select.Having |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-
-    and private validateRawSourceQuery source orderingProofs mySqlPipes query =
-        validateRawSourceSelect source orderingProofs mySqlPipes query.Head
-        query.SetOperations |> List.iter (fun branch -> validateRawSourceQuery source orderingProofs mySqlPipes branch.Query)
-        query.OrderBy
-        |> List.iter (fun order ->
-            validateRawSourceOrder orderingProofs order
-            validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
-
-    let private validateRawSourceDocument source orderingProofs mySqlPipes document =
-        match document.Statement with
-        | QueryStatement query -> validateRawSourceQuery source orderingProofs mySqlPipes query
-        | InsertStatement insert ->
-            match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
-            | QuerySource query -> validateRawSourceQuery source orderingProofs mySqlPipes query
-            | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
-        | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Value)
-            update.From |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
-            update.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-            update.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
-            delete.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-            delete.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
 
     let private profileVersion (profile: SqlProviderCapabilityProfile | null) =
         match profile with
@@ -715,7 +444,7 @@ module internal RewriteStages =
         | Cast(value, targetType) ->
             Cast(
                 normalizeExpr source target value,
-                RewriteCastTypes.normalize (sourceProvider source) (targetProvider target) targetType)
+                RewriteCastTypes.normalize (sourceProvider source) (TargetRuntime.provider target) targetType)
         | Extract(field, value) -> Extract(field, normalizeExpr source target value)
         | SimpleCase(input, branches, fallback) ->
             SimpleCase(
@@ -754,7 +483,7 @@ module internal RewriteStages =
 
     and private normalizeFunction source target (call: FunctionCall) =
         let sourceTool = sourceProvider source
-        let targetTool = targetProvider target
+        let targetTool = TargetRuntime.provider target
         let arguments = call.Arguments |> List.map (normalizeExpr source target)
         let orderBy = call.AggregateOrderBy |> List.map (normalizeOrderBy source target)
         let call = { call with Arguments = arguments; AggregateOrderBy = orderBy }
@@ -780,236 +509,255 @@ module internal RewriteStages =
             | "CURRENT_TIMESTAMP" -> Some SqlCurrentTemporalKind.Timestamp
             | _ -> None
 
-        match currentKind with
-        | Some kind ->
-            let canonical =
-                match kind with
-                | SqlCurrentTemporalKind.Date -> "CORE_CURRENT_DATE"
-                | SqlCurrentTemporalKind.Time -> "CORE_CURRENT_TIME"
-                | SqlCurrentTemporalKind.Timestamp -> "CORE_CURRENT_TIMESTAMP"
-                | value -> compilationError ("Unsupported current temporal kind '" + string value + "'.")
-            if not arguments.IsEmpty then
-                compilationError (sourceName + " does not accept arguments.")
-            canonicalCall call canonical []
-        | None when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) ->
-            if arguments.Length <> 1 then
-                compilationError (sourceName + " requires exactly 1 argument.")
-            canonicalCall call "CORE_DATE_PART" [ Literal(ScalarValue.Text sourceName); arguments.Head ]
-        | None when SqlDateOnlyCapabilityRules.IsMySqlSourceFunction(sourceTool, sourceName) ->
-            if arguments.Length <> 1 then
-                compilationError "MySQL DATE(expr) requires exactly 1 argument."
-            canonicalCall call "CORE_DATE_ONLY" arguments
-
-        | None when not (isNull sourceContract) ->
-            match (requireSourceContract ()).CanonicalizationKind with
-            | SqlSourceFunctionCanonicalizationKind.DateAdd ->
-                if arguments.Length <> 3 then compilationError "DATEADD requires exactly 3 arguments."
-                let unit =
-                    keywordValue "DATEADD date-part unit" arguments[0]
-                    |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEADD")
-                canonicalCall call "CORE_DATE_ADD" [ Literal(ScalarValue.Text unit); arguments[1]; arguments[2] ]
-
-            | SqlSourceFunctionCanonicalizationKind.DateDiff ->
-                let portableDay startValue endValue =
-                    let canonical =
-                        canonicalCall
-                            call
-                            "CORE_DATE_DIFF"
-                            [ Literal(ScalarValue.Text "DAY")
-                              dateOnlyOperand targetTool startValue
-                              dateOnlyOperand targetTool endValue ]
-                    if targetTool = SqlAgentToolType.Sqlite then
-                        Cast(canonical, CastType.create "INTEGER")
-                    else canonical
-                match arguments with
-                | [ finish; startValue ] ->
-                    portableDay startValue finish
-                | [ unitExpr; startValue; finish ] ->
-                    let unit =
-                        keywordValue "DATEDIFF date-part unit" unitExpr
-                        |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEDIFF")
-                    if (sourceTool = SqlAgentToolType.MsSqlServer || sourceTool = SqlAgentToolType.Firebird)
-                       && sourceTool = targetTool then
-                        canonicalCall call "CORE_DATE_DIFF" [ Literal(ScalarValue.Text unit); startValue; finish ]
-                    elif unit <> "DAY" then
-                        compilationError (
-                            "Cross-dialect DATEDIFF unit '" + unit + "' from " + string sourceTool + " to " + string targetTool
-                            + " is not translated: SQL capability 'core_date_diff.unit." + unit.ToLowerInvariant()
-                            + "' is not modeled losslessly. DAY is the currently modeled portable intersection.")
-                    else
-                        portableDay startValue finish
-                | values ->
-                    compilationError (
-                        "DATEDIFF requires either the portable 2-argument (end, start) shape or the "
-                        + "3-argument (unit, start, end) shape; received " + string values.Length + " arguments.")
-
-            | SqlSourceFunctionCanonicalizationKind.DateFormat ->
-                if arguments.Length <> 2 then compilationError "DATE_FORMAT/FORMAT requires exactly 2 arguments."
-                let rawFormat = textLiteral "DATE_FORMAT format" arguments[1]
-                let translated =
-                    try dateFormats.Translate(rawFormat, sourceTool, targetTool)
-                    with
-                    | :? FormatException as ex ->
-                        raise (SqlCompilationException(
-                            "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                    | :? NotSupportedException as ex ->
-                        raise (SqlCompilationException(
-                            "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                canonicalCall call "CORE_DATE_FORMAT" [ arguments[0]; Literal(ScalarValue.Text translated) ]
-
-            | SqlSourceFunctionCanonicalizationKind.DateParse ->
-                if arguments.Length <> 2 then compilationError "TO_DATE requires exactly 2 arguments."
-                let rawFormat = textLiteral "TO_DATE format" arguments[1]
-                let translated =
-                    try dateFormats.Translate(rawFormat, sourceTool, targetTool)
-                    with
-                    | :? FormatException as ex ->
-                        raise (SqlCompilationException(
-                            "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                    | :? NotSupportedException as ex ->
-                        raise (SqlCompilationException(
-                            "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
-                            ex))
-                canonicalCall call "CORE_DATE_PARSE" [ arguments[0]; Literal(ScalarValue.Text translated) ]
-
-            | SqlSourceFunctionCanonicalizationKind.Position ->
-                if arguments.Length <> 2 then compilationError (sourceName + " requires exactly 2 arguments.")
-                let canonicalArguments =
-                    if sourceName = "STRPOS" || sourceName = "INSTR" then
-                        [ arguments[0]; arguments[1] ]
-                    else
-                        [ arguments[1]; arguments[0] ]
-                canonicalCall call "CORE_POSITION" canonicalArguments
-
-            | SqlSourceFunctionCanonicalizationKind.JsonExtract ->
-                if arguments.Length <> 2 then compilationError "JSON_EXTRACT requires exactly 2 arguments."
-                canonicalCall call "CORE_JSON_EXTRACT" arguments
-
-            | SqlSourceFunctionCanonicalizationKind.JsonSet ->
-                if arguments.Length <> 3 then compilationError "JSON_SET requires exactly 3 arguments."
-                canonicalCall call "CORE_JSON_SET" arguments
-
-            | SqlSourceFunctionCanonicalizationKind.RegexMatch ->
-                if arguments.Length <> 2 then
-                    compilationError ("Function 'CORE_REGEX_MATCH' requires 2 argument(s); received " + string arguments.Length + ".")
-                RegexMatch(arguments[0], arguments[1])
-
-            | SqlSourceFunctionCanonicalizationKind.CurrentTimestamp ->
-                if not arguments.IsEmpty then compilationError (sourceName + " does not accept arguments.")
-                canonicalCall call "CORE_CURRENT_TIMESTAMP" []
-
-            | SqlSourceFunctionCanonicalizationKind.OracleSysdate ->
-                if sourceTool <> SqlAgentToolType.Oracle then
-                    compilationError "SYSDATE source semantics are modeled only for Oracle."
+        if FunctionName.requiresNativeIdentifierSemantics call.Name then
+            // Native quoted or qualified names are opaque identities. They are never canonicalized
+            // into portable built-ins; same-provider compilation preserves them, while cross-provider
+            // compilation remains intact until the typed target capability boundary rejects it.
+            FunctionCall call
+        else
+            match currentKind with
+            | Some kind ->
+                let canonical =
+                    match kind with
+                    | SqlCurrentTemporalKind.Date -> "CORE_CURRENT_DATE"
+                    | SqlCurrentTemporalKind.Time -> "CORE_CURRENT_TIME"
+                    | SqlCurrentTemporalKind.Timestamp -> "CORE_CURRENT_TIMESTAMP"
+                    | value -> compilationError ("Unsupported current temporal kind '" + string value + "'.")
                 if not arguments.IsEmpty then
-                    compilationError "Oracle SYSDATE does not accept arguments."
-                canonicalCall call "CORE_ORACLE_SYSDATE" []
+                    compilationError (sourceName + " does not accept arguments.")
+                canonicalCall call canonical []
+            | None when SqlDatePartCapabilityRules.IsRepresentedPart(sourceName) ->
+                if arguments.Length <> 1 then
+                    compilationError (sourceName + " requires exactly 1 argument.")
+                canonicalCall call "CORE_DATE_PART" [ Literal(ScalarValue.Text sourceName); arguments.Head ]
+            | None when SqlDateOnlyCapabilityRules.IsMySqlSourceFunction(sourceTool, sourceName) ->
+                if arguments.Length <> 1 then
+                    compilationError "MySQL DATE(expr) requires exactly 1 argument."
+                canonicalCall call "CORE_DATE_ONLY" arguments
 
-            | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
-                if sourceName = "STRING_AGG" && arguments.Length <> 2 then
-                    compilationError "STRING_AGG requires exactly 2 arguments."
-                let normalizedArguments =
-                    if sourceName = "GROUP_CONCAT" && sourceTool = SqlAgentToolType.MySQL then
-                        if arguments.Length <> 1 then
+            | None when not (isNull sourceContract) ->
+                match (requireSourceContract ()).CanonicalizationKind with
+                | SqlSourceFunctionCanonicalizationKind.DateAdd ->
+                    if arguments.Length <> 3 then compilationError "DATEADD requires exactly 3 arguments."
+                    let unit =
+                        keywordValue "DATEADD date-part unit" arguments[0]
+                        |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEADD")
+                    canonicalCall call "CORE_DATE_ADD" [ Literal(ScalarValue.Text unit); arguments[1]; arguments[2] ]
+
+                | SqlSourceFunctionCanonicalizationKind.DateDiff ->
+                    let portableDay startValue endValue =
+                        let canonical =
+                            canonicalCall
+                                call
+                                "CORE_DATE_DIFF"
+                                [ Literal(ScalarValue.Text "DAY")
+                                  dateOnlyOperand targetTool startValue
+                                  dateOnlyOperand targetTool endValue ]
+                        if targetTool = SqlAgentToolType.Sqlite then
+                            Cast(canonical, CastType.create "INTEGER")
+                        else canonical
+                    match arguments with
+                    | [ finish; startValue ] ->
+                        portableDay startValue finish
+                    | [ unitExpr; startValue; finish ] ->
+                        let unit =
+                            keywordValue "DATEDIFF date-part unit" unitExpr
+                            |> fun value -> SqlDateMathCapabilityRules.NormalizeUnit(value, "DATEDIFF")
+                        if (sourceTool = SqlAgentToolType.MsSqlServer || sourceTool = SqlAgentToolType.Firebird)
+                           && sourceTool = targetTool then
+                            canonicalCall call "CORE_DATE_DIFF" [ Literal(ScalarValue.Text unit); startValue; finish ]
+                        elif unit <> "DAY" then
                             compilationError (
-                                "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. "
-                                + "Core currently supports exactly one value expression; use portable STRING_AGG(value, separator) "
-                                + "or native SEPARATOR 'literal' for an explicit delimiter.")
-                        let separator = call.AggregateSeparator |> Option.defaultValue ","
-                        [ arguments.Head; Literal(ScalarValue.Text separator) ]
-                    elif arguments.Length = 1 then
-                        let separator =
-                            match sourceName with
-                            | "LISTAGG" -> ""
-                            | "GROUP_CONCAT"
-                            | "LIST" -> ","
-                            | _ -> compilationError ("String aggregate '" + sourceName + "' requires an explicit separator.")
-                        [ arguments.Head; Literal(ScalarValue.Text separator) ]
-                    else arguments
-                canonicalCall call "CORE_STRING_AGG" normalizedArguments
-
-            | value ->
-                compilationError (
-                    "Unsupported source function canonicalization kind '" + string value + "' for function '" + sourceName + "'.")
-
-        | None when sourceName = "DATE" && sourceTool = SqlAgentToolType.MySQL ->
-            if arguments.Length <> 1 then
-                compilationError "MySQL DATE(expr) requires exactly 1 argument."
-            if targetTool <> SqlAgentToolType.MySQL then
-                compilationError (
-                    "MySQL DATE(expr) is currently a native-only source capability. "
-                    + "Cross-provider lowering remains fail-closed because MySQL DATE coercion and invalid-input semantics "
-                    + "are not proven equivalent to target CAST/date functions. Target provider is "
-                    + string targetTool + ".")
-            FunctionCall { call with Name = FunctionName.create "DATE"; Arguments = arguments }
-
-        | None when sourceName = "COALESCE" ->
-            if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
-            FunctionCall { call with Name = FunctionName.create "COALESCE"; Arguments = arguments }
-
-        | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceRegistryName) ->
-            let renderedName =
-                if sourceTool = targetTool then sourceName
-                else sourceRegistryName
-            FunctionCall { call with Name = FunctionName.create renderedName; Arguments = arguments }
-
-        | None ->
-            let sourceDefinition =
-                match functionRegistry.Find(sourceTool, sourceRegistryName, arguments.Length) |> Option.ofObj with
-                | Some definition -> definition
-                | None ->
-                    compilationError (
-                        "Function '" + sourceName + "' is not registered for source dialect "
-                        + string sourceTool + "; normalization remains fail-closed.")
-            if not sourceDefinition.Semantic.HasValue then
-                compilationError ("Function '" + sourceName + "' has no portable semantic mapping from " + string sourceTool + ".")
-
-            let semantic = sourceDefinition.Semantic.Value
-            if sourceTool <> targetTool then
-                match semantic with
-                | SemanticFunction.Random ->
-                    compilationError (
-                        "Random function '" + sourceName + "' is not translated across dialects because providers differ in value range and evaluation frequency.")
-                | SemanticFunction.StringLength when sourceTool = SqlAgentToolType.MsSqlServer ->
-                    if arguments.Length <> 1 then compilationError "SQL Server LEN requires exactly 1 argument."
-                    let targetLength =
-                        match targetTool with
-                        | SqlAgentToolType.Postgres
-                        | SqlAgentToolType.Oracle
-                        | SqlAgentToolType.Sqlite -> "LENGTH"
-                        | SqlAgentToolType.MySQL
-                        | SqlAgentToolType.Firebird -> "CHAR_LENGTH"
-                        | value -> compilationError ("SQL Server LEN has no Core cross-dialect lowering for target provider " + string value + ".")
-                    let trimmed = FunctionCall(emptyFunction "RTRIM" [ arguments.Head ])
-                    FunctionCall { call with Name = FunctionName.create targetLength; Arguments = [ trimmed ] }
-                | SemanticFunction.StringLength when targetTool = SqlAgentToolType.MsSqlServer ->
-                    compilationError "Portable string length cannot be translated losslessly to SQL Server LEN because LEN excludes trailing spaces."
-                | SemanticFunction.Repeat when sourceTool = SqlAgentToolType.MsSqlServer || targetTool = SqlAgentToolType.MsSqlServer ->
-                    compilationError "REPLICATE/REPEAT is not translated across SQL Server because SQL Server REPLICATE can truncate non-MAX inputs."
-                | SemanticFunction.Coalesce when sourceName <> "COALESCE" ->
-                    compilationError (
-                        "Provider-specific null function '" + sourceName
-                        + "' is not translated across dialects because its type-conversion rules differ from COALESCE.")
-                | _ ->
-                    let targetDefinition =
-                        match functionRegistry.Find(targetTool, semantic, arguments.Length) |> Option.ofObj with
-                        | Some definition -> definition
-                        | None ->
-                            compilationError (
-                                "Semantic function '" + string semantic + "' with " + string arguments.Length
-                                + " argument(s) is not supported by " + string targetTool + ".")
-                    if targetDefinition.TranslationKind = FunctionTranslationKind.Template
-                       || targetDefinition.TranslationKind = FunctionTranslationKind.Specialized then
+                                "Cross-dialect DATEDIFF unit '" + unit + "' from " + string sourceTool + " to " + string targetTool
+                                + " is not translated: SQL capability 'core_date_diff.unit." + unit.ToLowerInvariant()
+                                + "' is not modeled losslessly. DAY is the currently modeled portable intersection.")
+                        else
+                            portableDay startValue finish
+                    | values ->
                         compilationError (
-                            "Function '" + sourceName + "' requires Core " + string targetDefinition.TranslationKind
-                            + " translation for target provider " + string targetTool
-                            + "; no lossless Core translator is registered yet.")
-                    FunctionCall { call with Name = FunctionName.create (targetDefinition.Name.Trim().ToUpperInvariant()); Arguments = arguments }
-            else
-                FunctionCall { call with Name = FunctionName.create sourceName; Arguments = arguments }
+                            "DATEDIFF requires either the portable 2-argument (end, start) shape or the "
+                            + "3-argument (unit, start, end) shape; received " + string values.Length + " arguments.")
+
+                | SqlSourceFunctionCanonicalizationKind.DateFormat ->
+                    if arguments.Length <> 2 then compilationError "DATE_FORMAT/FORMAT requires exactly 2 arguments."
+                    let rawFormat = textLiteral "DATE_FORMAT format" arguments[1]
+                    let translated =
+                        try dateFormats.Translate(rawFormat, sourceTool, targetTool)
+                        with
+                        | :? FormatException as ex ->
+                            raise (SqlCompilationException(
+                                "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                        | :? NotSupportedException as ex ->
+                            raise (SqlCompilationException(
+                                "portable date formatting from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                    canonicalCall call "CORE_DATE_FORMAT" [ arguments[0]; Literal(ScalarValue.Text translated) ]
+
+                | SqlSourceFunctionCanonicalizationKind.DateParse ->
+                    if arguments.Length <> 2 then compilationError "TO_DATE requires exactly 2 arguments."
+                    let rawFormat = textLiteral "TO_DATE format" arguments[1]
+                    let translated =
+                        try dateFormats.Translate(rawFormat, sourceTool, targetTool)
+                        with
+                        | :? FormatException as ex ->
+                            raise (SqlCompilationException(
+                                "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                        | :? NotSupportedException as ex ->
+                            raise (SqlCompilationException(
+                                "formatted date parsing from " + string sourceTool + " to " + string targetTool + " is not supported: " + ex.Message,
+                                ex))
+                    canonicalCall call "CORE_DATE_PARSE" [ arguments[0]; Literal(ScalarValue.Text translated) ]
+
+                | SqlSourceFunctionCanonicalizationKind.Position ->
+                    if arguments.Length <> 2 then compilationError (sourceName + " requires exactly 2 arguments.")
+                    let canonicalArguments =
+                        if sourceName = "STRPOS" || sourceName = "INSTR" then
+                            [ arguments[0]; arguments[1] ]
+                        else
+                            [ arguments[1]; arguments[0] ]
+                    canonicalCall call "CORE_POSITION" canonicalArguments
+
+                | SqlSourceFunctionCanonicalizationKind.JsonExtract ->
+                    if arguments.Length <> 2 then compilationError "JSON_EXTRACT requires exactly 2 arguments."
+                    canonicalCall call "CORE_JSON_EXTRACT" arguments
+
+                | SqlSourceFunctionCanonicalizationKind.JsonSet ->
+                    if arguments.Length <> 3 then compilationError "JSON_SET requires exactly 3 arguments."
+                    canonicalCall call "CORE_JSON_SET" arguments
+
+                | SqlSourceFunctionCanonicalizationKind.RegexMatch ->
+                    if arguments.Length <> 2 then
+                        compilationError ("Function 'CORE_REGEX_MATCH' requires 2 argument(s); received " + string arguments.Length + ".")
+                    RegexMatch(arguments[0], arguments[1])
+
+                | SqlSourceFunctionCanonicalizationKind.CurrentTimestamp ->
+                    if not arguments.IsEmpty then compilationError (sourceName + " does not accept arguments.")
+                    canonicalCall call "CORE_CURRENT_TIMESTAMP" []
+
+                | SqlSourceFunctionCanonicalizationKind.OracleSysdate ->
+                    if sourceTool <> SqlAgentToolType.Oracle then
+                        compilationError "SYSDATE source semantics are modeled only for Oracle."
+                    if not arguments.IsEmpty then
+                        compilationError "Oracle SYSDATE does not accept arguments."
+                    canonicalCall call "CORE_ORACLE_SYSDATE" []
+
+                | SqlSourceFunctionCanonicalizationKind.StringAggregate ->
+                    if sourceName = "STRING_AGG" && arguments.Length <> 2 then
+                        compilationError "STRING_AGG requires exactly 2 arguments."
+                    let normalizedArguments =
+                        if sourceName = "GROUP_CONCAT" && sourceTool = SqlAgentToolType.MySQL then
+                            if arguments.Length <> 1 then
+                                compilationError (
+                                    "MySQL GROUP_CONCAT comma-separated arguments are multiple value expressions, not a separator. "
+                                    + "Core currently supports exactly one value expression; use portable STRING_AGG(value, separator) "
+                                    + "or native SEPARATOR 'literal' for an explicit delimiter.")
+                            let separator = call.AggregateSeparator |> Option.defaultValue ","
+                            [ arguments.Head; Literal(ScalarValue.Text separator) ]
+                        elif arguments.Length = 1 then
+                            let separator =
+                                match sourceName with
+                                | "LISTAGG" -> ""
+                                | "GROUP_CONCAT"
+                                | "LIST" -> ","
+                                | _ -> compilationError ("String aggregate '" + sourceName + "' requires an explicit separator.")
+                            [ arguments.Head; Literal(ScalarValue.Text separator) ]
+                        else arguments
+                    canonicalCall call "CORE_STRING_AGG" normalizedArguments
+
+                | value ->
+                    compilationError (
+                        "Unsupported source function canonicalization kind '" + string value + "' for function '" + sourceName + "'.")
+
+            | None when sourceName = "DATE" && sourceTool = SqlAgentToolType.MySQL ->
+                if arguments.Length <> 1 then
+                    compilationError "MySQL DATE(expr) requires exactly 1 argument."
+                if targetTool <> SqlAgentToolType.MySQL then
+                    compilationError (
+                        "MySQL DATE(expr) is currently a native-only source capability. "
+                        + "Cross-provider lowering remains fail-closed because MySQL DATE coercion and invalid-input semantics "
+                        + "are not proven equivalent to target CAST/date functions. Target provider is "
+                        + string targetTool + ".")
+                FunctionCall { call with Name = FunctionName.create "DATE"; Arguments = arguments }
+
+            | None when sourceName = "COALESCE" ->
+                if arguments.Length < 2 then compilationError "COALESCE requires at least 2 arguments."
+                let renderedName =
+                    if FunctionName.requiresNativeIdentifierSemantics call.Name then
+                        call.Name
+                    else
+                        FunctionName.create "COALESCE"
+                FunctionCall { call with Name = renderedName; Arguments = arguments }
+
+            | None when SqlCanonicalFunctionRegistry.IsDirectPortable(sourceRegistryName) ->
+                let renderedName =
+                    if sourceTool = targetTool && FunctionName.requiresNativeIdentifierSemantics call.Name then
+                        call.Name
+                    else
+                        let name = if sourceTool = targetTool then sourceName else sourceRegistryName
+                        FunctionName.create name
+                FunctionCall { call with Name = renderedName; Arguments = arguments }
+
+            | None ->
+                let sourceDefinition =
+                    match functionRegistry.Find(sourceTool, sourceRegistryName, arguments.Length) |> Option.ofObj with
+                    | Some definition -> definition
+                    | None ->
+                        compilationError (
+                            "Function '" + sourceName + "' is not registered for source dialect "
+                            + string sourceTool + "; normalization remains fail-closed.")
+                if not sourceDefinition.Semantic.HasValue then
+                    compilationError ("Function '" + sourceName + "' has no portable semantic mapping from " + string sourceTool + ".")
+
+                let semantic = sourceDefinition.Semantic.Value
+                if sourceTool <> targetTool then
+                    match semantic with
+                    | SemanticFunction.Random ->
+                        compilationError (
+                            "Random function '" + sourceName + "' is not translated across dialects because providers differ in value range and evaluation frequency.")
+                    | SemanticFunction.StringLength when sourceTool = SqlAgentToolType.MsSqlServer ->
+                        if arguments.Length <> 1 then compilationError "SQL Server LEN requires exactly 1 argument."
+                        let targetLength =
+                            match targetTool with
+                            | SqlAgentToolType.Postgres
+                            | SqlAgentToolType.Oracle
+                            | SqlAgentToolType.Sqlite -> "LENGTH"
+                            | SqlAgentToolType.MySQL
+                            | SqlAgentToolType.Firebird -> "CHAR_LENGTH"
+                            | value -> compilationError ("SQL Server LEN has no Core cross-dialect lowering for target provider " + string value + ".")
+                        let trimmed = FunctionCall(emptyFunction "RTRIM" [ arguments.Head ])
+                        FunctionCall { call with Name = FunctionName.create targetLength; Arguments = [ trimmed ] }
+                    | SemanticFunction.StringLength when targetTool = SqlAgentToolType.MsSqlServer ->
+                        compilationError "Portable string length cannot be translated losslessly to SQL Server LEN because LEN excludes trailing spaces."
+                    | SemanticFunction.Repeat when sourceTool = SqlAgentToolType.MsSqlServer || targetTool = SqlAgentToolType.MsSqlServer ->
+                        compilationError "REPLICATE/REPEAT is not translated across SQL Server because SQL Server REPLICATE can truncate non-MAX inputs."
+                    | SemanticFunction.Coalesce when sourceName <> "COALESCE" ->
+                        compilationError (
+                            "Provider-specific null function '" + sourceName
+                            + "' is not translated across dialects because its type-conversion rules differ from COALESCE.")
+                    | _ ->
+                        let targetDefinition =
+                            match functionRegistry.Find(targetTool, semantic, arguments.Length) |> Option.ofObj with
+                            | Some definition -> definition
+                            | None ->
+                                compilationError (
+                                    "Semantic function '" + string semantic + "' with " + string arguments.Length
+                                    + " argument(s) is not supported by " + string targetTool + ".")
+                        if targetDefinition.TranslationKind = FunctionTranslationKind.Template
+                           || targetDefinition.TranslationKind = FunctionTranslationKind.Specialized then
+                            compilationError (
+                                "Function '" + sourceName + "' requires Core " + string targetDefinition.TranslationKind
+                                + " translation for target provider " + string targetTool
+                                + "; no lossless Core translator is registered yet.")
+                        FunctionCall { call with Name = FunctionName.create (targetDefinition.Name.Trim().ToUpperInvariant()); Arguments = arguments }
+                else
+                    let renderedName =
+                        if FunctionName.requiresNativeIdentifierSemantics call.Name then
+                            call.Name
+                        else
+                            FunctionName.create sourceName
+                    FunctionCall { call with Name = renderedName; Arguments = arguments }
 
     and private normalizeWindow source target (window: WindowSpec) =
         { window with
@@ -1126,10 +874,10 @@ module internal RewriteStages =
                     SqlDiagnosticStage.SourceValidation
                     SqlDiagnosticCategory.Capability
                     document.Span
-                    (fun () -> verifySourceRegexDocument sourceRegexProof document)
+                    (fun () -> RewriteSourceValidation.verifyRegexDocument sourceRegexProof document)
 
                 let source = sourceProvider sourceDialect
-                let target = targetProvider targetRuntime
+                let target = TargetRuntime.provider targetRuntime
 
                 withCompilationDiagnostic
                     "SQL_SEMANTIC_VALIDATION_FAILED"
@@ -1151,7 +899,7 @@ module internal RewriteStages =
                         SqlDiagnosticStage.SourceValidation
                         SqlDiagnosticCategory.Capability
                         document.Span
-                        (fun () -> validateRawSourceDocument source sourceOrdering mySqlPipes document)
+                        (fun () -> RewriteSourceValidation.validateRawDocument source sourceOrdering mySqlPipes document)
 
                 withCompilationDiagnostic
                     "SQL_NORMALIZATION_REJECTED"
@@ -1381,1202 +1129,6 @@ module internal RewriteStages =
             validateReturning allowedTables delete.Returning
         document
 
-    let private proveTargetLiteral targetRuntime (proofs: ExpressionProofs) value =
-        let requireProof proof =
-            match proof with
-            | ProvenCapability -> ()
-            | RejectedCapability message -> raise (SqlCompilationException(message))
-        match targetRuntime, value with
-        | FirebirdRuntime, ScalarValue.Text text when text.Length > 8191 ->
-            raise (SqlCompilationException(
-                "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."))
-        | _, ScalarValue.OffsetDateTime _ ->
-            requireProof proofs.OffsetTimestamp
-        | _, ScalarValue.Time _ ->
-            requireProof proofs.StandaloneTime
-        | FirebirdRuntime, ScalarValue.Decimal value ->
-            let shape = SqlFirebirdDecimalCapabilityRules.Shape(value)
-            if shape.Precision > SqlFirebirdDecimalCapabilityRules.LegacyMaximumPrecision then
-                match proofs.FirebirdExtendedDecimal with
-                | ProvenCapability -> ()
-                | RejectedCapability _ ->
-                    raise (SqlCompilationException(
-                        "SQL capability 'numeric.decimal_extended' requires an explicit Firebird target "
-                        + "capability profile with ServerVersion 4.0 or newer for exact decimal precision "
-                        + "above 18; this value requires "
-                        + SqlFirebirdDecimalCapabilityRules.FirebirdCastType(value)
-                        + "."))
-        | _ -> ()
-
-    let private proveSqlServerConcat targetRuntime =
-        match targetRuntime with
-        | SqlServerRuntime(Proven _) -> ()
-        | SqlServerRuntime(Unproven message) -> invalidOp message
-        | _ -> ()
-
-    let private requireExpressionCapability = function
-        | ProvenCapability -> ()
-        | RejectedCapability message -> invalidOp message
-
-    let private requireFilterCapability = function
-        | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
-
-    let rec private proveFilterPredicate (proofs: FilterPredicateProofs) expression =
-        match expression with
-        | BoundColumn(_, OuterRowSource) ->
-            requireFilterCapability proofs.OuterReference
-        | Column _
-        | BoundColumn(_, LocalRowSource)
-        | BoundColumn(_, ProjectionAlias)
-        | Wildcard _
-        | OrderOrdinal _
-        | Literal _
-        | Interval _ -> ()
-        | Unary(_, operand) ->
-            proveFilterPredicate proofs operand
-        | Binary(_, left, right) ->
-            proveFilterPredicate proofs left
-            proveFilterPredicate proofs right
-        | Like(value, pattern, _, _, _) ->
-            proveFilterPredicate proofs value
-            proveFilterPredicate proofs pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (proveFilterPredicate proofs)
-        | RegexMatch(value, pattern) ->
-            proveFilterPredicate proofs value
-            proveFilterPredicate proofs pattern
-        | FunctionCall call ->
-            call.Arguments |> List.iter (proveFilterPredicate proofs)
-            call.AggregateOrderBy |> List.iter (fun order -> proveFilterPredicate proofs order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            proveFilterPredicate proofs value
-            proveFilterPredicate proofs predicate
-        | Windowed(value, window) ->
-            requireFilterCapability proofs.WindowFunction
-            proveFilterPredicate proofs value
-            window.PartitionBy |> List.iter (proveFilterPredicate proofs)
-            window.OrderBy |> List.iter (fun order -> proveFilterPredicate proofs order.Expression)
-        | Cast(value, _)
-        | Extract(_, value) ->
-            proveFilterPredicate proofs value
-        | SimpleCase(input, branches, fallback) ->
-            proveFilterPredicate proofs input
-            branches |> NonEmpty.iter (fun branch ->
-                proveFilterPredicate proofs branch.Match
-                proveFilterPredicate proofs branch.Result)
-            fallback |> Option.iter (proveFilterPredicate proofs)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveFilterPredicate proofs branch.Condition
-                proveFilterPredicate proofs branch.Result)
-            fallback |> Option.iter (proveFilterPredicate proofs)
-        | InList(value, items, _) ->
-            proveFilterPredicate proofs value
-            items |> NonEmpty.iter (proveFilterPredicate proofs)
-        | InSubquery(value, _, _) ->
-            proveFilterPredicate proofs value
-            requireFilterCapability proofs.Subquery
-        | Between(value, lower, upper, _) ->
-            proveFilterPredicate proofs value
-            proveFilterPredicate proofs lower
-            proveFilterPredicate proofs upper
-        | IsNull(value, _) ->
-            proveFilterPredicate proofs value
-        | ScalarSubquery _
-        | Exists _ ->
-            requireFilterCapability proofs.Subquery
-
-    let rec private proveSourceFilterExpr (expressionProofs: ExpressionProofs) expression =
-        match expression with
-        | Column _
-        | BoundColumn _
-        | Wildcard _
-        | OrderOrdinal _
-        | Literal _ -> ()
-        | Interval _ ->
-            requireFilterCapability expressionProofs.IntervalLiteral
-        | Unary(_, operand) ->
-            proveSourceFilterExpr expressionProofs operand
-        | Binary(_, left, right) ->
-            proveSourceFilterExpr expressionProofs left
-            proveSourceFilterExpr expressionProofs right
-        | Like(value, pattern, _, _, caseInsensitive) ->
-            if caseInsensitive then requireFilterCapability expressionProofs.ILike
-            proveSourceFilterExpr expressionProofs value
-            proveSourceFilterExpr expressionProofs pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (proveSourceFilterExpr expressionProofs)
-        | RegexMatch(value, pattern) ->
-            proveSourceFilterExpr expressionProofs value
-            proveSourceFilterExpr expressionProofs pattern
-        | FunctionCall call ->
-            if (FunctionName.value call.Name).Contains(".", StringComparison.Ordinal) then
-                requireFilterCapability expressionProofs.QualifiedFunction
-            call.Arguments |> List.iter (proveSourceFilterExpr expressionProofs)
-            call.AggregateOrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            requireFilterCapability expressionProofs.AggregateFilter
-            proveFilterPredicate expressionProofs.FilterPredicate predicate
-            proveSourceFilterExpr expressionProofs value
-            proveSourceFilterExpr expressionProofs predicate
-        | Windowed(value, window) ->
-            proveSourceFilterExpr expressionProofs value
-            window.PartitionBy |> List.iter (proveSourceFilterExpr expressionProofs)
-            window.OrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
-        | Cast(value, _)
-        | Extract(_, value) ->
-            proveSourceFilterExpr expressionProofs value
-        | SimpleCase(input, branches, fallback) ->
-            proveSourceFilterExpr expressionProofs input
-            branches |> NonEmpty.iter (fun branch ->
-                proveSourceFilterExpr expressionProofs branch.Match
-                proveSourceFilterExpr expressionProofs branch.Result)
-            fallback |> Option.iter (proveSourceFilterExpr expressionProofs)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveSourceFilterExpr expressionProofs branch.Condition
-                proveSourceFilterExpr expressionProofs branch.Result)
-            fallback |> Option.iter (proveSourceFilterExpr expressionProofs)
-        | InList(value, items, _) ->
-            proveSourceFilterExpr expressionProofs value
-            items |> NonEmpty.iter (proveSourceFilterExpr expressionProofs)
-        | InSubquery(value, query, _) ->
-            proveSourceFilterExpr expressionProofs value
-            proveSourceFilterQuery expressionProofs query
-        | Between(value, lower, upper, _) ->
-            proveSourceFilterExpr expressionProofs value
-            proveSourceFilterExpr expressionProofs lower
-            proveSourceFilterExpr expressionProofs upper
-        | IsNull(value, _) ->
-            proveSourceFilterExpr expressionProofs value
-        | ScalarSubquery query
-        | Exists(query, _) ->
-            proveSourceFilterQuery expressionProofs query
-
-    and private proveSourceFilterSource expressionProofs source =
-        match source with
-        | NamedTable _
-        | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) ->
-            proveSourceFilterQuery expressionProofs query
-
-    and private proveSourceFilterSelect expressionProofs select =
-        select.Ctes |> List.iter (fun cte -> proveSourceFilterQuery expressionProofs cte.Query)
-        iterDistinctOn (proveSourceFilterExpr expressionProofs) select
-        select.Projection |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
-        select.From |> Option.iter (proveSourceFilterSource expressionProofs)
-        select.Joins |> List.iter (fun join ->
-            proveSourceFilterSource expressionProofs join.Source
-            join.Predicate |> Option.iter (proveSourceFilterExpr expressionProofs))
-        select.Where |> Option.iter (proveSourceFilterExpr expressionProofs)
-        select.GroupBy |> List.iter (proveSourceFilterExpr expressionProofs)
-        select.Having |> Option.iter (proveSourceFilterExpr expressionProofs)
-
-    and private proveSourceFilterQuery expressionProofs query =
-        proveSourceFilterSelect expressionProofs query.Head
-        query.SetOperations |> List.iter (fun branch -> proveSourceFilterQuery expressionProofs branch.Query)
-        query.OrderBy |> List.iter (fun order -> proveSourceFilterExpr expressionProofs order.Expression)
-
-    let private proveSourceFilterDocument expressionProofs document =
-        match document.Statement with
-        | QueryStatement query ->
-            proveSourceFilterQuery expressionProofs query
-        | InsertStatement insert ->
-            match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveSourceFilterExpr expressionProofs))
-            | QuerySource query -> proveSourceFilterQuery expressionProofs query
-            | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
-        | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveSourceFilterExpr expressionProofs assignment.Value)
-            update.From |> List.iter (proveSourceFilterSource expressionProofs)
-            update.Where |> Option.iter (proveSourceFilterExpr expressionProofs)
-            update.Returning |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter (proveSourceFilterSource expressionProofs)
-            delete.Where |> Option.iter (proveSourceFilterExpr expressionProofs)
-            delete.Returning |> List.iter (fun item -> proveSourceFilterExpr expressionProofs item.Expression)
-
-    let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
-        match expression with
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ -> ()
-        | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
-        | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
-        | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
-        | Binary(BinaryOperator.Concat, left, right) ->
-            proveSqlServerConcat targetRuntime
-            proveTargetExpr targetRuntime expressionProofs left
-            proveTargetExpr targetRuntime expressionProofs right
-        | Binary(_, left, right) ->
-            proveTargetExpr targetRuntime expressionProofs left
-            proveTargetExpr targetRuntime expressionProofs right
-        | Like(value, pattern, _, _, caseInsensitive) ->
-            if caseInsensitive then requireExpressionCapability expressionProofs.ILike
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs pattern
-        | RawRegexCall _ ->
-            invalidOp "Raw REGEXP_LIKE reached target validation before canonicalization."
-        | RegexMatch(value, pattern) ->
-            requireExpressionCapability expressionProofs.RegexMatch
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs pattern
-        | FunctionCall call ->
-            if (FunctionName.value call.Name).Contains(".", StringComparison.Ordinal) then
-                requireExpressionCapability expressionProofs.QualifiedFunction
-            call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
-            call.AggregateOrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs predicate
-        | Windowed(value, window) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            window.PartitionBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
-            window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
-        | Cast(value, targetType) ->
-            let targetTypeName = CastType.value targetType
-            match targetRuntime with
-            | FirebirdRuntime when targetTypeName.Contains(" WITH TIME ZONE", StringComparison.OrdinalIgnoreCase) ->
-                requireExpressionCapability expressionProofs.FirebirdTimeZoneType
-            | _ -> ()
-            proveTargetExpr targetRuntime expressionProofs value
-        | Extract(_, value) ->
-            proveTargetExpr targetRuntime expressionProofs value
-        | SimpleCase(input, branches, fallback) ->
-            proveTargetExpr targetRuntime expressionProofs input
-            branches |> NonEmpty.iter (fun branch ->
-                proveTargetExpr targetRuntime expressionProofs branch.Match
-                proveTargetExpr targetRuntime expressionProofs branch.Result)
-            fallback |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveTargetExpr targetRuntime expressionProofs branch.Condition
-                proveTargetExpr targetRuntime expressionProofs branch.Result)
-            fallback |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-        | InList(value, items, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            items |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
-        | InSubquery(value, query, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetQuery targetRuntime expressionProofs query
-        | Between(value, lower, upper, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs lower
-            proveTargetExpr targetRuntime expressionProofs upper
-        | IsNull(value, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-        | ScalarSubquery query ->
-            proveTargetQuery targetRuntime expressionProofs query
-        | Exists(query, _) ->
-            proveTargetQuery targetRuntime expressionProofs query
-
-    and private proveTargetSource targetRuntime expressionProofs source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> proveTargetQuery targetRuntime expressionProofs query
-        | LateralDerivedTable(query, _) ->
-            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                      targetProvider targetRuntime,
-                      null) with
-            | null -> proveTargetQuery targetRuntime expressionProofs query
-            | message -> raise (SqlCompilationException(message))
-
-    and private proveTargetSelect targetRuntime expressionProofs select =
-        if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
-            let provider = targetProvider targetRuntime
-            if not (SqlRecursiveCteCapabilityRules.SupportsWithRecursiveSyntax(provider)) then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.recursive_cte' is not supported by target provider "
-                    + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
-        select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
-        match select.DistinctMode with
-        | SelectDistinct.DistinctOn expressions ->
-            match SqlDistinctOnCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            expressions |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
-        | SelectDistinct.AllRows
-        | SelectDistinct.DistinctRows -> ()
-        select.ProjectionItems |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
-        select.From |> Option.iter (proveTargetSource targetRuntime expressionProofs)
-        select.Joins
-        |> List.iter (function
-            | CrossJoin source ->
-                proveTargetSource targetRuntime expressionProofs source
-            | NaturalJoin(_, source) ->
-                match SqlNaturalJoinCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-                proveTargetSource targetRuntime expressionProofs source
-            | OnJoin(_, source, predicate) ->
-                proveTargetSource targetRuntime expressionProofs source
-                proveTargetExpr targetRuntime expressionProofs predicate
-            | UsingJoin(_, source, _) ->
-                match SqlUsingJoinCapabilityRules.TargetValidationError(targetProvider targetRuntime) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-                proveTargetSource targetRuntime expressionProofs source)
-        select.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-        select.GroupBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
-        select.Having |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-
-    and private proveTargetQuery targetRuntime expressionProofs query =
-        if query.FetchPercent.IsSome then
-            match SqlFetchPercentCapabilityRules.TargetValidationError(
-                      targetProvider targetRuntime,
-                      null) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        if query.FetchWithTies then
-            match SqlFetchWithTiesCapabilityRules.TargetValidationError(
-                      targetProvider targetRuntime,
-                      null) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        proveTargetSelect targetRuntime expressionProofs query.Head
-        query.SetOperations
-        |> List.iter (fun branch ->
-            match branch.Operator with
-            | SetOperator.IntersectAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError(
-                          "INTERSECT",
-                          targetProvider targetRuntime) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            | SetOperator.ExceptAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError(
-                          "EXCEPT",
-                          targetProvider targetRuntime) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            | SetOperator.Union
-            | SetOperator.UnionAll
-            | SetOperator.Intersect
-            | SetOperator.Except -> ()
-            proveTargetQuery targetRuntime expressionProofs branch.Query)
-        query.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
-
-    let private proveTargetDocument targetRuntime expressionProofs document =
-        match document.Statement with
-        | QueryStatement query -> proveTargetQuery targetRuntime expressionProofs query
-        | InsertStatement insert ->
-            match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
-            | QuerySource query -> proveTargetQuery targetRuntime expressionProofs query
-            | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
-        | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime expressionProofs assignment.Value)
-            update.From |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            update.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            delete.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
-        document
-
-    let private requireCapability = function
-        | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
-
-    let private proveJoinKind (proofs: JoinProofs) = function
-        | JoinKind.Right -> requireCapability proofs.RightJoin
-        | JoinKind.Full -> requireCapability proofs.FullJoin
-        | JoinKind.Inner | JoinKind.Left | JoinKind.Cross -> ()
-
-    let rec private proveTargetJoinSource proofs source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> proveTargetJoinQuery proofs query
-
-    and private proveTargetJoinSelect proofs select =
-        select.Ctes |> List.iter (fun cte -> proveTargetJoinQuery proofs cte.Query)
-        select.From |> Option.iter (proveTargetJoinSource proofs)
-        select.Joins
-        |> List.iter (fun join ->
-            proveJoinKind proofs join.Kind
-            proveTargetJoinSource proofs join.Source)
-
-    and private proveTargetJoinQuery proofs query =
-        proveTargetJoinSelect proofs query.Head
-        query.SetOperations |> List.iter (fun branch -> proveTargetJoinQuery proofs branch.Query)
-
-    let private proveTargetJoins proofs document =
-        match document.Statement with
-        | QueryStatement query -> proveTargetJoinQuery proofs query
-        | InsertStatement insert ->
-            match insert.Input with
-            | QuerySource query -> proveTargetJoinQuery proofs query
-            | Values _ | DefaultValues -> ()
-        | UpdateStatement update ->
-            update.From |> List.iter (proveTargetJoinSource proofs)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter (proveTargetJoinSource proofs)
-
-    let private requireDmlCapability = function
-        | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
-
-    let private returningNodeName = function
-        | Column _ -> "ColumnExpr"
-        | BoundColumn _ -> "BoundColumnExpr"
-        | Wildcard _ -> "WildcardExpr"
-        | OrderOrdinal _ -> "OrderByOrdinalExpr"
-        | Literal _ -> "LiteralExpr"
-        | Interval _ -> "IntervalExpr"
-        | Unary _ -> "UnaryExpr"
-        | Binary _ -> "BinaryExpr"
-        | Like _ -> "BinaryExpr"
-        | RawRegexCall _ | RegexMatch _ -> "RegexExpr"
-        | FunctionCall _ -> "FunctionCallExpr"
-        | FilteredAggregate _ -> "FilterExpr"
-        | Windowed _ -> "WindowedExpr"
-        | Cast _ -> "CastExpr"
-        | Extract _ -> "ExtractExpr"
-        | SimpleCase _ -> "SimpleCaseExpr"
-        | SearchedCase _ -> "CaseExpr"
-        | InList _ -> "InExpr"
-        | InSubquery _ | ScalarSubquery _ -> "SubqueryExpr"
-        | Between _ -> "BetweenExpr"
-        | IsNull _ -> "IsNullExpr"
-        | Exists _ -> "ExistsExpr"
-
-    let private returningExpressionError detail =
-        raise (SqlCompilationException(
-            "SQL capability 'dml.returning.expression' " + detail + " remains fail-closed."))
-
-    let rec private validateRichReturningExpression expression =
-        let validateBoundColumn binding =
-            match binding with
-            | ColumnBinding.LocalRowSource -> ()
-            | ColumnBinding.OuterRowSource ->
-                returningExpressionError "does not admit correlated outer-row references"
-            | ColumnBinding.ProjectionAlias ->
-                returningExpressionError "does not admit projection-alias bindings"
-
-        match expression with
-        | BoundColumn(_, binding) ->
-            validateBoundColumn binding
-        | Column _ ->
-            returningExpressionError "requires every column reference to bind to a local DML row source"
-        | Literal _ -> ()
-        | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
-            validateRichReturningExpression operand
-        | Binary((BinaryOperator.Add
-                 | BinaryOperator.Subtract
-                 | BinaryOperator.Multiply
-                 | BinaryOperator.Divide
-                 | BinaryOperator.Modulo
-                 | BinaryOperator.Concat), left, right) ->
-            validateRichReturningExpression left
-            validateRichReturningExpression right
-        | Cast(value, _) ->
-            validateRichReturningExpression value
-        | FunctionCall call ->
-            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
-            | Some contract
-                when contract.Kind = SqlCanonicalFunctionKind.Scalar
-                     && contract.IsDirectPortable
-                     && not call.IsDistinct
-                     && contract.AcceptsArgumentCount(call.Arguments.Length) ->
-                call.Arguments |> List.iter validateRichReturningExpression
-            | _ ->
-                returningExpressionError (
-                    "accepts only registered direct-portable scalar functions with canonical arity and no DISTINCT; function '"
-                    + name + "'")
-        | SimpleCase(input, branches, fallback) ->
-            validateRichReturningExpression input
-            branches |> NonEmpty.iter (fun branch ->
-                validateRichReturningExpression branch.Match
-                validateRichReturningExpression branch.Result)
-            fallback |> Option.iter validateRichReturningExpression
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateRichReturningPredicate branch.Condition
-                validateRichReturningExpression branch.Result)
-            fallback |> Option.iter validateRichReturningExpression
-        | Unary(UnaryOperator.Not, _)
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual
-                 | BinaryOperator.And
-                 | BinaryOperator.Or), _, _)
-        | Like _
-        | IsNull _
-        | Between _
-        | InList _ ->
-            validateRichReturningPredicate expression
-        | _ ->
-            returningExpressionError (
-                "accepts only the proven target-row scalar/predicate subset; expression node "
-                + returningNodeName expression)
-
-    and private validateRichReturningPredicate expression =
-        match expression with
-        | Unary(UnaryOperator.Not, operand) ->
-            validateRichReturningPredicate operand
-        | Binary((BinaryOperator.And | BinaryOperator.Or), left, right) ->
-            validateRichReturningPredicate left
-            validateRichReturningPredicate right
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual), left, right) ->
-            validateRichReturningExpression left
-            validateRichReturningExpression right
-        | Like(value, pattern, _, _, _) ->
-            validateRichReturningExpression value
-            validateRichReturningExpression pattern
-        | IsNull(value, _) ->
-            validateRichReturningExpression value
-        | Between(value, lower, upper, _) ->
-            validateRichReturningExpression value
-            validateRichReturningExpression lower
-            validateRichReturningExpression upper
-        | InList(value, items, _) ->
-            validateRichReturningExpression value
-            items |> NonEmpty.iter validateRichReturningExpression
-        | _ ->
-            returningExpressionError (
-                "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
-                + returningNodeName expression)
-
-    let private proveReturning (proofs: DmlProofs) (items: ReturningItem list) =
-        if not (List.isEmpty items) then
-            requireDmlCapability proofs.Returning
-            let rich =
-                items
-                |> List.choose (function
-                    | ReturningExpression(expression, _) -> Some expression
-                    | ReturningColumn _ | ReturningWildcard _ -> None)
-            if not rich.IsEmpty then
-                requireDmlCapability proofs.ReturningExpression
-                rich |> List.iter validateRichReturningExpression
-
-    let private proveTargetDml (proofs: DmlProofs) document =
-        match document.Statement with
-        | QueryStatement _ -> ()
-        | InsertStatement insert ->
-            proveReturning proofs insert.Returning
-        | UpdateStatement update ->
-            if update.TargetAlias.IsSome then requireDmlCapability proofs.TargetAlias
-            if not update.From.IsEmpty then requireDmlCapability proofs.UpdateFrom
-            proveReturning proofs update.Returning
-        | DeleteStatement delete ->
-            if delete.TargetAlias.IsSome then requireDmlCapability proofs.TargetAlias
-            if not delete.Using.IsEmpty then requireDmlCapability proofs.DeleteUsing
-            proveReturning proofs delete.Returning
-
-    let private orderingProviderName = function
-        | MySqlRuntime -> "MySQL"
-        | SqlServerRuntime _ -> "MsSqlServer"
-        | PostgreSqlRuntime -> "Postgres"
-        | SQLiteRuntime -> "Sqlite"
-        | OracleRuntime -> "Oracle"
-        | FirebirdRuntime -> "Firebird"
-
-    let private nullOrderingCapabilityError targetRuntime =
-        SqlCompilationException(
-            "SQL capability 'ordering.nulls' is not supported by provider "
-            + orderingProviderName targetRuntime
-            + " for this Core plan.")
-
-    let private targetDefaultNullOrdering (order: OrderBy) =
-        match order.NullOrdering with
-        | NullOrdering.Default -> true
-        | NullOrdering.NullsFirst -> not order.Descending
-        | NullOrdering.NullsLast -> order.Descending
-
-    let private requireRewriteableNullOrdering targetRuntime targetOrdering isStatementTail isDistinct isSetTail (order: OrderBy) =
-        match targetOrdering, order.NullOrdering with
-        | NativeNullOrdering, _
-        | RewriteNullOrdering, NullOrdering.Default -> ()
-        | RewriteNullOrdering, _ when targetDefaultNullOrdering order -> ()
-        | RewriteNullOrdering, _ ->
-            if isStatementTail && (isDistinct || isSetTail) then
-                raise (nullOrderingCapabilityError targetRuntime)
-            match order.Expression with
-            | BoundColumn(_, LocalRowSource)
-            | BoundColumn(_, OuterRowSource) -> ()
-            | Column _
-            | BoundColumn(_, ProjectionAlias)
-            | _ -> raise (nullOrderingCapabilityError targetRuntime)
-
-    let rec private proveOrderingExpr targetRuntime targetOrdering expression =
-        match expression with
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | Unary(_, value) -> proveOrderingExpr targetRuntime targetOrdering value
-        | Binary(_, left, right) ->
-            proveOrderingExpr targetRuntime targetOrdering left
-            proveOrderingExpr targetRuntime targetOrdering right
-        | Like(value, pattern, _, _, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | RegexMatch(value, pattern) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering pattern
-        | FunctionCall call ->
-            call.Arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
-                proveOrderingExpr targetRuntime targetOrdering order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering predicate
-        | Windowed(value, window) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            window.PartitionBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-            window.OrderBy
-            |> List.iter (fun order ->
-                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
-                proveOrderingExpr targetRuntime targetOrdering order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | SimpleCase(input, branches, fallback) ->
-            proveOrderingExpr targetRuntime targetOrdering input
-            branches |> NonEmpty.iter (fun branch ->
-                proveOrderingExpr targetRuntime targetOrdering branch.Match
-                proveOrderingExpr targetRuntime targetOrdering branch.Result)
-            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveOrderingExpr targetRuntime targetOrdering branch.Condition
-                proveOrderingExpr targetRuntime targetOrdering branch.Result)
-            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | InList(value, items, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            items |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | InSubquery(value, query, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingQuery targetRuntime targetOrdering query
-        | Between(value, lower, upper, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering lower
-            proveOrderingExpr targetRuntime targetOrdering upper
-        | IsNull(value, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | ScalarSubquery query | Exists(query, _) ->
-            proveOrderingQuery targetRuntime targetOrdering query
-
-    and private proveOrderingSource targetRuntime targetOrdering source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> proveOrderingQuery targetRuntime targetOrdering query
-
-    and private proveOrderingSelect targetRuntime targetOrdering select =
-        select.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
-        iterDistinctOn (proveOrderingExpr targetRuntime targetOrdering) select
-        select.Projection |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
-        select.From |> Option.iter (proveOrderingSource targetRuntime targetOrdering)
-        select.Joins |> List.iter (fun join ->
-            proveOrderingSource targetRuntime targetOrdering join.Source
-            join.Predicate |> Option.iter (proveOrderingExpr targetRuntime targetOrdering))
-        select.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        select.GroupBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-        select.Having |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-
-    and private proveOrderingQuery targetRuntime targetOrdering query =
-        proveOrderingSelect targetRuntime targetOrdering query.Head
-        query.SetOperations |> List.iter (fun branch -> proveOrderingQuery targetRuntime targetOrdering branch.Query)
-        let isSetTail = not query.SetOperations.IsEmpty
-        query.OrderBy
-        |> List.iter (fun order ->
-            requireRewriteableNullOrdering targetRuntime targetOrdering true query.Head.Distinct isSetTail order
-            proveOrderingExpr targetRuntime targetOrdering order.Expression)
-
-    let private stableProjectionNames context (query: Query) =
-        query.Head.Projection
-        |> List.map (fun item ->
-            match item.Alias, item.Expression with
-            | Some alias, _ -> alias
-            | None, Column identifier
-            | None, BoundColumn(identifier, _) ->
-                Identifier.parts identifier |> List.last
-            | _ ->
-                raise (SqlCompilationException(
-                    context
-                    + " requires every projected output to have a stable name; use explicit aliases for wildcard or computed expressions.")))
-
-    let private ensureUniqueOutputNames context names =
-        let seen = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        names
-        |> List.iter (fun (name: IdentifierPart) ->
-            if not (seen.Add name.Value) then
-                raise (SqlCompilationException(
-                    context + " requires unique set-result output names before the legacy ROW_NUMBER wrapper.")))
-
-    let private projectionOrderIndex (projection: SelectItem list) (order: OrderBy) =
-        match order.Expression with
-        | OrderOrdinal ordinal ->
-            let index = PositiveRowCount.value ordinal - 1
-            if index >= 0 && index < projection.Length then Some index else None
-        | Column identifier
-        | BoundColumn(identifier, _)
-            when Identifier.parts identifier |> List.length = 1 ->
-            let reference = Identifier.parts identifier |> List.head |> fun part -> part.Value
-            let aliasMatches =
-                projection
-                |> List.indexed
-                |> List.choose (fun (index, item) ->
-                    item.Alias
-                    |> Option.bind (fun alias ->
-                        if StringComparer.OrdinalIgnoreCase.Equals(alias.Value, reference) then Some index else None))
-            match aliasMatches with
-            | [ index ] -> Some index
-            | _ :: _ :: _ ->
-                raise (SqlCompilationException(
-                    "SQL Server OFFSET pagination ORDER BY alias '" + reference + "' is ambiguous."))
-            | [] ->
-                projection |> List.tryFindIndex (fun item -> Expr.equivalent item.Expression order.Expression)
-        | _ ->
-            projection |> List.tryFindIndex (fun item -> Expr.equivalent item.Expression order.Expression)
-
-    let private proveSqlServerSelectPaging (query: Query) =
-        let context = "SQL Server OFFSET pagination"
-        stableProjectionNames context query |> ignore
-        let projection = query.Head.Projection
-        for order in query.OrderBy do
-            match projectionOrderIndex projection order with
-            | Some _ -> ()
-            | None when query.Head.Distinct ->
-                raise (SqlCompilationException(
-                    "SQL Server DISTINCT OFFSET pagination requires every ORDER BY expression to resolve to a projected output."))
-            | None -> ()
-
-    let private proveSqlServerSetPaging (query: Query) =
-        let context = "SQL Server set-operation OFFSET pagination"
-        let names = stableProjectionNames context query
-        ensureUniqueOutputNames context names
-        for order in query.OrderBy do
-            match order.Expression with
-            | OrderOrdinal ordinal ->
-                let index = PositiveRowCount.value ordinal - 1
-                if index < 0 || index >= names.Length then
-                    raise (SqlCompilationException(
-                        "SQL Server set-operation OFFSET pagination ORDER BY position is outside the projected output width."))
-            | Column identifier
-            | BoundColumn(identifier, _)
-                when Identifier.parts identifier |> List.length = 1 ->
-                let reference = Identifier.parts identifier |> List.head |> fun part -> part.Value
-                let matches =
-                    names
-                    |> List.filter (fun name -> StringComparer.OrdinalIgnoreCase.Equals(name.Value, reference))
-                if matches.Length <> 1 then
-                    raise (SqlCompilationException(
-                        "SQL Server set-operation OFFSET pagination ORDER BY reference '"
-                        + reference
-                        + "' is not a unique combined output name."))
-            | _ ->
-                raise (SqlCompilationException(
-                    "SQL Server set-operation OFFSET pagination supports ORDER BY output names or ordinals only."))
-
-    let rec private proveSqlServerPagingQuery query =
-        query.Head.Ctes |> List.iter (fun cte -> proveSqlServerPagingQuery cte.Query)
-        query.Head.From |> Option.iter (function DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
-        query.Head.Joins |> List.iter (fun join ->
-            match join.Source with DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
-        query.SetOperations |> List.iter (fun branch -> proveSqlServerPagingQuery branch.Query)
-        match query.Offset with
-        | Some offset when NonNegativeRowCount.value offset > 0 ->
-            if query.SetOperations.IsEmpty then proveSqlServerSelectPaging query
-            else proveSqlServerSetPaging query
-        | _ -> ()
-
-    let private proveOrderingAndPaging targetRuntime targetOrdering document =
-        match document.Statement with
-        | QueryStatement query ->
-            proveOrderingQuery targetRuntime targetOrdering query
-            match targetRuntime with
-            | SqlServerRuntime _ -> proveSqlServerPagingQuery query
-            | _ -> ()
-        | InsertStatement insert ->
-            match insert.Input with
-            | QuerySource query ->
-                proveOrderingQuery targetRuntime targetOrdering query
-                match targetRuntime with
-                | SqlServerRuntime _ -> proveSqlServerPagingQuery query
-                | _ -> ()
-            | Values _ | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
-        | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveOrderingExpr targetRuntime targetOrdering assignment.Value)
-            update.From |> List.iter (proveOrderingSource targetRuntime targetOrdering)
-            update.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-            update.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter (proveOrderingSource targetRuntime targetOrdering)
-            delete.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-            delete.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
-
-    let private exactColumnSetMatch (left: string list) (right: string list) =
-        let leftSet = HashSet<string>(left, StringComparer.OrdinalIgnoreCase)
-        let rightSet = HashSet<string>(right, StringComparer.OrdinalIgnoreCase)
-        leftSet.Count = List.length left
-        && rightSet.Count = List.length right
-        && leftSet.SetEquals(rightSet)
-
-    let private assuredColumns label = function
-        | AssuredColumns columns -> columns
-        | MissingAssurance -> raise (SqlCompilationException(label))
-
-    let private requireExplicitConflictTarget label (conflict: InsertConflict) =
-        match conflict.TargetColumns with
-        | Some columns -> columns
-        | None -> raise (SqlCompilationException(label))
-
-    let private validateConflictTargetColumns (insert: Insert) (conflict: InsertConflict) =
-        match conflict.TargetColumns with
-        | None ->
-            match conflict.Action with
-            | DoNothing -> ()
-            | UpdateProposedValues _ ->
-                raise (SqlCompilationException(
-                    "ON CONFLICT DO UPDATE requires an explicit conflict target in the modeled Core contract."))
-        | Some targets ->
-            let insertColumns =
-                HashSet<string>(
-                    insert.Columns |> List.map (fun column -> column.Value),
-                    StringComparer.OrdinalIgnoreCase)
-            let seen = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            for target in targets |> NonEmpty.toList do
-                let name = Identifier.text target
-                if not (seen.Add name) then
-                    raise (SqlCompilationException(
-                        "INSERT conflict target column '" + name + "' is declared more than once."))
-                if not (insertColumns.Contains name) then
-                    raise (SqlCompilationException(
-                        "INSERT conflict target column '" + name + "' must be explicitly present in the INSERT column list so Core does not depend on provider-default conflict-key values."))
-
-    let private validateInsertSelectConflictAssurance (conflict: InsertConflict) (proofs: ConflictProofs) =
-        let proven =
-            assuredColumns
-                "PostgreSQL INSERT ... SELECT ON CONFLICT DO UPDATE remains fail-closed without explicit source-row uniqueness/cardinality assurance for the complete conflict target."
-                proofs.SourceRowsUniqueByInsertColumns
-        let target =
-            conflict
-            |> requireExplicitConflictTarget "INSERT ... SELECT conflict DO UPDATE requires an explicit conflict target."
-            |> NonEmpty.toList
-            |> List.map Identifier.text
-        if not (exactColumnSetMatch target proven) then
-            raise (SqlCompilationException(
-                "INSERT ... SELECT conflict DO UPDATE requires source-row uniqueness assurance to match the complete explicit conflict target exactly."))
-
-    let private validateConflictAssignments (insert: Insert) (assignments: NonEmpty<ConflictAssignment>) =
-        let insertColumns =
-            HashSet<string>(
-                insert.Columns |> List.map (fun column -> column.Value),
-                StringComparer.OrdinalIgnoreCase)
-        let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        assignments
-        |> NonEmpty.iter (fun (assignment: ConflictAssignment) ->
-            let target = Identifier.text assignment.Target
-            let proposed = Identifier.text assignment.Proposed
-            if not (assigned.Add target) then
-                raise (SqlCompilationException(
-                    "INSERT conflict DO UPDATE assigns column '" + target + "' more than once."))
-            if not (insertColumns.Contains proposed) then
-                raise (SqlCompilationException(
-                    "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values.")))
-
-    let private validatePortableConflict targetRuntime (proofs: ConflictProofs) (insert: Insert) (conflict: InsertConflict) =
-        match insert.Input with
-        | DefaultValues ->
-            raise (SqlCompilationException("Unsupported INSERT source for conflict handling."))
-        | QuerySource _ ->
-            match targetRuntime with
-            | PostgreSqlRuntime -> ()
-            | _ ->
-                raise (SqlCompilationException(
-                    "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL targets; other targets remain fail-closed."))
-        | Values _ -> ()
-
-        validateConflictTargetColumns insert conflict
-
-        match conflict.TargetColumns, conflict.Action with
-        | None, DoNothing ->
-            let target = targetProvider targetRuntime
-            if proofs.SourceProvider <> target then
-                raise (SqlCompilationException(
-                    "SQL capability 'dml.conflict_do_nothing_any' is native-only because an omitted conflict target depends on the provider's complete native conflict domain. Source provider "
-                    + string proofs.SourceProvider + ", target provider " + string target + "."))
-            match targetRuntime with
-            | PostgreSqlRuntime | SQLiteRuntime -> ()
-            | _ ->
-                raise (SqlCompilationException(
-                    "SQL capability 'dml.conflict_do_nothing_any' is supported only for PostgreSQL and SQLite native targets."))
-        | None, UpdateProposedValues _ ->
-            raise (SqlCompilationException(
-                "ON CONFLICT DO UPDATE requires an explicit conflict target in the modeled Core contract."))
-        | Some _, _ -> ()
-
-        match conflict.Action with
-        | DoNothing -> ()
-        | UpdateProposedValues assignments ->
-            match insert.Input with
-            | QuerySource _ -> validateInsertSelectConflictAssurance conflict proofs
-            | Values rows when NonEmpty.length rows <> 1 ->
-                raise (SqlCompilationException(
-                    "Portable INSERT conflict DO UPDATE currently requires exactly one proposed VALUES row. Multi-row proposed values require explicit source-row uniqueness/cardinality assurance."))
-            | Values _ -> ()
-            | DefaultValues -> ()
-            validateConflictAssignments insert assignments
-
-    let private validateFirebirdFullProposedRowUpdate (insert: Insert) (assignments: NonEmpty<ConflictAssignment>) =
-        let assignmentList = NonEmpty.toList assignments
-        if assignmentList.Length <> insert.Columns.Length then
-            raise (SqlCompilationException(
-                "Firebird UPDATE OR INSERT updates every supplied INSERT column on a match. Core therefore requires one same-column proposed-row assignment for every INSERT column so partial-update semantics cannot drift."))
-
-        let insertColumns =
-            HashSet<string>(
-                insert.Columns |> List.map (fun column -> column.Value),
-                StringComparer.OrdinalIgnoreCase)
-        let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        for (assignment: ConflictAssignment) in assignmentList do
-            let target = Identifier.text assignment.Target
-            let proposed = Identifier.text assignment.Proposed
-            if not (StringComparer.OrdinalIgnoreCase.Equals(target, proposed)) then
-                raise (SqlCompilationException(
-                    "Firebird UPDATE OR INSERT can mirror the portable conflict contract only when each assignment is target = proposed-row target for the same column."))
-            if not (assigned.Add target) || not (insertColumns.Contains target) then
-                raise (SqlCompilationException(
-                    "Firebird UPDATE OR INSERT assignment column '" + target + "' must occur exactly once in the INSERT column list."))
-
-        if not (assigned.SetEquals insertColumns) then
-            raise (SqlCompilationException(
-                "Firebird UPDATE OR INSERT requires conflict assignments to cover the complete INSERT column set."))
-
-    let private requireConflictCapability = function
-        | ProvenCapability -> ()
-        | RejectedCapability message -> raise (SqlCompilationException(message))
-
-    let private validateMySqlConflict (proofs: ConflictProofs) (conflict: InsertConflict) =
-        match conflict.Action with
-        | DoNothing ->
-            raise (SqlCompilationException(
-                "MySQL INSERT IGNORE is not a portable ON CONFLICT DO NOTHING equivalent because it can suppress errors beyond the explicit conflict target; MySQL DO NOTHING therefore remains fail-closed."))
-        | UpdateProposedValues _ ->
-            let matchedColumns =
-                match proofs.MySqlUniqueKey with
-                | MissingMySqlUniqueKeyAssurance ->
-                    raise (SqlCompilationException(
-                        "MySQL ON DUPLICATE KEY UPDATE requires metadata-backed statement assurance proving the explicit conflict target matches a complete enforced unique key and is the sole enforced native conflict source."))
-                | AssuredMySqlUniqueKey(_, false) ->
-                    raise (SqlCompilationException(
-                        "MySQL ON DUPLICATE KEY UPDATE can react to any UNIQUE or PRIMARY KEY conflict. Core requires the matched conflict target to be the sole enforced native unique-conflict source, including no additional richer expression, prefix, partial, or otherwise unsupported enforced unique keys."))
-                | AssuredMySqlUniqueKey(columns, true) -> columns
-            let target =
-                conflict
-                |> requireExplicitConflictTarget "MySQL conflict lowering requires an explicit canonical conflict target."
-                |> NonEmpty.toList
-                |> List.map Identifier.text
-            if not (exactColumnSetMatch target matchedColumns) then
-                raise (SqlCompilationException(
-                    "MySQL conflict lowering requires the canonical explicit conflict target to match the complete metadata-resolved unique key exactly."))
-            requireConflictCapability proofs.MySqlConditionalTarget
-
-    let private validateDirectConflict (proofs: ConflictProofs) =
-        requireConflictCapability proofs.DirectTarget
-
-    let private validateFirebirdConflict (proofs: ConflictProofs) (insert: Insert) (conflict: InsertConflict) =
-        match conflict.Action with
-        | DoNothing ->
-            raise (SqlCompilationException(
-                "Firebird UPDATE OR INSERT has update-or-insert semantics and cannot represent portable ON CONFLICT DO NOTHING; a separate MERGE no-match contract is required."))
-        | UpdateProposedValues assignments ->
-            let primaryKey =
-                assuredColumns
-                    "Firebird UPDATE OR INSERT requires metadata-backed conflict-target assurance proving MATCHING equals the resolved primary key; absent assurance remains fail-closed because non-unique MATCHING can update multiple rows."
-                    proofs.FirebirdPrimaryKey
-            let target =
-                conflict
-                |> requireExplicitConflictTarget "Firebird conflict lowering requires an explicit canonical conflict target."
-                |> NonEmpty.toList
-                |> List.map Identifier.text
-            if not (exactColumnSetMatch target primaryKey) then
-                raise (SqlCompilationException(
-                    "Firebird UPDATE OR INSERT requires the canonical conflict target to match the complete resolved primary key exactly; general UNIQUE-key and non-unique MATCHING metadata are not represented yet."))
-            validateFirebirdFullProposedRowUpdate insert assignments
-
-    let private proveConflicts targetRuntime (proofs: ConflictProofs) document =
-        match document.Statement with
-        | InsertStatement insert ->
-            match insert.Conflict with
-            | None -> ()
-            | Some conflict ->
-                validatePortableConflict targetRuntime proofs insert conflict
-                match targetRuntime with
-                | PostgreSqlRuntime | SQLiteRuntime | SqlServerRuntime _ | OracleRuntime ->
-                    validateDirectConflict proofs
-                | MySqlRuntime ->
-                    validateMySqlConflict proofs conflict
-                | FirebirdRuntime ->
-                    validateFirebirdConflict proofs insert conflict
-        | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
-
-    type private QueryPosition =
-        | RootQuery
-        | InsertSelectSource
-        | CteDefinition
-        | DerivedTablePosition
-        | SetBranchPosition
-        | ScalarSubqueryPosition
-
-    let private cteScopeError detail =
-        raise (SqlCompilationException(
-            "SQL capability 'select.cte_scope' is not supported by the native SQL backend: " + detail + "."))
-
-    let private nestedCteSupported targetRuntime =
-        SqlNestedCteCapabilityRules.SupportsTarget(targetProvider targetRuntime)
-
-    let private validateCtePlacement targetRuntime position (ctes: Cte list) =
-        if not ctes.IsEmpty && not (nestedCteSupported targetRuntime) then
-            match position with
-            | RootQuery | InsertSelectSource -> ()
-            | CteDefinition ->
-                cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
-                    + " has no declared portable nested-WITH-inside-a-CTE-definition contract")
-            | DerivedTablePosition ->
-                cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
-                    + " has no declared portable WITH-in-derived-table lowering contract")
-            | SetBranchPosition ->
-                cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
-                    + " has no declared portable WITH-in-set-operation-branch lowering contract")
-            | ScalarSubqueryPosition ->
-                cteScopeError (
-                    "provider " + string (targetProvider targetRuntime)
-                    + " has no declared portable WITH-at-the-root-of-a-scalar/EXISTS-subquery contract")
-
-    let rec private validateNestedCteExpr targetRuntime expression =
-        match expression with
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | Unary(_, operand) -> validateNestedCteExpr targetRuntime operand
-        | Binary(_, left, right) ->
-            validateNestedCteExpr targetRuntime left
-            validateNestedCteExpr targetRuntime right
-        | Like(value, pattern, _, _, _) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime pattern
-        | RawRegexCall(arguments, _) -> arguments |> List.iter (validateNestedCteExpr targetRuntime)
-        | RegexMatch(value, pattern) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime pattern
-        | FunctionCall call ->
-            call.Arguments |> List.iter (validateNestedCteExpr targetRuntime)
-            call.AggregateOrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime predicate
-        | Windowed(value, window) ->
-            validateNestedCteExpr targetRuntime value
-            window.PartitionBy |> List.iter (validateNestedCteExpr targetRuntime)
-            window.OrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
-        | Cast(value, _) | Extract(_, value) -> validateNestedCteExpr targetRuntime value
-        | SimpleCase(input, branches, fallback) ->
-            validateNestedCteExpr targetRuntime input
-            branches |> NonEmpty.iter (fun branch ->
-                validateNestedCteExpr targetRuntime branch.Match
-                validateNestedCteExpr targetRuntime branch.Result)
-            fallback |> Option.iter (validateNestedCteExpr targetRuntime)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateNestedCteExpr targetRuntime branch.Condition
-                validateNestedCteExpr targetRuntime branch.Result)
-            fallback |> Option.iter (validateNestedCteExpr targetRuntime)
-        | InList(value, items, _) ->
-            validateNestedCteExpr targetRuntime value
-            items |> NonEmpty.iter (validateNestedCteExpr targetRuntime)
-        | InSubquery(value, query, _) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteQuery targetRuntime ScalarSubqueryPosition query
-        | Between(value, lower, upper, _) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime lower
-            validateNestedCteExpr targetRuntime upper
-        | IsNull(value, _) -> validateNestedCteExpr targetRuntime value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateNestedCteQuery targetRuntime ScalarSubqueryPosition query
-
-    and private validateNestedCteTable targetRuntime source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) ->
-            validateNestedCteQuery targetRuntime DerivedTablePosition query
-
-    and private validateNestedCteSelect targetRuntime position select =
-        validateCtePlacement targetRuntime position select.Ctes
-        select.Ctes |> List.iter (fun cte ->
-            validateNestedCteQuery targetRuntime CteDefinition cte.Query)
-        select.From |> Option.iter (validateNestedCteTable targetRuntime)
-        select.Joins |> List.iter (fun join ->
-            validateNestedCteTable targetRuntime join.Source
-            join.Predicate |> Option.iter (validateNestedCteExpr targetRuntime))
-        iterDistinctOn (validateNestedCteExpr targetRuntime) select
-        select.Projection |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
-        select.Where |> Option.iter (validateNestedCteExpr targetRuntime)
-        select.GroupBy |> List.iter (validateNestedCteExpr targetRuntime)
-        select.Having |> Option.iter (validateNestedCteExpr targetRuntime)
-
-    and private validateNestedCteQuery targetRuntime position query =
-        validateNestedCteSelect targetRuntime position query.Head
-
-        if position = ScalarSubqueryPosition
-           && not query.Head.Ctes.IsEmpty
-           && not query.SetOperations.IsEmpty
-           && not query.OrderBy.IsEmpty then
-            let portableSetTailOrder expression =
-                match expression with
-                | OrderOrdinal _ -> true
-                | Column identifier
-                | BoundColumn(identifier, ProjectionAlias) ->
-                    Identifier.parts identifier |> List.length = 1
-                | _ -> false
-            if query.OrderBy
-               |> List.exists (fun order -> not (portableSetTailOrder order.Expression)) then
-                cteScopeError (
-                    "scalar/EXISTS subquery with a root CTE and set-operation tail can order only by an output name "
-                    + "or output ordinal; rich ordering expressions would require an unproven scope barrier")
-
-        query.SetOperations |> List.iter (fun branch ->
-            validateNestedCteQuery targetRuntime SetBranchPosition branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
-
-    let private validateNestedCteDocument targetRuntime document =
-        match document.Statement with
-        | QueryStatement query -> validateNestedCteQuery targetRuntime RootQuery query
-        | InsertStatement insert ->
-            match insert.Input with
-            | QuerySource query -> validateNestedCteQuery targetRuntime InsertSelectSource query
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (validateNestedCteExpr targetRuntime))
-            | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
-        | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun item -> validateNestedCteExpr targetRuntime item.Value)
-            update.From |> List.iter (validateNestedCteTable targetRuntime)
-            update.Where |> Option.iter (validateNestedCteExpr targetRuntime)
-            update.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter (validateNestedCteTable targetRuntime)
-            delete.Where |> Option.iter (validateNestedCteExpr targetRuntime)
-            delete.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
-
     type private ClauseContext =
         | ProjectionClause
         | PredicateClause
@@ -2602,13 +1154,14 @@ module internal RewriteStages =
         | Literal(ScalarValue.Boolean _) -> true
         | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ -> true
         | RegexMatch _ ->
-            SqlRegexCapabilityRules.SupportsTarget(targetProvider targetRuntime, null)
+            SqlRegexCapabilityRules.SupportsTarget(TargetRuntime.provider targetRuntime, null)
         | Unary(UnaryOperator.Not, _) -> true
         | Binary(operator, _, _) ->
             match operator with
             | BinaryOperator.Equal | BinaryOperator.NotEqual
             | BinaryOperator.GreaterThan | BinaryOperator.LessThan
             | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
+            | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom
             | BinaryOperator.And | BinaryOperator.Or -> true
             | _ -> false
         | SimpleCase(_, branches, fallback) ->
@@ -2627,13 +1180,16 @@ module internal RewriteStages =
 
     let private validateBooleanScalar targetRuntime capability expression =
         if isDefinitelyBoolean targetRuntime expression then
-            match SqlScalarBooleanCapabilityRules.TargetValidationError(targetProvider targetRuntime, capability) with
+            match SqlScalarBooleanCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime, capability) with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
 
     let private canonicalFunctionKind (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-        name, SqlCanonicalFunctionRegistry.IsAggregate(name), SqlCanonicalFunctionRegistry.IsWindow(name)
+        if FunctionName.requiresNativeIdentifierSemantics call.Name then
+            name, false, false
+        else
+            name, SqlCanonicalFunctionRegistry.IsAggregate(name), SqlCanonicalFunctionRegistry.IsWindow(name)
 
     let private targetCapabilityError provider capability =
         SqlCompilationException(
@@ -2670,9 +1226,18 @@ module internal RewriteStages =
                 + string provider + " for this Core plan."))
 
     let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
-        let provider = targetProvider targetRuntime
+        let provider = TargetRuntime.provider targetRuntime
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-        match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+        let nativeIdentifierIdentity = FunctionName.requiresNativeIdentifierSemantics call.Name
+        if nativeIdentifierIdentity
+           && (call.IsDistinct || not call.AggregateOrderBy.IsEmpty || call.AggregateSeparator.IsSome) then
+            raise (SqlCompilationException(
+                "Native quoted or qualified function '" + name
+                + "' cannot use DISTINCT or aggregate-local modifiers until its aggregate semantics are explicitly modeled."))
+        let contract =
+            if nativeIdentifierIdentity then None
+            else SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj
+        match contract with
         | None ->
             if call.IsDistinct then
                 raise (SqlCompilationException(
@@ -2858,6 +1423,10 @@ module internal RewriteStages =
     let private validateFilterTarget = function
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            if FunctionName.requiresNativeIdentifierSemantics call.Name then
+                raise (SqlCompilationException(
+                    "Native quoted or qualified function '" + name
+                    + "' cannot use FILTER until its aggregate semantics are explicitly modeled."))
             match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
             | Some contract when contract.AllowFilter -> ()
             | _ ->
@@ -2868,12 +1437,16 @@ module internal RewriteStages =
                 "FILTER must modify a directly modeled aggregate function."))
 
     let private validateWindowTarget targetRuntime value (window: WindowSpec) =
-        let provider = targetProvider targetRuntime
+        let provider = TargetRuntime.provider targetRuntime
         match directWindowFunction value with
         | None -> raise (SqlCompilationException(
                     "OVER must modify a directly modeled aggregate or window function."))
         | Some call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+            if FunctionName.requiresNativeIdentifierSemantics call.Name then
+                raise (SqlCompilationException(
+                    "Native quoted or qualified function '" + name
+                    + "' cannot use OVER until its aggregate/window semantics are explicitly modeled."))
             let contract =
                 match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
                 | Some contract when contract.AllowWindow -> contract
@@ -2955,7 +1528,7 @@ module internal RewriteStages =
                         || context = HavingClause
                         || context = OrderByClause
                         || (context = WindowSpecificationClause
-                            && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(targetProvider targetRuntime))
+                            && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(TargetRuntime.provider targetRuntime))
                 if not allowed then
                     raise (SqlCompilationException(
                         "Aggregate function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
@@ -3052,12 +1625,12 @@ module internal RewriteStages =
             if part.WasQuoted || part.PreserveSpelling then
                 part.Value
             else
-                match targetProvider targetRuntime with
+                match TargetRuntime.provider targetRuntime with
                 | SqlAgentToolType.Postgres -> part.Value.ToLowerInvariant()
                 | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird -> part.Value.ToUpperInvariant()
                 | _ -> part.Value
         let comparer =
-            match targetProvider targetRuntime with
+            match TargetRuntime.provider targetRuntime with
             | SqlAgentToolType.Postgres | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird ->
                 StringComparer.Ordinal
             | _ -> StringComparer.OrdinalIgnoreCase
@@ -3155,242 +1728,14 @@ module internal RewriteStages =
             | _ -> ()
             validateSemanticExpr targetRuntime OrderByClause false false order.Expression)
 
-    let private noFromReferenceError identifier =
-        raise (SqlCompilationException(
-            "Column reference '" + Identifier.text identifier
-            + "' requires a FROM source in the portable Core query model."))
-
-    let rec private validateNoFromExpression allowWildcard expression =
-        match expression with
-        | Literal _ | Interval _ | OrderOrdinal _ -> ()
-        | Column identifier ->
-            noFromReferenceError identifier
-        | BoundColumn(_, ColumnBinding.OuterRowSource) ->
-            ()
-        | BoundColumn(identifier, _) ->
-            noFromReferenceError identifier
-        | Wildcard _ when allowWildcard -> ()
-        | Wildcard None ->
-            raise (SqlCompilationException(
-                "Column reference '*' requires a FROM source in the portable Core query model."))
-        | Wildcard(Some identifier) ->
-            noFromReferenceError identifier
-        | Unary(_, operand) ->
-            validateNoFromExpression false operand
-        | Binary(_, left, right) ->
-            validateNoFromExpression false left
-            validateNoFromExpression false right
-        | Like(value, pattern, _, _, _) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateNoFromExpression false)
-        | RegexMatch(value, pattern) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false pattern
-        | FunctionCall call ->
-            let name =
-                FunctionName.value call.Name
-                |> fun value -> value.Trim().ToUpperInvariant()
-            call.Arguments
-            |> List.iteri (fun index argument ->
-                let allowFunctionWildcard =
-                    name = "COUNT"
-                    && index = 0
-                    && (match argument with
-                        | Wildcard None -> true
-                        | _ -> false)
-                validateNoFromExpression allowFunctionWildcard argument)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                validateNoFromExpression false order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false predicate
-        | Windowed(value, window) ->
-            validateNoFromExpression false value
-            window.PartitionBy |> List.iter (validateNoFromExpression false)
-            window.OrderBy
-            |> List.iter (fun order ->
-                validateNoFromExpression false order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            validateNoFromExpression false value
-        | SimpleCase(input, branches, fallback) ->
-            validateNoFromExpression false input
-            branches
-            |> NonEmpty.iter (fun branch ->
-                validateNoFromExpression false branch.Match
-                validateNoFromExpression false branch.Result)
-            fallback |> Option.iter (validateNoFromExpression false)
-        | SearchedCase(branches, fallback) ->
-            branches
-            |> NonEmpty.iter (fun branch ->
-                validateNoFromExpression false branch.Condition
-                validateNoFromExpression false branch.Result)
-            fallback |> Option.iter (validateNoFromExpression false)
-        | InList(value, items, _) ->
-            validateNoFromExpression false value
-            items |> NonEmpty.iter (validateNoFromExpression false)
-        | InSubquery(value, query, _) ->
-            validateNoFromExpression false value
-            validateNoFromQuery query
-        | Between(value, lower, upper, _) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false lower
-            validateNoFromExpression false upper
-        | IsNull(value, _) ->
-            validateNoFromExpression false value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateNoFromQuery query
-
-    and private visitNestedNoFromExpression expression =
-        match expression with
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | Unary(_, operand) ->
-            visitNestedNoFromExpression operand
-        | Binary(_, left, right) ->
-            visitNestedNoFromExpression left
-            visitNestedNoFromExpression right
-        | Like(value, pattern, _, _, _)
-        | RegexMatch(value, pattern) ->
-            visitNestedNoFromExpression value
-            visitNestedNoFromExpression pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter visitNestedNoFromExpression
-        | FunctionCall call ->
-            call.Arguments |> List.iter visitNestedNoFromExpression
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                visitNestedNoFromExpression order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            visitNestedNoFromExpression value
-            visitNestedNoFromExpression predicate
-        | Windowed(value, window) ->
-            visitNestedNoFromExpression value
-            window.PartitionBy |> List.iter visitNestedNoFromExpression
-            window.OrderBy
-            |> List.iter (fun order ->
-                visitNestedNoFromExpression order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            visitNestedNoFromExpression value
-        | SimpleCase(input, branches, fallback) ->
-            visitNestedNoFromExpression input
-            branches
-            |> NonEmpty.iter (fun branch ->
-                visitNestedNoFromExpression branch.Match
-                visitNestedNoFromExpression branch.Result)
-            fallback |> Option.iter visitNestedNoFromExpression
-        | SearchedCase(branches, fallback) ->
-            branches
-            |> NonEmpty.iter (fun branch ->
-                visitNestedNoFromExpression branch.Condition
-                visitNestedNoFromExpression branch.Result)
-            fallback |> Option.iter visitNestedNoFromExpression
-        | InList(value, items, _) ->
-            visitNestedNoFromExpression value
-            items |> NonEmpty.iter visitNestedNoFromExpression
-        | InSubquery(value, query, _) ->
-            visitNestedNoFromExpression value
-            validateNoFromQuery query
-        | Between(value, lower, upper, _) ->
-            visitNestedNoFromExpression value
-            visitNestedNoFromExpression lower
-            visitNestedNoFromExpression upper
-        | IsNull(value, _) ->
-            visitNestedNoFromExpression value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateNoFromQuery query
-
-    and private validateNoFromSource source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) ->
-            validateNoFromQuery query
-
-    and private validateNoFromSelect select =
-        select.Ctes
-        |> List.iter (fun cte ->
-            validateNoFromQuery cte.Query)
-        select.From |> Option.iter validateNoFromSource
-        select.Joins
-        |> List.iter (fun join ->
-            validateNoFromSource join.Source
-            join.Predicate |> Option.iter visitNestedNoFromExpression)
-
-        match select.From with
-        | Some _ ->
-            iterDistinctOn visitNestedNoFromExpression select
-            select.Projection
-            |> List.iter (fun item ->
-                visitNestedNoFromExpression item.Expression)
-            select.Where |> Option.iter visitNestedNoFromExpression
-            select.GroupBy |> List.iter visitNestedNoFromExpression
-            select.Having |> Option.iter visitNestedNoFromExpression
-        | None ->
-            if not select.Joins.IsEmpty then
-                raise (SqlCompilationException(
-                    "A Core SELECT cannot contain JOIN sources without a primary FROM source."))
-            iterDistinctOn (validateNoFromExpression false) select
-            select.Projection
-            |> List.iter (fun item ->
-                validateNoFromExpression false item.Expression)
-            select.Where |> Option.iter (validateNoFromExpression false)
-            select.GroupBy |> List.iter (validateNoFromExpression false)
-            select.Having |> Option.iter (validateNoFromExpression false)
-
-    and private validateNoFromQuery query =
-        validateNoFromSelect query.Head
-        query.SetOperations
-        |> List.iter (fun branch ->
-            validateNoFromQuery branch.Query)
-        query.OrderBy
-        |> List.iter (fun order ->
-            match order.Expression with
-            | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
-            | _ ->
-                if query.Head.From.IsNone then
-                    validateNoFromExpression false order.Expression
-                else
-                    visitNestedNoFromExpression order.Expression)
-
-    let private validateNoFromDocument targetRuntime document =
-        let _ = targetRuntime
-        match document.Statement with
-        | QueryStatement query ->
-            validateNoFromQuery query
-        | InsertStatement insert ->
-            match insert.Input with
-            | QuerySource query ->
-                validateNoFromQuery query
-            | Values rows ->
-                rows
-                |> NonEmpty.iter (NonEmpty.iter visitNestedNoFromExpression)
-            | DefaultValues -> ()
-            insert.Returning
-            |> List.iter (fun item ->
-                visitNestedNoFromExpression item.Expression)
-        | UpdateStatement update ->
-            update.From |> List.iter validateNoFromSource
-            update.AssignmentItems
-            |> NonEmpty.iter (fun item ->
-                visitNestedNoFromExpression item.Value)
-            update.Where |> Option.iter visitNestedNoFromExpression
-            update.Returning
-            |> List.iter (fun item ->
-                visitNestedNoFromExpression item.Expression)
-        | DeleteStatement delete ->
-            delete.Using |> List.iter validateNoFromSource
-            delete.Where |> Option.iter visitNestedNoFromExpression
-            delete.Returning
-            |> List.iter (fun item ->
-                visitNestedNoFromExpression item.Expression)
-
     let rec private containsVolatileRandom expression =
         match expression with
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            name = "RAND" || name = "RANDOM"
+            let isKnownRandom =
+                not (FunctionName.hasQuotedParts call.Name)
+                && (name = "RAND" || name = "RANDOM")
+            isKnownRandom
             || (call.Arguments |> List.exists containsVolatileRandom)
             || (call.AggregateOrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
         | Unary(_, operand) -> containsVolatileRandom operand
@@ -3498,21 +1843,23 @@ module internal RewriteStages =
                 document.Span
                 action
 
-        targetCheck (fun () -> validateNestedCteDocument targetRuntime document)
-        targetCheck (fun () -> validateNoFromDocument targetRuntime document)
-        sourceCheck (fun () -> proveSourceFilterDocument sourceExpressions document)
-        targetCheck (fun () -> proveSourceFilterDocument targetExpressions document)
+        targetCheck (fun () -> RewriteStructuralValidation.validateNestedCteDocument targetRuntime document)
+        targetCheck (fun () -> RewriteStructuralValidation.validateNoFromDocument targetRuntime document)
+        sourceCheck (fun () ->
+            RewriteCapabilityValidation.proveFilterDocument sourceCapabilityMessage sourceExpressions document)
+        targetCheck (fun () ->
+            RewriteCapabilityValidation.proveFilterDocument targetCapabilityMessage targetExpressions document)
 
         let validated =
             semanticCheck (fun () ->
                 validateSemanticDocument targetRuntime document
                 validateDocument allowedTables document)
 
-        targetCheck (fun () -> proveTargetDocument targetRuntime targetExpressions validated |> ignore)
-        sourceCheck (fun () -> proveTargetJoins sourceJoins validated)
-        targetCheck (fun () -> proveTargetJoins targetJoins validated)
-        targetCheck (fun () -> proveOrderingAndPaging targetRuntime targetOrdering validated)
-        sourceCheck (fun () -> proveTargetDml sourceDml validated)
-        targetCheck (fun () -> proveTargetDml targetDml validated)
-        targetCheck (fun () -> proveConflicts targetRuntime conflictProofs validated)
+        targetCheck (fun () -> RewriteCapabilityValidation.proveTargetDocument targetRuntime targetExpressions validated |> ignore)
+        sourceCheck (fun () -> RewritePlanCapabilityValidation.proveJoins sourceCapabilityMessage sourceJoins validated)
+        targetCheck (fun () -> RewritePlanCapabilityValidation.proveJoins targetCapabilityMessage targetJoins validated)
+        targetCheck (fun () -> RewritePlanCapabilityValidation.proveOrderingAndPaging targetRuntime targetOrdering validated)
+        sourceCheck (fun () -> RewritePlanCapabilityValidation.proveDml sourceCapabilityMessage sourceDml validated)
+        targetCheck (fun () -> RewritePlanCapabilityValidation.proveDml targetCapabilityMessage targetDml validated)
+        targetCheck (fun () -> RewritePlanCapabilityValidation.proveConflicts targetRuntime conflictProofs validated)
         ValidatedSql(validated, targetRuntime)

@@ -133,6 +133,8 @@ module internal RewriteLegacyAstAdapter =
         | "<" -> Some BinaryOperator.LessThan
         | ">=" -> Some BinaryOperator.GreaterThanOrEqual
         | "<=" -> Some BinaryOperator.LessThanOrEqual
+        | "IS DISTINCT FROM" -> Some BinaryOperator.DistinctFrom
+        | "IS NOT DISTINCT FROM" -> Some BinaryOperator.NotDistinctFrom
         | "AND" -> Some BinaryOperator.And
         | "OR" -> Some BinaryOperator.Or
         | _ -> None
@@ -230,12 +232,14 @@ module internal RewriteLegacyAstAdapter =
 
         | :? HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr as functionCall ->
             let arguments = functionCall.Arguments |> Seq.map exprOf |> Seq.toList
-            let name = identifierText functionCall.Name
-            if name.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase) then
+            let identifier = identifierOf functionCall.Name
+            let name = Identifier.text identifier
+            if name.Equals("REGEXP_LIKE", StringComparison.OrdinalIgnoreCase)
+               && (functionCall.Name.Parts |> Seq.forall (fun part -> not part.WasQuoted)) then
                 RawRegexCall(arguments, functionCall.IsDistinct)
             else
                 FunctionCall
-                    { Name = FunctionName.create name
+                    { Name = FunctionName.ofIdentifier identifier
                       Arguments = arguments
                       IsDistinct = functionCall.IsDistinct
                       AggregateOrderBy = functionCall.AggregateOrderBy |> Seq.map orderByOf |> Seq.toList

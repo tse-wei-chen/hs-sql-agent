@@ -45,6 +45,14 @@ module internal RewriteCompatibilityAstAdapter =
         |> ImmutableArray.CreateRange
         |> fun parts -> HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(parts, unknown)
 
+    let private functionIdentifierOf functionName =
+        HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
+            functionName
+            |> FunctionName.parts
+            |> List.map partOf
+            |> ImmutableArray.CreateRange,
+            unknown)
+
     let private scalarValue = function
         | ScalarValue.Null -> null
         | ScalarValue.Boolean value -> box value
@@ -73,6 +81,8 @@ module internal RewriteCompatibilityAstAdapter =
         | BinaryOperator.LessThan -> "<"
         | BinaryOperator.GreaterThanOrEqual -> ">="
         | BinaryOperator.LessThanOrEqual -> "<="
+        | BinaryOperator.DistinctFrom -> "IS DISTINCT FROM"
+        | BinaryOperator.NotDistinctFrom -> "IS NOT DISTINCT FROM"
         | BinaryOperator.And -> "AND"
         | BinaryOperator.Or -> "OR"
 
@@ -194,7 +204,7 @@ module internal RewriteCompatibilityAstAdapter =
         | Expr.FunctionCall call ->
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
-                    identifierFromText (FunctionName.value call.Name),
+                    functionIdentifierOf call.Name,
                     call.Arguments |> List.map exprOf |> ImmutableArray.CreateRange,
                     call.IsDistinct,
                     expressionSpan)

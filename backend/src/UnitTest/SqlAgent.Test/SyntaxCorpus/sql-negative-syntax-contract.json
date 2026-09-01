@@ -370,21 +370,6 @@
     "requireDiagnosticSpan": true
   },
   {
-    "name": "pg-unregistered-qualified-function",
-    "dialect": "Postgres",
-    "sql": "SELECT custom.fn(id) FROM users",
-    "expectedStage": "compile",
-    "exceptionTypeContains": "SqlCompilationException",
-    "messageContains": [
-      "not registered"
-    ],
-    "expectedDiagnosticCode": "SQL_NORMALIZATION_REJECTED",
-    "expectedDiagnosticStage": "SemanticValidation",
-    "expectedDiagnosticCategory": "Semantic",
-    "requireDiagnosticSpan": true,
-    "requireTypedDiagnostic": true
-  },
-  {
     "name": "pg-intersect-all-to-mysql",
     "dialect": "Postgres",
     "targetDialect": "MySQL",
