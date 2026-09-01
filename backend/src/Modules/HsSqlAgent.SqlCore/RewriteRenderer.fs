@@ -78,6 +78,16 @@ module internal RewriteRenderer =
 
     let private renderIdentifier provider identifier = identifier |> Identifier.parts |> List.map (quotePart provider) |> String.concat "."
     let private renderAlias provider alias = quotePart provider alias
+
+    let private renderFunctionName provider functionName =
+        functionName
+        |> FunctionName.parts
+        |> List.map (fun part ->
+            if part.WasQuoted || part.PreserveSpelling then
+                quotePart provider part
+            else
+                part.Value.ToUpperInvariant())
+        |> String.concat "."
     let private tableAliasPrefix = function Oracle -> " " | _ -> " AS "
     let private providerName = function
         | PostgreSql -> "Postgres"
@@ -367,6 +377,7 @@ module internal RewriteRenderer =
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+        let nativeName = renderFunctionName ctx.Provider call.Name
         let tool = providerTool ctx.Provider
 
         let fail message = raise (SqlCompilationException(message))
@@ -406,7 +417,7 @@ module internal RewriteRenderer =
                         "CAST(" + sql + " AS numeric)"
                     else sql)
             let args = String.concat ", " rendered
-            name + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
+            nativeName + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
 
         match name with
         | "CORE_DATE_ADD" ->
