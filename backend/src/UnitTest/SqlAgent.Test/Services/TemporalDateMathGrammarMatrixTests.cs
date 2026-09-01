@@ -4,6 +4,11 @@ namespace SqlAgent.Test.Services;
 
 public sealed class TemporalDateMathGrammarMatrixTests
 {
+    public const int ExpectedDateAddCaseCount = 144;
+    public const int ExpectedSourceGrammarCaseCount = 8;
+    public const int ExpectedPositiveCaseCount =
+        ExpectedDateAddCaseCount + ExpectedSourceGrammarCaseCount;
+
     private static readonly SqlAgentToolType[] Targets =
     [
         SqlAgentToolType.Postgres,

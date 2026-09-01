@@ -4,6 +4,8 @@ namespace SqlAgent.Test.Services;
 
 public sealed class NegativeTemporalGrammarMutationMatrixTests
 {
+    public const int ExpectedCaseCount = 5;
+
     [Theory]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.MsSqlServer)]

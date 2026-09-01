@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-01.67"
+    static member Version = "2026-09-01.68"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
