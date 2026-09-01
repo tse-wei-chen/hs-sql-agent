@@ -734,6 +734,11 @@ module internal SqlFirebirdTimeZoneTypeCapabilityRules =
         && not (isNull targetProfile.ServerVersion)
         && targetProfile.ServerVersion.CompareTo(MinimumVersion) >= 0
 
+    let CastSourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        if provider <> SqlAgentToolType.Firebird || SupportsTargetProfile(sourceProfile) then null
+        else
+            "SQL capability 'temporal.firebird_time_zone_type' requires an explicit Firebird source capability profile with ServerVersion 4.0 or newer for TIME/TIMESTAMP WITH TIME ZONE CAST source syntax."
+
     let CastTargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null, typeName: string) : string | null =
         let normalized = String.Join(" ", typeName.Trim().ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries))
         let timezoneType =
