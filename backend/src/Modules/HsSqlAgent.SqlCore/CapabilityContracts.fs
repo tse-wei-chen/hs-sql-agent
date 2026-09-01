@@ -959,10 +959,14 @@ module internal SqlDateMathCapabilityRules =
             match functionName, provider, unit with
             | "CORE_DATE_ADD", (SqlAgentToolType.Postgres
                               | SqlAgentToolType.MySQL
-                              | SqlAgentToolType.Sqlite
                               | SqlAgentToolType.MsSqlServer
-                              | SqlAgentToolType.Oracle
                               | SqlAgentToolType.Firebird), _ -> true
+            | "CORE_DATE_ADD", (SqlAgentToolType.Oracle | SqlAgentToolType.Sqlite),
+                (SqlDateMathUnit.Day
+                | SqlDateMathUnit.Week
+                | SqlDateMathUnit.Hour
+                | SqlDateMathUnit.Minute
+                | SqlDateMathUnit.Second) -> true
             | "CORE_DATE_DIFF", (SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer), _ -> true
             | "CORE_DATE_DIFF", SqlAgentToolType.Firebird, SqlDateMathUnit.Quarter -> false
             | "CORE_DATE_DIFF", SqlAgentToolType.Firebird, _ -> true

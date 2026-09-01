@@ -302,12 +302,10 @@ module internal RewriteRenderer =
             | Oracle ->
                 let interval =
                     match unit with
-                    | SqlDateMathUnit.Year ->
-                        "NUMTOYMINTERVAL(" + amount + ", 'YEAR')"
-                    | SqlDateMathUnit.Quarter ->
-                        "NUMTOYMINTERVAL((" + amount + " * 3), 'MONTH')"
+                    | SqlDateMathUnit.Year
+                    | SqlDateMathUnit.Quarter
                     | SqlDateMathUnit.Month ->
-                        "NUMTOYMINTERVAL(" + amount + ", 'MONTH')"
+                        invalidOp "Oracle calendar-unit DATEADD reached rendering without a lossless rollover proof."
                     | SqlDateMathUnit.Week ->
                         "NUMTODSINTERVAL((" + amount + " * 7), 'DAY')"
                     | SqlDateMathUnit.Day ->
@@ -322,11 +320,12 @@ module internal RewriteRenderer =
             | SQLite ->
                 let multiplier, modifier =
                     match unit with
+                    | SqlDateMathUnit.Month
+                    | SqlDateMathUnit.Quarter
+                    | SqlDateMathUnit.Year ->
+                        invalidOp "SQLite calendar-unit DATEADD reached rendering without a versioned floor-modifier proof."
                     | SqlDateMathUnit.Week -> 7, "day"
-                    | SqlDateMathUnit.Quarter -> 3, "month"
                     | SqlDateMathUnit.Day -> 1, "day"
-                    | SqlDateMathUnit.Month -> 1, "month"
-                    | SqlDateMathUnit.Year -> 1, "year"
                     | SqlDateMathUnit.Hour -> 1, "hour"
                     | SqlDateMathUnit.Minute -> 1, "minute"
                     | SqlDateMathUnit.Second -> 1, "second"

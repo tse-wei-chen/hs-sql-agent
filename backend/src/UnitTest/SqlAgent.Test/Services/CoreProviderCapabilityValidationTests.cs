@@ -81,6 +81,20 @@ public class CoreProviderCapabilityValidationTests
         Assert.Contains("function.regex_match", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_CalendarDateAddWithoutRolloverProof_FailsBeforeLowering(
+        SqlAgentToolType targetProvider)
+    {
+        var ex = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT DATEADD(month, 1, created_at) FROM events",
+            SqlAgentToolType.MsSqlServer,
+            targetProvider));
+
+        Assert.Contains("core_date_add.unit.month", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_NonDayDateAddForPostgres_UsesTypedIntervalLowering()
     {

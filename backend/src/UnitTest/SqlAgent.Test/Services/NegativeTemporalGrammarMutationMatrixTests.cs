@@ -4,7 +4,53 @@ namespace SqlAgent.Test.Services;
 
 public sealed class NegativeTemporalGrammarMutationMatrixTests
 {
-    public const int ExpectedCaseCount = 5;
+    public const int ExpectedDateAddRejectionCaseCount = 18;
+    public const int ExpectedCaseCount = 23;
+
+    public static IEnumerable<object[]> UnsupportedDateAddCases()
+    {
+        var targets = new[]
+        {
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Oracle
+        };
+        var units = new[] { "MONTH", "QUARTER", "YEAR" };
+        var contexts = new[] { "select", "predicate", "order" };
+
+        foreach (var target in targets)
+        foreach (var unit in units)
+        foreach (var context in contexts)
+            yield return [target, unit, context];
+    }
+
+    [Theory]
+    [MemberData(nameof(UnsupportedDateAddCases))]
+    public void DateAdd_CalendarUnitsWithoutRolloverProof_FailClosed(
+        SqlAgentToolType targetProvider,
+        string unit,
+        string context)
+    {
+        var expression = $"DATEADD({unit}, 2, created_at)";
+        var sql = context switch
+        {
+            "select" => $"SELECT {expression} AS shifted FROM events",
+            "predicate" => $"SELECT id FROM events WHERE {expression} > created_at",
+            "order" => $"SELECT id FROM events ORDER BY {expression}",
+            _ => throw new ArgumentOutOfRangeException(nameof(context))
+        };
+
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MsSqlServer),
+                targetProvider,
+                new SqlPlanValidationContext("negative-temporal-dateadd-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains(
+            $"core_date_add.unit.{unit.ToLowerInvariant()}",
+            ex.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
 
     [Theory]
     [InlineData(SqlAgentToolType.Sqlite)]

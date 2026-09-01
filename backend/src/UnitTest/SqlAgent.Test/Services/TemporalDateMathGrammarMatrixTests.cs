@@ -4,7 +4,7 @@ namespace SqlAgent.Test.Services;
 
 public sealed class TemporalDateMathGrammarMatrixTests
 {
-    public const int ExpectedDateAddCaseCount = 144;
+    public const int ExpectedDateAddCaseCount = 126;
     public const int ExpectedSourceGrammarCaseCount = 8;
     public const int ExpectedPositiveCaseCount =
         ExpectedDateAddCaseCount + ExpectedSourceGrammarCaseCount;
@@ -35,8 +35,22 @@ public sealed class TemporalDateMathGrammarMatrixTests
         foreach (var target in Targets)
         foreach (var unit in Units)
         foreach (var context in Contexts)
-            yield return [target, unit, context];
+            if (SupportsDateAdd(target, unit))
+                yield return [target, unit, context];
     }
+
+    private static bool SupportsDateAdd(SqlAgentToolType target, string unit) =>
+        target switch
+        {
+            SqlAgentToolType.Postgres or
+            SqlAgentToolType.MySQL or
+            SqlAgentToolType.MsSqlServer or
+            SqlAgentToolType.Firebird => true,
+            SqlAgentToolType.Sqlite or
+            SqlAgentToolType.Oracle =>
+                unit is "DAY" or "WEEK" or "HOUR" or "MINUTE" or "SECOND",
+            _ => false
+        };
 
     [Theory]
     [MemberData(nameof(DateAddCases))]
