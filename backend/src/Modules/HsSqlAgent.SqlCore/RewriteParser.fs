@@ -1218,7 +1218,8 @@ module internal RewriteParser =
         let requireJoinProof proof =
             match proof with
             | ProvenCapability -> ()
-            | RejectedCapability message -> raise (SqlCompilationException(message))
+            | RejectedCapability rejection ->
+                raise (SqlCompilationException(sourceCapabilityMessage rejection))
 
         if acceptKeyword "NATURAL" cursor then
             match SqlNaturalJoinCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with
