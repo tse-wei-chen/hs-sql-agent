@@ -23,6 +23,17 @@ public sealed class DialectDmlGrammarMatrixTests
             });
 
     [Fact]
+    public void DmlGrammarCoverage_HasStableCommonAndNativeFloor()
+    {
+        Assert.Equal(42, DmlGrammarMatrixCases.ExpectedCaseCount);
+        Assert.Equal(17, DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount);
+        Assert.Equal(
+            59,
+            DmlGrammarMatrixCases.ExpectedCaseCount +
+            DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount);
+    }
+
+    [Fact]
     public void SixDialectDmlMatrix_HasStableCoverage()
     {
         var cases = DmlGrammarMatrixCases.All().ToArray();
