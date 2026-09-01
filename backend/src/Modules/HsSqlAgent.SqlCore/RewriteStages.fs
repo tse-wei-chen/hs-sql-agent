@@ -1178,13 +1178,23 @@ module internal RewriteStages =
             let values =
                 (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
                 @ (fallback |> Option.toList)
-            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            let nonNull =
+                values
+                |> List.filter (fun value ->
+                    match Expr.unspan value with
+                    | Literal ScalarValue.Null -> false
+                    | _ -> true)
             not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
         | SearchedCase(branches, fallback) ->
             let values =
                 (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
                 @ (fallback |> Option.toList)
-            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            let nonNull =
+                values
+                |> List.filter (fun value ->
+                    match Expr.unspan value with
+                    | Literal ScalarValue.Null -> false
+                    | _ -> true)
             not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
         | _ -> false
 
@@ -1206,7 +1216,8 @@ module internal RewriteStages =
             "SQL capability '" + capability + "' is not supported by provider "
             + string provider + " for this Core plan.")
 
-    let private integerLiteral = function
+    let private integerLiteral expression =
+        match Expr.unspan expression with
         | Literal(ScalarValue.Integer value) -> Some value
         | Literal(ScalarValue.Decimal value)
             when value = Decimal.Truncate(value)
@@ -1704,7 +1715,7 @@ module internal RewriteStages =
         let headHasWildcard =
             query.Head.Projection
             |> List.exists (fun item ->
-                match item.Expression with
+                match Expr.unspan item.Expression with
                 | Wildcard _ -> true
                 | _ -> false)
         let outputNames = projectionOutputNames query.Head

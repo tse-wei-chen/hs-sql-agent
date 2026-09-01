@@ -67,7 +67,8 @@ module internal RewritePlanCapabilityValidation =
         | RejectedCapability rejection ->
             raise (SqlCompilationException(capabilityMessage rejection))
 
-    let private returningNodeName = function
+    let rec private returningNodeName = function
+        | Spanned(_, inner) -> returningNodeName inner
         | Column _ -> "ColumnExpr"
         | BoundColumn _ -> "BoundColumnExpr"
         | Wildcard _ -> "WildcardExpr"

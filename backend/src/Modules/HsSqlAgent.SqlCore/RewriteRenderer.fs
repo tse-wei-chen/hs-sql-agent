@@ -226,13 +226,23 @@ module internal RewriteRenderer =
             let values =
                 (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
                 @ (fallback |> Option.toList)
-            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            let nonNull =
+                values
+                |> List.filter (fun value ->
+                    match Expr.unspan value with
+                    | Literal ScalarValue.Null -> false
+                    | _ -> true)
             not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
         | SearchedCase(branches, fallback) ->
             let values =
                 (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
                 @ (fallback |> Option.toList)
-            let nonNull = values |> List.filter (function Literal ScalarValue.Null -> false | _ -> true)
+            let nonNull =
+                values
+                |> List.filter (fun value ->
+                    match Expr.unspan value with
+                    | Literal ScalarValue.Null -> false
+                    | _ -> true)
             not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
         | _ -> false
 
@@ -689,7 +699,7 @@ module internal RewriteRenderer =
             let targetDefault = (not order.Descending && explicitNulls = NullOrdering.NullsFirst) || (order.Descending && explicitNulls = NullOrdering.NullsLast)
             if targetDefault then [ expression + direction ]
             else
-                match order.Expression with
+                match Expr.unspan order.Expression with
                 | BoundColumn(_, LocalRowSource)
                 | BoundColumn(_, OuterRowSource) ->
                     let nullRank, nonNullRank = if explicitNulls = NullOrdering.NullsLast then 1, 0 else 0, 1
@@ -923,7 +933,7 @@ module internal RewriteRenderer =
             baseProjection.Add(renderExpr ctx item.Expression + " AS " + renderAlias ctx.Provider alias))
 
         let projectionIndex (order: OrderBy) =
-            match order.Expression with
+            match Expr.unspan order.Expression with
             | OrderOrdinal ordinal ->
                 let index = PositiveRowCount.value ordinal - 1
                 if index >= 0 && index < projection.Length then Some index else None
@@ -1063,7 +1073,7 @@ module internal RewriteRenderer =
 
         let resolveOrder (order: OrderBy) =
             let index =
-                match order.Expression with
+                match Expr.unspan order.Expression with
                 | OrderOrdinal ordinal -> PositiveRowCount.value ordinal - 1
                 | Column identifier
                 | BoundColumn(identifier, _) when Identifier.parts identifier |> List.length = 1 ->
