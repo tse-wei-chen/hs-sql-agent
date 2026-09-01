@@ -115,6 +115,37 @@ public class CoreSqlTextParserTests
         Assert.IsType<LiteralExpr>(Assert.Single(Assert.IsType<SelectStatement>(parsed.Statement).Select).Expression);
     }
 
+    [Fact]
+    public void Compile_MySqlDateFunction_PreservesNativeSemantics()
+    {
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseQuery(
+                "SELECT DATE(created_at) FROM events",
+                SqlAgentToolType.MySQL),
+            SqlAgentToolType.MySQL,
+            new SqlPlanValidationContext("mysql-date-function-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("DATE(", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_MySqlDateFunction_CrossProviderRemainsFailClosed()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseQuery(
+                    "SELECT DATE(created_at) FROM events",
+                    SqlAgentToolType.MySQL),
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("mysql-date-function-cross-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("temporal.date_only", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DATE(expr)", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Cross-dialect lowering", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
@@ -195,13 +226,13 @@ public class CoreSqlTextParserTests
     }
 
     [Fact]
-    public void ParseQuery_UnsupportedExtractUnit_FailsClosed()
+    public void ParseQuery_UnknownExtractUnit_FailsClosed()
     {
         var error = Assert.Throws<SqlParseException>(() =>
             CoreSqlTextParser.ParseQuery(
-                "SELECT EXTRACT(HOUR FROM created_at) FROM events",
+                "SELECT EXTRACT(FOOBAR FROM created_at) FROM events",
                 SqlAgentToolType.Postgres));
-        Assert.Contains("HOUR", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FOOBAR", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -217,13 +248,14 @@ public class CoreSqlTextParserTests
     }
 
     [Fact]
-    public void ParseQuery_RecursiveCte_FailsClosedUntilRecursiveSemanticsAreModeled()
+    public void ParseQuery_RecursiveCte_PreservesRecursiveScope()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(
-                "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
-                SqlAgentToolType.Postgres));
-        Assert.Contains("RECURSIVE", error.Message, StringComparison.OrdinalIgnoreCase);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+            SqlAgentToolType.Postgres);
+        var cte = Assert.Single(Assert.IsType<SelectStatement>(parsed.Statement).Ctes);
+
+        Assert.True(cte.RecursiveScope);
     }
 
     [Fact]
@@ -299,9 +331,9 @@ public class CoreSqlTextParserTests
         var parsed = CoreSqlTextParser.ParseQuery(
             "WITH x AS (SELECT id FROM audit.events) SELECT x.id FROM x JOIN crm.users u ON x.id = u.id",
             SqlAgentToolType.Postgres);
-        var bound = new SqlAstBinder().Bind(parsed);
-        Assert.Contains("audit.events", bound.Facts.ReferencedTables);
-        Assert.Contains("crm.users", bound.Facts.ReferencedTables);
-        Assert.DoesNotContain("x", bound.Facts.ReferencedTables);
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
+        Assert.Contains("audit.events", facts.ReferencedTables);
+        Assert.Contains("crm.users", facts.ReferencedTables);
+        Assert.DoesNotContain("x", facts.ReferencedTables);
     }
 }

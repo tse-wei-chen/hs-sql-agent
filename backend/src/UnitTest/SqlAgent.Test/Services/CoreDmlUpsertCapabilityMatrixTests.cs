@@ -30,7 +30,7 @@ public sealed class CoreDmlUpsertCapabilityMatrixTests
             SqlAgentToolType.Sqlite,
             new SqlProviderCapabilityProfile(
                 SqlAgentToolType.Sqlite,
-                ServerVersion: new Version(major, minor)));
+                new Version(major, minor)));
 
         Assert.Equal(expected, capability.Status);
         Assert.Contains("3.24", capability.Detail, StringComparison.OrdinalIgnoreCase);

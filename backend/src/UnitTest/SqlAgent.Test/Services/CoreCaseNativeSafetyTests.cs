@@ -9,34 +9,33 @@ public sealed class CoreCaseNativeSafetyTests
     public void Compile_MalformedSearchedCaseWithoutBranches_FailsClosed()
     {
         var select = new SelectStatement(
-            Ctes: ImmutableArray<CteDefinition>.Empty,
-            Distinct: false,
-            Select:
+            ImmutableArray<CteDefinition>.Empty,
+            false,
             [
                 new SelectItem(
                     new CaseExpr(
                         ImmutableArray<CaseBranch>.Empty,
                         new LiteralExpr("fallback", SourceSpan.Unknown),
                         SourceSpan.Unknown),
-                    Alias: null,
+                    null,
                     SourceSpan.Unknown)
             ],
-            From: null,
-            Joins: ImmutableArray<JoinSource>.Empty,
-            Where: null,
-            GroupBy: ImmutableArray<SqlExpr>.Empty,
-            Having: null,
-            OrderBy: ImmutableArray<OrderByItem>.Empty,
-            Limit: null,
-            Offset: null,
-            Span: SourceSpan.Unknown);
+            null,
+            ImmutableArray<JoinSource>.Empty,
+            null,
+            ImmutableArray<SqlExpr>.Empty,
+            null,
+            ImmutableArray<OrderByItem>.Empty,
+            null,
+            null,
+            SourceSpan.Unknown);
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(
                 new ParsedStatement(
                     select,
                     SqlAgentToolType.Postgres,
-                    EnforceSourceDialectSyntax: false),
+                    false),
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("case-native-safety-v1"),
                 new SqlExecutionPlanPolicy()));

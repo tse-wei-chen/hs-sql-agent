@@ -44,7 +44,6 @@ public interface ISqlProvider
 {
     SqlAgentToolType Type { get; }
     IDbConnectionFactory Connections { get; }
-    IProviderLowerer Lowerer { get; }
     IProviderMetadataReader Metadata { get; }
     IProviderErrorMapper Errors { get; }
 }

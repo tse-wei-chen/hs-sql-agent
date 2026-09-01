@@ -319,14 +319,11 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     public async Task ExecuteQueryAsync_PostgresStringAggBackslashQuoteSeparator_ExecutesAsBoundText()
     {
         const string separator = "\\'雪";
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT STRING_AGG(name, '\\''雪') AS names FROM users");
-        definition.SourceDialect = SqlAgentToolType.Postgres;
-
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "SELECT STRING_AGG(name, '\\''雪') AS names FROM users",
+            SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var names = document.RootElement[0]
@@ -345,14 +342,11 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
     [Fact]
     public async Task ExecuteQueryAsync_PostgresIntervalLiteral_ExecutesAsBoundInterval()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT CURRENT_TIMESTAMP - INTERVAL '1 day' AS shifted FROM orders LIMIT 1");
-        definition.SourceDialect = SqlAgentToolType.Postgres;
-
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "SELECT CURRENT_TIMESTAMP - INTERVAL '1 day' AS shifted FROM orders LIMIT 1",
+            SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         Assert.Single(document.RootElement.EnumerateArray());
@@ -559,4 +553,33 @@ public class PostgresStrategyTests(PostgresFixture fixture) : BaseStrategyTests<
         Assert.Equal(3, rows.Count);
         Assert.Equal("2023-01", rows[0].GetProperty("order_month").GetString());
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CtePostgresNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT id::bigint AS item_id FROM users WHERE name ILIKE 'a%'" +
+            ") SELECT item_id FROM recent",
+            SqlAgentToolType.Postgres,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_NestedInnerCte_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH outer_cte AS (" +
+            "WITH inner_cte AS (SELECT id AS item_id FROM users) " +
+            "SELECT item_id FROM inner_cte" +
+            ") SELECT item_id FROM outer_cte",
+            SqlAgentToolType.Postgres,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
 }

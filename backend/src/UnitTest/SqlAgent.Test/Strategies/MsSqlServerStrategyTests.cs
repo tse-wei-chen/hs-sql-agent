@@ -142,4 +142,18 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
         Assert.Equal("245", ex.Code);
         Assert.Contains("conversion", ex.ProviderMessage, StringComparison.OrdinalIgnoreCase);
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteSqlServerNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT TOP 2 [Id] AS item_id FROM [Users]" +
+            ") SELECT item_id FROM recent ORDER BY item_id",
+            SqlAgentToolType.MsSqlServer,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
 }

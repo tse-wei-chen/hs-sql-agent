@@ -54,7 +54,9 @@ public sealed class CoreDmlInsertSelectConflictAssuranceTests
             ImmutableArray.Create(
                 new InsertConflictAssignment(Id("name"), Id("name"), SourceSpan.Unknown)),
             SourceSpan.Unknown);
-        return parsed with { Statement = insert with { Conflict = conflict } };
+        insert.Conflict = conflict;
+        parsed.Statement = insert;
+        return parsed;
     }
 
     private static SqlIdentifier Id(string value) =>

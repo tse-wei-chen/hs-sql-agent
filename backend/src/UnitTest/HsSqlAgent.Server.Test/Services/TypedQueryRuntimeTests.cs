@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.SqlCore.Models;
 using Moq;
 using Xunit;
 
@@ -13,7 +14,6 @@ public class TypedQueryRuntimeTests
     public void SqlStrategyContract_DoesNotExposeExecutionMethods()
     {
         var methodNames = typeof(ISqlStrategy).GetMethods().Select(method => method.Name).ToArray();
-
         Assert.DoesNotContain("ExecuteQueryAsync", methodNames);
         Assert.DoesNotContain("ExecuteDmlAsync", methodNames);
     }
@@ -23,26 +23,11 @@ public class TypedQueryRuntimeTests
     {
         var runtime = new TypedQueryRuntime();
         var provider = CreateProvider(SqlAgentToolType.Postgres);
-        var definition = new QueryDefinition
-        {
-            TableName = "public.users",
-            SelectColumns = [new FieldSelectCondition { FieldName = "id" }],
-            WhereColumnsAndValues =
-            [
-                new BasicWhereCondition
-                {
-                    FieldName = "status",
-                    Operator = "=",
-                    Value = "active"
-                }
-            ]
-        };
-        var policy = CreatePolicy(maxRows: 25);
-
         var command = runtime.Compile(
             provider.Object,
-            Map(definition, SqlAgentToolType.Postgres),
-            policy,
+            "SELECT id FROM public.users WHERE status = 'active'",
+            SqlAgentToolType.Postgres,
+            CreatePolicy(maxRows: 25),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
 
         Assert.Equal(SqlStatementKind.Select, command.Kind);
@@ -57,15 +42,10 @@ public class TypedQueryRuntimeTests
     {
         var runtime = new TypedQueryRuntime();
         var provider = CreateProvider(SqlAgentToolType.Postgres);
-        var definition = new QueryDefinition
-        {
-            TableName = "public.secrets",
-            SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
-        };
-
         Assert.Throws<UnauthorizedAccessException>(() => runtime.Compile(
             provider.Object,
-            Map(definition, SqlAgentToolType.Postgres),
+            "SELECT id FROM public.secrets",
+            SqlAgentToolType.Postgres,
             CreatePolicy(),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }));
     }
@@ -75,25 +55,62 @@ public class TypedQueryRuntimeTests
     {
         var runtime = new TypedQueryRuntime();
         var provider = CreateProvider(SqlAgentToolType.Postgres);
-        var definition = new QueryDefinition
-        {
-            TableName = "public.users",
-            SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
-        };
-        var parsed = Map(definition, SqlAgentToolType.Postgres);
-
+        const string sql = "SELECT id FROM public.users";
         var first = runtime.Compile(
-            provider.Object,
-            parsed,
-            CreatePolicy(maxRows: 10),
+            provider.Object, sql, SqlAgentToolType.Postgres, CreatePolicy(maxRows: 10),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
         var second = runtime.Compile(
-            provider.Object,
-            parsed,
-            CreatePolicy(maxRows: 20),
+            provider.Object, sql, SqlAgentToolType.Postgres, CreatePolicy(maxRows: 20),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
-
         Assert.NotEqual(first.PlanFingerprint, second.PlanFingerprint);
+    }
+
+    [Fact]
+    public void Compile_WithVerifiedNativeProfile_UsesItAsSourceCapabilityProof()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = CreateProvider(SqlAgentToolType.MySQL);
+        var verifiedProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            new Version(8, 0, 36));
+
+        var command = runtime.Compile(
+            provider.Object,
+            "WITH RECURSIVE x(n) AS (" +
+            "SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3" +
+            ") SELECT n FROM x",
+            SqlAgentToolType.MySQL,
+            CreatePolicy(),
+            allowedTables: null,
+            verifiedProfile);
+
+        Assert.Equal(SqlAgentToolType.MySQL, command.TargetProvider);
+        Assert.Equal(SqlStatementKind.Select, command.Kind);
+        Assert.Contains(
+            "WITH RECURSIVE",
+            command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_WithVerifiedTargetProfile_DoesNotTreatItAsSourceProfile()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = CreateProvider(SqlAgentToolType.MsSqlServer);
+        var targetProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer,
+            new Version(16, 0));
+
+        var command = runtime.Compile(
+            provider.Object,
+            "SELECT id FROM public.users",
+            SqlAgentToolType.Postgres,
+            CreatePolicy(),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" },
+            targetProfile);
+
+        Assert.Equal(SqlAgentToolType.MsSqlServer, command.TargetProvider);
+        Assert.Equal(SqlStatementKind.Select, command.Kind);
     }
 
     [Fact]
@@ -102,11 +119,7 @@ public class TypedQueryRuntimeTests
         var connection = new Mock<DbConnection>();
         connection.SetupGet(x => x.State).Returns(ConnectionState.Open);
         connection.SetupGet(x => x.ServerVersion).Returns("17.5 (Debian 17.5-1)");
-
-        var profile = TypedQueryRuntime.CreateVerifiedTargetProfile(
-            SqlAgentToolType.Postgres,
-            connection.Object);
-
+        var profile = TypedQueryRuntime.CreateVerifiedTargetProfile(SqlAgentToolType.Postgres, connection.Object);
         Assert.Equal(SqlAgentToolType.Postgres, profile.Provider);
         Assert.Equal(new Version(17, 5), profile.ServerVersion);
     }
@@ -116,15 +129,9 @@ public class TypedQueryRuntimeTests
     {
         var connection = new Mock<DbConnection>();
         connection.SetupGet(x => x.State).Returns(ConnectionState.Closed);
-
         Assert.Throws<InvalidOperationException>(() =>
-            TypedQueryRuntime.CreateVerifiedTargetProfile(
-                SqlAgentToolType.Postgres,
-                connection.Object));
+            TypedQueryRuntime.CreateVerifiedTargetProfile(SqlAgentToolType.Postgres, connection.Object));
     }
-
-    private static ParsedStatement Map(QueryDefinition definition, SqlAgentToolType sourceDialect) =>
-        new(QueryDefinitionCoreMapper.Map(definition), sourceDialect);
 
     private static Mock<ISqlProvider> CreateProvider(SqlAgentToolType type)
     {

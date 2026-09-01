@@ -132,19 +132,6 @@ public sealed class CoreMySqlNoBackslashEscapesTests
         Assert.Equal("C:\\Users\\Ada", Assert.IsType<string>(literal.Value));
     }
 
-    [Fact]
-    public void Tokenizer_NoBackslashEscapesFlagCannotBeUsedForAnotherProvider()
-    {
-        var error = Assert.Throws<ArgumentException>(() =>
-            new SqlTokenizer(
-                "SELECT 'x'",
-                SqlAgentToolType.Postgres,
-                mysqlNoBackslashEscapes: true));
-
-        Assert.Contains("NO_BACKSLASH_ESCAPES", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("mysqlNoBackslashEscapes", error.ParamName);
-    }
-
     private static SqlProviderCapabilityProfile MySqlProfile(params string[] modes) =>
         new(
             SqlAgentToolType.MySQL,

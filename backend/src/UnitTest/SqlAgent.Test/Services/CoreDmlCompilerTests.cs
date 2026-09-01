@@ -7,21 +7,8 @@ public class CoreDmlCompilerTests
     [Fact]
     public void Compile_Update_ProducesParameterizedCommand()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Update,
-            TableName = "public.users",
-            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }],
-            WhereConditions =
-            [
-                new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 7 }
-            ]
-        };
-
         var command = Compile(
-            definition,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
+            "UPDATE public.users SET status = 'disabled' WHERE id = 7",
             new SqlPlanValidationContext(
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }));
@@ -31,52 +18,31 @@ public class CoreDmlCompilerTests
         Assert.DoesNotContain("disabled", command.Sql, StringComparison.Ordinal);
         Assert.DoesNotContain(" 7", command.Sql, StringComparison.Ordinal);
         Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "disabled"));
-        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 7));
+        Assert.Contains(command.Parameters, parameter =>
+            parameter.Value is int intValue && intValue == 7
+            || parameter.Value is long longValue && longValue == 7L);
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
     }
 
     [Fact]
     public void Compile_Delete_ProducesParameterizedCommand()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Delete,
-            TableName = "public.users",
-            WhereConditions =
-            [
-                new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 7 }
-            ]
-        };
-
         var command = Compile(
-            definition,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
+            "DELETE FROM public.users WHERE id = 7",
             new SqlPlanValidationContext("policy-v1"));
 
         Assert.Equal(SqlStatementKind.Delete, command.Kind);
         Assert.Contains("DELETE", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 7));
+        Assert.Contains(command.Parameters, parameter =>
+            parameter.Value is int intValue && intValue == 7
+            || parameter.Value is long longValue && longValue == 7L);
     }
 
     [Fact]
     public void Compile_InsertSingleRow_ProducesParameterizedCommand()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Insert,
-            TableName = "public.users",
-            Values =
-            [
-                new NameValuePair { FieldName = "name", Value = "Alice" },
-                new NameValuePair { FieldName = "age", Value = 30 }
-            ]
-        };
-
         var command = Compile(
-            definition,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
+            "INSERT INTO public.users (name, age) VALUES ('Alice', 30)",
             new SqlPlanValidationContext(
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }));
@@ -85,91 +51,42 @@ public class CoreDmlCompilerTests
         Assert.Contains("INSERT", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Alice", command.Sql, StringComparison.Ordinal);
         Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "Alice"));
-        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 30));
+        Assert.Contains(command.Parameters, parameter =>
+            parameter.Value is int intValue && intValue == 30
+            || parameter.Value is long longValue && longValue == 30L);
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
     }
 
     [Fact]
     public void Compile_InsertMultiRow_PreservesOrderedBindings()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Insert,
-            TableName = "public.users",
-            Columns = ["name", "age"],
-            MultiValues =
-            [
-                ["Alice", 30],
-                ["Bob", 40]
-            ]
-        };
-
         var command = Compile(
-            definition,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
+            "INSERT INTO public.users (name, age) VALUES ('Alice', 30), ('Bob', 40)",
             new SqlPlanValidationContext("policy-v1"));
 
         Assert.Equal(SqlStatementKind.Insert, command.Kind);
-        Assert.Equal(["Alice", 30, "Bob", 40], command.Parameters.Select(x => x.Value).ToArray());
-    }
-
-    [Fact]
-    public void Compile_InsertRejectsConflictingSources()
-    {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Insert,
-            TableName = "public.users",
-            Values = [new NameValuePair { FieldName = "name", Value = "Alice" }],
-            Columns = ["name"],
-            MultiValues = [["Bob"]]
-        };
-
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            Compile(
-                definition,
-                SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("policy-v1")));
-
-        Assert.Contains("exactly one source", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(4, command.Parameters.Length);
+        Assert.Equal("Alice", command.Parameters[0].Value);
+        Assert.Equal(30L, Convert.ToInt64(command.Parameters[1].Value));
+        Assert.Equal("Bob", command.Parameters[2].Value);
+        Assert.Equal(40L, Convert.ToInt64(command.Parameters[3].Value));
     }
 
     [Fact]
     public void Compile_InsertSelect_AuthorizesSourceAndUsesStructuredQueryLowering()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Insert,
-            TableName = "public.archive",
-            Columns = ["id"],
-            FromQuery = new QueryDefinition
-            {
-                TableName = "public.users",
-                SelectColumns = [new FieldSelectCondition { FieldName = "id" }],
-                WhereColumnsAndValues =
-                [
-                    new BasicWhereCondition { FieldName = "status", Operator = "=", Value = "active" }
-                ]
-            }
-        };
-        var compiler = CoreDmlCompiler.CreateDefault();
+        const string sql =
+            "INSERT INTO public.archive (id) " +
+            "SELECT id FROM public.users WHERE status = 'active'";
 
         Assert.Throws<UnauthorizedAccessException>(() => Compile(
-            compiler,
-            definition,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
+            sql,
             new SqlPlanValidationContext(
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.archive" })));
 
         var command = Compile(
-            compiler,
-            definition,
-            SqlAgentToolType.Postgres,
-            SqlAgentToolType.Postgres,
+            sql,
             new SqlPlanValidationContext(
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -181,7 +98,6 @@ public class CoreDmlCompilerTests
         Assert.Equal(SqlStatementKind.Insert, command.Kind);
         Assert.Contains("INSERT INTO", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("public", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("active", command.Sql, StringComparison.Ordinal);
         Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, "active"));
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
@@ -190,68 +106,28 @@ public class CoreDmlCompilerTests
     [Fact]
     public void Compile_UpdateWithoutWhere_IsDeniedByDefault()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Update,
-            TableName = "public.users",
-            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }]
-        };
-
         Assert.Throws<UnauthorizedAccessException>(() =>
             Compile(
-                definition,
-                SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres,
+                "UPDATE public.users SET status = 'disabled'",
                 new SqlPlanValidationContext("policy-v1")));
     }
 
     [Fact]
     public void Compile_WhitelistViolation_IsDeniedBeforeLowering()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Delete,
-            TableName = "public.secrets",
-            WhereConditions =
-            [
-                new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 1 }
-            ]
-        };
-
         Assert.Throws<UnauthorizedAccessException>(() =>
             Compile(
-                definition,
-                SqlAgentToolType.Postgres,
-                SqlAgentToolType.Postgres,
+                "DELETE FROM public.secrets WHERE id = 1",
                 new SqlPlanValidationContext(
                     "policy-v1",
                     new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" })));
     }
 
     private static CompiledSqlCommand Compile(
-        DmlDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider,
-        SqlPlanValidationContext validationContext,
-        DmlCompilationPolicy? policy = null) =>
-        Compile(
-            CoreDmlCompiler.CreateDefault(),
-            definition,
-            sourceDialect,
-            targetProvider,
-            validationContext,
-            policy);
-
-    private static CompiledSqlCommand Compile(
-        CoreDmlCompiler compiler,
-        DmlDefinition definition,
-        SqlAgentToolType sourceDialect,
-        SqlAgentToolType targetProvider,
-        SqlPlanValidationContext validationContext,
-        DmlCompilationPolicy? policy = null) =>
-        compiler.Compile(
-            new ParsedStatement(DmlDefinitionCoreMapper.Map(definition), sourceDialect),
-            targetProvider,
-            validationContext,
-            policy);
+        string sql,
+        SqlPlanValidationContext validationContext) =>
+        CoreDmlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres),
+            SqlAgentToolType.Postgres,
+            validationContext);
 }

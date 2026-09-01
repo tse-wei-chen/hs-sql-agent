@@ -6,6 +6,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using HsSqlAgent.SqlCore;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
@@ -205,7 +206,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
                 TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
-                _ = CoreDmlCompiler.CreateDefault().Compile(
+                _ = SqlCoreFacade.CompileDml(
                     parsedDml,
                     dbType,
                     new SqlPlanValidationContext("custom-tool-definition-validation"),
@@ -213,19 +214,21 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                         policy?.RequireWhereForUpdate ?? true,
                         policy?.RequireWhereForDelete ?? true,
                         policy?.AllowFullTableUpdate ?? false,
-                        policy?.AllowFullTableDelete ?? false));
+                        policy?.AllowFullTableDelete ?? false),
+                    targetProfile: null,
+                    conflictTargetAssurance: null);
                 return null;
             }
 
-            var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
-            _ = CoreSqlCompiler.CreateDefault().Compile(
-                parsed,
+            _ = SqlCoreFacade.CompileQuery(
+                sql,
+                dbType,
                 dbType,
                 new SqlPlanValidationContext("custom-tool-definition-validation"),
                 new SqlExecutionPlanPolicy(policy?.QueryMaxRows ?? 0));
             return null;
         }
-        catch (Exception ex) when (ex is SqlParseException or InvalidOperationException or JsonException or NotSupportedException)
+        catch (Exception ex) when (ex is SqlParseException or ArgumentException or InvalidOperationException or JsonException or NotSupportedException)
         {
             return new { error = "SQL template validation failed.", detail = ex.Message };
         }
@@ -323,11 +326,11 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             string result;
             if (isQuery)
             {
-                var parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
                 var execution = await typedQueryRuntime.ExecuteAsync(
                     provider,
                     connectionString,
-                    parsed,
+                    sql,
+                    dbType,
                     runtimePolicy,
                     allowedTables: null,
                     cancellationToken);

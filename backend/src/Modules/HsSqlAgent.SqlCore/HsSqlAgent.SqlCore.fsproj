@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AssemblyName>HsSqlAgent.SqlCore</AssemblyName>
+    <RootNamespace>HsSqlAgent.SqlCore</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>HsSqlAgent.SqlCore</PackageId>
+    <Authors>tse-wei-chen</Authors>
+    <Company>hs-sql-agent</Company>
+    <Description>Provider-driver-free F# SQL parser, closed AST, validation, normalization and cross-database compiler core for HsSqlAgent.</Description>
+    <PackageTags>sql;compiler;parser;ast;database;dialect;validation;fsharp</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="ClrContracts.fs" />
+    <Compile Include="CompatibilityTemporalLiteralParser.fs" />
+    <Compile Include="LegacyDtoContracts.fs" />
+    <Compile Include="CompatibilityAstTypes.fs" />
+    <Compile Include="LegacyDtoMapper.fs" />
+    <Compile Include="CapabilityContracts.fs" />
+    <Compile Include="CapabilityMatrix.fs" />
+    <Compile Include="TranslationContracts.fs" />
+    <Compile Include="RuntimeContracts.fs" />
+    <Compile Include="RewriteCoreModel.fs" />
+    <Compile Include="RewriteTypestate.fs" />
+    <Compile Include="RewriteLegacyAstAdapter.fs" />
+    <Compile Include="RewriteLexer.fs" />
+    <Compile Include="RewriteParser.fs" />
+    <Compile Include="RewriteCompatibilityAstAdapter.fs" />
+    <Compile Include="RewriteCastTypes.fs" />
+    <Compile Include="RewriteBinder.fs" />
+    <Compile Include="RewriteStages.fs" />
+    <Compile Include="RewritePolicy.fs" />
+    <Compile Include="RewriteRenderer.fs" />
+    <Compile Include="RewritePipeline.fs" />
+    <Compile Include="RewriteFacadeAdapter.fs" />
+    <Compile Include="InspectionFacade.fs" />
+    <Compile Include="CompatibilityParserFacade.fs" />
+    <Compile Include="Facade.fs" />
+    <Compile Include="LegacyCompilerFacade.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

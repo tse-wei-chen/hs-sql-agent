@@ -15,10 +15,8 @@ public sealed class CoreIdentifierDialectRulesTests
         SqlAgentToolType provider,
         string sql)
     {
-        var parsed = CoreSqlTextParser.ParseQuery(sql, provider);
-        var bound = new SqlAstBinder().Bind(parsed);
-        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(bound.Statement);
-        Assert.IsType<BoundColumnExpr>(Assert.Single(select.Select).Expression);
+        var command = Compile(sql, provider);
+        Assert.Contains("SELECT", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

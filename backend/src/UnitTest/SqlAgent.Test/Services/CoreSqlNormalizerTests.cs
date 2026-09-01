@@ -1,3 +1,6 @@
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -5,77 +8,63 @@ namespace SqlAgent.Test.Services;
 public class CoreSqlNormalizerTests
 {
     [Fact]
-    public void Normalize_SemanticFunction_RenamesAcrossDialectsWithoutAmbientState()
+    public void Normalize_SqlServerLen_PreservesTrailingSpaceSemanticsAcrossDialects()
     {
-        var dto = new QueryDefinition
-        {
-            TableName = "users",
-            SelectColumns =
-            [
-                new FunctionSelectCondition
-                {
-                    FunctionName = "LEN",
-                    Arguments = [new FieldSelectCondition { FieldName = "name" }]
-                }
-            ]
-        };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.MsSqlServer);
-        var bound = new SqlAstBinder().Bind(parsed);
+        var command = Compile(
+            "SELECT LEN(name) FROM users",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Postgres,
+            "fsharp-normalize-len-v1");
 
-        var normalized = CoreSqlNormalizer.CreateDefault().Normalize(bound, SqlAgentToolType.Postgres);
-
-        Assert.Equal(SqlAgentToolType.MsSqlServer, normalized.SourceDialect);
-        Assert.Equal(SqlAgentToolType.Postgres, normalized.TargetProvider);
-        var select = Assert.IsType<SelectStatement>(normalized.Statement);
-        var function = Assert.IsType<FunctionCallExpr>(select.Select[0].Expression);
-        Assert.Equal("LENGTH", function.Name.Parts[0].Value);
+        Assert.Contains("LENGTH", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RTRIM", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Normalize_CurrentTimestampTemplate_BecomesCanonicalSemanticFunction()
+    public void Normalize_CurrentTimestampTemplate_LowersToTargetTemporalPrimitive()
     {
-        var dto = new QueryDefinition
-        {
-            TableName = "users",
-            SelectColumns =
-            [
-                new FunctionSelectCondition
-                {
-                    FunctionName = "NOW",
-                    Arguments = []
-                }
-            ]
-        };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.Postgres);
-        var bound = new SqlAstBinder().Bind(parsed);
+        var command = Compile(
+            "SELECT NOW() FROM users",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            "fsharp-normalize-current-timestamp-v1");
 
-        var normalized = CoreSqlNormalizer.CreateDefault().Normalize(bound, SqlAgentToolType.MsSqlServer);
-
-        var select = Assert.IsType<SelectStatement>(normalized.Statement);
-        var function = Assert.IsType<FunctionCallExpr>(select.Select[0].Expression);
-        Assert.Equal("CORE_CURRENT_TIMESTAMP", function.Name.Parts[0].Value);
-        Assert.Empty(function.Arguments);
+        Assert.DoesNotContain("NOW(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CURRENT_TIMESTAMP", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
-    [InlineData("CURRENT_DATE", "CORE_CURRENT_DATE")]
-    [InlineData("CURRENT_TIME", "CORE_CURRENT_TIME")]
-    public void Normalize_CurrentTemporalKeywords_BecomeCanonicalSemanticFunctions(
+    [InlineData("CURRENT_DATE", "DATE")]
+    [InlineData("CURRENT_TIME", "TIME")]
+    public void Normalize_CurrentTemporalFunctions_DoNotLeakCanonicalImplementationNames(
         string sourceName,
-        string canonicalName)
+        string expectedTargetToken)
     {
-        var dto = new QueryDefinition
-        {
-            TableName = "users",
-            SelectColumns = [new FunctionSelectCondition { FunctionName = sourceName, Arguments = [] }]
-        };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.Sqlite);
-        var bound = new SqlAstBinder().Bind(parsed);
+        var command = Compile(
+            $"SELECT {sourceName}() FROM users",
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.MsSqlServer,
+            "fsharp-normalize-current-temporal-v1");
 
-        var normalized = CoreSqlNormalizer.CreateDefault().Normalize(bound, SqlAgentToolType.MsSqlServer);
+        Assert.DoesNotContain("CORE_CURRENT_", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expectedTargetToken, command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
 
-        var select = Assert.IsType<SelectStatement>(normalized.Statement);
-        var function = Assert.IsType<FunctionCallExpr>(select.Select[0].Expression);
-        Assert.Equal(canonicalName, function.Name.Parts[0].Value);
+    private static CompiledSqlCommand Compile(
+        string sql,
+        SqlAgentToolType source,
+        SqlAgentToolType target,
+        string policyVersion)
+    {
+        var validation = new SqlPlanValidationContext(
+            policyVersion,
+            new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+
+        return SqlCoreFacade.CompileQuery(
+            sql,
+            source,
+            target,
+            validation,
+            new SqlExecutionPlanPolicy());
     }
 }

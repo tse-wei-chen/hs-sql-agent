@@ -133,7 +133,8 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
-                It.Is<ParsedStatement>(parsed => IsTable(parsed, "users")),
+                It.Is<string>(sql => sql.Contains("users", StringComparison.OrdinalIgnoreCase)),
+                SqlAgentToolType.Postgres,
                 It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == 1000 && p.QueryTimeoutSeconds == 30),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
@@ -173,7 +174,8 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
-            It.IsAny<ParsedStatement>(),
+            It.IsAny<string>(),
+            It.IsAny<SqlAgentToolType>(),
             It.IsAny<SecurityPolicyModel>(),
             It.IsAny<IReadOnlySet<string>?>(),
             It.IsAny<CancellationToken>()), Times.Never);
@@ -288,7 +290,7 @@ public class CustomToolProxyTests
 
         Assert.Contains("cancelled by user", result, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, approval.ElicitCount);
-        connections.Verify(x => x.Create("Host=localhost;Database=testdb"), Times.Once);
+        connections.Verify(x => x.Create("Host=localhost;Database=testdb"), Times.Exactly(2));
         metadata.VerifyAll();
     }
 
@@ -340,7 +342,8 @@ public class CustomToolProxyTests
         _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
-                It.IsAny<ParsedStatement>(),
+                It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(),
                 It.IsAny<SecurityPolicyModel>(),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
@@ -384,19 +387,30 @@ public class CustomToolProxyTests
 
     private void SetupPostgresProvider()
     {
+        var verificationConnection = new Mock<DbConnection>();
+        verificationConnection
+            .SetupGet(x => x.State)
+            .Returns(System.Data.ConnectionState.Open);
+        verificationConnection
+            .SetupGet(x => x.ServerVersion)
+            .Returns("17.5");
+        verificationConnection
+            .Setup(x => x.OpenAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var connections = new Mock<IDbConnectionFactory>();
+        connections
+            .Setup(x => x.Create("Host=localhost;Database=testdb"))
+            .Returns(verificationConnection.Object);
+
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(p => p.Type).Returns(SqlAgentToolType.Postgres);
+        provider.SetupGet(p => p.Connections).Returns(connections.Object);
         _providerFactoryMock
             .Setup(f => f.GetProvider(SqlAgentToolType.Postgres))
             .Returns(provider.Object);
     }
 
-    private static bool IsTable(ParsedStatement parsed, string expected)
-    {
-        if (parsed.Statement is not SelectStatement { From: NamedTableSource source }) return false;
-        var actual = string.Join('.', source.Name.Parts.Select(part => part.Value));
-        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
-    }
 
     private sealed class DecliningApprovalClient : IDmlApprovalClient
     {

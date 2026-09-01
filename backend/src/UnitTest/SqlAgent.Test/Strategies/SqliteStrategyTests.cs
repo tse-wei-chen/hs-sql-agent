@@ -110,14 +110,12 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
     [Fact]
     public async Task ExecuteQueryAsync_ShouldPreserveParsedModuloComparisonAndBooleanOperators()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
+        var json = await Strategy.ExecuteRawQueryAsync(
             "SELECT Age % 10 AS remainder, Age >= 30 AS is_senior, " +
-            "Age >= 30 AND Active = TRUE AS matches FROM Users ORDER BY Id LIMIT 1");
-
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+            "Age >= 30 AND Active = TRUE AS matches FROM Users ORDER BY Id LIMIT 1",
+            SqlAgentToolType.Sqlite,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
 
         var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
         var row = Assert.Single(rows!);
@@ -536,4 +534,37 @@ public class SqliteStrategyTests(SqliteFixture fixture) : BaseStrategyTests<Sqli
         Assert.Single(rows);
         Assert.Equal(420m, rows[0].GetProperty("TotalWithTax").GetDecimal());
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteSqliteNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT GROUP_CONCAT(Name) AS names FROM Users" +
+            ") SELECT names FROM recent",
+            SqlAgentToolType.Sqlite,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_RecursiveCte_UsesVerifiedSourceVersion()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH RECURSIVE x(n) AS (" +
+            "SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3" +
+            ") SELECT n FROM x ORDER BY n",
+            SqlAgentToolType.Sqlite,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var values = document.RootElement
+            .EnumerateArray()
+            .Select(row => row.EnumerateObject().Single().Value.GetDecimal())
+            .ToArray();
+        Assert.Equal([1m, 2m, 3m], values);
+    }
+
 }

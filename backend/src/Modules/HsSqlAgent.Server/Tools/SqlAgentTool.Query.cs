@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
@@ -9,8 +10,8 @@ namespace HsSqlAgent.Server.Tools;
 public partial class SqlAgentTool
 {
     [McpServerTool, Description(@"
-        Execute one SELECT SQL statement. The server parses SQL directly into the Core AST, binds and validates it,
-        applies the current table authorization and query policy, compiles an immutable command, then executes it.
+        Execute one SELECT SQL statement. SQL text enters the F# compiler pipeline directly, where it is parsed, bound,
+        validated against table authorization and query policy, compiled to an immutable command, then executed.
 
         Use get_schemas/get_tables/get_columns first when you need database structure. Only send a single SELECT statement.
         Supported SQL includes JOINs, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs, subqueries, and UNION/INTERSECT/EXCEPT.
@@ -25,7 +26,6 @@ public partial class SqlAgentTool
             return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 
         var provider = _sqlProviderFactory.GetProvider(dbType);
-        ParsedStatement? parsed = null;
         QueryFacts? auditFacts = null;
         try
         {
@@ -33,8 +33,7 @@ public partial class SqlAgentTool
             if (string.IsNullOrWhiteSpace(sql))
                 return "Error: SQL is missing.";
 
-            parsed = CoreSqlTextParser.ParseQuery(sql, dbType);
-            auditFacts = new SqlAstBinder().Bind(parsed).Facts;
+            auditFacts = SqlCoreInspection.GetQueryFacts(sql, dbType);
 
             var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
             var allowedTables = ResolveTableWhitelist();
@@ -46,7 +45,8 @@ public partial class SqlAgentTool
                 execution = await _typedQueryRuntime.ExecuteAsync(
                     provider,
                     sqlConfig.ConnectionString,
-                    parsed,
+                    sql,
+                    dbType,
                     securityPolicy,
                     allowedTables);
             }
@@ -62,7 +62,7 @@ public partial class SqlAgentTool
                     Operation = "select",
                     DurationMs = stopwatch.ElapsedMilliseconds,
                     ReturnedRows = execution.RowCount,
-                    Definition = DescribeQuery(parsed, auditFacts)
+                    Definition = DescribeQuery(sql, dbType, auditFacts)
                 },
                 $"Provider: {dbType}");
             return result;
@@ -79,7 +79,7 @@ public partial class SqlAgentTool
                     Operation = "select",
                     DurationMs = stopwatch.ElapsedMilliseconds,
                     ErrorCategory = ex.GetType().Name,
-                    Definition = parsed is null ? null : DescribeQuery(parsed, auditFacts)
+                    Definition = auditFacts is null ? null : DescribeQuery(sql, dbType, auditFacts)
                 },
                 ex.Message);
             return "Execution failed: " + ex.Message;
@@ -90,11 +90,11 @@ public partial class SqlAgentTool
         facts?.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault()
         ?? "query";
 
-    private static string DescribeQuery(ParsedStatement parsed, QueryFacts? facts) =>
+    private static string DescribeQuery(string sql, SqlAgentToolType sourceDialect, QueryFacts? facts) =>
         JsonSerializer.Serialize(new
         {
-            SourceDialect = parsed.SourceDialect.ToString(),
-            Span = new { parsed.Statement.Span.Start, parsed.Statement.Span.End },
+            SourceDialect = sourceDialect.ToString(),
+            Span = new { Start = 0, End = sql.Length },
             ReferencedTables = facts?.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray() ?? [],
             facts?.ContainsCte,
             facts?.ContainsSubquery

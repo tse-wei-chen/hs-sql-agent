@@ -20,7 +20,11 @@ public sealed class CoreDmlReturningSimpleCaseTests
         Assert.Contains("CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("status_code", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("active", command.Sql, StringComparison.Ordinal);
-        Assert.Equal(new object?[] { 9, "active", 1, 0 }, command.Parameters.Select(x => x.Value).ToArray());
+        Assert.Equal(4, command.Parameters.Length);
+        Assert.Equal(9L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal("active", command.Parameters[1].Value);
+        Assert.Equal(1L, Convert.ToInt64(command.Parameters[2].Value));
+        Assert.Equal(0L, Convert.ToInt64(command.Parameters[3].Value));
     }
 
     [Fact]
@@ -39,9 +43,14 @@ public sealed class CoreDmlReturningSimpleCaseTests
         Assert.Contains("CASE WHEN", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("bucket", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("other", command.Sql, StringComparison.Ordinal);
-        Assert.Equal(
-            new object?[] { 9, 1, "one", 2, 3, "few", "other" },
-            command.Parameters.Select(x => x.Value).ToArray());
+        Assert.Equal(7, command.Parameters.Length);
+        Assert.Equal(9L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal(1L, Convert.ToInt64(command.Parameters[1].Value));
+        Assert.Equal("one", command.Parameters[2].Value);
+        Assert.Equal(2L, Convert.ToInt64(command.Parameters[3].Value));
+        Assert.Equal(3L, Convert.ToInt64(command.Parameters[4].Value));
+        Assert.Equal("few", command.Parameters[5].Value);
+        Assert.Equal("other", command.Parameters[6].Value);
     }
 
     [Fact]
@@ -55,18 +64,13 @@ public sealed class CoreDmlReturningSimpleCaseTests
             SqlAgentToolType.Postgres).Statement;
         var searchedCase = new CaseExpr(
             [new CaseBranch(
-                new ExistsExpr(subquery, IsNegated: false, SourceSpan.Unknown),
+                new ExistsExpr(subquery, false, SourceSpan.Unknown),
                 new LiteralExpr(1, SourceSpan.Unknown))],
             new LiteralExpr(0, SourceSpan.Unknown),
             SourceSpan.Unknown);
         var delete = Assert.IsType<DeleteStatement>(parsed.Statement);
-        parsed = parsed with
-        {
-            Statement = delete with
-            {
-                Returning = [new DmlReturningExpressionItem(searchedCase, null, SourceSpan.Unknown)]
-            }
-        };
+        delete.Returning = [new DmlReturningExpressionItem(searchedCase, null, SourceSpan.Unknown)];
+        parsed.Statement = delete;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(

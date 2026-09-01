@@ -60,17 +60,28 @@ public sealed class CoreNativeSubqueryShapeTests
             SqlAgentToolType.Postgres);
         var select = Assert.IsType<SelectStatement>(parsed.Statement);
         var predicate = Assert.IsType<BinaryExpr>(select.Where);
-        var malformed = parsed with
-        {
-            Statement = select with
-            {
-                Where = predicate with
-                {
-                    Right = new LiteralExpr(7, SourceSpan.Unknown)
-                }
-            },
-            EnforceSourceDialectSyntax = false
-        };
+        var malformedPredicate = new BinaryExpr(
+            predicate.Left,
+            predicate.Operator,
+            new LiteralExpr(7, SourceSpan.Unknown),
+            predicate.Span,
+            predicate.LikeEscape);
+        var malformedSelect = new SelectStatement(
+            select.Ctes,
+            select.Distinct,
+            select.Select,
+            select.From,
+            select.Joins,
+            malformedPredicate,
+            select.GroupBy,
+            select.Having,
+            select.OrderBy,
+            select.Limit,
+            select.Offset,
+            select.Span);
+        parsed.Statement = malformedSelect;
+        parsed.EnforceSourceDialectSyntax = false;
+        var malformed = parsed;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(

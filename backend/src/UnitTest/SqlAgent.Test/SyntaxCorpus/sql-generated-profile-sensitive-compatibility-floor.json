@@ -1,0 +1,1034 @@
+[
+  {
+    "name": "mysql-session__concat__pipes-as-concat__two-column__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT first_name || last_name AS value FROM users"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__two-column__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "WITH x AS (SELECT first_name || last_name AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__two-column__scalar-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT (SELECT first_name || last_name FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__two-column__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT id FROM users WHERE first_name || last_name = 'Ada Lovelace'"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__nested__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT first_name || ' ' || last_name AS value FROM users"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__nested__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "WITH x AS (SELECT first_name || ' ' || last_name AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__nested__scalar-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT (SELECT first_name || ' ' || last_name FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__nested__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT id FROM users WHERE first_name || ' ' || last_name = 'Ada Lovelace'"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__function-operand__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT COALESCE(first_name, '') || last_name AS value FROM users"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__function-operand__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "WITH x AS (SELECT COALESCE(first_name, '') || last_name AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__function-operand__scalar-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT (SELECT COALESCE(first_name, '') || last_name FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "mysql-session__concat__pipes-as-concat__function-operand__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "targetSessionModes": [
+      "PIPES_AS_CONCAT"
+    ],
+    "sql": "SELECT id FROM users WHERE COALESCE(first_name, '') || last_name = 'Ada Lovelace'"
+  },
+  {
+    "name": "mysql-session__concat__ansi__two-column__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT first_name || last_name AS value FROM users"
+  },
+  {
+    "name": "mysql-session__concat__ansi__two-column__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "WITH x AS (SELECT first_name || last_name AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__concat__ansi__two-column__scalar-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT (SELECT first_name || last_name FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "mysql-session__concat__ansi__two-column__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT id FROM users WHERE first_name || last_name = 'Ada Lovelace'"
+  },
+  {
+    "name": "mysql-session__concat__ansi__nested__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT first_name || ' ' || last_name AS value FROM users"
+  },
+  {
+    "name": "mysql-session__concat__ansi__nested__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "WITH x AS (SELECT first_name || ' ' || last_name AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__concat__ansi__nested__scalar-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT (SELECT first_name || ' ' || last_name FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "mysql-session__concat__ansi__nested__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT id FROM users WHERE first_name || ' ' || last_name = 'Ada Lovelace'"
+  },
+  {
+    "name": "mysql-session__concat__ansi__function-operand__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT COALESCE(first_name, '') || last_name AS value FROM users"
+  },
+  {
+    "name": "mysql-session__concat__ansi__function-operand__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "WITH x AS (SELECT COALESCE(first_name, '') || last_name AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__concat__ansi__function-operand__scalar-subquery",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT (SELECT COALESCE(first_name, '') || last_name FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "mysql-session__concat__ansi__function-operand__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT id FROM users WHERE COALESCE(first_name, '') || last_name = 'Ada Lovelace'"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__simple__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display_name\" AS value FROM users"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__simple__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "WITH x AS (SELECT \"display_name\" AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__simple__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display_name\" AS value FROM users WHERE \"display_name\" IS NOT NULL"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__simple__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display_name\" AS value FROM users ORDER BY \"display_name\""
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__escaped-quote__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display\"\"name\" AS value FROM users"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__escaped-quote__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "WITH x AS (SELECT \"display\"\"name\" AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__escaped-quote__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display\"\"name\" AS value FROM users WHERE \"display\"\"name\" IS NOT NULL"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__escaped-quote__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display\"\"name\" AS value FROM users ORDER BY \"display\"\"name\""
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__backtick-content__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display`name\" AS value FROM users"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__backtick-content__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "WITH x AS (SELECT \"display`name\" AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__backtick-content__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display`name\" AS value FROM users WHERE \"display`name\" IS NOT NULL"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi-quotes__backtick-content__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "targetSessionModes": [
+      "ANSI_QUOTES"
+    ],
+    "sql": "SELECT \"display`name\" AS value FROM users ORDER BY \"display`name\""
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__simple__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display_name\" AS value FROM users"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__simple__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "WITH x AS (SELECT \"display_name\" AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__simple__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display_name\" AS value FROM users WHERE \"display_name\" IS NOT NULL"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__simple__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display_name\" AS value FROM users ORDER BY \"display_name\""
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__escaped-quote__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display\"\"name\" AS value FROM users"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__escaped-quote__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "WITH x AS (SELECT \"display\"\"name\" AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__escaped-quote__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display\"\"name\" AS value FROM users WHERE \"display\"\"name\" IS NOT NULL"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__escaped-quote__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display\"\"name\" AS value FROM users ORDER BY \"display\"\"name\""
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__backtick-content__root",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display`name\" AS value FROM users"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__backtick-content__cte-body",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "WITH x AS (SELECT \"display`name\" AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__backtick-content__predicate",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display`name\" AS value FROM users WHERE \"display`name\" IS NOT NULL"
+  },
+  {
+    "name": "mysql-session__ansi-quotes__ansi__backtick-content__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.4",
+    "targetVersion": "8.4",
+    "sourceSessionModes": [
+      "ANSI"
+    ],
+    "targetSessionModes": [
+      "ANSI"
+    ],
+    "sql": "SELECT \"display`name\" AS value FROM users ORDER BY \"display`name\""
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users GROUP BY category"
+  }
+]

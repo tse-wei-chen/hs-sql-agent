@@ -63,8 +63,8 @@ public sealed class CoreMySqlSessionProfileTests
         Assert.Equal("+", plus.Operator);
         var concat = Assert.IsType<BinaryExpr>(plus.Right);
         Assert.Equal("||", concat.Operator);
-        Assert.Equal(2, Assert.IsType<int>(Assert.IsType<LiteralExpr>(concat.Left).Value));
-        Assert.Equal(3, Assert.IsType<int>(Assert.IsType<LiteralExpr>(concat.Right).Value));
+        Assert.Equal(2L, Convert.ToInt64(Assert.IsType<LiteralExpr>(concat.Left).Value));
+        Assert.Equal(3L, Convert.ToInt64(Assert.IsType<LiteralExpr>(concat.Right).Value));
     }
 
     [Fact]
@@ -180,12 +180,10 @@ public sealed class CoreMySqlSessionProfileTests
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT 1",
-            SqlAgentToolType.MySQL) with
-        {
-            SourceProfile = new SqlProviderCapabilityProfile(
-                SqlAgentToolType.MySQL,
-                CompatibilityLevel: -1)
-        };
+            SqlAgentToolType.MySQL);
+        parsed.SourceProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MySQL,
+            CompatibilityLevel: -1);
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(

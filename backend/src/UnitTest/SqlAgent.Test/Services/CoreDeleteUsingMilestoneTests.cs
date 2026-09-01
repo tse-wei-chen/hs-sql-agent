@@ -24,10 +24,10 @@ public class CoreDeleteUsingMilestoneTests
             "DELETE FROM inventory USING warehouse WHERE inventory.id = warehouse.inventory_id",
             SqlAgentToolType.Postgres);
 
-        var bound = new CoreDmlBinder().Bind(parsed);
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
 
-        Assert.Contains(bound.Facts.ReferencedTables, table => table.Equals("inventory", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(bound.Facts.ReferencedTables, table => table.Equals("warehouse", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(facts.ReferencedTables, table => table.Equals("inventory", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(facts.ReferencedTables, table => table.Equals("warehouse", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class CoreDeleteUsingMilestoneTests
         Assert.Contains("DELETE FROM", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("USING", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("warehouse", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(7, Assert.Single(command.Parameters).Value);
+        Assert.Equal(7L, Convert.ToInt64(Assert.Single(command.Parameters).Value));
     }
 
     [Theory]
@@ -101,12 +101,22 @@ public class CoreDeleteUsingMilestoneTests
     }
 
     [Fact]
-    public void ParseDeleteUsing_Alias_RemainsFailClosed()
+    public void ParseDeleteUsing_Alias_IsRepresentedAndCompiles()
     {
-        var error = Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseDml(
+        var parsed = CoreSqlTextParser.ParseDml(
             "DELETE FROM inventory USING warehouse AS w WHERE inventory.id = w.inventory_id",
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.Postgres);
 
-        Assert.Contains("aliases", error.Message, StringComparison.OrdinalIgnoreCase);
+        var delete = Assert.IsType<DeleteStatement>(parsed.Statement);
+        var source = Assert.Single(delete.Using);
+        Assert.Equal("w", source.Alias?.Value, ignoreCase: true);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.Contains("\"warehouse\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AS \"w\"", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 }

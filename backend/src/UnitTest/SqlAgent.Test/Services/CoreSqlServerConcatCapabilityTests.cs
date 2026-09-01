@@ -174,10 +174,11 @@ public sealed class CoreSqlServerConcatCapabilityTests
                 ["CONCAT_NULL_YIELDS_NULL"] = concatNullYieldsNull
             };
 
-        return new(
+        return new SqlProviderCapabilityProfile(
             SqlAgentToolType.MsSqlServer,
-            ServerVersion: new Version(major, 0),
-            CompatibilityLevel: compatibility,
-            SessionSettings: settings);
+            new Version(major, 0),
+            compatibility,
+            null,
+            settings);
     }
 }

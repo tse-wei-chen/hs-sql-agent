@@ -13,24 +13,16 @@ public class CoreAggregateLocalOrderingModelTests
         var select = Assert.IsType<SelectStatement>(parsed.Statement);
         var projection = Assert.Single(select.Select);
         var aggregate = Assert.IsType<FunctionCallExpr>(projection.Expression);
-        var ordered = aggregate with
-        {
-            AggregateOrderBy =
-            [
-                new OrderByItem(
-                    aggregate.Arguments[0],
-                    Descending: false,
-                    NullOrderingKind.Default,
-                    aggregate.Span)
-            ]
-        };
-        parsed = parsed with
-        {
-            Statement = select with
-            {
-                Select = [projection with { Expression = ordered }]
-            }
-        };
+        aggregate.AggregateOrderBy =
+        [
+            new OrderByItem(
+                aggregate.Arguments[0],
+                false,
+                NullOrderingKind.Default,
+                aggregate.Span)
+        ];
+        projection.Expression = aggregate;
+        parsed.Statement = select;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(
@@ -54,29 +46,18 @@ public class CoreAggregateLocalOrderingModelTests
         var inner = Assert.IsType<SelectStatement>(innerParsed.Statement);
         var innerProjection = Assert.Single(inner.Select);
         var aggregate = Assert.IsType<FunctionCallExpr>(innerProjection.Expression);
-        var ordered = aggregate with
-        {
-            AggregateOrderBy =
-            [
-                new OrderByItem(
-                    aggregate.Arguments[0],
-                    Descending: false,
-                    NullOrderingKind.Default,
-                    aggregate.Span)
-            ]
-        };
-        var orderedInner = inner with
-        {
-            Select = [innerProjection with { Expression = ordered }]
-        };
-        var subquery = new SubqueryExpr(orderedInner, orderedInner.Span);
-        parsed = parsed with
-        {
-            Statement = outer with
-            {
-                Select = [new SelectItem(subquery, Alias: null, subquery.Span)]
-            }
-        };
+        aggregate.AggregateOrderBy =
+        [
+            new OrderByItem(
+                aggregate.Arguments[0],
+                false,
+                NullOrderingKind.Default,
+                aggregate.Span)
+        ];
+        innerProjection.Expression = aggregate;
+        var subquery = new SubqueryExpr(inner, inner.Span);
+        outer.Select[0].Expression = subquery;
+        parsed.Statement = outer;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(
@@ -97,25 +78,17 @@ public class CoreAggregateLocalOrderingModelTests
         var select = Assert.IsType<SelectStatement>(parsed.Statement);
         var projection = Assert.Single(select.Select);
         var aggregate = Assert.IsType<FunctionCallExpr>(projection.Expression);
-        var ordered = aggregate with
-        {
-            AggregateOrderBy =
-            [
-                new OrderByItem(
-                    new LiteralExpr(1, aggregate.Span),
-                    Descending: false,
-                    NullOrderingKind.Default,
-                    aggregate.Span)
-            ]
-        };
-        parsed = parsed with
-        {
-            EnforceSourceDialectSyntax = false,
-            Statement = select with
-            {
-                Select = [projection with { Expression = ordered }]
-            }
-        };
+        aggregate.AggregateOrderBy =
+        [
+            new OrderByItem(
+                new LiteralExpr(1, aggregate.Span),
+                false,
+                NullOrderingKind.Default,
+                aggregate.Span)
+        ];
+        projection.Expression = aggregate;
+        parsed.Statement = select;
+        parsed.EnforceSourceDialectSyntax = false;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(
@@ -125,8 +98,8 @@ public class CoreAggregateLocalOrderingModelTests
                 new SqlExecutionPlanPolicy(),
                 new SqlProviderCapabilityProfile(
                     SqlAgentToolType.MsSqlServer,
-                    ServerVersion: new Version(14, 0),
-                    CompatibilityLevel: 110)));
+                    new Version(14, 0),
+                    110)));
 
         Assert.Contains("non-constant", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("column", error.Message, StringComparison.OrdinalIgnoreCase);
@@ -141,24 +114,26 @@ public class CoreAggregateLocalOrderingModelTests
         var update = Assert.IsType<UpdateStatement>(parsed.Statement);
         var assignment = Assert.Single(update.Assignments);
         var aggregate = Assert.IsType<FunctionCallExpr>(assignment.Value);
-        var ordered = aggregate with
-        {
-            AggregateOrderBy =
-            [
-                new OrderByItem(
-                    aggregate.Arguments[0],
-                    Descending: true,
-                    NullOrderingKind.Default,
-                    aggregate.Span)
-            ]
-        };
-        parsed = parsed with
-        {
-            Statement = update with
-            {
-                Assignments = [assignment with { Value = ordered }]
-            }
-        };
+        aggregate.AggregateOrderBy =
+        [
+            new OrderByItem(
+                aggregate.Arguments[0],
+                true,
+                NullOrderingKind.Default,
+                aggregate.Span)
+        ];
+        var updatedAssignment = new Assignment(
+            assignment.Column,
+            aggregate,
+            assignment.Span);
+        var updated = new UpdateStatement(
+            update.Target,
+            [updatedAssignment],
+            update.Predicate,
+            update.Span);
+        updated.From = update.From;
+        updated.Returning = update.Returning;
+        parsed.Statement = updated;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(

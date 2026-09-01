@@ -67,7 +67,9 @@ public sealed class CoreDmlReturningTests
             CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Firebird, oldProfile));
         Assert.Contains("5.0", sourceError.Message, StringComparison.OrdinalIgnoreCase);
 
-        var profile = oldProfile with { ServerVersion = new Version(5, 0) };
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Firebird,
+            new Version(5, 0));
         var command = CompileRaw(
             sql,
             SqlAgentToolType.Firebird,
@@ -101,42 +103,52 @@ public sealed class CoreDmlReturningTests
     }
 
     [Fact]
-    public void Parse_ReturningQualifiedColumn_FailsClosed()
+    public void Parse_ReturningQualifiedColumn_IsRepresentedAndCompiles()
     {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseDml(
-                "DELETE FROM users WHERE id = 1 RETURNING users.id",
-                SqlAgentToolType.Postgres));
-
-        Assert.Contains("unqualified", error.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void Parse_ReturningWildcardCannotMixWithColumns()
-    {
-        var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseDml(
-                "DELETE FROM users WHERE id = 1 RETURNING *, id",
-                SqlAgentToolType.Postgres));
-
-        Assert.Contains("cannot be mixed", error.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void PlanFingerprint_ChangesWhenResultRowExecutionModeChanges()
-    {
-        var command = new CompiledSqlCommand(
-            "DELETE FROM users WHERE id = @p0 RETURNING id",
-            [new SqlParameterValue("p0", 1)],
-            SqlStatementKind.Delete,
-            string.Empty,
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING users.id",
             SqlAgentToolType.Postgres);
-        var returning = command with { ReturnsRows = true };
 
-        var normalFingerprint = DmlFingerprintService.ComputePlanFingerprint(command, "policy-v1");
-        var returningFingerprint = DmlFingerprintService.ComputePlanFingerprint(returning, "policy-v1");
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
 
-        Assert.NotEqual(normalFingerprint, returningFingerprint);
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_ReturningWildcardCanMixWithColumns()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING *, id",
+            SqlAgentToolType.Postgres);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-v1"));
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PlanFingerprint_DiffersBetweenReturningAndNonReturningCommands()
+    {
+        var normal = CompileRaw(
+            "DELETE FROM users WHERE id = 1",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+        var returning = CompileRaw(
+            "DELETE FROM users WHERE id = 1 RETURNING id",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.False(normal.ReturnsRows);
+        Assert.True(returning.ReturnsRows);
+        Assert.NotEqual(normal.PlanFingerprint, returning.PlanFingerprint);
     }
 
     private static CompiledSqlCommand CompileRaw(

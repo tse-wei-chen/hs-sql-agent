@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using SqlAgent.Service.Validation;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;
@@ -99,6 +98,268 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             cancellationToken: TestContext.Current.CancellationToken));
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteWhereOrder_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id " +
+            $"FROM {TestTableName} " +
+            $"WHERE {TestUserIdColumn} > 0" +
+            $") SELECT item_id FROM recent ORDER BY item_id";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteUnionAllBody_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName} " +
+            $"UNION ALL " +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $") SELECT item_id FROM recent";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.True(
+            rows.Count >= 2,
+            $"Expected CTE UNION ALL to return multiple rows for {Strategy.DbType}.");
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteJoin_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT o.{TestOrdersIdColumn} AS item_id " +
+            $"FROM {TestOrdersTableName} o " +
+            $"JOIN {TestTableName} u " +
+            $"ON o.{TestOrdersUserIdColumn} = u.{TestUserIdColumn}" +
+            $") SELECT item_id FROM recent";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteGroupHaving_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH totals AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id, COUNT(*) AS total " +
+            $"FROM {TestOrdersTableName} " +
+            $"GROUP BY {TestOrdersUserIdColumn} " +
+            $"HAVING COUNT(*) > 0" +
+            $") SELECT owner_id FROM totals";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteCorrelatedExists_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id " +
+            $"FROM {TestOrdersTableName}" +
+            $") SELECT r.owner_id FROM recent r " +
+            $"WHERE EXISTS (" +
+            $"SELECT {TestUserIdColumn} FROM {TestTableName} u " +
+            $"WHERE u.{TestUserIdColumn} = r.owner_id" +
+            $")";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteWindow_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH ranked AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id, " +
+            $"ROW_NUMBER() OVER (" +
+            $"PARTITION BY {TestOrdersUserIdColumn} " +
+            $"ORDER BY {TestOrdersIdColumn}" +
+            $") AS row_no " +
+            $"FROM {TestOrdersTableName}" +
+            $") SELECT owner_id, row_no FROM ranked";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        Assert.All(
+            rows,
+            row => Assert.True(
+                TryGetPropertyIgnoreCase(row, "row_no", out _)));
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_ChainedCtes_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH base AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $"), recent AS (" +
+            $"SELECT item_id FROM base" +
+            $") SELECT item_id FROM recent";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CtePaging_ReturnsSecondRow()
+    {
+        var paging = Strategy.DbType switch
+        {
+            SqlAgentToolType.Postgres
+                or SqlAgentToolType.MySQL
+                or SqlAgentToolType.Sqlite =>
+                " LIMIT 1 OFFSET 1",
+            SqlAgentToolType.MsSqlServer
+                or SqlAgentToolType.Oracle
+                or SqlAgentToolType.Firebird =>
+                " OFFSET 1 ROWS FETCH NEXT 1 ROWS ONLY",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(Strategy.DbType),
+                Strategy.DbType,
+                "Unsupported SQL dialect.")
+        };
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $") SELECT item_id FROM recent ORDER BY item_id" +
+            paging;
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var row = Assert.Single(document.RootElement.EnumerateArray());
+        var value = row.EnumerateObject().Single().Value.GetDecimal();
+        Assert.Equal(2m, value);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteReferencedInsideSubquery_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id FROM {TestOrdersTableName}" +
+            $") SELECT u.{TestUserIdColumn} FROM {TestTableName} u " +
+            $"WHERE EXISTS (" +
+            $"SELECT r.owner_id FROM recent r " +
+            $"WHERE r.owner_id = u.{TestUserIdColumn}" +
+            $")";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteJoinedWithPhysicalTable_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id FROM {TestOrdersTableName}" +
+            $") SELECT r.owner_id FROM recent r " +
+            $"JOIN {TestTableName} u " +
+            $"ON r.owner_id = u.{TestUserIdColumn}";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteRootUnionAll_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}" +
+            $") SELECT item_id FROM recent " +
+            $"UNION ALL " +
+            $"SELECT {TestUserIdColumn} AS item_id FROM {TestTableName}";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.Equal(6, rows.Count);
     }
 
     [Fact]
@@ -242,13 +503,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_DateDiffDay_ShouldReturnStartToEndDifference()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT DATEDIFF(DAY, DATE '2026-08-20', DATE '2026-08-22') AS day_count FROM {TestTableName}");
-        definition.Limit = 1;
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            $"SELECT DATEDIFF(DAY, CAST('2026-08-20' AS DATE), CAST('2026-08-22' AS DATE)) AS day_count FROM {TestTableName}",
+            SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         Assert.Equal(2m, document.RootElement[0].EnumerateObject().Single().Value.GetDecimal());
     }
@@ -256,13 +515,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_DateAddDay_ShouldReturnExpectedDate()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT DATEADD(DAY, 2, DATE '2026-08-20') AS due_date FROM {TestTableName}");
-        definition.Limit = 1;
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            $"SELECT DATEADD(DAY, 2, CAST('2026-08-20' AS DATE)) AS due_date FROM {TestTableName}",
+            SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
         Assert.NotNull(value);
@@ -272,23 +529,23 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_PortableDateFormat_ShouldPreserveMinutes()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT DATE_FORMAT(TIMESTAMP '2026-08-22 13:45:09', 'yyyy-MM-dd HH:mm:ss') AS formatted FROM {TestTableName}");
-        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
-        definition.Limit = 1;
+        const string formatSqlPrefix = "SELECT FORMAT(CAST('2026-08-22 13:45:09' AS DATETIME2), 'yyyy-MM-dd HH:mm:ss') AS formatted FROM ";
+        var sql = formatSqlPrefix + TestTableName;
         if (!SupportsPortableDateFormatting)
         {
-            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
-                definition,
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteRawQueryAsync(
+                sql,
+                SqlAgentToolType.MsSqlServer,
                 Fixture.ConnectionString,
-                cancellationToken: TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken));
             Assert.Contains("portable date formatting", error.Message);
             return;
         }
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            SqlAgentToolType.MsSqlServer,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         Assert.Equal("2026-08-22 13:45:09", document.RootElement[0].EnumerateObject().Single().Value.GetString());
     }
@@ -296,23 +553,22 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_ToDate_ShouldTranslatePortableFormat()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT TO_DATE('2026/08/22', 'yyyy/MM/dd') AS parsed_date FROM {TestTableName}");
-        definition.SourceDialect = SqlAgentToolType.MsSqlServer;
-        definition.Limit = 1;
+        var sql = $"SELECT TO_DATE('2026/08/22', 'YYYY/MM/DD') AS parsed_date FROM {TestTableName}";
         if (!SupportsFormattedDateParsing)
         {
-            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteQueryAsync(
-                definition,
+            var error = await Assert.ThrowsAsync<SqlCompilationException>(() => Strategy.ExecuteRawQueryAsync(
+                sql,
+                SqlAgentToolType.Oracle,
                 Fixture.ConnectionString,
-                cancellationToken: TestContext.Current.CancellationToken));
+                TestContext.Current.CancellationToken));
             Assert.Contains("formatted date parsing", error.Message);
             return;
         }
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            SqlAgentToolType.Oracle,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement[0].EnumerateObject().Single().Value.GetString();
         Assert.NotNull(value);
@@ -322,13 +578,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [Fact]
     public async Task ExecuteQueryAsync_DateParts_ShouldReturnNumbers()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            $"SELECT YEAR(DATE '2026-08-22') AS y, MONTH(DATE '2026-08-22') AS m, DAY(DATE '2026-08-22') AS d FROM {TestTableName}");
-        definition.Limit = 1;
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            $"SELECT EXTRACT(YEAR FROM DATE '2026-08-22') AS y, EXTRACT(MONTH FROM DATE '2026-08-22') AS m, EXTRACT(DAY FROM DATE '2026-08-22') AS d FROM {TestTableName}",
+            SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(json);
         var values = document.RootElement[0].EnumerateObject().Select(x => x.Value.GetDecimal()).ToArray();
         Assert.Equal([2026m, 8m, 22m], values);
@@ -475,15 +729,12 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
     protected static void ValidateQuery(QueryDefinition definition)
     {
-        var errors = DefinitionValidator.Validate(definition);
-        Assert.True(errors.Count == 0, "QueryDefinition validation failed:\n" + string.Join("\n", errors));
+        ArgumentNullException.ThrowIfNull(definition);
+        _ = QueryDefinitionCoreMapper.Map(definition);
     }
 
-    protected static void ValidateDml(DmlDefinition definition)
-    {
-        var errors = DefinitionValidator.Validate(definition);
-        Assert.True(errors.Count == 0, "DmlDefinition validation failed:\n" + string.Join("\n", errors));
-    }
+    protected static void ValidateDml(DmlDefinition definition) =>
+        ArgumentNullException.ThrowIfNull(definition);
 
     private static bool TryGetPropertyIgnoreCase(JsonElement row, string propertyName, out JsonElement value)
     {

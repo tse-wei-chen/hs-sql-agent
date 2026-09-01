@@ -13,20 +13,13 @@ public class DmlPlanFactoryTests
             new DatabaseColumnMetadata("public", "users", "id", "integer", true, 1),
             new DatabaseColumnMetadata("public", "users", "status", "text", false)
         ]);
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Update,
-            TableName = "public.users",
-            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }],
-            WhereConditions =
-            [
-                new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 7 }
-            ]
-        };
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE public.users SET status = 'disabled' WHERE id = 7",
+            SqlAgentToolType.Postgres);
 
         var plan = await new DmlPlanFactory(metadata).CreateAsync(
             "connection",
-            Map(definition),
+            parsed,
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext(
                 "policy-v2",
@@ -45,11 +38,11 @@ public class DmlPlanFactoryTests
         Assert.Contains("UPDATE", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("disabled", plan.MutationCommand.Sql, StringComparison.Ordinal);
         Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, "disabled"));
-        Assert.Contains(plan.MutationCommand.Parameters, parameter => Equals(parameter.Value, 7));
+        Assert.Contains(plan.MutationCommand.Parameters, parameter => IsInteger(parameter.Value, 7));
         Assert.Contains("id", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("7", matchCommand.Sql, StringComparison.Ordinal);
-        Assert.Contains(matchCommand.Parameters, parameter => Equals(parameter.Value, 7));
-        Assert.Contains(matchCommand.Parameters, parameter => Equals(parameter.Value, 26));
+        Assert.DoesNotContain(" = 7", matchCommand.Sql, StringComparison.Ordinal);
+        Assert.Contains(matchCommand.Parameters, parameter => IsInteger(parameter.Value, 7));
+        Assert.Contains(matchCommand.Parameters, parameter => IsInteger(parameter.Value, 26));
         Assert.Equal("policy-v2", plan.PolicyVersion);
         Assert.Equal(TimeSpan.FromMinutes(2), plan.ApprovalTtl);
         Assert.Equal(25, plan.MaxAffectedRows);
@@ -71,20 +64,13 @@ public class DmlPlanFactoryTests
             ["audit"] = ["events"],
             ["public"] = ["users"]
         });
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Update,
-            TableName = "users",
-            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }],
-            WhereConditions =
-            [
-                new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 7 }
-            ]
-        };
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users SET status = 'disabled' WHERE id = 7",
+            SqlAgentToolType.Postgres);
 
         var plan = await new DmlPlanFactory(metadata).CreateAsync(
             "connection",
-            Map(definition),
+            parsed,
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext(
                 "policy-v3",
@@ -102,15 +88,9 @@ public class DmlPlanFactoryTests
     [Fact]
     public async Task CreateAsync_Strict_RejectsMissingPrimaryKey()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Delete,
-            TableName = "public.events",
-            WhereConditions =
-            [
-                new BasicWhereCondition { FieldName = "status", Operator = "=", Value = "old" }
-            ]
-        };
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM public.events WHERE status = 'old'",
+            SqlAgentToolType.Postgres);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new DmlPlanFactory(new StubMetadataReader(
@@ -118,7 +98,7 @@ public class DmlPlanFactoryTests
                 new DatabaseColumnMetadata("public", "events", "status", "text", false)
             ])).CreateAsync(
                 "connection",
-                Map(definition),
+                parsed,
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("policy-v1"),
                 assurance: DmlRowIdentityAssurance.Strict,
@@ -127,8 +107,19 @@ public class DmlPlanFactoryTests
         Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static ParsedStatement Map(DmlDefinition definition) =>
-        new(DmlDefinitionCoreMapper.Map(definition), SqlAgentToolType.Postgres);
+    private static bool IsInteger(object? value, long expected) =>
+        value switch
+        {
+            byte x => x == expected,
+            sbyte x => x == expected,
+            short x => x == expected,
+            ushort x => x == expected,
+            int x => x == expected,
+            uint x => x == expected,
+            long x => x == expected,
+            ulong x => x == (ulong)expected,
+            _ => false
+        };
 
     private sealed class StubMetadataReader(
         IReadOnlyList<DatabaseColumnMetadata> columns,

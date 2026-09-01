@@ -30,10 +30,12 @@ public class DmlFingerprintServiceTests
             SqlStatementKind.Delete,
             "legacy",
             SqlAgentToolType.Postgres);
-        var changed = command with
-        {
-            Parameters = ImmutableArray.Create(new SqlParameterValue("p0", 43))
-        };
+        var changed = new CompiledSqlCommand(
+            command.Sql,
+            ImmutableArray.Create(new SqlParameterValue("p0", 43)),
+            command.Kind,
+            command.PlanFingerprint,
+            command.TargetProvider);
 
         var baseline = DmlFingerprintService.ComputePlanFingerprint(command, "policy-v1");
 

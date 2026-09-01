@@ -1,0 +1,212 @@
+[
+  {
+    "name": "dml-postgres-insert-explicit-values",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-postgres-insert-implicit-values",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-postgres-insert-select",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO users (id, name) SELECT id, name FROM staged_users"
+  },
+  {
+    "name": "dml-postgres-update-basic",
+    "dialect": "Postgres",
+    "sql": "UPDATE users SET name = 'Alice' WHERE id = 1"
+  },
+  {
+    "name": "dml-postgres-update-expression",
+    "dialect": "Postgres",
+    "sql": "UPDATE users SET score = score + 1 WHERE id = 2"
+  },
+  {
+    "name": "dml-postgres-delete-basic",
+    "dialect": "Postgres",
+    "sql": "DELETE FROM users WHERE id = 3"
+  },
+  {
+    "name": "dml-postgres-quoted-identifiers",
+    "dialect": "Postgres",
+    "sql": "UPDATE \"users\" SET \"name\" = 'Ada' WHERE \"id\" = 7"
+  },
+  {
+    "name": "dml-mysql-insert-explicit-values",
+    "dialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-mysql-insert-implicit-values",
+    "dialect": "MySQL",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-mysql-insert-select",
+    "dialect": "MySQL",
+    "sql": "INSERT INTO users (id, name) SELECT id, name FROM staged_users"
+  },
+  {
+    "name": "dml-mysql-update-basic",
+    "dialect": "MySQL",
+    "sql": "UPDATE users SET name = 'Alice' WHERE id = 1"
+  },
+  {
+    "name": "dml-mysql-update-expression",
+    "dialect": "MySQL",
+    "sql": "UPDATE users SET score = score + 1 WHERE id = 2"
+  },
+  {
+    "name": "dml-mysql-delete-basic",
+    "dialect": "MySQL",
+    "sql": "DELETE FROM users WHERE id = 3"
+  },
+  {
+    "name": "dml-mysql-quoted-identifiers",
+    "dialect": "MySQL",
+    "sql": "UPDATE `users` SET `name` = 'Ada' WHERE `id` = 7"
+  },
+  {
+    "name": "dml-mssqlserver-insert-explicit-values",
+    "dialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-mssqlserver-insert-implicit-values",
+    "dialect": "MsSqlServer",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-mssqlserver-insert-select",
+    "dialect": "MsSqlServer",
+    "sql": "INSERT INTO users (id, name) SELECT id, name FROM staged_users"
+  },
+  {
+    "name": "dml-mssqlserver-update-basic",
+    "dialect": "MsSqlServer",
+    "sql": "UPDATE users SET name = 'Alice' WHERE id = 1"
+  },
+  {
+    "name": "dml-mssqlserver-update-expression",
+    "dialect": "MsSqlServer",
+    "sql": "UPDATE users SET score = score + 1 WHERE id = 2"
+  },
+  {
+    "name": "dml-mssqlserver-delete-basic",
+    "dialect": "MsSqlServer",
+    "sql": "DELETE FROM users WHERE id = 3"
+  },
+  {
+    "name": "dml-mssqlserver-quoted-identifiers",
+    "dialect": "MsSqlServer",
+    "sql": "UPDATE [users] SET [name] = 'Ada' WHERE [id] = 7"
+  },
+  {
+    "name": "dml-sqlite-insert-explicit-values",
+    "dialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-sqlite-insert-implicit-values",
+    "dialect": "Sqlite",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-sqlite-insert-select",
+    "dialect": "Sqlite",
+    "sql": "INSERT INTO users (id, name) SELECT id, name FROM staged_users"
+  },
+  {
+    "name": "dml-sqlite-update-basic",
+    "dialect": "Sqlite",
+    "sql": "UPDATE users SET name = 'Alice' WHERE id = 1"
+  },
+  {
+    "name": "dml-sqlite-update-expression",
+    "dialect": "Sqlite",
+    "sql": "UPDATE users SET score = score + 1 WHERE id = 2"
+  },
+  {
+    "name": "dml-sqlite-delete-basic",
+    "dialect": "Sqlite",
+    "sql": "DELETE FROM users WHERE id = 3"
+  },
+  {
+    "name": "dml-sqlite-quoted-identifiers",
+    "dialect": "Sqlite",
+    "sql": "UPDATE \"users\" SET \"name\" = 'Ada' WHERE \"id\" = 7"
+  },
+  {
+    "name": "dml-oracle-insert-explicit-values",
+    "dialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-oracle-insert-implicit-values",
+    "dialect": "Oracle",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-oracle-insert-select",
+    "dialect": "Oracle",
+    "sql": "INSERT INTO users (id, name) SELECT id, name FROM staged_users"
+  },
+  {
+    "name": "dml-oracle-update-basic",
+    "dialect": "Oracle",
+    "sql": "UPDATE users SET name = 'Alice' WHERE id = 1"
+  },
+  {
+    "name": "dml-oracle-update-expression",
+    "dialect": "Oracle",
+    "sql": "UPDATE users SET score = score + 1 WHERE id = 2"
+  },
+  {
+    "name": "dml-oracle-delete-basic",
+    "dialect": "Oracle",
+    "sql": "DELETE FROM users WHERE id = 3"
+  },
+  {
+    "name": "dml-oracle-quoted-identifiers",
+    "dialect": "Oracle",
+    "sql": "UPDATE \"USERS\" SET \"NAME\" = 'Ada' WHERE \"ID\" = 7"
+  },
+  {
+    "name": "dml-firebird-insert-explicit-values",
+    "dialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-firebird-insert-implicit-values",
+    "dialect": "Firebird",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')"
+  },
+  {
+    "name": "dml-firebird-insert-select",
+    "dialect": "Firebird",
+    "sql": "INSERT INTO users (id, name) SELECT id, name FROM staged_users"
+  },
+  {
+    "name": "dml-firebird-update-basic",
+    "dialect": "Firebird",
+    "sql": "UPDATE users SET name = 'Alice' WHERE id = 1"
+  },
+  {
+    "name": "dml-firebird-update-expression",
+    "dialect": "Firebird",
+    "sql": "UPDATE users SET score = score + 1 WHERE id = 2"
+  },
+  {
+    "name": "dml-firebird-delete-basic",
+    "dialect": "Firebird",
+    "sql": "DELETE FROM users WHERE id = 3"
+  },
+  {
+    "name": "dml-firebird-quoted-identifiers",
+    "dialect": "Firebird",
+    "sql": "UPDATE \"USERS\" SET \"NAME\" = 'Ada' WHERE \"ID\" = 7"
+  }
+]

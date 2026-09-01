@@ -37,6 +37,21 @@ foreach (var parameter in command.Parameters)
 For mutations, use `CoreSqlTextParser.ParseDml` with `CoreDmlCompiler`. Compilation produces an
 immutable `CompiledSqlCommand`; this package does not open database connections or execute SQL.
 
+## Architecture invariants
+
+The public CLR compatibility surface and the compiler core are intentionally separate:
+
+- `RewriteCoreModel` is the closed F# DU source of truth after SQL enters the compiler.
+- Compiler state advances through unforgeable stages: parsed → bound → canonical → validated → executable.
+- Source dialect semantics travel as `VerifiedSource`; target runtime and target capability proofs travel together as `VerifiedTarget`.
+- `RewriteLegacyAstAdapter`, `RewriteCompatibilityAstAdapter` and `RewriteFacadeAdapter` are the only rewrite-layer seams allowed to depend on the legacy `Core.Ast` / `ParsedStatement` compatibility model.
+- Binder, normalization/validation, policy and native rendering must not depend on the compatibility AST. CI reflects over internal rewrite signatures and rejects any dependency that crosses this boundary.
+- Typed diagnostics preserve code, compiler stage, category and source span without changing legacy exception compatibility.
+- Rendering accepts executable typestate, not an arbitrary AST plus a separately supplied provider identity.
+
+The compatibility AST remains available for CLR callers that inspect or replace `ParsedStatement.Statement`,
+but it is a projection/ingress format rather than a second semantic source of truth.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and

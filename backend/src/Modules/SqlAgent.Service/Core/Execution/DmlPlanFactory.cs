@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Collections.Immutable;
 using System.Text.Json;
 
@@ -15,8 +16,10 @@ public sealed class DmlPlanFactory(
     CoreSqlCompiler? queryCompiler = null)
 {
     private readonly DmlRowIdentityResolver _rowIdentityResolver = new(metadataReader);
-    private readonly CoreDmlCompiler _dmlCompiler = dmlCompiler ?? CoreDmlCompiler.CreateDefault();
-    private readonly CoreSqlCompiler _queryCompiler = queryCompiler ?? CoreSqlCompiler.CreateDefault();
+    // Explicit legacy compilers remain an opt-in compatibility seam for tests/custom hosts.
+    // The default production path is the F# typestate facade.
+    private readonly CoreDmlCompiler? _dmlCompiler = dmlCompiler;
+    private readonly CoreSqlCompiler? _queryCompiler = queryCompiler;
 
     public async Task<ValidatedDmlPlan> CreateAsync(
         string connectionString,
@@ -66,9 +69,9 @@ public sealed class DmlPlanFactory(
             null,
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
-        var resolvedMutation = parsedMutation with { Statement = resolvedStatement };
+        var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedStatement);
 
-        var mutationCommand = _dmlCompiler.Compile(
+        var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
             validationContext,
@@ -105,11 +108,10 @@ public sealed class DmlPlanFactory(
             SourceSpan.Unknown);
         var parsedMatch = new ParsedStatement(matchStatement, parsedMutation.SourceDialect);
 
-        var matchCommand = _queryCompiler.Compile(
+        var matchCommand = CompileMatchQuery(
             parsedMatch,
             targetProvider,
             validationContext,
-            new SqlExecutionPlanPolicy(),
             targetProfile);
 
         var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
@@ -162,10 +164,10 @@ public sealed class DmlPlanFactory(
             MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
             null,
             insert.Target.Span);
-        var resolvedInsert = insert with { Target = resolvedTarget };
-        var resolvedMutation = parsedMutation with { Statement = resolvedInsert };
+        var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
+        var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedInsert);
 
-        var mutationCommand = _dmlCompiler.Compile(
+        var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
             validationContext,
@@ -196,6 +198,56 @@ public sealed class DmlPlanFactory(
             MaxAffectedRows: maxAffectedRows,
             ApprovalMode: DmlApprovalMode.InsertValues,
             InsertRows: previewRows);
+    }
+
+    private CompiledSqlCommand CompileMutation(
+        ParsedStatement parsed,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? compilationPolicy,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        if (_dmlCompiler is not null)
+        {
+            return _dmlCompiler.Compile(
+                parsed,
+                targetProvider,
+                validationContext,
+                compilationPolicy,
+                targetProfile);
+        }
+
+        return SqlCoreFacade.CompileDml(
+            parsed,
+            targetProvider,
+            validationContext,
+            compilationPolicy,
+            targetProfile,
+            conflictTargetAssurance: null);
+    }
+
+    private CompiledSqlCommand CompileMatchQuery(
+        ParsedStatement parsed,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        if (_queryCompiler is not null)
+        {
+            return _queryCompiler.Compile(
+                parsed,
+                targetProvider,
+                validationContext,
+                new SqlExecutionPlanPolicy(),
+                targetProfile);
+        }
+
+        return SqlCoreFacade.CompileQuery(
+            parsed,
+            targetProvider,
+            validationContext,
+            new SqlExecutionPlanPolicy(),
+            targetProfile);
     }
 
     private static ImmutableArray<ImmutableDictionary<string, object?>> BuildInsertPreviewRows(
@@ -262,22 +314,70 @@ public sealed class DmlPlanFactory(
             $"Statement '{statement.GetType().Name}' is not a supported row-set DML mutation.")
     };
 
+    private static ParsedStatement CloneParsedWithStatement(
+        ParsedStatement source,
+        SqlStatement statement) =>
+        new(
+            statement,
+            source.SourceDialect,
+            source.EnforceSourceDialectSyntax,
+            source.SourceProfile);
+
     private static SqlStatement ReplaceTarget(
         SqlStatement statement,
-        NamedTableSource resolvedTarget) => statement switch
+        NamedTableSource resolvedTarget)
     {
-        UpdateStatement update => update with { Target = resolvedTarget },
-        DeleteStatement delete => delete with { Target = resolvedTarget },
-        InsertStatement insert => insert with { Target = resolvedTarget },
-        _ => throw new InvalidOperationException(
-            $"Statement '{statement.GetType().Name}' is not a supported DML mutation.")
-    };
+        switch (statement)
+        {
+            case UpdateStatement update:
+            {
+                var clone = new UpdateStatement(
+                    resolvedTarget,
+                    update.Assignments,
+                    update.Predicate,
+                    update.Span)
+                {
+                    From = update.From,
+                    Returning = update.Returning
+                };
+                return clone;
+            }
+            case DeleteStatement delete:
+            {
+                var clone = new DeleteStatement(
+                    resolvedTarget,
+                    delete.Predicate,
+                    delete.Span)
+                {
+                    Using = delete.Using,
+                    Returning = delete.Returning
+                };
+                return clone;
+            }
+            case InsertStatement insert:
+            {
+                var clone = new InsertStatement(
+                    resolvedTarget,
+                    insert.Columns,
+                    insert.Source,
+                    insert.Span)
+                {
+                    Conflict = insert.Conflict,
+                    Returning = insert.Returning
+                };
+                return clone;
+            }
+            default:
+                throw new InvalidOperationException(
+                    $"Statement '{statement.GetType().Name}' is not a supported DML mutation.");
+        }
+    }
 
     private static SqlIdentifier MetadataIdentifier(params string[] parts) =>
         new(
             parts.Select(part => new IdentifierPart(
                     part,
-                    WasQuoted: true,
+                    true,
                     SourceSpan.Unknown))
                 .ToImmutableArray(),
             SourceSpan.Unknown);

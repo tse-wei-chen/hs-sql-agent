@@ -98,14 +98,13 @@ public sealed class CoreSqliteStringAggregateOrderingTests
     [Fact]
     public void Compile_StructuredOrdering_RequiresOnlySqliteTargetVersion()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
+        var parsedSource = CoreSqlTextParser.ParseQuery(
             "SELECT STRING_AGG(name, ',' ORDER BY created_at) FROM users",
-            SqlAgentToolType.Postgres) with
-        {
-            SourceDialect = SqlAgentToolType.MySQL,
-            EnforceSourceDialectSyntax = false,
-            SourceProfile = null
-        };
+            SqlAgentToolType.Postgres);
+        var parsed = new ParsedStatement(
+            parsedSource.Statement,
+            SqlAgentToolType.MySQL,
+            false);
 
         var command = CoreSqlCompiler.CreateDefault().Compile(
             parsed,
@@ -157,8 +156,8 @@ public sealed class CoreSqliteStringAggregateOrderingTests
     }
 
     private static SqlProviderCapabilityProfile SourceProfile(Version version) =>
-        new(SqlAgentToolType.Sqlite, ServerVersion: version);
+        new(SqlAgentToolType.Sqlite, version);
 
     private static SqlProviderCapabilityProfile TargetProfile(Version version) =>
-        new(SqlAgentToolType.Sqlite, ServerVersion: version);
+        new(SqlAgentToolType.Sqlite, version);
 }

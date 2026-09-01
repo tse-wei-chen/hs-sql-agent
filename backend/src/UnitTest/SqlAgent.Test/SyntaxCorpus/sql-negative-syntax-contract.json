@@ -1,0 +1,794 @@
+[
+  {
+    "name": "mysql-with-recursive",
+    "dialect": "MySQL",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "MySQL"
+    ],
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "sqlite-with-recursive-without-profile",
+    "dialect": "Sqlite",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "explicit source ServerVersion",
+      "Sqlite"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "firebird-with-recursive-without-profile",
+    "dialect": "Firebird",
+    "sql": "WITH RECURSIVE x AS (SELECT 1 FROM RDB$DATABASE) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "explicit source ServerVersion",
+      "Firebird"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-recursive-anchor-self-reference",
+    "dialect": "Postgres",
+    "sql": "WITH RECURSIVE x AS (SELECT id FROM x) SELECT * FROM x",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.recursive_cte",
+      "anchor"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_BINDING_ERROR",
+    "expectedDiagnosticStage": "Binding",
+    "expectedDiagnosticCategory": "Binding",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-recursive-multiple-self-reference",
+    "dialect": "Postgres",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT a.n + b.n FROM x a JOIN x b ON TRUE) SELECT n FROM x",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.recursive_cte",
+      "exactly one direct self-reference"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_BINDING_ERROR",
+    "expectedDiagnosticStage": "Binding",
+    "expectedDiagnosticCategory": "Binding",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-recursive-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.recursive_cte",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "mysql-lateral-derived-source",
+    "dialect": "MySQL",
+    "sql": "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.lateral_derived",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-lateral-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT q.id FROM LATERAL (SELECT id FROM users) q",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.lateral_derived",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-right-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT a.id FROM alpha a RIGHT JOIN LATERAL (SELECT a.id AS id) q ON TRUE",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "RIGHT/FULL JOIN LATERAL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "sqlserver-natural-join",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "join.natural",
+      "MsSqlServer"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-natural-join-on",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta ON alpha.id = beta.id",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "NATURAL JOIN",
+      "ON or USING"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-natural-join-using",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta USING (id)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "NATURAL JOIN",
+      "ON or USING"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-fetch-with-ties-without-order",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM users FETCH FIRST 10 ROWS WITH TIES",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "WITH TIES",
+      "ORDER BY"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-fetch-with-ties-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.fetch_with_ties",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-cross-join-using",
+    "dialect": "Postgres",
+    "sql": "SELECT a.id FROM a CROSS JOIN b USING (id)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "ON/USING"
+    ],
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "mysql-postgres-cast",
+    "dialect": "MySQL",
+    "sql": "SELECT 'abc'::VARCHAR(20)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "::",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_DIALECT_SYNTAX",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "DialectSyntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "mysql-nulls-first",
+    "dialect": "MySQL",
+    "sql": "SELECT amount FROM orders ORDER BY amount NULLS FIRST",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "NULLS FIRST",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "sqlserver-limit",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users LIMIT 5",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "LIMIT",
+      "MsSqlServer"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "sqlserver-current-date",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT CURRENT_DATE FROM orders",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "CURRENT_DATE"
+    ],
+    "expectedDiagnosticCode": "SQL_SOURCE_VALIDATION_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "sqlite-typed-date",
+    "dialect": "Sqlite",
+    "sql": "SELECT DATE '2026-08-24'",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "typed temporal literal",
+      "Sqlite"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_DIALECT_SYNTAX",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "DialectSyntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "oracle-limit",
+    "dialect": "Oracle",
+    "sql": "SELECT id FROM users LIMIT 5",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "LIMIT",
+      "Oracle"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "firebird-limit",
+    "dialect": "Firebird",
+    "sql": "SELECT id FROM users LIMIT 5",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "LIMIT",
+      "Firebird"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "sqlserver-join-using",
+    "dialect": "MsSqlServer",
+    "sql": "SELECT id FROM users JOIN orders USING (id)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "join.using",
+      "MsSqlServer"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-unregistered-qualified-function",
+    "dialect": "Postgres",
+    "sql": "SELECT custom.fn(id) FROM users",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "not registered"
+    ],
+    "expectedDiagnosticCode": "SQL_NORMALIZATION_REJECTED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "pg-intersect-all-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT id FROM alpha INTERSECT ALL SELECT id FROM beta",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "set.intersect_all",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_TARGET_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "TargetCapability",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-except-all-to-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM alpha EXCEPT ALL SELECT id FROM beta",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "set.except_all",
+      "MsSqlServer"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_TARGET_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "TargetCapability",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "pg-using-to-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "SELECT id FROM users JOIN orders USING (id)",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "join.using",
+      "MsSqlServer"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_TARGET_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "TargetCapability",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "mysql-date-to-postgres",
+    "dialect": "MySQL",
+    "targetDialect": "Postgres",
+    "sql": "SELECT DATE(created_at) FROM events",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "temporal.date_only",
+      "Cross-dialect lowering"
+    ],
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "pg-distinct-on-to-mysql",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "SELECT DISTINCT ON (customer_id) customer_id, created_at FROM orders ORDER BY customer_id, created_at DESC",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.distinct_on",
+      "MySQL"
+    ],
+    "expectedDiagnosticCode": "SQL_TARGET_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "TargetCapability",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "mysql-recursive-old-source-version",
+    "dialect": "MySQL",
+    "sourceVersion": "8.0.0",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "source ServerVersion",
+      "8.0.1"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "sqlite-recursive-old-source-version",
+    "dialect": "Sqlite",
+    "sourceVersion": "3.8.2",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "source ServerVersion",
+      "3.8.3"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "firebird-recursive-old-source-version",
+    "dialect": "Firebird",
+    "sourceVersion": "2.0",
+    "sql": "WITH RECURSIVE x AS (SELECT 1 FROM RDB$DATABASE) SELECT * FROM x",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.recursive_cte",
+      "source ServerVersion",
+      "2.1"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "mysql-recursive-old-target-version",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.recursive_cte",
+      "target ServerVersion",
+      "8.0.1"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-fetch-percent",
+    "dialect": "Postgres",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS ONLY",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.fetch_percent",
+      "Postgres"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "oracle-fetch-percent-old-source-version",
+    "dialect": "Oracle",
+    "sourceVersion": "11.2",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS ONLY",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "select.fetch_percent",
+      "source ServerVersion",
+      "12.1"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "oracle-fetch-percent-old-target-version",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "11.2",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 PERCENT ROWS ONLY",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "select.fetch_percent",
+      "target ServerVersion",
+      "12.1"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-natural-right-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT u.id FROM users u NATURAL RIGHT JOIN LATERAL (SELECT u.id AS id) q",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "RIGHT/FULL JOIN LATERAL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-natural-full-join-lateral",
+    "dialect": "Postgres",
+    "sql": "SELECT u.id FROM users u NATURAL FULL JOIN LATERAL (SELECT u.id AS id) q",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "RIGHT/FULL JOIN LATERAL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-insert-implicit-columns-cross-provider",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO users VALUES (1, 'Alice')",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.insert_implicit_columns",
+      "native-only"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-insert-implicit-columns-row-width",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO users VALUES (1, 'Alice'), (2)",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "same width"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_PARSE_GRAMMAR",
+    "expectedDiagnosticStage": "Parse",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-insert-implicit-columns-conflict",
+    "dialect": "Postgres",
+    "sql": "INSERT INTO users VALUES (1, 'Alice') ON CONFLICT DO NOTHING",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "conflict handling",
+      "explicit target columns"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "mysql-update-from",
+    "dialect": "MySQL",
+    "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "dml.update.from",
+      "MySQL"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SOURCE_CAPABILITY_REJECTED",
+    "expectedDiagnosticStage": "SourceValidation",
+    "expectedDiagnosticCategory": "Capability",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "sqlserver-update-from-to-postgres",
+    "dialect": "MsSqlServer",
+    "targetDialect": "Postgres",
+    "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.update.from",
+      "native-only",
+      "MsSqlServer",
+      "Postgres"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-update-from-to-sqlserver",
+    "dialect": "Postgres",
+    "targetDialect": "MsSqlServer",
+    "sql": "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.update.from",
+      "native-only",
+      "Postgres",
+      "MsSqlServer"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "insert-select-implicit-columns-cross-provider",
+    "dialect": "Postgres",
+    "targetDialect": "MySQL",
+    "sql": "INSERT INTO archive SELECT id, name FROM staged_users",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "SqlCompilationException",
+    "messageContains": [
+      "dml.insert_implicit_columns",
+      "native-only"
+    ],
+    "requireTypedDiagnostic": true,
+    "expectedDiagnosticCode": "SQL_SEMANTIC_VALIDATION_FAILED",
+    "expectedDiagnosticStage": "SemanticValidation",
+    "expectedDiagnosticCategory": "Semantic",
+    "requireDiagnosticSpan": true
+  },
+  {
+    "name": "postgres-unterminated-string",
+    "dialect": "Postgres",
+    "sql": "SELECT 'abc",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "Unterminated string literal"
+    ],
+    "expectedDiagnosticCode": "SQL_LEXICAL_ERROR",
+    "expectedDiagnosticStage": "Lexical",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "postgres-unbound-named-parameter",
+    "dialect": "Postgres",
+    "sql": "SELECT :id",
+    "expectedStage": "parse",
+    "exceptionTypeContains": "SqlParseException",
+    "messageContains": [
+      "Unbound SQL parameter"
+    ],
+    "expectedDiagnosticCode": "SQL_LEXICAL_ERROR",
+    "expectedDiagnosticStage": "Lexical",
+    "expectedDiagnosticCategory": "Syntax",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  },
+  {
+    "name": "postgres-unknown-qualified-column",
+    "dialect": "Postgres",
+    "sql": "SELECT missing.id FROM users",
+    "expectedStage": "compile",
+    "exceptionTypeContains": "InvalidOperationException",
+    "messageContains": [
+      "unknown table/alias qualifier"
+    ],
+    "expectedDiagnosticCode": "SQL_BINDING_ERROR",
+    "expectedDiagnosticStage": "Binding",
+    "expectedDiagnosticCategory": "Binding",
+    "requireDiagnosticSpan": true,
+    "requireTypedDiagnostic": true
+  }
+]

@@ -8,14 +8,12 @@ public abstract class SqlProviderBase :
     IProviderMetadataReader,
     IProviderDmlPreviewTransactionSource
 {
-    private IProviderLowerer? _lowerer;
     private IProviderErrorMapper? _errors;
     private IDmlPreviewTransactionFactory? _previewTransactions;
 
     public abstract SqlAgentToolType DbType { get; }
     public SqlAgentToolType Type => DbType;
     public IDbConnectionFactory Connections => this;
-    public IProviderLowerer Lowerer => _lowerer ??= new NativeSqlRenderer(DbType);
     public IProviderMetadataReader Metadata => this;
     public IProviderErrorMapper Errors => _errors ??= new ProviderExecutionErrorMapper(DbType);
     public virtual IDmlPreviewTransactionFactory PreviewTransactions =>

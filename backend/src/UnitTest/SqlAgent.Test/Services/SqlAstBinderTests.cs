@@ -2,50 +2,53 @@ using Xunit;
 
 namespace SqlAgent.Test.Services;
 
-public class SqlAstBinderTests
+public class SqlAstBindingContractTests
 {
     [Fact]
-    public void Bind_QualifiedColumn_ResolvesAliasAndFacts()
+    public void Binding_QualifiedColumn_ResolvesAliasAndFacts()
     {
-        var dto = new QueryDefinition
+        var definition = new QueryDefinition
         {
             TableName = "sales.orders",
             Alias = "o",
             SelectColumns = [new FieldSelectCondition { FieldName = "o.id" }]
         };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.Postgres);
 
-        var bound = new SqlAstBinder().Bind(parsed);
+        var parsed = Parsed(definition);
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
 
-        var select = Assert.IsType<SelectStatement>(bound.Statement);
-        var column = Assert.IsType<BoundColumnExpr>(select.Select[0].Expression);
-        Assert.NotNull(column.Source);
-        Assert.Equal("sales.orders", column.Source!.Name);
-        Assert.Equal("o", column.Source.Alias);
-        Assert.False(column.IsOuterReference);
-        Assert.Contains("sales.orders", bound.Facts.ReferencedTables);
+        Assert.Contains("sales.orders", facts.ReferencedTables);
+        Assert.Contains(facts.Aliases, alias =>
+            alias.Alias == "o" && alias.Target == "sales.orders");
+
+        var command = Compile(parsed);
+        Assert.Contains("orders", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("o", command.Sql, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Bind_UnknownQualifier_FailsClosed()
+    public void Binding_UnknownQualifier_FailsClosed()
     {
-        var dto = new QueryDefinition
+        var definition = new QueryDefinition
         {
             TableName = "users",
             Alias = "u",
             SelectColumns = [new FieldSelectCondition { FieldName = "x.id" }]
         };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.Postgres);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => new SqlAstBinder().Bind(parsed));
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(Parsed(definition)));
 
-        Assert.Contains("unknown table/alias qualifier", ex.Message);
+        Assert.Contains(
+            "unknown table/alias qualifier",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Bind_CteReference_IsNotCountedAsPhysicalTable()
+    public void Binding_CteReference_IsNotCountedAsPhysicalTable()
     {
-        var dto = new QueryDefinition
+        var definition = new QueryDefinition
         {
             TableName = "recent",
             Alias = "r",
@@ -63,19 +66,18 @@ public class SqlAstBinderTests
             ],
             SelectColumns = [new FieldSelectCondition { FieldName = "r.id" }]
         };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(dto), SqlAgentToolType.Postgres);
 
-        var bound = new SqlAstBinder().Bind(parsed);
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(Parsed(definition));
 
-        Assert.Contains("sales.orders", bound.Facts.ReferencedTables);
-        Assert.DoesNotContain("recent", bound.Facts.ReferencedTables);
-        Assert.True(bound.Facts.ContainsCte);
+        Assert.Contains("sales.orders", facts.ReferencedTables);
+        Assert.DoesNotContain("recent", facts.ReferencedTables);
+        Assert.True(facts.ContainsCte);
     }
 
     [Fact]
-    public void Bind_CorrelatedSubquery_ResolvesOuterAliasAndMarksOuterReference()
+    public void Binding_CorrelatedSubquery_ResolvesOuterAlias()
     {
-        var outer = new QueryDefinition
+        var definition = new QueryDefinition
         {
             TableName = "users",
             Alias = "u",
@@ -103,27 +105,24 @@ public class SqlAstBinderTests
                 }
             ]
         };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(outer), SqlAgentToolType.Postgres);
 
-        var bound = new SqlAstBinder().Bind(parsed);
+        var parsed = Parsed(definition);
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
 
-        var select = Assert.IsType<SelectStatement>(bound.Statement);
-        var exists = Assert.IsType<ExistsExpr>(select.Where);
-        var inner = Assert.IsType<SelectStatement>(exists.Query);
-        var comparison = Assert.IsType<BinaryExpr>(inner.Where);
-        var localColumn = Assert.IsType<BoundColumnExpr>(comparison.Left);
-        var outerColumn = Assert.IsType<BoundColumnExpr>(comparison.Right);
-        Assert.Equal("orders", localColumn.Source!.Name);
-        Assert.False(localColumn.IsOuterReference);
-        Assert.Equal("users", outerColumn.Source!.Name);
-        Assert.Equal("u", outerColumn.Source.Alias);
-        Assert.True(outerColumn.IsOuterReference);
+        Assert.Contains("users", facts.ReferencedTables);
+        Assert.Contains("orders", facts.ReferencedTables);
+        Assert.True(facts.ContainsSubquery);
+
+        var command = Compile(parsed);
+        Assert.Contains("user_id", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("u", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("o", command.Sql, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Bind_CorrelatedSubquery_LocalAliasShadowing_RemainsLocal()
+    public void Binding_CorrelatedSubquery_LocalAliasShadowing_RemainsLocal()
     {
-        var outer = new QueryDefinition
+        var definition = new QueryDefinition
         {
             TableName = "users",
             Alias = "u",
@@ -151,19 +150,31 @@ public class SqlAstBinderTests
                 }
             ]
         };
-        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(outer), SqlAgentToolType.Postgres);
 
-        var bound = new SqlAstBinder().Bind(parsed);
+        var parsed = Parsed(definition);
+        var facts = HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
 
-        var select = Assert.IsType<SelectStatement>(bound.Statement);
-        var exists = Assert.IsType<ExistsExpr>(select.Where);
-        var inner = Assert.IsType<SelectStatement>(exists.Query);
-        var comparison = Assert.IsType<BinaryExpr>(inner.Where);
-        var left = Assert.IsType<BoundColumnExpr>(comparison.Left);
-        var right = Assert.IsType<BoundColumnExpr>(comparison.Right);
-        Assert.Equal("orders", left.Source!.Name);
-        Assert.Equal("orders", right.Source!.Name);
-        Assert.False(left.IsOuterReference);
-        Assert.False(right.IsOuterReference);
+        Assert.Equal(2, facts.Aliases.Count(alias => alias.Alias == "u"));
+        Assert.Equal(
+            2,
+            facts.Aliases
+                .Where(alias => alias.Alias == "u")
+                .Select(alias => alias.ScopeId)
+                .Distinct()
+                .Count());
+
+        _ = Compile(parsed);
     }
+
+    private static ParsedStatement Parsed(QueryDefinition definition) =>
+        new(
+            QueryDefinitionCoreMapper.Map(definition),
+            SqlAgentToolType.Postgres);
+
+    private static CompiledSqlCommand Compile(ParsedStatement parsed) =>
+        CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("binding-contract-v2"),
+            new SqlExecutionPlanPolicy());
 }

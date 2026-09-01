@@ -160,14 +160,11 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     public async Task ExecuteQueryAsync_PostgresStringAggBackslashQuoteSeparator_ExecutesOnMySql()
     {
         const string separator = "\\'雪";
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT STRING_AGG(name, '\\''雪') AS names FROM users");
-        definition.SourceDialect = SqlAgentToolType.Postgres;
-
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "SELECT STRING_AGG(name, '\\''雪') AS names FROM users",
+            SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var names = document.RootElement[0]
@@ -186,14 +183,11 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
     [Fact]
     public async Task ExecuteQueryAsync_PostgresStringAggCustomSeparator_ExecutesOnMySql()
     {
-        var definition = SqlDefinitionParser.ParseQuery(
-            "SELECT STRING_AGG(name, '|') AS names FROM users");
-        definition.SourceDialect = SqlAgentToolType.Postgres;
-
-        var json = await Strategy.ExecuteQueryAsync(
-            definition,
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "SELECT STRING_AGG(name, '|') AS names FROM users",
+            SqlAgentToolType.Postgres,
             Fixture.ConnectionString,
-            cancellationToken: TestContext.Current.CancellationToken);
+            TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var names = document.RootElement[0]
@@ -206,4 +200,52 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
             new[] { "Alice", "Bob", "Charlie" },
             names.Split('|').OrderBy(value => value, StringComparer.Ordinal).ToArray());
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteMySqlNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT CAST(`id` AS SIGNED) AS item_id FROM `users`" +
+            ") SELECT item_id FROM recent ORDER BY item_id LIMIT 1",
+            SqlAgentToolType.MySQL,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_NestedInnerCte_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH outer_cte AS (" +
+            "WITH inner_cte AS (SELECT id AS item_id FROM users) " +
+            "SELECT item_id FROM inner_cte" +
+            ") SELECT item_id FROM outer_cte",
+            SqlAgentToolType.MySQL,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_RecursiveCte_UsesVerifiedSourceVersion()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH RECURSIVE x(n) AS (" +
+            "SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3" +
+            ") SELECT n FROM x ORDER BY n",
+            SqlAgentToolType.MySQL,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var values = document.RootElement
+            .EnumerateArray()
+            .Select(row => row.EnumerateObject().Single().Value.GetDecimal())
+            .ToArray();
+        Assert.Equal([1m, 2m, 3m], values);
+    }
+
 }

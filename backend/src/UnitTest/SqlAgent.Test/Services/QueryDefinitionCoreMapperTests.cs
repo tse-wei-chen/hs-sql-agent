@@ -33,7 +33,7 @@ public class QueryDefinitionCoreMapperTests
         var source = Assert.IsType<NamedTableSource>(statement.From);
         Assert.Equal("sales", source.Name.Parts[0].Value);
         Assert.Equal("orders", source.Name.Parts[1].Value);
-        Assert.Equal("o", source.Alias);
+        Assert.Equal("o", source.Alias?.Value);
         Assert.Equal(2, statement.Select.Length);
         var predicate = Assert.IsType<BinaryExpr>(statement.Where);
         Assert.Equal("AND", predicate.Operator);

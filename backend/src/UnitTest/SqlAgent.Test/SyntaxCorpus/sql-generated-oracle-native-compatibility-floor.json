@@ -1,0 +1,578 @@
+[
+  {
+    "name": "oracle-native__root__simple-source__default-null-order__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__simple-source__default-null-order__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__simple-source__default-null-order__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__simple-source__default-null-order__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-first__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-first__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-first__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-first__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-last__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-last__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-last__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__simple-source__nulls-last__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__join-source__default-null-order__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__join-source__default-null-order__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__join-source__default-null-order__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__join-source__default-null-order__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-first__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-first__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-first__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-first__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-last__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-last__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-last__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__join-source__nulls-last__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__exists-source__default-null-order__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__exists-source__default-null-order__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__exists-source__default-null-order__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__exists-source__default-null-order__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-first__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-first__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-first__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-first__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-last__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-last__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-last__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS ONLY"
+  },
+  {
+    "name": "oracle-native__root__exists-source__nulls-last__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS WITH TIES"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__default-null-order__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__default-null-order__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__default-null-order__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__default-null-order__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-first__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-first__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-first__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-first__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-last__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-last__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-last__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__simple-source__nulls-last__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__default-null-order__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__default-null-order__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__default-null-order__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__default-null-order__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-first__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-first__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-first__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-first__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-last__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-last__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-last__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__join-source__nulls-last__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u JOIN profiles p ON p.user_id = u.id ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__default-null-order__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__default-null-order__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__default-null-order__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__default-null-order__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-first__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-first__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-first__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-first__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS FIRST FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-last__rows-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-last__rows-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-last__percent-only",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS ONLY) SELECT id FROM native"
+  },
+  {
+    "name": "oracle-native__cte-body__exists-source__nulls-last__percent-with-ties",
+    "dialect": "Oracle",
+    "targetDialect": "Oracle",
+    "sourceVersion": "12.1",
+    "targetVersion": "12.1",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u WHERE EXISTS (SELECT id FROM audit_log a WHERE a.user_id = u.id) ORDER BY u.id NULLS LAST FETCH FIRST 12.5 PERCENT ROWS WITH TIES) SELECT id FROM native"
+  }
+]

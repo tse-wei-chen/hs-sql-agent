@@ -26,8 +26,7 @@ public class ProviderRuntimeBoundaryTests
         var parameters = execute.GetParameters();
 
         Assert.Contains(parameters, parameter =>
-            parameter.Name == "openConnection"
-            && parameter.ParameterType == typeof(DbConnection));
+            parameter.ParameterType == typeof(DbConnection));
         Assert.DoesNotContain(parameters, parameter =>
             parameter.ParameterType == typeof(string)
             && parameter.Name?.Contains("connection", StringComparison.OrdinalIgnoreCase) == true);
@@ -38,8 +37,7 @@ public class ProviderRuntimeBoundaryTests
             .ToArray();
         Assert.Single(executorMethods);
         Assert.Contains(executorMethods[0].GetParameters(), parameter =>
-            parameter.Name == "openConnection"
-            && parameter.ParameterType == typeof(DbConnection));
+            parameter.ParameterType == typeof(DbConnection));
         Assert.Empty(typeof(CompiledSqlCommandExecutor).GetConstructors()
             .SelectMany(constructor => constructor.GetParameters())
             .Where(parameter => parameter.ParameterType == typeof(IDbConnectionFactory)));

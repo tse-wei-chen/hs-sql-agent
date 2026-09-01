@@ -46,7 +46,8 @@ public class SqlAgentToolExecutionTests
             .Setup(x => x.ExecuteAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
-                It.Is<ParsedStatement>(p => IsTable(p, "public.users")),
+                It.Is<string>(candidate => candidate.Contains("public.users", StringComparison.OrdinalIgnoreCase)),
+                SqlAgentToolType.Postgres,
                 policy,
                 It.Is<IReadOnlySet<string>?>(tables => tables != null && tables.Contains("public.users")),
                 It.IsAny<CancellationToken>()))
@@ -109,7 +110,8 @@ public class SqlAgentToolExecutionTests
             .Setup(x => x.ExecuteAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
-                It.IsAny<ParsedStatement>(),
+                It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(),
                 It.IsAny<SecurityPolicyModel>(),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
@@ -161,7 +163,8 @@ public class SqlAgentToolExecutionTests
         typedQueryRuntime.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
-            It.IsAny<ParsedStatement>(),
+            It.IsAny<string>(),
+            It.IsAny<SqlAgentToolType>(),
             It.IsAny<SecurityPolicyModel>(),
             It.IsAny<IReadOnlySet<string>?>(),
             It.IsAny<CancellationToken>()), Times.Never);
@@ -203,7 +206,8 @@ public class SqlAgentToolExecutionTests
         typedQueryRuntime.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
-            It.IsAny<ParsedStatement>(),
+            It.IsAny<string>(),
+            It.IsAny<SqlAgentToolType>(),
             It.IsAny<SecurityPolicyModel>(),
             It.IsAny<IReadOnlySet<string>?>(),
             It.IsAny<CancellationToken>()), Times.Never);
@@ -239,7 +243,8 @@ public class SqlAgentToolExecutionTests
             .Setup(x => x.ExecuteAsync(
                 provider.Object,
                 "Host=localhost;Database=testdb",
-                It.IsAny<ParsedStatement>(),
+                It.IsAny<string>(),
+                SqlAgentToolType.Postgres,
                 policy,
                 null,
                 It.IsAny<CancellationToken>()))
@@ -260,10 +265,4 @@ public class SqlAgentToolExecutionTests
         typedQueryRuntime.VerifyAll();
     }
 
-    private static bool IsTable(ParsedStatement parsed, string expected)
-    {
-        if (parsed.Statement is not SelectStatement { From: NamedTableSource source }) return false;
-        var actual = string.Join('.', source.Name.Parts.Select(part => part.Value));
-        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
-    }
 }

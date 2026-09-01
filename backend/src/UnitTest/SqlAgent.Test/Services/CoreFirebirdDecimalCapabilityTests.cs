@@ -123,7 +123,7 @@ public sealed class CoreFirebirdDecimalCapabilityTests
             new InsertStatement(
                 new NamedTableSource(
                     SqlIdentifier.Unquoted("orders", span),
-                    Alias: null,
+                    null,
                     span),
                 [SqlIdentifier.Unquoted("amount", span)],
                 new InsertValuesSource(
@@ -141,5 +141,5 @@ public sealed class CoreFirebirdDecimalCapabilityTests
     private static SqlProviderCapabilityProfile FirebirdProfile(int majorVersion) =>
         new(
             SqlAgentToolType.Firebird,
-            ServerVersion: new Version(majorVersion, 0));
+            new Version(majorVersion, 0));
 }

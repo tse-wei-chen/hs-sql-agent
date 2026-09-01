@@ -178,14 +178,13 @@ public sealed class CoreSqlServerStringAggregateOrderingTests
     [Fact]
     public void Compile_StructuredOrdering_RequiresOnlySqlServerTargetRuntimeContract()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
+        var parsedSource = CoreSqlTextParser.ParseQuery(
             "SELECT STRING_AGG(name, ',' ORDER BY created_at) FROM users",
-            SqlAgentToolType.Postgres) with
-        {
-            SourceDialect = SqlAgentToolType.MySQL,
-            EnforceSourceDialectSyntax = false,
-            SourceProfile = null
-        };
+            SqlAgentToolType.Postgres);
+        var parsed = new ParsedStatement(
+            parsedSource.Statement,
+            SqlAgentToolType.MySQL,
+            false);
 
         var command = CoreSqlCompiler.CreateDefault().Compile(
             parsed,
@@ -244,6 +243,8 @@ public sealed class CoreSqlServerStringAggregateOrderingTests
         int? compatibilityLevel) =>
         new(
             SqlAgentToolType.MsSqlServer,
-            ServerVersion: serverVersion,
-            CompatibilityLevel: compatibilityLevel);
+            serverVersion,
+            compatibilityLevel,
+            null,
+            null);
 }

@@ -27,7 +27,7 @@ public sealed class CoreDmlReturningExpressionTests
         Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("doubled_id", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Single(command.Parameters);
-        Assert.Equal(1, command.Parameters[0].Value);
+        Assert.Equal(1L, Convert.ToInt64(command.Parameters[0].Value));
     }
 
     [Fact]
@@ -100,7 +100,9 @@ public sealed class CoreDmlReturningExpressionTests
 
         Assert.True(command.ReturnsRows);
         Assert.DoesNotContain(" + 2", command.Sql, StringComparison.Ordinal);
-        Assert.Equal(new object?[] { 1, 2 }, command.Parameters.Select(x => x.Value).ToArray());
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(1L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal(2L, Convert.ToInt64(command.Parameters[1].Value));
     }
 
     [Fact]
@@ -162,26 +164,28 @@ public sealed class CoreDmlReturningExpressionTests
     {
         IdentifierPart? aliasPart = alias is null
             ? null
-            : new IdentifierPart(alias, WasQuoted: false, SourceSpan.Unknown);
+            : new IdentifierPart(alias, false, SourceSpan.Unknown);
         var item = new DmlReturningExpressionItem(expression, aliasPart, SourceSpan.Unknown);
-        return parsed with
+        var returning = ImmutableArray.Create<DmlReturningItem>(item);
+
+        switch (parsed.Statement)
         {
-            Statement = parsed.Statement switch
-            {
-                InsertStatement insert => insert with
-                {
-                    Returning = ImmutableArray.Create<DmlReturningItem>(item)
-                },
-                UpdateStatement update => update with
-                {
-                    Returning = ImmutableArray.Create<DmlReturningItem>(item)
-                },
-                DeleteStatement delete => delete with
-                {
-                    Returning = ImmutableArray.Create<DmlReturningItem>(item)
-                },
-                _ => throw new InvalidOperationException("Expected DML statement.")
-            }
-        };
+            case InsertStatement insert:
+                insert.Returning = returning;
+                parsed.Statement = insert;
+                break;
+            case UpdateStatement update:
+                update.Returning = returning;
+                parsed.Statement = update;
+                break;
+            case DeleteStatement delete:
+                delete.Returning = returning;
+                parsed.Statement = delete;
+                break;
+            default:
+                throw new InvalidOperationException("Expected DML statement.");
+        }
+
+        return parsed;
     }
 }

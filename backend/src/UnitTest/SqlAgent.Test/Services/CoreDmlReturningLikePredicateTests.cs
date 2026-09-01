@@ -23,7 +23,9 @@ public sealed class CoreDmlReturningLikePredicateTests
         Assert.True(command.ReturnsRows);
         Assert.Contains(predicateOperator, command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(pattern, command.Sql, StringComparison.Ordinal);
-        Assert.Equal(new object?[] { 9, pattern }, command.Parameters.Select(x => x.Value).ToArray());
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(9L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal(pattern, command.Parameters[1].Value);
     }
 
     [Fact]
@@ -41,7 +43,9 @@ public sealed class CoreDmlReturningLikePredicateTests
         Assert.True(command.ReturnsRows);
         Assert.Contains("ESCAPE '!'", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("A!_%", command.Sql, StringComparison.Ordinal);
-        Assert.Equal(new object?[] { 9, "A!_%" }, command.Parameters.Select(x => x.Value).ToArray());
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(9L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal("A!_%", command.Parameters[1].Value);
     }
 
     [Fact]
@@ -56,14 +60,9 @@ public sealed class CoreDmlReturningLikePredicateTests
             "LIKE",
             new LiteralExpr("A!_%", SourceSpan.Unknown),
             SourceSpan.Unknown,
-            LikeEscape: "!!");
-        parsed = parsed with
-        {
-            Statement = delete with
-            {
-                Returning = [new DmlReturningExpressionItem(expression, null, SourceSpan.Unknown)]
-            }
-        };
+            "!!");
+        delete.Returning = [new DmlReturningExpressionItem(expression, null, SourceSpan.Unknown)];
+        parsed.Statement = delete;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(

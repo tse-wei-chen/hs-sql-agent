@@ -187,39 +187,31 @@ public sealed class CoreAggregateModifierTraversalTests
         var select = Assert.IsType<SelectStatement>(parsed.Statement);
         var projection = Assert.Single(select.Select);
         var function = Assert.IsType<FunctionCallExpr>(projection.Expression);
-        var ordered = function with
-        {
-            AggregateOrderBy =
-            [
-                new OrderByItem(
-                    orderExpression,
-                    Descending: false,
-                    NullOrderingKind.Default,
-                    SourceSpan.Unknown)
-            ]
-        };
-
-        return parsed with
-        {
-            Statement = select with
-            {
-                Select = [projection with { Expression = ordered }]
-            },
-            EnforceSourceDialectSyntax = false
-        };
+        function.AggregateOrderBy =
+        [
+            new OrderByItem(
+                orderExpression,
+                false,
+                NullOrderingKind.Default,
+                SourceSpan.Unknown)
+        ];
+        projection.Expression = function;
+        parsed.Statement = select;
+        parsed.EnforceSourceDialectSyntax = false;
+        return parsed;
     }
 
     private static SqlProviderCapabilityProfile MySqlProfile(params string[] modes) =>
         new(
             SqlAgentToolType.MySQL,
-            ServerVersion: new Version(8, 4),
-            SessionModes: new HashSet<string>(modes, StringComparer.OrdinalIgnoreCase));
+            new Version(8, 4),
+            new HashSet<string>(modes, StringComparer.OrdinalIgnoreCase));
 
     private static SqlProviderCapabilityProfile SqlServerProfile(
         int major,
         int compatibility) =>
         new(
             SqlAgentToolType.MsSqlServer,
-            ServerVersion: new Version(major, 0),
-            CompatibilityLevel: compatibility);
+            new Version(major, 0),
+            compatibility);
 }

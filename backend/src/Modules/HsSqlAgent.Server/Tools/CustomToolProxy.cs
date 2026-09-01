@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Diagnostics;
 using System.Text.Json;
 using Admin.Service.Data.Entites;
@@ -66,8 +67,8 @@ public class CustomToolProxy(
         }
 
         CustomSqlTool? tool = null;
-        ParsedStatement? auditQuery = null;
         QueryFacts? auditQueryFacts = null;
+        SqlAgentToolType? auditQueryDialect = null;
         ParsedStatement? auditDml = null;
         string renderedSql = string.Empty;
         try
@@ -115,9 +116,8 @@ public class CustomToolProxy(
 
             if (isQuery)
             {
-                var parsedQuery = CoreSqlTextParser.ParseQuery(renderedSql, dbType);
-                auditQuery = parsedQuery;
-                auditQueryFacts = new SqlAstBinder().Bind(parsedQuery).Facts;
+                auditQueryDialect = dbType;
+                auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
 
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
@@ -126,7 +126,8 @@ public class CustomToolProxy(
                     var execution = await _typedQueryRuntime.ExecuteAsync(
                         provider,
                         sqlConfig.ConnectionString,
-                        parsedQuery,
+                        renderedSql,
+                        dbType,
                         _securityPolicyRuntimeState.GetCurrent(),
                         ResolveTableWhitelist(),
                         cancellationToken);
@@ -136,7 +137,13 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var parsedDml = CoreSqlTextParser.ParseDml(renderedSql, dbType);
+                var parsedDml =
+                    await _typedDmlRuntime.ParseDmlWithVerifiedRuntimeProfileAsync(
+                        provider,
+                        sqlConfig.ConnectionString,
+                        renderedSql,
+                        dbType,
+                        cancellationToken);
                 auditDml = parsedDml;
                 TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
@@ -204,8 +211,8 @@ public class CustomToolProxy(
                     ReturnedRows = isQuery ? queryReturnedRows : null,
                     AffectedRows = isDml ? dmlAffectedRows : null,
                     ApprovalStatus = isDml ? "interactive-accepted" : null,
-                    Definition = isQuery && auditQuery != null
-                        ? DescribeQuery(auditQuery, auditQueryFacts)
+                    Definition = isQuery && auditQueryFacts != null
+                        ? DescribeQuery(renderedSql, dbType, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 $"Type: {tool.Type}",
@@ -221,7 +228,7 @@ public class CustomToolProxy(
                 new AuditEventContext
                 {
                     ToolName = _name,
-                    Operation = auditQuery != null
+                    Operation = auditQueryFacts != null
                         ? "select"
                         : auditDml is null ? null : DmlOperationName(auditDml),
                     DurationMs = auditDml == null
@@ -230,8 +237,8 @@ public class CustomToolProxy(
                     ReturnedRows = queryReturnedRows,
                     AffectedRows = dmlAffectedRows,
                     ErrorCategory = ex.GetType().Name,
-                    Definition = auditQuery != null
-                        ? DescribeQuery(auditQuery, auditQueryFacts)
+                    Definition = auditQueryFacts != null && auditQueryDialect.HasValue
+                        ? DescribeQuery(renderedSql, auditQueryDialect.Value, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 ex.Message,
@@ -247,14 +254,17 @@ public class CustomToolProxy(
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
         Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
-    private static string DescribeQuery(ParsedStatement parsed, QueryFacts? facts) =>
+    private static string DescribeQuery(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        QueryFacts facts) =>
         JsonSerializer.Serialize(new
         {
-            SourceDialect = parsed.SourceDialect.ToString(),
-            Span = new { parsed.Statement.Span.Start, parsed.Statement.Span.End },
-            ReferencedTables = facts?.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray() ?? [],
-            facts?.ContainsCte,
-            facts?.ContainsSubquery
+            SourceDialect = sourceDialect.ToString(),
+            Span = new { Start = 0, End = sql.Length },
+            ReferencedTables = facts.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
+            facts.ContainsCte,
+            facts.ContainsSubquery
         });
 
     private static string DescribeDml(ParsedStatement parsedDml)

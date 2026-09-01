@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
@@ -119,7 +120,7 @@ public class SqlAgentToolTests
     }
 
     [Fact]
-    public void BinderFacts_ShouldInspectNestedWindowSubqueries()
+    public void InspectionFacts_ShouldInspectNestedWindowSubqueries()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT LAG(order_date) OVER (" +
@@ -127,7 +128,7 @@ public class SqlAgentToolTests
             "ORDER BY COALESCE((SELECT id FROM secret_order_table), 0)) FROM orders",
             SqlAgentToolType.Postgres);
 
-        var facts = new SqlAstBinder().Bind(parsed).Facts;
+        var facts = SqlCoreInspection.GetQueryFacts(parsed);
 
         Assert.Contains("orders", facts.ReferencedTables);
         Assert.Contains("secret_partition_table", facts.ReferencedTables);
@@ -136,13 +137,13 @@ public class SqlAgentToolTests
     }
 
     [Fact]
-    public void BinderFacts_ShouldNotTreatTableAliasAsPhysicalTableExemption()
+    public void InspectionFacts_ShouldNotTreatTableAliasAsPhysicalTableExemption()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT secret.id FROM secret AS secret",
             SqlAgentToolType.Postgres);
 
-        var facts = new SqlAstBinder().Bind(parsed).Facts;
+        var facts = SqlCoreInspection.GetQueryFacts(parsed);
 
         Assert.Contains("secret", facts.ReferencedTables);
     }

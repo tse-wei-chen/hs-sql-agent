@@ -1,0 +1,578 @@
+[
+  {
+    "name": "postgres-native__root__plain__no-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id"
+  },
+  {
+    "name": "postgres-native__root__plain__no-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__no-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST"
+  },
+  {
+    "name": "postgres-native__root__plain__no-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__no-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST"
+  },
+  {
+    "name": "postgres-native__root__plain__no-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__cross-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id"
+  },
+  {
+    "name": "postgres-native__root__plain__cross-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__cross-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST"
+  },
+  {
+    "name": "postgres-native__root__plain__cross-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__cross-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST"
+  },
+  {
+    "name": "postgres-native__root__plain__cross-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__left-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id"
+  },
+  {
+    "name": "postgres-native__root__plain__left-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__left-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST"
+  },
+  {
+    "name": "postgres-native__root__plain__left-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__plain__left-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST"
+  },
+  {
+    "name": "postgres-native__root__plain__left-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__no-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__no-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__no-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS FIRST"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__no-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__no-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS LAST"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__no-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__cross-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__cross-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__cross-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__cross-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__cross-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__cross-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__left-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__left-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__left-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__left-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__left-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST"
+  },
+  {
+    "name": "postgres-native__root__distinct-on__left-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__no-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__no-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__no-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__no-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__no-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__no-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__cross-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__cross-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__cross-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__cross-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__cross-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__cross-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__left-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__left-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__left-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__left-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__left-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__plain__left-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__no-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__no-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__no-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS FIRST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__no-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__no-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS LAST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__no-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__cross-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__cross-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__cross-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__cross-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__cross-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__cross-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u CROSS JOIN LATERAL (SELECT u.id AS id) q ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__left-lateral__default-null-order__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__left-lateral__default-null-order__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__left-lateral__nulls-first__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__left-lateral__nulls-first__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS FIRST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__left-lateral__nulls-last__no-fetch",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST) SELECT id FROM native"
+  },
+  {
+    "name": "postgres-native__cte-body__distinct-on__left-lateral__nulls-last__fetch-with-ties",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "13.0",
+    "targetVersion": "13.0",
+    "sql": "WITH native AS (SELECT DISTINCT ON (u.id) u.id AS id FROM users u LEFT JOIN LATERAL (SELECT u.id AS id) q ON TRUE ORDER BY u.id NULLS LAST FETCH FIRST 5 ROWS WITH TIES) SELECT id FROM native"
+  }
+]

@@ -1,0 +1,1026 @@
+[
+  {
+    "name": "recursive__postgres__increment__select__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__postgres__increment__select__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__increment__physical-join__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__postgres__increment__physical-join__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__increment__correlated-exists__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__postgres__increment__correlated-exists__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__increment__root-set-operation__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__postgres__increment__root-set-operation__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__select__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__select__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__physical-join__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__physical-join__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__correlated-exists__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__correlated-exists__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__root-set-operation__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__postgres__arithmetic-expression__root-set-operation__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__select__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__select__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__physical-join__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__physical-join__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__correlated-exists__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__correlated-exists__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__root-set-operation__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__postgres__inner-join-physical__root-set-operation__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__select__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__select__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__physical-join__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__physical-join__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__correlated-exists__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__correlated-exists__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__root-set-operation__none",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__postgres__cross-join-physical__root-set-operation__order",
+    "dialect": "Postgres",
+    "targetDialect": "Postgres",
+    "sourceVersion": "16.0",
+    "targetVersion": "16.0",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__increment__select__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__mysql__increment__select__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__increment__physical-join__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__mysql__increment__physical-join__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__increment__correlated-exists__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__mysql__increment__correlated-exists__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__increment__root-set-operation__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__mysql__increment__root-set-operation__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__select__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__select__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__physical-join__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__physical-join__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__correlated-exists__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__correlated-exists__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__root-set-operation__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__mysql__arithmetic-expression__root-set-operation__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__select__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__select__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__physical-join__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__physical-join__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__correlated-exists__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__correlated-exists__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__root-set-operation__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__mysql__inner-join-physical__root-set-operation__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__select__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__select__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__physical-join__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__physical-join__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__correlated-exists__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__correlated-exists__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__root-set-operation__none",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__mysql__cross-join-physical__root-set-operation__order",
+    "dialect": "MySQL",
+    "targetDialect": "MySQL",
+    "sourceVersion": "8.0.1",
+    "targetVersion": "8.0.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__increment__select__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__sqlite__increment__select__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__increment__physical-join__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__sqlite__increment__physical-join__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__increment__correlated-exists__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__sqlite__increment__correlated-exists__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__increment__root-set-operation__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__sqlite__increment__root-set-operation__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__select__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__select__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__physical-join__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__physical-join__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__correlated-exists__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__correlated-exists__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__root-set-operation__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__sqlite__arithmetic-expression__root-set-operation__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__select__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__select__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__physical-join__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__physical-join__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__correlated-exists__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__correlated-exists__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__root-set-operation__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__sqlite__inner-join-physical__root-set-operation__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__select__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__select__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__physical-join__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__physical-join__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__correlated-exists__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__correlated-exists__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__root-set-operation__none",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__sqlite__cross-join-physical__root-set-operation__order",
+    "dialect": "Sqlite",
+    "targetDialect": "Sqlite",
+    "sourceVersion": "3.8.3",
+    "targetVersion": "3.8.3",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__increment__select__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__firebird__increment__select__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__increment__physical-join__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__firebird__increment__physical-join__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__increment__correlated-exists__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__firebird__increment__correlated-exists__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__increment__root-set-operation__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__firebird__increment__root-set-operation__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__select__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__select__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__physical-join__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__physical-join__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__correlated-exists__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__correlated-exists__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__root-set-operation__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__firebird__arithmetic-expression__root-set-operation__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT n + 2 - 1 FROM x WHERE n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__select__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__select__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__physical-join__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__physical-join__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__correlated-exists__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__correlated-exists__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__root-set-operation__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__firebird__inner-join-physical__root-set-operation__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x JOIN step_guard g ON g.id = x.n WHERE x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__select__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__select__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__physical-join__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__physical-join__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT x.n FROM x JOIN result_guard g ON g.id = x.n ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__correlated-exists__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n)"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__correlated-exists__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x WHERE EXISTS (SELECT id FROM result_guard g WHERE g.id = x.n) ORDER BY n"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__root-set-operation__none",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard"
+  },
+  {
+    "name": "recursive__firebird__cross-join-physical__root-set-operation__order",
+    "dialect": "Firebird",
+    "targetDialect": "Firebird",
+    "sourceVersion": "2.1",
+    "targetVersion": "2.1",
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 FROM RDB$DATABASE UNION ALL SELECT x.n + 1 FROM x CROSS JOIN step_guard g WHERE g.id = x.n AND x.n < 3) SELECT n FROM x UNION ALL SELECT id FROM result_guard ORDER BY n"
+  }
+]

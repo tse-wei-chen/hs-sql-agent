@@ -17,7 +17,7 @@ COPY backend/Directory.Build.props ./backend/
 COPY backend/src/Common/Common.csproj ./backend/src/Common/
 COPY backend/src/Modules/Admin.Service/Admin.Service.csproj ./backend/src/Modules/Admin.Service/
 COPY backend/src/Modules/SqlAgent.Service/SqlAgent.Service.csproj ./backend/src/Modules/SqlAgent.Service/
-COPY backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj ./backend/src/Modules/HsSqlAgent.SqlCore/
+COPY backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj ./backend/src/Modules/HsSqlAgent.SqlCore/
 COPY backend/src/Modules/HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj ./backend/src/Modules/HsSqlAgent.Provider.Abstractions/
 COPY backend/src/Modules/HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj ./backend/src/Modules/HsSqlAgent.Provider.PostgreSql/
 COPY backend/src/Modules/HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj ./backend/src/Modules/HsSqlAgent.Provider.MySql/

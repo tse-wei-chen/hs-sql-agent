@@ -94,13 +94,13 @@ public sealed class CorePostgresStringAggregateOrderingTests
     [Fact]
     public void Compile_StructuredOrderedStringAggregate_IsNotBoundToRawSourceDialect()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
+        var parsedSource = CoreSqlTextParser.ParseQuery(
             "SELECT STRING_AGG(name, ',' ORDER BY created_at) FROM users",
-            SqlAgentToolType.Postgres) with
-        {
-            SourceDialect = SqlAgentToolType.MySQL,
-            EnforceSourceDialectSyntax = false
-        };
+            SqlAgentToolType.Postgres);
+        var parsed = new ParsedStatement(
+            parsedSource.Statement,
+            SqlAgentToolType.MySQL,
+            false);
 
         var command = CoreSqlCompiler.CreateDefault().Compile(
             parsed,

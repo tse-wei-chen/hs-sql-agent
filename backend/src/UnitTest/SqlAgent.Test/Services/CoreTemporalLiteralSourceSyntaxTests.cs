@@ -34,6 +34,7 @@ public sealed class CoreTemporalLiteralSourceSyntaxTests
     [InlineData(SqlAgentToolType.Postgres, "TIME '12:34:56'")]
     [InlineData(SqlAgentToolType.Postgres, "TIMESTAMP '2026-08-24 12:34:56'")]
     [InlineData(SqlAgentToolType.Postgres, "TIMESTAMP WITH TIME ZONE '2026-08-24 12:34:56+00:00'")]
+    [InlineData(SqlAgentToolType.Postgres, "TIMESTAMP WITHOUT TIME ZONE '2026-08-24 12:34:56'")]
     [InlineData(SqlAgentToolType.MySQL, "DATE '2026-08-24'")]
     [InlineData(SqlAgentToolType.MySQL, "TIME '12:34:56'")]
     [InlineData(SqlAgentToolType.MySQL, "TIMESTAMP '2026-08-24 12:34:56'")]
@@ -56,6 +57,36 @@ public sealed class CoreTemporalLiteralSourceSyntaxTests
     }
 
     [Fact]
+    public void Parse_PostgresExplicitTimestampTimezoneIntent_IsPreserved()
+    {
+        var withZone = CoreSqlTextParser.ParseQuery(
+            "SELECT TIMESTAMP WITH TIME ZONE '2026-08-24T12:34:56+08:00'",
+            SqlAgentToolType.Postgres);
+        var withoutZone = CoreSqlTextParser.ParseQuery(
+            "SELECT TIMESTAMP WITHOUT TIME ZONE '2026-08-24T12:34:56'",
+            SqlAgentToolType.Postgres);
+
+        var withSelect = Assert.IsType<SelectStatement>(withZone.Statement);
+        var withoutSelect = Assert.IsType<SelectStatement>(withoutZone.Statement);
+        var withLiteral = Assert.IsType<LiteralExpr>(Assert.Single(withSelect.Select).Expression);
+        var withoutLiteral = Assert.IsType<LiteralExpr>(Assert.Single(withoutSelect.Select).Expression);
+
+        Assert.IsType<SqlOffsetDateTimeValue>(withLiteral.Value);
+        Assert.IsType<SqlLocalDateTimeValue>(withoutLiteral.Value);
+    }
+
+    [Theory]
+    [InlineData("TIMESTAMP WITH TIME ZONE '2026-08-24 12:34:56'")]
+    [InlineData("TIMESTAMP WITHOUT TIME ZONE '2026-08-24T12:34:56+08:00'")]
+    [InlineData("TIME WITH TIME ZONE '12:34:56+08:00'")]
+    [InlineData("TIMESTAMP '08/24/2026 12:34:56'")]
+    public void Parse_PostgresContradictoryOrNonPortableTemporalLiteral_FailsClosed(string literal)
+    {
+        Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery($"SELECT {literal}", SqlAgentToolType.Postgres));
+    }
+
+    [Fact]
     public void Compile_SqlServerCastDate_RemainsValidRawSourceSyntax()
     {
         var command = CompileQuery(
@@ -63,8 +94,10 @@ public sealed class CoreTemporalLiteralSourceSyntaxTests
             SqlAgentToolType.MsSqlServer,
             SqlAgentToolType.Postgres);
 
-        Assert.Contains("CAST(", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(" AS DATE)", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("2026-08-24", command.Sql, StringComparison.Ordinal);
+        var parameter = Assert.Single(command.Parameters);
+        var value = Assert.IsType<DateTime>(parameter.Value);
+        Assert.Equal(new DateTime(2026, 8, 24), value);
     }
 
     [Fact]

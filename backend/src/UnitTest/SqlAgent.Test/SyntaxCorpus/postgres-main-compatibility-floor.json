@@ -1,0 +1,190 @@
+[
+  {
+    "name": "select-basic",
+    "sql": "SELECT id FROM users"
+  },
+  {
+    "name": "cte-simple",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT id FROM x"
+  },
+  {
+    "name": "cte-column-alias",
+    "sql": "WITH x(id) AS (SELECT id FROM users) SELECT id FROM x"
+  },
+  {
+    "name": "cte-multiple",
+    "sql": "WITH x AS (SELECT id FROM users), y AS (SELECT id FROM x) SELECT id FROM y"
+  },
+  {
+    "name": "cte-where-ilike",
+    "sql": "WITH x AS (SELECT id FROM users WHERE name ILIKE 'a%') SELECT id FROM x"
+  },
+  {
+    "name": "cte-join-on",
+    "sql": "WITH x AS (SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id) SELECT id FROM x"
+  },
+  {
+    "name": "cte-join-using",
+    "sql": "WITH x AS (SELECT id FROM users JOIN accounts USING (id)) SELECT id FROM x"
+  },
+  {
+    "name": "cte-group-having",
+    "sql": "WITH x AS (SELECT user_id AS id FROM orders GROUP BY user_id HAVING COUNT(*) > 0) SELECT id FROM x"
+  },
+  {
+    "name": "cte-window",
+    "sql": "WITH x AS (SELECT id, LAG(id) OVER (ORDER BY id) AS previous_id FROM users) SELECT id FROM x"
+  },
+  {
+    "name": "cte-filter",
+    "sql": "WITH x AS (SELECT user_id AS id, SUM(amount) FILTER (WHERE status = 'open') AS total FROM orders GROUP BY user_id) SELECT id FROM x"
+  },
+  {
+    "name": "cte-subquery",
+    "sql": "WITH x AS (SELECT id FROM users WHERE id IN (SELECT user_id FROM orders)) SELECT id FROM x"
+  },
+  {
+    "name": "cte-set-body",
+    "sql": "WITH x AS (SELECT id FROM users UNION SELECT user_id AS id FROM orders) SELECT id FROM x"
+  },
+  {
+    "name": "cte-root-union",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT id FROM x UNION ALL SELECT id FROM x"
+  },
+  {
+    "name": "cte-order-limit-offset",
+    "sql": "WITH x AS (SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 1) SELECT id FROM x"
+  },
+  {
+    "name": "cte-nested-nonrecursive",
+    "sql": "WITH x AS (WITH y AS (SELECT id FROM users) SELECT id FROM y) SELECT id FROM x"
+  },
+  {
+    "name": "cte-subquery-reference",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT q.id FROM (SELECT id FROM x) q"
+  },
+  {
+    "name": "cte-physical-join",
+    "sql": "WITH x AS (SELECT id FROM users) SELECT x.id FROM x JOIN audit_log a ON a.id = x.id"
+  },
+  {
+    "name": "cte-quoted-identifier",
+    "sql": "WITH \"CaseCte\" AS (SELECT id FROM users) SELECT id FROM \"CaseCte\""
+  },
+  {
+    "name": "cte-postfix-cast",
+    "sql": "WITH x AS (SELECT id FROM events WHERE created_at::date >= DATE '2026-01-01') SELECT id FROM x"
+  },
+  {
+    "name": "cte-interval",
+    "sql": "WITH x AS (SELECT id FROM events WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '1 day') SELECT id FROM x"
+  },
+  {
+    "name": "root-intersect",
+    "sql": "SELECT id FROM alpha INTERSECT SELECT id FROM beta"
+  },
+  {
+    "name": "root-except",
+    "sql": "SELECT id FROM alpha EXCEPT SELECT id FROM beta"
+  },
+  {
+    "name": "root-intersect-all",
+    "sql": "SELECT id FROM alpha INTERSECT ALL SELECT id FROM beta"
+  },
+  {
+    "name": "root-except-all",
+    "sql": "SELECT id FROM alpha EXCEPT ALL SELECT id FROM beta"
+  },
+  {
+    "name": "join-using",
+    "sql": "SELECT id FROM alpha JOIN beta USING (id)"
+  },
+  {
+    "name": "join-using-multiple",
+    "sql": "SELECT tenant_id, id FROM alpha JOIN beta USING (tenant_id, id)"
+  },
+  {
+    "name": "recursive-cte",
+    "sql": "WITH RECURSIVE x AS (SELECT 1) SELECT * FROM x"
+  },
+  {
+    "name": "lateral-derived-source",
+    "sql": "SELECT q.id FROM LATERAL (SELECT id FROM users) q"
+  },
+  {
+    "name": "natural-join",
+    "sql": "SELECT id FROM alpha NATURAL JOIN beta"
+  },
+  {
+    "name": "fetch-first-only",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS ONLY"
+  },
+  {
+    "name": "fetch-first-with-ties",
+    "sql": "SELECT id FROM users ORDER BY id FETCH FIRST 10 ROWS WITH TIES"
+  },
+  {
+    "name": "distinct-on",
+    "sql": "SELECT DISTINCT ON (customer_id) customer_id, created_at FROM orders ORDER BY customer_id, created_at DESC"
+  },
+  {
+    "name": "nulls-last",
+    "sql": "SELECT id FROM users ORDER BY id NULLS LAST"
+  },
+  {
+    "name": "aggregate-filter",
+    "sql": "SELECT SUM(amount) FILTER (WHERE status = 'open') FROM orders"
+  },
+  {
+    "name": "window-frame",
+    "sql": "SELECT LAG(amount) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM orders"
+  },
+  {
+    "name": "dollar-quoted-string",
+    "sql": "SELECT $$O'Brien$$ AS value FROM users"
+  },
+  {
+    "name": "tagged-dollar-quoted-string",
+    "sql": "SELECT $tag$line 1 '2'$tag$ AS value FROM users"
+  },
+  {
+    "name": "typed-date",
+    "sql": "SELECT DATE '2026-08-21' FROM events"
+  },
+  {
+    "name": "typed-timestamp-zone",
+    "sql": "SELECT TIMESTAMP WITH TIME ZONE '2026-08-21T09:30:00+08:00' FROM events"
+  },
+  {
+    "name": "postfix-cast",
+    "sql": "SELECT created_at::date FROM events"
+  },
+  {
+    "name": "interval-arithmetic",
+    "sql": "SELECT created_at + INTERVAL '1 day' FROM events"
+  },
+  {
+    "name": "expression-in-list",
+    "sql": "SELECT id FROM users WHERE id IN (other_id, ABS(1))"
+  },
+  {
+    "name": "root-limit-offset",
+    "sql": "SELECT id FROM users ORDER BY id LIMIT 10 OFFSET 5"
+  },
+  {
+    "name": "schema-qualified-function",
+    "sql": "SELECT pg_catalog.lower(name) FROM users"
+  },
+  {
+    "name": "quoted-identifier",
+    "sql": "SELECT \"MixedCase\" FROM users"
+  },
+  {
+    "name": "comma-from",
+    "sql": "SELECT a.id FROM alpha a, beta b WHERE a.id = b.id"
+  },
+  {
+    "name": "correlated-exists",
+    "sql": "SELECT u.id FROM users u WHERE EXISTS (SELECT o.id FROM orders o WHERE o.user_id = u.id)"
+  }
+]

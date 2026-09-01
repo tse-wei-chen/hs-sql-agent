@@ -7,18 +7,8 @@ public class CoreDmlCompilerBoundaryTests
     [Fact]
     public void Compile_ParsedUpdate_ProducesTypedCommand()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Update,
-            TableName = "public.users",
-            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }],
-            WhereConditions =
-            [
-                new BasicWhereCondition { FieldName = "id", Operator = "=", Value = 7 }
-            ]
-        };
-        var parsed = new ParsedStatement(
-            DmlDefinitionCoreMapper.Map(definition),
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE public.users SET status = 'disabled' WHERE id = 7",
             SqlAgentToolType.Postgres);
 
         var command = CoreDmlCompiler.CreateDefault().Compile(
@@ -34,14 +24,8 @@ public class CoreDmlCompilerBoundaryTests
     [Fact]
     public void Compile_ParsedUpdateWithoutPredicate_IsDeniedByCorePolicy()
     {
-        var definition = new DmlDefinition
-        {
-            Operation = DmlOperation.Update,
-            TableName = "public.users",
-            Values = [new NameValuePair { FieldName = "status", Value = "disabled" }]
-        };
-        var parsed = new ParsedStatement(
-            DmlDefinitionCoreMapper.Map(definition),
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE public.users SET status = 'disabled'",
             SqlAgentToolType.Postgres);
 
         Assert.Throws<UnauthorizedAccessException>(() =>
@@ -54,12 +38,8 @@ public class CoreDmlCompilerBoundaryTests
     [Fact]
     public void Compile_QueryParsedStatement_IsRejectedByDmlCompiler()
     {
-        var parsed = new ParsedStatement(
-            QueryDefinitionCoreMapper.Map(new QueryDefinition
-            {
-                TableName = "public.users",
-                SelectColumns = [new FieldSelectCondition { FieldName = "id" }]
-            }),
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT id FROM public.users",
             SqlAgentToolType.Postgres);
 
         var error = Assert.Throws<SqlCompilationException>(() =>

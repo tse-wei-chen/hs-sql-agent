@@ -55,18 +55,25 @@ public static class RuntimeServerProfileVerifier
         var trimmed = value.Trim();
         if (Version.TryParse(trimmed, out var exact)) return exact;
 
-        var tokenLength = 0;
-        while (tokenLength < trimmed.Length)
+        for (var start = 0; start < trimmed.Length; start++)
         {
-            var ch = trimmed[tokenLength];
-            if (!(char.IsDigit(ch) || ch == '.')) break;
-            tokenLength++;
+            if (!char.IsDigit(trimmed[start])) continue;
+
+            var end = start;
+            while (end < trimmed.Length
+                   && (char.IsDigit(trimmed[end]) || trimmed[end] == '.'))
+            {
+                end++;
+            }
+
+            var candidate = trimmed[start..end].TrimEnd('.');
+            if (Version.TryParse(candidate, out var embedded))
+                return embedded;
+
+            start = end;
         }
 
-        return tokenLength > 0
-               && Version.TryParse(trimmed[..tokenLength].TrimEnd('.'), out var prefix)
-            ? prefix
-            : null;
+        return null;
     }
 
     private static string NormalizeIdentity(string? value) => value?.Trim() ?? string.Empty;

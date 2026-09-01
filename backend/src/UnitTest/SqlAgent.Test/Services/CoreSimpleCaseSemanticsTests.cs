@@ -70,33 +70,41 @@ public class CoreSimpleCaseSemanticsTests
         var simple = Assert.IsType<SimpleCaseExpr>(projection.Expression);
         var branches = simple.Branches.ToArray();
         var second = Assert.IsType<BinaryExpr>(branches[1].Condition);
-        branches[1] = branches[1] with
-        {
-            Condition = second with
-            {
-                Left = new ColumnExpr(
+        branches[1] = new CaseBranch(
+            new BinaryExpr(
+                new ColumnExpr(
                     SqlIdentifier.Unquoted("other_id", SourceSpan.Unknown),
-                    SourceSpan.Unknown)
-            }
-        };
+                    SourceSpan.Unknown),
+                second.Operator,
+                second.Right,
+                second.Span,
+                second.LikeEscape),
+            branches[1].Value);
 
-        var malformed = parsed with
-        {
-            Statement = select with
-            {
-                Select =
-                [
-                    projection with
-                    {
-                        Expression = simple with
-                        {
-                            Branches = branches.ToImmutableArray()
-                        }
-                    }
-                ]
-            },
-            EnforceSourceDialectSyntax = false
-        };
+        var malformedSimple = new SimpleCaseExpr(
+            branches.ToImmutableArray(),
+            simple.ElseExpression,
+            simple.Span);
+        var malformedProjection = new SelectItem(
+            malformedSimple,
+            projection.Alias,
+            projection.Span);
+        var malformedSelect = new SelectStatement(
+            select.Ctes,
+            select.Distinct,
+            [malformedProjection],
+            select.From,
+            select.Joins,
+            select.Where,
+            select.GroupBy,
+            select.Having,
+            select.OrderBy,
+            select.Limit,
+            select.Offset,
+            select.Span);
+        parsed.Statement = malformedSelect;
+        parsed.EnforceSourceDialectSyntax = false;
+        var malformed = parsed;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreSqlCompiler.CreateDefault().Compile(

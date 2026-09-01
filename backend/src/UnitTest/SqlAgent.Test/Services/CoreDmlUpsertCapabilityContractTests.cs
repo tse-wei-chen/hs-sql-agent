@@ -9,8 +9,10 @@ public sealed class CoreDmlUpsertCapabilityContractTests
     {
         var oldProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Sqlite,
-            ServerVersion: new Version(3, 23));
-        var currentProfile = oldProfile with { ServerVersion = new Version(3, 24) };
+            new Version(3, 23));
+        var currentProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            new Version(3, 24));
 
         Assert.Equal(
             SqlCapabilityStatus.Rejected,

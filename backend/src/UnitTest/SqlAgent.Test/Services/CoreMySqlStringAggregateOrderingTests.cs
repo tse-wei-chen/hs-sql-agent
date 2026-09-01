@@ -122,14 +122,13 @@ public sealed class CoreMySqlStringAggregateOrderingTests
     [Fact]
     public void Compile_StructuredOrdering_ToMySql_DoesNotRequireSourceProfile()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
+        var parsedSource = CoreSqlTextParser.ParseQuery(
             "SELECT STRING_AGG(name, '|' ORDER BY created_at DESC) FROM users",
-            SqlAgentToolType.Postgres) with
-        {
-            SourceDialect = SqlAgentToolType.Oracle,
-            EnforceSourceDialectSyntax = false,
-            SourceProfile = null
-        };
+            SqlAgentToolType.Postgres);
+        var parsed = new ParsedStatement(
+            parsedSource.Statement,
+            SqlAgentToolType.Oracle,
+            false);
 
         var command = CoreSqlCompiler.CreateDefault().Compile(
             parsed,

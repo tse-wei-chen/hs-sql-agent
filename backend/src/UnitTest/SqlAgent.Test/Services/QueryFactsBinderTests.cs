@@ -110,6 +110,6 @@ public class QueryFactsBinderTests
         var parsed = new ParsedStatement(
             QueryDefinitionCoreMapper.Map(definition),
             SqlAgentToolType.Postgres);
-        return new SqlAstBinder().Bind(parsed).Facts;
+        return HsSqlAgent.SqlCore.SqlCoreInspection.GetQueryFacts(parsed);
     }
 }

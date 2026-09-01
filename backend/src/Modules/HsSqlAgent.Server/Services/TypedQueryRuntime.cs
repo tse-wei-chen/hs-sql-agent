@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
@@ -10,57 +11,77 @@ public interface ITypedQueryRuntime
     Task<QueryExecutionResult> ExecuteAsync(
         ISqlProvider provider,
         string connectionString,
-        ParsedStatement parsed,
+        string sql,
+        SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Server-side SELECT execution boundary. Callers pass a parser-native or explicitly mapped
-/// <see cref="ParsedStatement"/>; compilation and execution after this boundary never depend on
-/// transport DTOs or legacy strategy translators.
+/// Server-side SELECT execution boundary. SQL text enters the F# compiler facade directly; callers
+/// cannot construct or mutate a compatibility AST to bypass binding, validation, policy, or rendering.
 /// </summary>
 public sealed class TypedQueryRuntime : ITypedQueryRuntime
 {
     public CompiledSqlCommand Compile(
         ISqlProvider provider,
-        ParsedStatement parsed,
+        string sql,
+        SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables) =>
-        Compile(provider, parsed, policy, allowedTables, targetProfile: null);
+        Compile(provider, sql, sourceDialect, policy, allowedTables, targetProfile: null);
 
     internal CompiledSqlCommand Compile(
         ISqlProvider provider,
-        ParsedStatement parsed,
+        string sql,
+        SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         SqlProviderCapabilityProfile? targetProfile)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        ArgumentNullException.ThrowIfNull(parsed);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sql);
         ArgumentNullException.ThrowIfNull(policy);
 
-        return CoreSqlCompiler.CreateDefault().Compile(
-            parsed,
+        var validationContext = new SqlPlanValidationContext(
+            ComputePolicyVersion(policy, allowedTables),
+            allowedTables);
+        var executionPolicy = new SqlExecutionPlanPolicy(policy.QueryMaxRows);
+
+        if (targetProfile is not null
+            && sourceDialect == provider.Type)
+        {
+            return SqlCoreFacade.CompileQuery(
+                sql,
+                sourceDialect,
+                provider.Type,
+                validationContext,
+                executionPolicy,
+                targetProfile,
+                targetProfile);
+        }
+
+        return SqlCoreFacade.CompileQuery(
+            sql,
+            sourceDialect,
             provider.Type,
-            new SqlPlanValidationContext(
-                ComputePolicyVersion(policy, allowedTables),
-                allowedTables),
-            new SqlExecutionPlanPolicy(policy.QueryMaxRows),
+            validationContext,
+            executionPolicy,
             targetProfile);
     }
 
     public async Task<QueryExecutionResult> ExecuteAsync(
         ISqlProvider provider,
         string connectionString,
-        ParsedStatement parsed,
+        string sql,
+        SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        ArgumentNullException.ThrowIfNull(parsed);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sql);
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -71,7 +92,8 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
             var verifiedProfile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
             var command = Compile(
                 provider,
-                parsed,
+                sql,
+                sourceDialect,
                 policy,
                 allowedTables,
                 verifiedProfile.TargetProfile);

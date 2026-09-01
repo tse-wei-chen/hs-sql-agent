@@ -37,7 +37,13 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\..\Modules\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.csproj" />
+		<None Update="SyntaxCorpus\*.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>Never</CopyToPublishDirectory>
+		</None>
+	</ItemGroup>
+	<ItemGroup>
+<ProjectReference Include="..\..\Modules\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.fsproj" />
 		<ProjectReference Include="..\..\Modules\HsSqlAgent.Provider.Abstractions\HsSqlAgent.Provider.Abstractions.csproj" />
 		<ProjectReference Include="..\..\Modules\HsSqlAgent.Provider.PostgreSql\HsSqlAgent.Provider.PostgreSql.csproj" />
 		<ProjectReference Include="..\..\Modules\HsSqlAgent.Provider.MySql\HsSqlAgent.Provider.MySql.csproj" />

@@ -482,4 +482,18 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
         Assert.Equal(2, rows.Count);
         Assert.Equal("Bob", rows[0].GetProperty("uname").GetString());
     }
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteOracleNativeSyntax_Executes()
+    {
+        var json = await Strategy.ExecuteRawQueryAsync(
+            "WITH recent AS (" +
+            "SELECT SYSDATE AS item_date FROM dual" +
+            ") SELECT item_date FROM recent",
+            SqlAgentToolType.Oracle,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEqual("[]", json);
+    }
+
 }

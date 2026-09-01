@@ -39,11 +39,15 @@ public partial class SqlAgentTool
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
                 return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
 
-            parsedMutation = CoreSqlTextParser.ParseDml(sql, dbType);
+            var provider = _sqlProviderFactory.GetProvider(dbType);
+            parsedMutation = await _typedDmlRuntime.ParseDmlWithVerifiedRuntimeProfileAsync(
+                provider,
+                sqlConfig.ConnectionString,
+                sql,
+                dbType,
+                cancellationToken);
             var descriptor = DescribeMutation(parsedMutation);
             TypedDmlRuntime.EnsureSupportedStatement(parsedMutation.Statement);
-
-            var provider = _sqlProviderFactory.GetProvider(dbType);
             var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(
                 _httpContextAccessor.HttpContext,
                 dbType);

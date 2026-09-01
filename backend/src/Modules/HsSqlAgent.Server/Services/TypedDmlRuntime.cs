@@ -25,6 +25,34 @@ public sealed class TypedDmlRuntime(
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
     private readonly IDmlPreviewTransactionFactory? _previewTransactionFactory = previewTransactionFactory;
 
+    public async Task<ParsedStatement> ParseDmlWithVerifiedRuntimeProfileAsync(
+        ISqlProvider provider,
+        string connectionString,
+        string sql,
+        SqlAgentToolType sourceDialect,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sql);
+
+        await using var verificationConnection =
+            provider.Connections.Create(connectionString);
+        await verificationConnection.OpenAsync(cancellationToken);
+        var verifiedProfile = RuntimeServerProfileVerifier.Capture(
+            provider.Type,
+            verificationConnection);
+
+        return sourceDialect == provider.Type
+            ? CoreSqlTextParser.ParseDml(
+                sql,
+                sourceDialect,
+                verifiedProfile.TargetProfile)
+            : CoreSqlTextParser.ParseDml(
+                sql,
+                sourceDialect);
+    }
+
     public async Task<TypedDmlApprovalSession> PreviewAsync(
         ISqlProvider provider,
         string connectionString,

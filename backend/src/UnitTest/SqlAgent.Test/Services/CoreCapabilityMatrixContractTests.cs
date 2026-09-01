@@ -112,7 +112,7 @@ public class CoreCapabilityMatrixContractTests
         Assert.Contains("SQL Server raw OFFSET/FETCH requires statement-level ORDER BY", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("FETCH requires a preceding OFFSET", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("TOP cannot share the same query scope", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("FETCH PERCENT", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("select.fetch_percent", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WITH TIES", rowLimit.Detail, StringComparison.OrdinalIgnoreCase);
     }
 

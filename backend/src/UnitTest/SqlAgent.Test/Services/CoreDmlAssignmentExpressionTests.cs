@@ -33,7 +33,7 @@ public class CoreDmlAssignmentExpressionTests
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.Contains("CURRENT_DATE", command.Sql, StringComparison.OrdinalIgnoreCase);
         var parameter = Assert.Single(command.Parameters);
-        Assert.Equal(11077, parameter.Value);
+        Assert.Equal(11077L, Convert.ToInt64(parameter.Value));
     }
 
     [Fact]
@@ -71,7 +71,9 @@ public class CoreDmlAssignmentExpressionTests
         Assert.DoesNotContain("2026-08-23", command.Sql, StringComparison.Ordinal);
         Assert.Equal(2, command.Parameters.Count(parameter =>
             parameter.Value is DateTime dateTime && dateTime == new DateTime(2026, 8, 23)));
-        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 11077));
+        Assert.Contains(command.Parameters, parameter =>
+            parameter.Value is int intValue && intValue == 11077
+            || parameter.Value is long longValue && longValue == 11077L);
     }
 
     [Fact]
@@ -84,9 +86,10 @@ public class CoreDmlAssignmentExpressionTests
 
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.DoesNotContain("open", command.Sql, StringComparison.Ordinal);
-        Assert.Equal(
-            new object?[] { "open", 2, 11077 },
-            command.Parameters.Select(parameter => parameter.Value).ToArray());
+        Assert.Equal(3, command.Parameters.Length);
+        Assert.Equal("open", command.Parameters[0].Value);
+        Assert.Equal(2L, Convert.ToInt64(command.Parameters[1].Value));
+        Assert.Equal(11077L, Convert.ToInt64(command.Parameters[2].Value));
     }
 
     [Fact]
@@ -101,7 +104,7 @@ public class CoreDmlAssignmentExpressionTests
 
         Assert.Equal("+", binary.Operator);
         Assert.IsType<ColumnExpr>(binary.Left);
-        Assert.Equal(1, Assert.IsType<LiteralExpr>(binary.Right).Value);
+        Assert.Equal(1L, Convert.ToInt64(Assert.IsType<LiteralExpr>(binary.Right).Value));
     }
 
     [Theory]
@@ -121,9 +124,9 @@ public class CoreDmlAssignmentExpressionTests
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.Contains(" SET ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("+", command.Sql, StringComparison.Ordinal);
-        Assert.Equal(
-            new object?[] { 1, 11077 },
-            command.Parameters.Select(parameter => parameter.Value).ToArray());
+        Assert.Equal(2, command.Parameters.Length);
+        Assert.Equal(1L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal(11077L, Convert.ToInt64(command.Parameters[1].Value));
     }
 
     [Fact]
@@ -135,7 +138,7 @@ public class CoreDmlAssignmentExpressionTests
             SqlAgentToolType.Oracle);
 
         Assert.Contains("LOWER", command.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(7, Assert.Single(command.Parameters).Value);
+        Assert.Equal(7L, Convert.ToInt64(Assert.Single(command.Parameters).Value));
     }
 
     [Fact]
@@ -149,9 +152,11 @@ public class CoreDmlAssignmentExpressionTests
         Assert.Contains("CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("large", command.Sql, StringComparison.Ordinal);
         Assert.DoesNotContain("small", command.Sql, StringComparison.Ordinal);
-        Assert.Equal(
-            new object?[] { 100, "large", "small", 7 },
-            command.Parameters.Select(parameter => parameter.Value).ToArray());
+        Assert.Equal(4, command.Parameters.Length);
+        Assert.Equal(100L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal("large", command.Parameters[1].Value);
+        Assert.Equal("small", command.Parameters[2].Value);
+        Assert.Equal(7L, Convert.ToInt64(command.Parameters[3].Value));
     }
 
     [Fact]

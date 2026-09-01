@@ -9,8 +9,10 @@ public sealed class CoreDmlReturningCapabilityContractTests
     {
         var oldProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Sqlite,
-            ServerVersion: new Version(3, 34));
-        var currentProfile = oldProfile with { ServerVersion = new Version(3, 35) };
+            new Version(3, 34));
+        var currentProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            new Version(3, 35));
 
         Assert.Equal(
             SqlCapabilityStatus.Rejected,
@@ -42,8 +44,10 @@ public sealed class CoreDmlReturningCapabilityContractTests
     {
         var oldProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Firebird,
-            ServerVersion: new Version(4, 0));
-        var currentProfile = oldProfile with { ServerVersion = new Version(5, 0) };
+            new Version(4, 0));
+        var currentProfile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Firebird,
+            new Version(5, 0));
 
         Assert.Equal(
             SqlCapabilityStatus.Rejected,

@@ -8,6 +8,10 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   infrastructure-test:
     runs-on: ubuntu-latest
@@ -61,6 +65,20 @@ jobs:
           dotnet-version: "10.0.x"
       - run: dotnet test backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
 
+  sqlagent-syntax-matrix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Run generated SQL grammar matrices
+        run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
+
   sqlagent-test:
     runs-on: ubuntu-latest
     permissions:
@@ -88,21 +106,89 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Run remaining SQL service tests
+        run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests'
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+
+
+  sqlagent-test-rest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: test
+        ports:
+          - 3306:3306
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services'
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+
+  sqlagent-package-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: Enable pnpm
         run: corepack enable pnpm
-      - run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-        env:
-          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
-          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+      - name: Verify SqlCore identity cutover
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj
+          test -f "$project"
+          grep -Fq '<PackageId>HsSqlAgent.SqlCore</PackageId>' "$project"
+          grep -Fq '<AssemblyName>HsSqlAgent.SqlCore</AssemblyName>' "$project"
+          grep -Fq 'COPY backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj ./backend/src/Modules/HsSqlAgent.SqlCore/' Dockerfile
+          stale_identity='HsSqlAgent.SqlCore''.FSharp'
+          if grep -RIn \
+              --exclude-dir=.git \
+              --include='*.csproj' \
+              --include='*.fsproj' \
+              --include='*.slnx' \
+              --include='*.yml' \
+              --include='*.yaml' \
+              "$stale_identity" .github backend \
+             || grep -n "$stale_identity" Dockerfile; then
+            echo "Stale temporary SqlCore.FSharp identity remains." >&2
+            exit 1
+          fi
       - name: Pack public NuGet packages
         shell: bash
         run: |
           set -euo pipefail
           projects=(
-            backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj
+            backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj
             backend/src/Modules/HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj
             backend/src/Modules/HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj
             backend/src/Modules/HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj
@@ -152,3 +238,199 @@ jobs:
         working-directory: frontend
       - run: pnpm lint
         working-directory: frontend
+
+  sql-syntax-parity:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build differential parity runner
+        run: dotnet build .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj --configuration Release
+      - name: Build PR SqlCore
+        run: dotnet build backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj --configuration Release --output artifacts/parity/head
+      - name: Capture PR syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
+          artifacts/parity/head.json
+      - name: Capture PR generated syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
+          artifacts/parity/head-generated.json
+      - name: Capture PR generated recursive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-compatibility-floor.json
+          artifacts/parity/head-generated-recursive.json
+      - name: Capture PR generated PostgreSQL native syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-compatibility-floor.json
+          artifacts/parity/head-generated-postgres-native.json
+      - name: Capture PR generated Oracle native syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-compatibility-floor.json
+          artifacts/parity/head-generated-oracle-native.json
+      - name: Capture PR generated profile-sensitive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-compatibility-floor.json
+          artifacts/parity/head-generated-profile-sensitive.json
+      - name: Capture PR generated DML behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-compatibility-floor.json
+          artifacts/parity/head-generated-dml.json
+      - name: Capture PR generated DML predicate behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-compatibility-floor.json
+          artifacts/parity/head-generated-dml-predicate.json
+      - name: Enforce negative syntax failure stages
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          verify-negative artifacts/parity/head/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-negative-syntax-contract.json
+      - name: Build base main SqlCore
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_SHA" --depth=1
+          git worktree add --detach /tmp/hs-sql-agent-main "$BASE_SHA"
+          dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.csproj \
+            --configuration Release \
+            --output artifacts/parity/main
+      - name: Capture base main syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-main-compatibility-floor.json
+          artifacts/parity/main.json
+      - name: Capture base main generated syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-compatibility-floor.json
+          artifacts/parity/main-generated.json
+      - name: Capture base main generated recursive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-compatibility-floor.json
+          artifacts/parity/main-generated-recursive.json
+      - name: Capture base main generated PostgreSQL native syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-compatibility-floor.json
+          artifacts/parity/main-generated-postgres-native.json
+      - name: Capture base main generated Oracle native syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-compatibility-floor.json
+          artifacts/parity/main-generated-oracle-native.json
+      - name: Capture base main generated profile-sensitive syntax behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-compatibility-floor.json
+          artifacts/parity/main-generated-profile-sensitive.json
+      - name: Capture base main generated DML behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-compatibility-floor.json
+          artifacts/parity/main-generated-dml.json
+      - name: Capture base main generated DML predicate behavior
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          run artifacts/parity/main/HsSqlAgent.SqlCore.dll
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-compatibility-floor.json
+          artifacts/parity/main-generated-dml-predicate.json
+      - name: Enforce main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main.json artifacts/parity/head.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-intentional-breaking-allowlist.json
+      - name: Enforce generated main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated.json artifacts/parity/head-generated.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-intentional-breaking-allowlist.json
+      - name: Enforce generated recursive main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-recursive.json artifacts/parity/head-generated-recursive.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-recursive-intentional-breaking-allowlist.json
+      - name: Enforce generated PostgreSQL native main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-postgres-native.json artifacts/parity/head-generated-postgres-native.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-postgres-native-intentional-breaking-allowlist.json
+      - name: Enforce generated Oracle native main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-oracle-native.json artifacts/parity/head-generated-oracle-native.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-oracle-native-intentional-breaking-allowlist.json
+      - name: Enforce generated profile-sensitive main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-profile-sensitive.json artifacts/parity/head-generated-profile-sensitive.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-profile-sensitive-intentional-breaking-allowlist.json
+      - name: Enforce generated DML main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-dml.json artifacts/parity/head-generated-dml.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-intentional-breaking-allowlist.json
+      - name: Enforce generated DML predicate main compatibility floor
+        run: >
+          dotnet run --project .github/tools/SqlSyntaxParityRunner/SqlSyntaxParityRunner.csproj
+          --configuration Release --no-build --
+          compare artifacts/parity/main-generated-dml-predicate.json artifacts/parity/head-generated-dml-predicate.json
+          backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-generated-dml-predicate-intentional-breaking-allowlist.json
+

@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Data.Common;
 using System.Text.Json;
 using SqlAgent.Service.Core.Execution;
@@ -56,6 +57,62 @@ public sealed class CoreStrategyTestHarness<TStrategy>
             connectionString,
             new SqlExecutionPolicy { QueryTimeoutSeconds = 30 },
             cancellationToken);
+
+    public async Task<string> ExecuteRawQueryAsync(
+        string sql,
+        SqlAgentToolType sourceDialect,
+        string? connectionString = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sql);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        await using var connection = _provider.Connections.Create(connectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw _provider.Errors.Map(ex, "query");
+        }
+
+        var verifiedProfile =
+            RuntimeServerProfileVerifier.Capture(DbType, connection);
+        var validationContext =
+            new SqlPlanValidationContext("provider-integration-raw");
+        var executionPolicy = new SqlExecutionPlanPolicy();
+        var command = sourceDialect == DbType
+            ? SqlCoreFacade.CompileQuery(
+                sql,
+                sourceDialect,
+                DbType,
+                validationContext,
+                executionPolicy,
+                verifiedProfile.TargetProfile,
+                verifiedProfile.TargetProfile)
+            : SqlCoreFacade.CompileQuery(
+                sql,
+                sourceDialect,
+                DbType,
+                validationContext,
+                executionPolicy,
+                verifiedProfile.TargetProfile);
+
+        try
+        {
+            var execution = await _executor.ExecuteQueryAsync(
+                command,
+                connection,
+                30,
+                cancellationToken);
+            return JsonSerializer.Serialize(execution.Rows);
+        }
+        catch (Exception ex)
+        {
+            throw _provider.Errors.Map(ex, "query");
+        }
+    }
 
     public async Task<string> ExecuteQueryAsync(
         QueryDefinition definition,

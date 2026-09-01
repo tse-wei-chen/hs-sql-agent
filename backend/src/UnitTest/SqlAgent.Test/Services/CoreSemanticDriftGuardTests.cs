@@ -248,19 +248,33 @@ public class CoreSemanticDriftGuardTests
     }
 
     [Fact]
-    public void Parse_OracleBareSysdate_FailsInsteadOfBecomingColumnReference()
+    public void Parse_OracleBareSysdate_IsStructuredInsteadOfBecomingColumnReference()
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT SYSDATE FROM dual",
+            SqlAgentToolType.Oracle);
+        var select = Assert.IsType<SelectStatement>(parsed.Statement);
+
+        Assert.IsType<FunctionCallExpr>(Assert.Single(select.Select).Expression);
+    }
+
+    [Fact]
+    public void Parse_OracleSysdateCall_RemainsRejectedBecauseOracleSyntaxIsBare()
     {
         var ex = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery("SELECT SYSDATE FROM dual", SqlAgentToolType.Oracle));
+            CoreSqlTextParser.ParseQuery(
+                "SELECT SYSDATE() FROM dual",
+                SqlAgentToolType.Oracle));
 
         Assert.Contains("SYSDATE", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("parentheses", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void Compile_SysdateCall_IsNotAdvertisedAsPortableAlias(SqlAgentToolType provider)
+    public void Compile_NonOracleSysdateCall_RemainsRejectedAtSourceCapabilityBoundary(
+        SqlAgentToolType provider)
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "SELECT SYSDATE() FROM users",
@@ -268,7 +282,7 @@ public class CoreSemanticDriftGuardTests
             provider));
 
         Assert.Contains("SYSDATE", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("not registered", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not valid for declared source dialect", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static int CountOccurrences(string value, string token, StringComparison comparison)

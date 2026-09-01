@@ -206,7 +206,9 @@ public sealed class CoreDmlConflictUpsertTests
             InsertConflictActionKind.DoNothing,
             ImmutableArray<InsertConflictAssignment>.Empty,
             SourceSpan.Unknown);
-        var structured = parsed with { Statement = insert with { Conflict = conflict } };
+        insert.Conflict = conflict;
+        parsed.Statement = insert;
+        var structured = parsed;
 
         var command = CoreDmlCompiler.CreateDefault().Compile(
             structured,
@@ -230,7 +232,9 @@ public sealed class CoreDmlConflictUpsertTests
             InsertConflictActionKind.UpdateProposedValues,
             ImmutableArray.Create(new InsertConflictAssignment(Id("name"), Id("name"), SourceSpan.Unknown)),
             SourceSpan.Unknown);
-        var structured = parsed with { Statement = insert with { Conflict = conflict } };
+        insert.Conflict = conflict;
+        parsed.Statement = insert;
+        var structured = parsed;
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(

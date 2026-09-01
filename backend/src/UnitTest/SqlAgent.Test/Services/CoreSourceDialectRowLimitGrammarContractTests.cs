@@ -33,6 +33,11 @@ public sealed class CoreSourceDialectRowLimitGrammarContractTests
     [InlineData(SqlAgentToolType.MsSqlServer, "SELECT id FROM users OFFSET 2 ROWS", "ORDER BY")]
     [InlineData(SqlAgentToolType.MsSqlServer, "SELECT id FROM users ORDER BY id FETCH NEXT 2 ROWS ONLY", "preceding OFFSET")]
     [InlineData(SqlAgentToolType.MsSqlServer, "SELECT id FROM users ORDER BY id OFFSET 1 ROWS FETCH NEXT 0 ROWS ONLY", "greater than zero")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "SELECT id FROM users OFFSET 1 ROWS FETCH NEXT 2 ROWS ONLY", "ORDER BY")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "SELECT id FROM users ORDER BY id OFFSET 1 FETCH NEXT 2 ROWS ONLY", "ROW or ROWS")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "SELECT id FROM users ORDER BY id OFFSET 1 ROWS FETCH NEXT ROWS ONLY", "explicit positive integer")]
+    [InlineData(SqlAgentToolType.Oracle, "SELECT id FROM users OFFSET 1", "ROW or ROWS")]
+    [InlineData(SqlAgentToolType.Firebird, "SELECT id FROM users OFFSET 1", "ROW or ROWS")]
     public void Parse_UndeclaredRowLimitForms_RemainFailClosed(
         SqlAgentToolType sourceDialect,
         string sql,

@@ -59,63 +59,72 @@ public sealed class CoreQuotedIdentifierLoweringTests
     [Fact]
     public void Bind_PostgresQuotedAliasesDifferingOnlyByCase_AreDistinct()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
+        var command = Compile(
             "SELECT \"Foo\".id, \"foo\".id " +
             "FROM users AS \"Foo\" " +
             "JOIN accounts AS \"foo\" ON \"Foo\".id = \"foo\".id",
             SqlAgentToolType.Postgres);
 
-        var bound = new SqlAstBinder().Bind(parsed);
-        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(bound.Statement);
-        var first = Assert.IsType<BoundColumnExpr>(select.Select[0].Expression);
-        var second = Assert.IsType<BoundColumnExpr>(select.Select[1].Expression);
-
-        Assert.Equal("Foo", first.Source?.Alias);
-        Assert.Equal("foo", second.Source?.Alias);
-        Assert.NotEqual(first.Source, second.Source);
+        Assert.Contains("\"Foo\".\"id\"", command.Sql, StringComparison.Ordinal);
+        Assert.Contains("\"foo\".\"id\"", command.Sql, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Bind_PostgresUnquotedQualifier_DoesNotMatchDifferentlyCasedQuotedAlias()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
-            "SELECT foo.id FROM users AS \"Foo\"",
-            SqlAgentToolType.Postgres);
-
-        var error = Assert.Throws<InvalidOperationException>(() => new SqlAstBinder().Bind(parsed));
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            Compile(
+                "SELECT foo.id FROM users AS \"Foo\"",
+                SqlAgentToolType.Postgres));
         Assert.Contains("unknown table/alias qualifier", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void Bind_PostgresUnquotedQualifier_MatchesLowercaseQuotedAlias()
     {
-        var parsed = CoreSqlTextParser.ParseQuery(
+        var command = Compile(
             "SELECT foo.id FROM users AS \"foo\"",
             SqlAgentToolType.Postgres);
 
-        var bound = new SqlAstBinder().Bind(parsed);
-        var select = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.SelectStatement>(bound.Statement);
-        var column = Assert.IsType<BoundColumnExpr>(Assert.Single(select.Select).Expression);
-        Assert.Equal("foo", column.Source?.Alias);
+        Assert.Contains("\"foo\".\"id\"", command.Sql, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Bind_QuotedCanonicalLookingFunction_FailsBeforeNormalization()
+    public void Parse_QuotedCanonicalLookingFunction_FailsBeforeNormalization()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(
+                "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
+                SqlAgentToolType.Postgres));
+
+        Assert.Contains("Quoted function identifiers", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("lossless identifier quoting", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void QualifiedFunction_ParsesStructurally_ThenUnknownSemanticFailsClosed()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
-            "SELECT \"CORE_DATE_ADD\"(1, 2, 3)",
-            SqlAgentToolType.Postgres);
-
-        var error = Assert.Throws<InvalidOperationException>(() => new SqlAstBinder().Bind(parsed));
-        Assert.Contains("quoted or qualified function identifier", error.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void Parse_QualifiedFunction_FailsClosedBeforeRegistryNameFlattening()
-    {
-        Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseQuery(
             "SELECT custom.fn(id) FROM users",
-            SqlAgentToolType.Postgres));
+            SqlAgentToolType.Postgres);
+        var select = parsed.Statement switch
+        {
+            SelectStatement value => value,
+            QueryStatement value => value.Head,
+            _ => throw new Xunit.Sdk.XunitException(
+                $"Expected SELECT/query AST, got {parsed.Statement.GetType().Name}.")
+        };
+        var function = Assert.IsType<FunctionCallExpr>(Assert.Single(select.Select).Expression);
+
+        Assert.Equal(2, function.Name.Parts.Length);
+        Assert.Equal("custom", function.Name.Parts[0].Value);
+        Assert.Equal("fn", function.Name.Parts[1].Value);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile("SELECT custom.fn(id) FROM users", SqlAgentToolType.Postgres));
+
+        Assert.Contains("not registered", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("normalization", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

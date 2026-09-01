@@ -25,7 +25,7 @@ public class CoreSqlCompilerTests
             new SqlPlanValidationContext(
                 "policy-v1",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }),
-            new SqlExecutionPlanPolicy(QueryMaxRows: 50));
+            new SqlExecutionPlanPolicy(50));
 
         Assert.Equal(SqlStatementKind.Select, command.Kind);
         Assert.Equal(SqlAgentToolType.Postgres, command.TargetProvider);
@@ -33,7 +33,9 @@ public class CoreSqlCompilerTests
         Assert.Contains("@p0", command.Sql, StringComparison.Ordinal);
         Assert.Contains("LIMIT", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("alice", command.Parameters[0].Value);
-        Assert.Contains(command.Parameters, parameter => Equals(parameter.Value, 50));
+        Assert.Contains(command.Parameters, parameter =>
+            parameter.Value is int intValue && intValue == 50
+            || parameter.Value is long longValue && longValue == 50L);
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
     }
 

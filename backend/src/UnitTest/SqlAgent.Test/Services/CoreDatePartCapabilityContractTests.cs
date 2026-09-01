@@ -33,6 +33,10 @@ public sealed class CoreDatePartCapabilityContractTests
     [InlineData("MONTH")]
     [InlineData("DAY")]
     [InlineData("QUARTER")]
+    [InlineData("HOUR")]
+    [InlineData("WEEK")]
+    [InlineData("EPOCH")]
+    [InlineData("ISOYEAR")]
     public void PostgresCompile_AllRepresentedDateParts_ReachNativeRenderer(string part)
     {
         var command = Compile(
@@ -45,17 +49,14 @@ public sealed class CoreDatePartCapabilityContractTests
     }
 
     [Fact]
-    public void PostgresParse_UnrepresentedDatePart_RemainsFailClosed()
+    public void PostgresParse_UnknownDatePart_RemainsFailClosed()
     {
         var error = Assert.Throws<SqlParseException>(() =>
             CoreSqlTextParser.ParseQuery(
-                "SELECT EXTRACT(WEEK FROM order_date) FROM public.orders",
+                "SELECT EXTRACT(FOOBAR FROM order_date) FROM public.orders",
                 SqlAgentToolType.Postgres));
 
-        Assert.Contains(
-            "not yet represented by the canonical date-part family",
-            error.Message,
-            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FOOBAR", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CompiledSqlCommand Compile(string sql) =>
