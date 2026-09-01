@@ -33,7 +33,8 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         SqlAgentToolType Source,
         SqlAgentToolType Target,
         string Sql,
-        string MessageFragment);
+        string MessageFragment,
+        bool SourceFailure = false);
 
     private static readonly TypeVariant[] Types =
     [
@@ -129,43 +130,50 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             "SELECT CAST(value AS VARCHAR(0)) FROM records",
-            "length must be positive"),
+            "length must be positive",
+            true),
         new(
             "postgres-scale-over-precision",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             "SELECT CAST(value AS NUMERIC(4,6)) FROM records",
-            "scale cannot exceed precision"),
+            "scale cannot exceed precision",
+            true),
         new(
             "postgres-max-length",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             "SELECT CAST(value AS VARCHAR(MAX)) FROM records",
-            "MAX is supported only for SQL Server"),
+            "MAX is supported only for SQL Server",
+            true),
         new(
             "mysql-zero-decimal",
             SqlAgentToolType.MySQL,
             SqlAgentToolType.MySQL,
             "SELECT CAST(value AS DECIMAL(0,0)) FROM records",
-            "precision must be positive"),
+            "precision must be positive",
+            true),
         new(
             "sqlserver-temporal-two-args",
             SqlAgentToolType.MsSqlServer,
             SqlAgentToolType.MsSqlServer,
             "SELECT CAST(value AS DATETIME2(7,2)) FROM records",
-            "accepts at most one precision"),
+            "accepts at most one precision",
+            true),
         new(
             "oracle-scale-over-precision",
             SqlAgentToolType.Oracle,
             SqlAgentToolType.Oracle,
             "SELECT CAST(value AS NUMBER(4,6)) FROM records",
-            "scale cannot exceed precision"),
+            "scale cannot exceed precision",
+            true),
         new(
             "firebird-zero-varchar",
             SqlAgentToolType.Firebird,
             SqlAgentToolType.Firebird,
             "SELECT CAST(value AS VARCHAR(0)) FROM records",
-            "length must be positive"),
+            "length must be positive",
+            true),
         new(
             "postgres-native-inet-cross-target",
             SqlAgentToolType.Postgres,
@@ -262,7 +270,8 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
                 item.Source,
                 item.Target,
                 item.Sql,
-                item.MessageFragment
+                item.MessageFragment,
+                item.SourceFailure
             ];
         }
     }
@@ -343,18 +352,39 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
 
     [Theory]
     [MemberData(nameof(NegativeMatrix))]
-    public void NegativeMatrix_FailsClosedBeforeUnsafeRendering(
+    public void NegativeMatrix_FailsClosedAtTypedBoundary(
         string name,
         SqlAgentToolType source,
         SqlAgentToolType target,
         string sql,
-        string messageFragment)
+        string messageFragment,
+        bool sourceFailure)
     {
-        var error = Assert.Throws<SqlCompilationException>(
+        if (sourceFailure)
+        {
+            var error = Assert.Throws<SqlParseException>(
+                () => CoreSqlTextParser.ParseQuery(sql, source));
+
+            Assert.Contains(messageFragment, error.Message, StringComparison.OrdinalIgnoreCase);
+            var diagnostic = Assert.IsType<SqlDiagnostic>(error.Diagnostic);
+            Assert.Equal("SQL_SOURCE_TYPE_REJECTED", diagnostic.Code);
+            Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Stage);
+            Assert.Equal(SqlDiagnosticCategory.DialectSyntax, diagnostic.Category);
+            Assert.NotNull(diagnostic.Span);
+            Assert.True(diagnostic.Span.Length > 0, name);
+            return;
+        }
+
+        var targetError = Assert.Throws<SqlCompilationException>(
             () => Compile(sql, source, target));
 
-        Assert.Contains(messageFragment, error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.False(string.IsNullOrWhiteSpace(error.Message), name);
+        Assert.Contains(messageFragment, targetError.Message, StringComparison.OrdinalIgnoreCase);
+        var targetDiagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(targetError);
+        Assert.Equal("SQL_TARGET_CAPABILITY_REJECTED", targetDiagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.TargetCapability, targetDiagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Capability, targetDiagnostic.Category);
+        Assert.NotNull(targetDiagnostic.Span);
+        Assert.True(targetDiagnostic.Span.Length > 0, name);
     }
 
     private static CompiledSqlCommand Compile(
