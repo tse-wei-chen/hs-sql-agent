@@ -145,6 +145,50 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     [Fact]
+    public async Task ExecuteRawQueryAsync_CteJoin_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH recent AS (" +
+            $"SELECT o.{TestOrdersIdColumn} AS item_id " +
+            $"FROM {TestOrdersTableName} o " +
+            $"JOIN {TestTableName} u " +
+            $"ON o.{TestOrdersUserIdColumn} = u.{TestUserIdColumn}" +
+            $") SELECT item_id FROM recent";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_CteGroupHaving_ShouldCompileRenderAndExecute()
+    {
+        var sql =
+            $"WITH totals AS (" +
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id, COUNT(*) AS total " +
+            $"FROM {TestOrdersTableName} " +
+            $"GROUP BY {TestOrdersUserIdColumn} " +
+            $"HAVING COUNT(*) > 0" +
+            $") SELECT owner_id FROM totals";
+
+        var json = await Strategy.ExecuteRawQueryAsync(
+            sql,
+            Strategy.DbType,
+            Fixture.ConnectionString,
+            TestContext.Current.CancellationToken);
+
+        var rows = JsonSerializer.Deserialize<List<JsonElement>>(json);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+    }
+
+    [Fact]
     public virtual async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()
     {
         var definition = new QueryDefinition { TableName = "NON_EXISTENT_TABLE_HS" };
