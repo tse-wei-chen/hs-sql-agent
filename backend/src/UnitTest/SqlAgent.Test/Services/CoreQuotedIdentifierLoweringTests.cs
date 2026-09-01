@@ -133,7 +133,7 @@ public sealed class CoreQuotedIdentifierLoweringTests
     }
 
     [Fact]
-    public void QualifiedFunction_ParsesStructurally_ThenUnknownSemanticFailsClosed()
+    public void QualifiedFunction_ParsesStructurally_AndPreservesNativePostgresIdentity()
     {
         var parsed = CoreSqlTextParser.ParseQuery(
             "SELECT custom.fn(id) FROM users",
@@ -151,11 +151,9 @@ public sealed class CoreQuotedIdentifierLoweringTests
         Assert.Equal("custom", function.Name.Parts[0].Value);
         Assert.Equal("fn", function.Name.Parts[1].Value);
 
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            Compile("SELECT custom.fn(id) FROM users", SqlAgentToolType.Postgres));
+        var command = Compile("SELECT custom.fn(id) FROM users", SqlAgentToolType.Postgres);
 
-        Assert.Contains("not registered", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("normalization", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"custom\".\"fn\"(", command.Sql, StringComparison.Ordinal);
     }
 
     [Theory]
