@@ -120,7 +120,7 @@ public sealed class NegativeRecursiveCteGrammarMutationMatrixTests
                     "recursive-negative",
                     provider.Name,
                     mutation.Name),
-                provider.Value,
+                provider.Value.Dialect,
                 Baseline(provider.Value),
                 mutation.Value.Sql(provider.Value),
                 mutation.Value.MessageFragment
@@ -141,7 +141,7 @@ public sealed class NegativeRecursiveCteGrammarMutationMatrixTests
                     "recursive-negative",
                     provider.Name,
                     mutation.Name),
-                provider.Value,
+                provider.Value.Dialect,
                 Baseline(provider.Value),
                 mutation.Value.Sql(provider.Value),
                 mutation.Value.MessageFragment
@@ -160,7 +160,7 @@ public sealed class NegativeRecursiveCteGrammarMutationMatrixTests
                 "recursive-negative",
                 provider.Name,
                 "union-distinct-recursive-member"),
-            provider.Value,
+            provider.Value.Dialect,
             Baseline(provider.Value),
             "WITH RECURSIVE x(n) AS (" +
             "SELECT 1 FROM RDB$DATABASE " +
@@ -196,11 +196,12 @@ public sealed class NegativeRecursiveCteGrammarMutationMatrixTests
     [MemberData(nameof(FirebirdUnionMutationMatrix))]
     public void RecursiveGrammarMutations_BaselineCompilesButMutationFailsAtTypedBinding(
         string name,
-        ProviderVariant provider,
+        SqlAgentToolType dialect,
         string baselineSql,
         string mutatedSql,
         string messageFragment)
     {
+        var provider = ProviderFor(dialect);
         var baseline = Compile(
             provider,
             baselineSql);
@@ -251,6 +252,9 @@ public sealed class NegativeRecursiveCteGrammarMutationMatrixTests
             new SqlExecutionPlanPolicy(),
             provider.Profile);
     }
+
+    private static ProviderVariant ProviderFor(SqlAgentToolType dialect) =>
+        Providers.Single(provider => provider.Value.Dialect == dialect).Value;
 
     private static SqlProviderCapabilityProfile Profile(
         SqlAgentToolType provider,
