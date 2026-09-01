@@ -30,6 +30,7 @@ module internal RewriteSourceValidation =
 
     let rec private verifySourceRegexExpr regexProof expression =
         match expression with
+        | Spanned(_, inner) -> verifySourceRegexExpr regexProof inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | RawRegexCall(arguments, _) ->
             arguments |> List.iter (verifySourceRegexExpr regexProof)
@@ -124,7 +125,7 @@ module internal RewriteSourceValidation =
             delete.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
 
     let private validateRawSourceFunction source expression =
-        match expression with
+        match Expr.unspan expression with
         | FunctionCall call when FunctionName.hasQuotedParts call.Name ->
             // Quoted PostgreSQL function identifiers are native opaque identities. Do not
             // reinterpret a case-sensitive custom function such as "Sum" as built-in SUM.
@@ -179,6 +180,7 @@ module internal RewriteSourceValidation =
     let rec private validateRawSourceExpr source orderingProofs mySqlPipes expression =
         validateRawSourceFunction source expression
         match expression with
+        | Spanned(_, inner) -> validateRawSourceExpr source orderingProofs mySqlPipes inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) -> validateRawSourceExpr source orderingProofs mySqlPipes operand
         | Binary(BinaryOperator.Concat, left, right) ->

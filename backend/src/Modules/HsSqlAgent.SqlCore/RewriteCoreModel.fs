@@ -12,6 +12,12 @@ module internal CoreModel =
         { Start: int
           Length: int }
 
+    module Span =
+        let unknown = { Start = -1; Length = 0 }
+
+        let isKnown span =
+            span.Start >= 0 && span.Length >= 0
+
     type IdentifierPart =
         { Value: string
           WasQuoted: bool
@@ -397,6 +403,7 @@ module internal CoreModel =
         | IsNull of Expr * bool
         | ScalarSubquery of Query
         | Exists of Query * bool
+        | Spanned of Span * Expr
 
     and FunctionCall =
         { Name: FunctionName
@@ -421,7 +428,8 @@ module internal CoreModel =
         { Name: IdentifierPart
           ColumnAliases: IdentifierPart list
           Query: Query
-          RecursiveScope: bool }
+          RecursiveScope: bool
+          Span: Span }
 
     and TableSource =
         | NamedTable of Identifier * IdentifierPart option
@@ -481,7 +489,8 @@ module internal CoreModel =
           Joins: Join list
           Where: Expr option
           GroupBy: Expr list
-          Having: Expr option }
+          Having: Expr option
+          Span: Span }
         member this.Distinct =
             match this.DistinctMode with
             | SelectDistinct.AllRows -> false
@@ -503,7 +512,8 @@ module internal CoreModel =
           Limit: NonNegativeRowCount option
           Offset: NonNegativeRowCount option
           FetchPercent: NonNegativePercentage option
-          FetchWithTies: bool }
+          FetchWithTies: bool
+          Span: Span }
 
     type ReturningItem =
         | ReturningColumn of Identifier * IdentifierPart option
@@ -579,6 +589,21 @@ module internal CoreModel =
     type Document = { Statement: Statement; Span: Span }
 
     module Expr =
+        let withSpan span expression =
+            match expression with
+            | Spanned(_, inner) -> Spanned(span, inner)
+            | inner -> Spanned(span, inner)
+
+        let span expression =
+            match expression with
+            | Spanned(value, _) -> value
+            | _ -> Span.unknown
+
+        let rec unspan expression =
+            match expression with
+            | Spanned(_, inner) -> unspan inner
+            | inner -> inner
+
         let private optionEquivalent (comparer: 'a -> 'a -> bool) (left: 'a option) (right: 'a option) =
             match left, right with
             | None, None -> true
@@ -590,6 +615,8 @@ module internal CoreModel =
 
         let rec equivalent (left: Expr) (right: Expr) =
             match left, right with
+            | Spanned(_, leftValue), _ -> equivalent leftValue right
+            | _, Spanned(_, rightValue) -> equivalent left rightValue
             | Column leftId, Column rightId
             | Column leftId, BoundColumn(rightId, _)
             | BoundColumn(leftId, _), Column rightId

@@ -66,6 +66,7 @@ module internal RewriteCapabilityValidation =
 
     let rec private proveFilterPredicate capabilityMessage (proofs: FilterPredicateProofs) expression =
         match expression with
+        | Spanned(_, inner) -> proveFilterPredicate capabilityMessage proofs inner
         | BoundColumn(_, OuterRowSource) ->
             requireFilterCapability capabilityMessage proofs.OuterReference
         | Column _
@@ -131,6 +132,7 @@ module internal RewriteCapabilityValidation =
 
     let rec private proveFilterExpr capabilityMessage (expressionProofs: ExpressionProofs) expression =
         match expression with
+        | Spanned(_, inner) -> proveFilterExpr capabilityMessage expressionProofs inner
         | Column _
         | BoundColumn _
         | Wildcard _
@@ -249,6 +251,7 @@ module internal RewriteCapabilityValidation =
 
     let rec private isRepeatableDistinctOperand expression =
         match expression with
+        | Spanned(_, inner) -> isRepeatableDistinctOperand inner
         | Column _ | BoundColumn _ | OrderOrdinal _ | Literal _ -> true
         | Unary(_, operand)
         | Cast(operand, _)
@@ -265,6 +268,7 @@ module internal RewriteCapabilityValidation =
 
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
         match expression with
+        | Spanned(_, inner) -> proveTargetExpr targetRuntime expressionProofs inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ -> ()
         | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
         | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral

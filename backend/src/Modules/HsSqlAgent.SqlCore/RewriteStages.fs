@@ -158,6 +158,7 @@ module internal RewriteStages =
 
     let rec private expressionReferencesColumn expression =
         match expression with
+        | Spanned(_, inner) -> expressionReferencesColumn inner
         | Column _ | BoundColumn _ -> true
         | Unary(_, value) | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
             expressionReferencesColumn value
@@ -221,6 +222,8 @@ module internal RewriteStages =
 
     let rec private validateAggregateExpr enforceSource source sourceProfile target targetProfile expression =
         match expression with
+        | Spanned(_, inner) ->
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile inner
         | FunctionCall call ->
             validateAggregateCall enforceSource source sourceProfile target targetProfile call
             call.Arguments |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
@@ -418,6 +421,7 @@ module internal RewriteStages =
 
     let rec private normalizeExpr source target expression =
         match expression with
+        | Spanned(span, inner) -> normalizeExpr source target inner |> Expr.withSpan span
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
         | Unary(Positive, operand) -> normalizeExpr source target operand
         | Unary(op, operand) -> Unary(op, normalizeExpr source target operand)
@@ -794,7 +798,7 @@ module internal RewriteStages =
         if cte.ColumnAliases.IsEmpty then { cte with Query = query }
         else
             let projection = query.Head.Projection
-            if projection |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then
+            if projection |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then
                 invalidOp ("CTE '" + cte.Name.Value + "' column aliases cannot be lowered safely when the CTE projection contains a wildcard.")
             if projection.Length <> cte.ColumnAliases.Length then
                 invalidOp ("CTE '" + cte.Name.Value + "' declares " + string cte.ColumnAliases.Length + " column alias(es) but its statically modeled projection has " + string projection.Length + " column(s).")
@@ -940,7 +944,10 @@ module internal RewriteStages =
                 error.Data[diagnosticDataKey] <- diagnostic
                 raise error
 
-    let private isWildcard = function Wildcard _ -> true | _ -> false
+    let rec private isWildcard = function
+        | Spanned(_, inner) -> isWildcard inner
+        | Wildcard _ -> true
+        | _ -> false
 
     let private ensureNoDistinctWildcard (call: FunctionCall) =
         if call.IsDistinct && call.Arguments |> List.exists isWildcard then
@@ -948,6 +955,7 @@ module internal RewriteStages =
 
     let rec private validateExpr allowedTables expression =
         match expression with
+        | Spanned(_, inner) -> validateExpr allowedTables inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) -> validateExpr allowedTables operand
         | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
@@ -1021,7 +1029,7 @@ module internal RewriteStages =
             | _ -> ()
         if duplicateAliases.Count > 0 then
             for order in query.OrderBy do
-                match order.Expression with
+                match Expr.unspan order.Expression with
                 | Column identifier
                 | BoundColumn(identifier, ProjectionAlias)
                     when Identifier.parts identifier |> List.length = 1 ->
@@ -1037,6 +1045,7 @@ module internal RewriteStages =
 
     let rec private validateInsertValueScope expression =
         match expression with
+        | Spanned(_, inner) -> validateInsertValueScope inner
         | Literal _ | Interval _ -> ()
         | ScalarSubquery _ | Exists _ -> ()
         | Column identifier
@@ -1151,6 +1160,7 @@ module internal RewriteStages =
 
     let rec private isDefinitelyBoolean targetRuntime expression =
         match expression with
+        | Spanned(_, inner) -> isDefinitelyBoolean targetRuntime inner
         | Literal(ScalarValue.Boolean _) -> true
         | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ -> true
         | RegexMatch _ ->
@@ -1484,7 +1494,7 @@ module internal RewriteStages =
         let projection = query.Head.Projection
         if projection
            |> List.exists (fun item ->
-               match item.Expression with
+               match Expr.unspan item.Expression with
                | Wildcard _ -> true
                | _ -> false) then
             raise (SqlCompilationException(
@@ -1502,6 +1512,8 @@ module internal RewriteStages =
         | _ -> ()
 
         match expression with
+        | Spanned(_, inner) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow inner
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
         | Unary(_, operand) ->
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow operand
@@ -1640,7 +1652,7 @@ module internal RewriteStages =
         let names =
             select.Projection
             |> List.map (fun item ->
-                match item.Alias, item.Expression with
+                match item.Alias, Expr.unspan item.Expression with
                 | Some alias, _ -> Some alias
                 | None, Column identifier
                 | None, BoundColumn(identifier, _) -> Identifier.parts identifier |> List.tryLast
@@ -1671,7 +1683,7 @@ module internal RewriteStages =
     and private validateSemanticQuery targetRuntime query =
         validateSemanticSelect targetRuntime query.Head
         let expectedWidth =
-            if query.Head.Projection |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then None
+            if query.Head.Projection |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then None
             else Some query.Head.Projection.Length
         query.SetOperations
         |> List.iter (fun branch ->
@@ -1680,7 +1692,7 @@ module internal RewriteStages =
             | Some expected ->
                 let actual =
                     if branch.Query.Head.Projection
-                       |> List.exists (fun item -> match item.Expression with Wildcard _ -> true | _ -> false) then None
+                       |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then None
                     else Some branch.Query.Head.Projection.Length
                 match actual with
                 | Some value when value <> expected ->
@@ -1698,7 +1710,7 @@ module internal RewriteStages =
         let outputNames = projectionOutputNames query.Head
         query.OrderBy
         |> List.iter (fun order ->
-            match order.Expression with
+            match Expr.unspan order.Expression with
             | OrderOrdinal ordinal
                 when not headHasWildcard
                      && PositiveRowCount.value ordinal > query.Head.Projection.Length ->
@@ -1730,6 +1742,7 @@ module internal RewriteStages =
 
     let rec private containsVolatileRandom expression =
         match expression with
+        | Spanned(_, inner) -> containsVolatileRandom inner
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
             let isKnownRandom =

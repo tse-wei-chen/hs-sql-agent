@@ -21,9 +21,6 @@ module internal RewriteCompatibilityAstAdapter =
         { Start = span.Start
           End = if span.Start < 0 then -1 else span.Start + max 0 span.Length }
 
-    let private nodeSpan (node: obj | null) =
-        Parsed.trySpan node |> Option.map spanOf |> Option.defaultValue unknown
-
     let private partOf (part: IdentifierPart) =
         HsSqlAgent.SqlCore.Core.Ast.IdentifierPart(
             part.Value,
@@ -124,8 +121,8 @@ module internal RewriteCompatibilityAstAdapter =
                 unknown)
 
     let rec private exprOf expression : HsSqlAgent.SqlCore.Core.Ast.SqlExpr =
-        let expressionSpan = nodeSpan (box expression)
-        match expression with
+        let expressionSpan = expression |> Expr.span |> spanOf
+        match Expr.unspan expression with
         | Expr.Column identifier
         | Expr.BoundColumn(identifier, _) ->
             HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, expressionSpan)
@@ -287,6 +284,9 @@ module internal RewriteCompatibilityAstAdapter =
         | Expr.Exists(query, negated) ->
             HsSqlAgent.SqlCore.Core.Ast.ExistsExpr(queryOf query, negated, expressionSpan)
 
+        | Expr.Spanned _ ->
+            invalidOp "Expr.unspan returned a spanned expression."
+
     and private orderByOf (order: OrderBy) =
         HsSqlAgent.SqlCore.Core.Ast.OrderByItem(
             exprOf order.Expression,
@@ -411,7 +411,7 @@ module internal RewriteCompatibilityAstAdapter =
                         unknown))
                 |> ImmutableArray.CreateRange,
                 queryOf cte.Query,
-                nodeSpan (box cte))
+                spanOf cte.Span)
         result.RecursiveScope <- cte.RecursiveScope
         result
 
@@ -452,9 +452,9 @@ module internal RewriteCompatibilityAstAdapter =
     and private queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
         match query.SetOperations with
         | [] ->
-            selectOf query.Head query.OrderBy query.Limit query.Offset query.FetchPercent query.FetchWithTies (nodeSpan (box query))
+            selectOf query.Head query.OrderBy query.Limit query.Offset query.FetchPercent query.FetchWithTies (spanOf query.Span)
         | operations ->
-            let head = selectOf query.Head [] None None None false (nodeSpan (box query.Head))
+            let head = selectOf query.Head [] None None None false (spanOf query.Head.Span)
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
                 head,
@@ -468,7 +468,7 @@ module internal RewriteCompatibilityAstAdapter =
                 query.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
                 query.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
                 query.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                nodeSpan (box query))
+                spanOf query.Span)
             result.FetchPercent <-
                 query.FetchPercent
                 |> Option.map (NonNegativePercentage.value >> Nullable)

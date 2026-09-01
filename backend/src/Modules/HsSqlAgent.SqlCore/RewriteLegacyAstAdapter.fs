@@ -174,7 +174,7 @@ module internal RewriteLegacyAstAdapter =
         | value -> raise (SqlCompilationException("Unsupported window frame bound '" + string value + "'."))
 
     let rec private exprOf (expression: HsSqlAgent.SqlCore.Core.Ast.SqlExpr) : Expr =
-        match expression with
+        (match expression with
         | :? HsSqlAgent.SqlCore.Core.Binding.BoundColumnExpr as column ->
             BoundColumn(
                 identifierOf column.Name,
@@ -296,7 +296,8 @@ module internal RewriteLegacyAstAdapter =
         | :? HsSqlAgent.SqlCore.Core.Ast.ExistsExpr as exists ->
             Exists(queryOfStatement exists.Query, exists.IsNegated)
 
-        | _ -> failClosed "expression node" expression
+        | _ -> failClosed "expression node" expression)
+        |> Expr.withSpan (spanOf expression.Span)
 
     and private simpleCaseOf (simpleCase: HsSqlAgent.SqlCore.Core.Ast.SimpleCaseExpr) =
         let converted =
@@ -396,7 +397,8 @@ module internal RewriteLegacyAstAdapter =
         { Cte.Name = singlePart "CTE name" cte.Name
           ColumnAliases = cte.ColumnAliases |> Seq.map (singlePart "CTE column alias") |> Seq.toList
           Query = queryOfStatement cte.Query
-          RecursiveScope = cte.RecursiveScope }
+          RecursiveScope = cte.RecursiveScope
+          Span = spanOf cte.Span }
 
     and private selectOf (select: HsSqlAgent.SqlCore.Core.Ast.SelectStatement) =
         let projection =
@@ -429,7 +431,8 @@ module internal RewriteLegacyAstAdapter =
           Joins = select.Joins |> Seq.map joinOf |> Seq.toList
           Where = Option.ofObj select.Where |> Option.map exprOf
           GroupBy = select.GroupBy |> Seq.map exprOf |> Seq.toList
-          Having = Option.ofObj select.Having |> Option.map exprOf }
+          Having = Option.ofObj select.Having |> Option.map exprOf
+          Span = spanOf select.Span }
 
     and private setOperator = function
         | HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Union -> SetOperator.Union
@@ -457,7 +460,8 @@ module internal RewriteLegacyAstAdapter =
               Limit = rowCount "limit" select.Limit
               Offset = rowCount "offset" select.Offset
               FetchPercent = percentage "fetchPercent" select.FetchPercent
-              FetchWithTies = select.FetchWithTies }
+              FetchWithTies = select.FetchWithTies
+              Span = spanOf select.Span }
         | :? HsSqlAgent.SqlCore.Core.Ast.QueryStatement as query ->
             { Query.Head = selectOf query.Head
               SetOperations =
@@ -470,7 +474,8 @@ module internal RewriteLegacyAstAdapter =
               Limit = rowCount "limit" query.Limit
               Offset = rowCount "offset" query.Offset
               FetchPercent = percentage "fetchPercent" query.FetchPercent
-              FetchWithTies = query.FetchWithTies }
+              FetchWithTies = query.FetchWithTies
+              Span = spanOf query.Span }
         | _ -> failClosed "query statement" statement
 
     and private returningItemOf (item: HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem) =

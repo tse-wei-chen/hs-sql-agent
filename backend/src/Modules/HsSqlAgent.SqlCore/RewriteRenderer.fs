@@ -208,6 +208,7 @@ module internal RewriteRenderer =
 
     let rec private isBooleanExpression expression =
         match expression with
+        | Spanned(_, inner) -> isBooleanExpression inner
         | Literal(ScalarValue.Boolean _) -> true
         | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ | RegexMatch _ -> true
         | Unary(UnaryOperator.Not, _) -> true
@@ -235,8 +236,9 @@ module internal RewriteRenderer =
             not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
         | _ -> false
 
-    let private renderBooleanTruthValue expression =
+    let rec private renderBooleanTruthValue expression =
         match expression with
+        | Spanned(_, inner) -> renderBooleanTruthValue inner
         | Literal(ScalarValue.Boolean true) -> "1"
         | Literal(ScalarValue.Boolean false) -> "0"
         | Literal ScalarValue.Null -> "NULL"
@@ -246,6 +248,7 @@ module internal RewriteRenderer =
 
     let rec private renderExpr (ctx: RenderContext) expression =
         match expression with
+        | Expr.Spanned(_, inner) -> renderExpr ctx inner
         | Expr.Column identifier
         | Expr.BoundColumn(identifier, _) -> renderIdentifier ctx.Provider identifier
         | Expr.Wildcard None -> "*"
@@ -354,6 +357,7 @@ module internal RewriteRenderer =
         match ctx.Provider with
         | Oracle | SqlServer ->
             match expression with
+            | Spanned(_, inner) -> renderPredicate ctx inner
             | Literal(ScalarValue.Boolean true) -> "(1 = 1)"
             | Literal(ScalarValue.Boolean false) -> "(1 = 0)"
             | Unary(UnaryOperator.Not, operand) ->
@@ -405,8 +409,9 @@ module internal RewriteRenderer =
             if call.Arguments.Length <> count then
                 fail ("Canonical function '" + name + "' requires " + string count + " argument(s).")
 
-        let literalText label expression =
+        let rec literalText label expression =
             match expression with
+            | Spanned(_, inner) -> literalText label inner
             | Literal(ScalarValue.Text value) -> value
             | _ -> fail (label + " must be a string literal.")
 
