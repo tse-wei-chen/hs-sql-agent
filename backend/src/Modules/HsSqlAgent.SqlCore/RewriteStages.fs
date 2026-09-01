@@ -384,11 +384,13 @@ module internal RewriteStages =
           AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
           AggregateSeparator = None }
 
-    let private textLiteral label = function
+    let private textLiteral label expression =
+        match Expr.unspan expression with
         | Literal(ScalarValue.Text value) -> value
         | _ -> compilationError (label + " must be a string literal.")
 
-    let private keywordValue label = function
+    let private keywordValue label expression =
+        match Expr.unspan expression with
         | Column identifier
         | BoundColumn(identifier, _) ->
             let parts = Identifier.parts identifier
@@ -1284,7 +1286,10 @@ module internal RewriteStages =
                         "Canonical function '" + contract.Name
                         + "' declares an invalid plan-shape argument index "
                         + string rule.ArgumentIndex + "."))
-                let argument = call.Arguments |> List.item rule.ArgumentIndex
+                let argument =
+                    call.Arguments
+                    |> List.item rule.ArgumentIndex
+                    |> Expr.unspan
                 match rule.Kind with
                 | SqlCanonicalPlanShapeValidationKind.DistinctWildcardForbidden ->
                     if call.IsDistinct then
@@ -1436,12 +1441,17 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "Window frame start must not be logically after its end bound."))
 
-    let private directWindowFunction = function
+    let private directWindowFunction expression =
+        match Expr.unspan expression with
         | FunctionCall call -> Some call
-        | FilteredAggregate(FunctionCall call, _) -> Some call
+        | FilteredAggregate(value, _) ->
+            match Expr.unspan value with
+            | FunctionCall call -> Some call
+            | _ -> None
         | _ -> None
 
-    let private validateFilterTarget = function
+    let private validateFilterTarget expression =
+        match Expr.unspan expression with
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
             if FunctionName.requiresNativeIdentifierSemantics call.Name then

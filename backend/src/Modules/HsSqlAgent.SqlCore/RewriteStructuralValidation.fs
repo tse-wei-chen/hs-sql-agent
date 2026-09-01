@@ -215,7 +215,7 @@ module internal RewriteStructuralValidation =
                     not (FunctionName.hasQuotedParts call.Name)
                     && name = "COUNT"
                     && index = 0
-                    && (match argument with
+                    && (match Expr.unspan argument with
                         | Wildcard None -> true
                         | _ -> false)
                 validateNoFromExpression allowFunctionWildcard argument)
