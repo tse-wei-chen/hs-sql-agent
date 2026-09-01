@@ -11,7 +11,7 @@ These corpora are merge contracts for the SQL compiler rewrite. They are not a l
 - `sql-generated-recursive-compatibility-floor.json` is the version-aware recursive CTE grammar floor for PostgreSQL, MySQL, SQLite, and Firebird.
 - `sql-generated-postgres-native-compatibility-floor.json` is the PostgreSQL 13 native modifier floor for DISTINCT ON, LATERAL, explicit NULL ordering, and FETCH WITH TIES.
 - `sql-generated-oracle-native-compatibility-floor.json` is the Oracle 12.1 native row-limiting floor for explicit NULL ordering, row-count/percentage FETCH, and WITH TIES.
-- `sql-generated-profile-sensitive-compatibility-floor.json` is the profile-sensitive grammar floor; it starts with MySQL 8.4 `ANSI_QUOTES`, `ANSI`, and `PIPES_AS_CONCAT` session semantics and is designed to also carry compatibility-level-gated cases.
+- `sql-generated-profile-sensitive-compatibility-floor.json` is the profile-sensitive grammar floor: MySQL 8.4 `ANSI_QUOTES`, `ANSI`, and `PIPES_AS_CONCAT` session semantics plus SQL Server 14.0 / compatibility 110 ordered `STRING_AGG`.
 - The differential runner compares the base `main` assembly with the PR assembly one-way:
   - `main=success, PR=failure` is a regression.
   - `main=failure, PR=success` is a capability expansion.
@@ -38,9 +38,10 @@ Current query matrix floor:
 | PostgreSQL native modifier matrix | 72 |
 | Oracle 12.1 native row-limiting matrix | 72 |
 | MySQL session-mode matrix | 48 |
-| **Total positive query floor** | **4805** |
+| SQL Server version/compatibility matrix | 36 |
+| **Total positive query floor** | **4841** |
 
-The recursive matrix additionally cross-products four proven native providers, four legal recursive-member shapes, four root consumers, and root ordering, with explicit source/target server-version proofs. The PostgreSQL native modifier matrix cross-products root/CTE placement, DISTINCT ON, CROSS/LEFT LATERAL, NULLS FIRST/LAST, and FETCH WITH TIES under an explicit PostgreSQL 13 source/target profile. The Oracle native matrix cross-products root/CTE placement, simple/join/correlated sources, explicit NULL ordering, row-count versus percentage FETCH, and ONLY versus WITH TIES under an explicit Oracle 12.1 source/target profile. The profile-sensitive matrix makes source/target session modes and compatibility levels first-class parity inputs; the initial MySQL cases cross-product concat/ANSI-quote modes with root, CTE, scalar-subquery, predicate, and ordering contexts. The matrices exercise parsing, query facts/binding, validation, compilation, and native rendering. Assertions are semantic and renderer-aware: source spelling is not required to survive when a target renderer intentionally lowers it to an equivalent native form.
+The recursive matrix additionally cross-products four proven native providers, four legal recursive-member shapes, four root consumers, and root ordering, with explicit source/target server-version proofs. The PostgreSQL native modifier matrix cross-products root/CTE placement, DISTINCT ON, CROSS/LEFT LATERAL, NULLS FIRST/LAST, and FETCH WITH TIES under an explicit PostgreSQL 13 source/target profile. The Oracle native matrix cross-products root/CTE placement, simple/join/correlated sources, explicit NULL ordering, row-count versus percentage FETCH, and ONLY versus WITH TIES under an explicit Oracle 12.1 source/target profile. The profile-sensitive matrix makes source/target session modes and compatibility levels first-class parity inputs. MySQL cross-products concat/ANSI-quote modes with root, CTE, scalar-subquery, predicate, and ordering contexts; SQL Server cross-products ordered `STRING_AGG` across root, CTE, scalar-subquery, and grouped contexts under explicit ServerVersion 14.0 and CompatibilityLevel 110 proofs. The matrices exercise parsing, query facts/binding, validation, compilation, and native rendering. Assertions are semantic and renderer-aware: source spelling is not required to survive when a target renderer intentionally lowers it to an equivalent native form.
 
 The DML positive floor contains 42 common six-dialect cases, 17 explicit native/profile/assurance-gated capability cases, 180 Cartesian UPDATE/DELETE predicate/assignment cases, and 180 Cartesian INSERT...SELECT projection/source-predicate cases, for 419 positive DML cases total.
 

@@ -22,6 +22,8 @@ public sealed class DialectGrammarMatrixCoverageTests
         var mySqlSession =
             MySqlSessionModeGrammarMatrixTests.ConcatSessionModeMatrix().Count()
             + MySqlSessionModeGrammarMatrixTests.AnsiQuotesSessionModeMatrix().Count();
+        var sqlServerProfile =
+            SqlServerProfileSensitiveGrammarMatrixTests.SqlServerStringAggregateProfileMatrix().Count();
 
         Assert.Equal(432, postgres);
         Assert.Equal(900, mySql);
@@ -33,9 +35,10 @@ public sealed class DialectGrammarMatrixCoverageTests
         Assert.Equal(72, postgresNative);
         Assert.Equal(72, oracleNative);
         Assert.Equal(48, mySqlSession);
+        Assert.Equal(36, sqlServerProfile);
         Assert.Equal(
-            4805,
-            postgres + mySql + sqlServer + sqlite + oracle + firebird + recursive + postgresNative + oracleNative + mySqlSession);
+            4841,
+            postgres + mySql + sqlServer + sqlite + oracle + firebird + recursive + postgresNative + oracleNative + mySqlSession + sqlServerProfile);
     }
 
     [Fact]
@@ -132,19 +135,40 @@ public sealed class DialectGrammarMatrixCoverageTests
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var cases = document.RootElement.EnumerateArray().ToArray();
 
-        Assert.Equal(48, cases.Length);
+        Assert.Equal(84, cases.Length);
         Assert.Equal(
-            48,
+            84,
             cases.Select(item => item.GetProperty("name").GetString())
                 .Distinct(StringComparer.Ordinal)
                 .Count());
+        var mySqlCases = cases
+            .Where(item => string.Equals(
+                item.GetProperty("dialect").GetString(),
+                "MySQL",
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var sqlServerCases = cases
+            .Where(item => string.Equals(
+                item.GetProperty("dialect").GetString(),
+                "MsSqlServer",
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        Assert.Equal(48, mySqlCases.Length);
+        Assert.Equal(36, sqlServerCases.Length);
         Assert.All(
-            cases,
+            mySqlCases,
             item => Assert.True(
                 item.TryGetProperty(
                     "sourceSessionModes",
                     out var modes)
                 && modes.GetArrayLength() == 1));
+        Assert.All(
+            sqlServerCases,
+            item => Assert.Equal(
+                110,
+                item.GetProperty(
+                    "sourceCompatibilityLevel").GetInt32()));
     }
 
     [Fact]

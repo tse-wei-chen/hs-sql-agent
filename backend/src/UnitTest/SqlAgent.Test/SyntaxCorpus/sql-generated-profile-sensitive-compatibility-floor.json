@@ -670,5 +670,365 @@
       "ANSI"
     ],
     "sql": "SELECT \"display`name\" AS value FROM users ORDER BY \"display`name\""
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__root__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__cte-body__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "WITH x AS (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users) SELECT value FROM x"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__scalar-subquery__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT (SELECT STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) FROM users) AS value FROM outer_users"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__single-desc__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__single-desc__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__single-desc__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__multi-direction__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ',') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__multi-direction__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, '|') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__multi-direction__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ';') WITHIN GROUP (ORDER BY created_at DESC, name ASC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__nested-expression__comma",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ',') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__nested-expression__pipe",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, '|') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users GROUP BY category"
+  },
+  {
+    "name": "sqlserver-profile__string-agg-ordering__grouped__nested-expression__semicolon",
+    "dialect": "MsSqlServer",
+    "targetDialect": "MsSqlServer",
+    "sourceVersion": "14.0",
+    "targetVersion": "14.0",
+    "sourceCompatibilityLevel": 110,
+    "targetCompatibilityLevel": 110,
+    "sql": "SELECT category, STRING_AGG(name, ';') WITHIN GROUP (ORDER BY COALESCE(sort_key, 'fallback') DESC) AS value FROM users GROUP BY category"
   }
 ]
