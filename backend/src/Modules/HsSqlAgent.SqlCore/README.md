@@ -52,6 +52,15 @@ The public CLR compatibility surface and the compiler core are intentionally sep
 The compatibility AST remains available for CLR callers that inspect or replace `ParsedStatement.Statement`,
 but it is a projection/ingress format rather than a second semantic source of truth.
 
+## Temporal capability boundary
+
+Date arithmetic units are represented as a closed F# algebra rather than free-form canonical strings.
+PostgreSQL, MySQL, SQL Server, and Firebird currently have declared DATEADD lowering for DAY, WEEK,
+MONTH, QUARTER, YEAR, HOUR, MINUTE, and SECOND. Oracle and SQLite currently admit DAY, WEEK, HOUR,
+MINUTE, and SECOND only. MONTH, QUARTER, and YEAR remain fail-closed for Oracle and SQLite because
+their calendar rollover behavior is not yet proven equivalent to the canonical source semantics.
+Cross-provider non-DAY DATEDIFF also remains fail-closed because provider boundary-counting rules differ.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and
