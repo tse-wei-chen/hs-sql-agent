@@ -189,6 +189,10 @@ module internal RewriteStages =
 
     let private validateRawSourceFunction source expression =
         match expression with
+        | FunctionCall call when FunctionName.hasQuotedParts call.Name ->
+            // Quoted PostgreSQL function identifiers are native opaque identities. Do not
+            // reinterpret a case-sensitive custom function such as "Sum" as built-in SUM.
+            ()
         | FunctionCall call ->
             let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
             match SqlDateOnlyCapabilityRules.SourceValidationError(source, name, call.Arguments.Length) with
@@ -794,10 +798,12 @@ module internal RewriteStages =
             | "CURRENT_TIMESTAMP" -> Some SqlCurrentTemporalKind.Timestamp
             | _ -> None
 
-        if FunctionName.requiresNativeIdentifierSemantics call.Name
-           && sourceTool <> targetTool then
-            // Preserve native identifier semantics until target validation. The target proof
-            // owns the fail-closed diagnostic for cross-provider qualified/quoted functions.
+        if FunctionName.hasQuotedParts call.Name
+           || (FunctionName.requiresNativeIdentifierSemantics call.Name
+               && sourceTool <> targetTool) then
+            // Quoted names remain opaque even on the native provider so case-sensitive custom
+            // function identity is never canonicalized into an unrelated built-in. Qualified
+            // names crossing providers remain intact until target capability validation rejects.
             FunctionCall call
         else
             match currentKind with
