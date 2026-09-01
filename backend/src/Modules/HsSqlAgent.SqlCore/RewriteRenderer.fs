@@ -87,8 +87,7 @@ module internal RewriteRenderer =
                 quotePart provider part
             else
                 match provider with
-                | PostgreSql -> part.Value.ToLowerInvariant()
-                | Oracle | Firebird -> part.Value.ToUpperInvariant()
+                | PostgreSql | Oracle | Firebird -> part.Value.ToUpperInvariant()
                 | MySql | SqlServer | SQLite -> part.Value)
         |> String.concat "."
     let private tableAliasPrefix = function Oracle -> " " | _ -> " AS "

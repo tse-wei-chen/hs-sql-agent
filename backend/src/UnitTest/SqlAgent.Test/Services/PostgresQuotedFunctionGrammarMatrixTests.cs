@@ -29,8 +29,8 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
     private static readonly IdentifierVariant[] Identifiers =
     [
         new("quoted-name", "\"lower\"", "\"lower\""),
-        new("quoted-function", "pg_catalog.\"lower\"", "pg_catalog.\"lower\""),
-        new("quoted-schema", "\"pg_catalog\".lower", "\"pg_catalog\".lower"),
+        new("quoted-function", "pg_catalog.\"lower\"", "PG_CATALOG.\"lower\""),
+        new("quoted-schema", "\"pg_catalog\".lower", "\"pg_catalog\".LOWER"),
         new("quoted-both", "\"pg_catalog\".\"lower\"", "\"pg_catalog\".\"lower\""),
         new("quoted-core-like", "\"CORE_DATE_ADD\"", "\"CORE_DATE_ADD\"")
     ];
@@ -67,7 +67,7 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
 
     private static readonly NativeFunctionVariant[] NativeQualifiedSources =
     [
-        new("postgres-qualified", SqlAgentToolType.Postgres, "analytics.NormalizeName", "analytics.normalizename"),
+        new("postgres-qualified", SqlAgentToolType.Postgres, "analytics.NormalizeName", "ANALYTICS.NORMALIZENAME"),
         new("mysql-qualified", SqlAgentToolType.MySQL, "analytics.NormalizeName", "analytics.NormalizeName"),
         new("sqlserver-qualified", SqlAgentToolType.MsSqlServer, "dbo.NormalizeName", "dbo.NormalizeName"),
         new("oracle-qualified", SqlAgentToolType.Oracle, "analytics.NormalizeName", "ANALYTICS.NORMALIZENAME"),

@@ -7,7 +7,29 @@ public sealed class CoreCapabilityMatrixVersionContractTests
     [Fact]
     public void MatrixVersion_IsCurrentCapabilityContract()
     {
-        Assert.Equal("2026-08-31.66", SqlCapabilityMatrix.Version);
+        Assert.Equal("2026-09-01.67", SqlCapabilityMatrix.Version);
+    }
+
+    [Fact]
+    public void NativeFunctionIdentifierCapabilities_ReflectProviderGrammar()
+    {
+        foreach (var provider in Enum.GetValues<SqlAgentToolType>())
+        {
+            var matrix = SqlCapabilityMatrix.ForProvider(provider);
+            var quoted = Assert.Single(
+                matrix.Capabilities,
+                capability => capability.Id == "function.quoted_identifier");
+            var qualified = Assert.Single(
+                matrix.Capabilities,
+                capability => capability.Id == "function.qualified");
+
+            Assert.Equal(SqlCapabilityStatus.Supported, quoted.Status);
+            Assert.Equal(
+                provider == SqlAgentToolType.Sqlite
+                    ? SqlCapabilityStatus.Rejected
+                    : SqlCapabilityStatus.Supported,
+                qualified.Status);
+        }
     }
 
     [Fact]
