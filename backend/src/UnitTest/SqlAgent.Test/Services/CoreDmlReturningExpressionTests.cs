@@ -31,7 +31,7 @@ public sealed class CoreDmlReturningExpressionTests
     }
 
     [Fact]
-    public void Compile_ExpressionReturningToNonPostgresTarget_FailsClosed()
+    public void Compile_ExpressionReturningToUnsupportedTarget_FailsClosed()
     {
         var parsed = CoreSqlTextParser.ParseDml(
             "DELETE FROM users WHERE id = 1 RETURNING id",
@@ -40,30 +40,26 @@ public sealed class CoreDmlReturningExpressionTests
             parsed,
             new ColumnExpr(SqlIdentifier.Unquoted("id", SourceSpan.Unknown), SourceSpan.Unknown),
             "returned_id");
-        var profile = new SqlProviderCapabilityProfile(
-            SqlAgentToolType.Sqlite,
-            ServerVersion: new Version(3, 35));
 
         var error = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(
                 parsed,
-                SqlAgentToolType.Sqlite,
-                new SqlPlanValidationContext("policy-v1"),
-                targetProfile: profile));
+                SqlAgentToolType.MySQL,
+                new SqlPlanValidationContext("policy-v1")));
 
         Assert.Contains("dml.returning.expression", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("PostgreSQL", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Compile_ExpressionReturningFromNonPostgresSource_FailsClosedBeforeBinding()
+    public void Compile_ExpressionReturningFromUnsupportedRichSource_FailsClosedBeforeBinding()
     {
         var profile = new SqlProviderCapabilityProfile(
-            SqlAgentToolType.Sqlite,
-            ServerVersion: new Version(3, 35));
+            SqlAgentToolType.Firebird,
+            ServerVersion: new Version(5, 0));
         var parsed = CoreSqlTextParser.ParseDml(
             "DELETE FROM users WHERE id = 1 RETURNING id",
-            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Firebird,
             profile);
         parsed = WithExpression(
             parsed,
@@ -79,6 +75,91 @@ public sealed class CoreDmlReturningExpressionTests
         Assert.Contains("dml.returning.expression", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("source dialect", error.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Compile_Sqlite335_RawScalarReturningExpression_RendersNatively()
+    {
+        var profile = SqliteProfile(new Version(3, 35));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users SET score = score + 1 WHERE id = 1 RETURNING score + 2 AS next_score",
+            SqlAgentToolType.Sqlite,
+            profile);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Sqlite,
+            new SqlPlanValidationContext("sqlite-returning-expression-v1"),
+            targetProfile: profile);
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("next_score", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(" + 2", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_PostgresRichReturningToSqlite_RemainsNativeOnly()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING id + 1 AS next_id",
+            SqlAgentToolType.Postgres);
+        var profile = SqliteProfile(new Version(3, 35));
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                new SqlPlanValidationContext("sqlite-returning-expression-cross-v1"),
+                targetProfile: profile));
+
+        Assert.Contains("dml.returning.expression", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("native-only", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_SqliteUpdateFromReturningAuxiliaryColumn_FailsClosed()
+    {
+        var profile = SqliteProfile(new Version(3, 35));
+
+        var error = Assert.ThrowsAny<Exception>(() =>
+        {
+            var parsed = CoreSqlTextParser.ParseDml(
+                "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id RETURNING profiles.name AS returned_name",
+                SqlAgentToolType.Sqlite,
+                profile);
+
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                new SqlPlanValidationContext("sqlite-returning-expression-scope-v1"),
+                targetProfile: profile);
+        });
+
+        Assert.Contains("RETURNING", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            error.Message.Contains("target", StringComparison.OrdinalIgnoreCase)
+            || error.Message.Contains("auxiliary", StringComparison.OrdinalIgnoreCase),
+            error.Message);
+    }
+
+    [Theory]
+    [InlineData(3, 34)]
+    [InlineData(3, 0)]
+    public void Parse_SqliteRichReturningExpression_Requires335(
+        int major,
+        int minor)
+    {
+        var profile = SqliteProfile(new Version(major, minor));
+
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(
+                "UPDATE users SET score = score + 1 WHERE id = 1 RETURNING score + 2 AS next_score",
+                SqlAgentToolType.Sqlite,
+                profile));
+
+        Assert.Contains("3.35", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
 
     [Fact]
     public void Compile_LiteralBearingExpressionReturning_IsParameterizedInsideNativeDmlFragment()
@@ -156,6 +237,9 @@ public sealed class CoreDmlReturningExpressionTests
         Assert.Contains("mystery", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static SqlProviderCapabilityProfile SqliteProfile(Version version) =>
+        new(SqlAgentToolType.Sqlite, ServerVersion: version);
 
     private static ParsedStatement WithExpression(
         ParsedStatement parsed,
