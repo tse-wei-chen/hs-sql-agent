@@ -53,6 +53,9 @@ internal static class DmlGrammarMatrixCases
             "USERS")
     ];
 
+    public static int ExpectedCaseCount =>
+        checked(Enum.GetValues<SqlAgentToolType>().Length * 7);
+
     public static IEnumerable<DmlGrammarCase> All()
     {
         foreach (var dialect in Enum.GetValues<SqlAgentToolType>())

@@ -11,13 +11,23 @@ public sealed class DialectDmlGrammarMatrixTests
 {
     public static IEnumerable<object[]> SixDialectDmlMatrix() =>
         DmlGrammarMatrixCases.All()
-            .Select(item => new object[] { item });
+            .Select(item => new object[]
+            {
+                item.Name,
+                item.Dialect,
+                item.Sql,
+                item.ExpectedKind,
+                item.RenderedFragments,
+                item.AllowedTables,
+                item.ExpectedParameter
+            });
 
     [Fact]
     public void SixDialectDmlMatrix_HasStableCoverage()
     {
         var cases = DmlGrammarMatrixCases.All().ToArray();
 
+        Assert.Equal(DmlGrammarMatrixCases.ExpectedCaseCount, cases.Length);
         Assert.Equal(42, cases.Length);
         Assert.Equal(
             42,
@@ -36,13 +46,19 @@ public sealed class DialectDmlGrammarMatrixTests
     [Theory]
     [MemberData(nameof(SixDialectDmlMatrix))]
     public void SixDialectDmlMatrix_ParsesBindsValidatesCompilesAndRenders(
-        DmlGrammarCase testCase)
+        string name,
+        SqlAgentToolType dialect,
+        string sql,
+        SqlStatementKind expectedKind,
+        string renderedFragments,
+        string allowedTablesCsv,
+        object? expectedParameter)
     {
         var parsed = CoreSqlTextParser.ParseDml(
-            testCase.Sql,
-            testCase.Dialect);
+            sql,
+            dialect);
 
-        switch (testCase.ExpectedKind)
+        switch (expectedKind)
         {
             case SqlStatementKind.Insert:
                 Assert.IsType<InsertStatement>(parsed.Statement);
@@ -55,10 +71,10 @@ public sealed class DialectDmlGrammarMatrixTests
                 break;
             default:
                 throw new Xunit.Sdk.XunitException(
-                    $"{testCase.Name}: unsupported DML test kind {testCase.ExpectedKind}.");
+                    $"{name}: unsupported DML test kind {expectedKind}.");
         }
 
-        var allowedTables = testCase.AllowedTables
+        var allowedTables = allowedTablesCsv
             .Split(
                 ',',
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -68,16 +84,16 @@ public sealed class DialectDmlGrammarMatrixTests
             allowedTables);
 
         var command = SqlCoreFacade.CompileDml(
-            testCase.Sql,
-            testCase.Dialect,
-            testCase.Dialect,
+            sql,
+            dialect,
+            dialect,
             validationContext);
 
-        Assert.Equal(testCase.ExpectedKind, command.Kind);
+        Assert.Equal(expectedKind, command.Kind);
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
         Assert.False(string.IsNullOrWhiteSpace(command.PlanFingerprint));
 
-        foreach (var fragment in testCase.RenderedFragments.Split(
+        foreach (var fragment in renderedFragments.Split(
                      ';',
                      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -87,16 +103,16 @@ public sealed class DialectDmlGrammarMatrixTests
                 StringComparison.OrdinalIgnoreCase);
         }
 
-        if (testCase.ExpectedParameter is not null)
+        if (expectedParameter is not null)
         {
             Assert.Contains(
                 command.Parameters,
                 parameter => ParameterEquals(
                     parameter.Value,
-                    testCase.ExpectedParameter));
+                    expectedParameter));
         }
 
-        if (testCase.ExpectedParameter is string text)
+        if (expectedParameter is string text)
         {
             Assert.DoesNotContain(
                 text,
