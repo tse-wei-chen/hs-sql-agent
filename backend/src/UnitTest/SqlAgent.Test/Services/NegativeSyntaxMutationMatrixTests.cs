@@ -8,7 +8,6 @@ namespace SqlAgent.Test.Services;
 public sealed class NegativeSyntaxMutationMatrixTests
 {
     private sealed record MutationPlacement(
-        string Name,
         string BaselineSql,
         string MutatedSql);
 
