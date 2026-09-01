@@ -352,13 +352,13 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
         SqlProviderCapabilityProfile? sourceProfile,
         string sql)
     {
-        var error = Assert.Throws<SqlParseException>(
+        var error = Assert.Throws<SqlCompilationException>(
             () => CoreSqlTextParser.ParseQuery(
                 sql,
                 sourceDialect,
                 sourceProfile));
 
-        var diagnostic = Assert.IsType<SqlDiagnostic>(error.Diagnostic);
+        var diagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(error);
         Assert.Equal("SQL_SOURCE_CAPABILITY_REJECTED", diagnostic.Code);
         Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Stage);
         Assert.Equal(SqlDiagnosticCategory.Capability, diagnostic.Category);
