@@ -137,7 +137,13 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var parsedDml = CoreSqlTextParser.ParseDml(renderedSql, dbType);
+                var parsedDml =
+                    await _typedDmlRuntime.ParseDmlWithVerifiedRuntimeProfileAsync(
+                        provider,
+                        sqlConfig.ConnectionString,
+                        renderedSql,
+                        dbType,
+                        cancellationToken);
                 auditDml = parsedDml;
                 TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 

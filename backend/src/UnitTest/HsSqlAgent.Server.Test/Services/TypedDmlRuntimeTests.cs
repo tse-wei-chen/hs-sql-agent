@@ -18,6 +18,54 @@ public class TypedDmlRuntimeTests
         "appdb");
 
     [Fact]
+    public async Task ParseDmlWithVerifiedRuntimeProfileAsync_NativeSqliteReturningUsesSourceVersion()
+    {
+        var connections = new VersionedConnectionFactory("3.46.0");
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+        provider.SetupGet(x => x.Connections).Returns(connections);
+
+        var parsed =
+            await new TypedDmlRuntime()
+                .ParseDmlWithVerifiedRuntimeProfileAsync(
+                    provider.Object,
+                    "connection",
+                    "INSERT INTO users (id, name) VALUES (1, 'Alice') RETURNING id",
+                    SqlAgentToolType.Sqlite,
+                    TestContext.Current.CancellationToken);
+
+        Assert.Equal(SqlAgentToolType.Sqlite, parsed.SourceDialect);
+        Assert.NotNull(parsed.SourceProfile);
+        Assert.Equal(SqlAgentToolType.Sqlite, parsed.SourceProfile.Provider);
+        Assert.Equal(new Version(3, 46), parsed.SourceProfile.ServerVersion);
+        Assert.Equal(1, connections.CreateCount);
+    }
+
+    [Fact]
+    public async Task ParseDmlWithVerifiedRuntimeProfileAsync_CrossDialectDoesNotBorrowTargetProof()
+    {
+        var connections = new VersionedConnectionFactory("8.4.0");
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MySQL);
+        provider.SetupGet(x => x.Connections).Returns(connections);
+
+        var error = await Assert.ThrowsAsync<SqlParseException>(() =>
+            new TypedDmlRuntime()
+                .ParseDmlWithVerifiedRuntimeProfileAsync(
+                    provider.Object,
+                    "connection",
+                    "INSERT INTO users (id, name) VALUES (1, 'Alice') RETURNING id",
+                    SqlAgentToolType.Sqlite,
+                    TestContext.Current.CancellationToken));
+
+        Assert.Contains(
+            "source",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, connections.CreateCount);
+    }
+
+    [Fact]
     public async Task PreviewAsync_InsertSelectFailsClosedBeforeProviderAccess()
     {
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
