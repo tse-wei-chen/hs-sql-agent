@@ -71,9 +71,10 @@ Current CTE execution floor:
 | CTE referenced inside subquery | 6 |
 | CTE joined with physical table | 6 |
 | root UNION ALL over CTE | 6 |
-| **Total** | **74** |
+| version-gated recursive CTE (MySQL / SQLite / Firebird) | 3 |
+| **Total** | **77** |
 
-These tests use each provider's existing integration fixture and the raw SQL path through `SqlCoreFacade.CompileQuery` and `CompiledSqlCommandExecutor`. The harness captures the open connection's verified runtime server profile before compilation, so version-gated target capabilities are tested with runtime proof rather than an assumed version.
+These tests use each provider's existing integration fixture and the raw SQL path through `SqlCoreFacade.CompileQuery` and `CompiledSqlCommandExecutor`. The harness captures the open connection's verified runtime server profile before compilation. When the declared source dialect is the same as the connected target provider, that verified profile is reused as both source and target capability proof; cross-dialect input receives target proof only and cannot borrow target runtime facts to authorize source semantics.
 
 ## Negative grammar bombardment
 

@@ -30,7 +30,7 @@ public sealed class ProviderSyntaxExecutionCoverageTests
     ];
 
     [Fact]
-    public void RealProviderCteExecution_HasStableSeventyFourCaseFloor()
+    public void RealProviderCteExecution_HasStableSeventySevenCaseFloor()
     {
         Assert.Equal(11, CommonCteExecutionMethods.Length);
         Assert.Equal(6, ProviderTestTypes.Length);
@@ -71,14 +71,31 @@ public sealed class ProviderSyntaxExecutionCoverageTests
             typeof(MySqlStrategyTests).GetMethod(
                 "ExecuteRawQueryAsync_NestedInnerCte_Executes"));
 
+        foreach (var providerType in new[]
+                 {
+                     typeof(MySqlStrategyTests),
+                     typeof(SqliteStrategyTests),
+                     typeof(FirebirdStrategyTests)
+                 })
+        {
+            var recursive = providerType.GetMethod(
+                "ExecuteRawQueryAsync_RecursiveCte_UsesVerifiedSourceVersion");
+            Assert.NotNull(recursive);
+            Assert.NotNull(
+                recursive.GetCustomAttributes(typeof(FactAttribute), inherit: true)
+                    .SingleOrDefault());
+        }
+
         const int inheritedCommonCases = 11 * 6;
         const int dialectNativeCases = 6;
         const int nestedInnerCteCases = 2;
+        const int versionGatedRecursiveCases = 3;
 
         Assert.Equal(
-            74,
+            77,
             inheritedCommonCases +
             dialectNativeCases +
-            nestedInnerCteCases);
+            nestedInnerCteCases +
+            versionGatedRecursiveCases);
     }
 }
