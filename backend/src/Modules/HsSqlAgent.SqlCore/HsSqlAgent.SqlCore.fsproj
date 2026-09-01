@@ -47,6 +47,7 @@
     <Compile Include="RewriteLegacyAstAdapter.fs" />
     <Compile Include="RewriteLexer.fs" />
     <Compile Include="RewriteParser.fs" />
+    <Compile Include="RewriteSourceValidation.fs" />
     <Compile Include="RewriteCompatibilityAstAdapter.fs" />
     <Compile Include="RewriteCastTypes.fs" />
     <Compile Include="RewriteBinder.fs" />
