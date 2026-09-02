@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.70"
+    static member Version = "2026-09-02.71"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -208,6 +208,10 @@ type SqlCapabilityMatrix private () =
                                                 profile,
                                                 provider,
                                                 SqlDmlReturningExpressionCapabilityRules.SQLiteMinimumVersion) -> translated
+            | SqlAgentToolType.Firebird when SqlCapabilityMatrix.VersionAtLeast(
+                                                  profile,
+                                                  provider,
+                                                  SqlDmlReturningExpressionCapabilityRules.FirebirdMinimumVersion) -> translated
             | _ -> rejected
 
         let targetlessDoNothingStatus =
@@ -571,11 +575,15 @@ type SqlCapabilityMatrix private () =
                             "PostgreSQL rich RETURNING admits the proven binder-resolved local-row scalar/predicate subset, including local FROM/USING row sources. Subqueries, windows, aggregates, correlated references, and unproven functions remain fail-closed."
                         | SqlAgentToolType.Sqlite ->
                             "SQLite 3.35+ rich RETURNING admits the proven scalar/predicate subset only for same-provider native compilation and only over the modified target table. UPDATE FROM auxiliary tables are deliberately outside RETURNING scope. Top-level aggregates, windows, subqueries, and unproven functions remain fail-closed."
+                        | SqlAgentToolType.Firebird ->
+                            "Firebird 5.0+ DSQL rich RETURNING admits the same proven scalar/predicate subset and can participate in cross-provider lowering when the ordinary expression capabilities are also proven. Firebird-specific OLD/NEW contexts are intentionally outside the portable Core model."
                         | _ -> "Rich RETURNING is enabled by the declared provider/runtime contract."
                     else
                         match provider with
                         | SqlAgentToolType.Sqlite ->
                             "SQLite rich RETURNING requires an explicit target capability profile with ServerVersion 3.35 or newer."
+                        | SqlAgentToolType.Firebird ->
+                            "Firebird rich DSQL RETURNING requires an explicit target capability profile with ServerVersion 5.0 or newer."
                         | _ ->
                             "Rich RETURNING expressions remain fail-closed for this target provider.")
                 cap("dml.conflict_do_nothing_any","dml",targetlessDoNothingStatus,

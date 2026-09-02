@@ -435,15 +435,16 @@ module internal SqlDmlDeleteUsingCapabilityRules =
 
 module internal SqlDmlReturningExpressionCapabilityRules =
     let SQLiteMinimumVersion = Version(3,35)
+    let FirebirdMinimumVersion = Version(5,0)
 
-    let private sqliteProfileAtLeast
+    let private profileAtLeast
         (provider: SqlAgentToolType)
-        (profile: SqlProviderCapabilityProfile | null) =
-        provider = SqlAgentToolType.Sqlite
-        && not (isNull profile)
+        (profile: SqlProviderCapabilityProfile | null)
+        (minimum: Version) =
+        not (isNull profile)
         && profile.Provider = provider
         && not (isNull profile.ServerVersion)
-        && profile.ServerVersion.CompareTo(SQLiteMinimumVersion) >= 0
+        && profile.ServerVersion.CompareTo(minimum) >= 0
 
     let private validationError
         (provider: SqlAgentToolType)
@@ -451,10 +452,14 @@ module internal SqlDmlReturningExpressionCapabilityRules =
         (side: string) : string | null =
         match provider with
         | SqlAgentToolType.Postgres -> null
-        | SqlAgentToolType.Sqlite when sqliteProfileAtLeast provider profile -> null
+        | SqlAgentToolType.Sqlite when profileAtLeast provider profile SQLiteMinimumVersion -> null
+        | SqlAgentToolType.Firebird when profileAtLeast provider profile FirebirdMinimumVersion -> null
         | SqlAgentToolType.Sqlite ->
             "SQL capability 'dml.returning.expression' requires an explicit SQLite "
             + side + " capability profile with ServerVersion 3.35 or newer."
+        | SqlAgentToolType.Firebird ->
+            "SQL capability 'dml.returning.expression' requires an explicit Firebird "
+            + side + " capability profile with ServerVersion 5.0 or newer."
         | _ when side = "target" ->
             "SQL capability 'dml.returning.expression' remains fail-closed for target provider "
             + string provider + "; no proven rich RETURNING equivalent is declared."

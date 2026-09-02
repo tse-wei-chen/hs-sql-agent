@@ -73,6 +73,10 @@ Auxiliary UPDATE FROM sources are not visible to RETURNING, and the existing pro
 continues to reject top-level aggregates, window functions, subqueries, correlated references, and
 unproven functions.
 
+Firebird 5.0+ DSQL rich RETURNING uses the same proven scalar/predicate subset and may cross-lower
+with PostgreSQL when ordinary expression capabilities are proven. Firebird-specific OLD/NEW row
+contexts are not represented by the portable Core AST and remain outside this contract.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and

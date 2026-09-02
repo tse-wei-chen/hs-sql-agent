@@ -58,6 +58,26 @@ public sealed class CoreDmlReturningCapabilityMatrixTests
     }
 
     [Fact]
+    public void Matrix_FirebirdRichReturningRequiresExplicitVersionFive()
+    {
+        var old = RichReturning(SqlCapabilityMatrix.ForProvider(
+            SqlAgentToolType.Firebird,
+            new SqlProviderCapabilityProfile(
+                SqlAgentToolType.Firebird,
+                ServerVersion: new Version(4, 0))));
+        var current = RichReturning(SqlCapabilityMatrix.ForProvider(
+            SqlAgentToolType.Firebird,
+            new SqlProviderCapabilityProfile(
+                SqlAgentToolType.Firebird,
+                ServerVersion: new Version(5, 0))));
+
+        Assert.Equal(SqlCapabilityStatus.Rejected, old.Status);
+        Assert.Equal(SqlCapabilityStatus.Translated, current.Status);
+        Assert.Contains("5.0", current.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OLD/NEW", current.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Matrix_FirebirdReturningRequiresExplicitVersionFive()
     {
         var old = Returning(SqlCapabilityMatrix.ForProvider(
