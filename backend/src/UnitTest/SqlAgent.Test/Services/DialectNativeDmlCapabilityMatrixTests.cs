@@ -263,6 +263,17 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             false,
             "UPDATE; FROM ;profiles"),
         new(
+            "sqlserver-delete-from",
+            "DELETE FROM users FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.None,
+            SqlStatementKind.Delete,
+            false,
+            "DELETE FROM; FROM ;profiles;WHERE"),
+        new(
             "postgres-delete-using-to-sqlserver",
             "DELETE FROM users USING profiles WHERE users.id = profiles.user_id",
             SqlAgentToolType.Postgres,
@@ -326,9 +337,9 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     [Fact]
     public void NativeDmlMatrix_HasStableCapabilityCoverage()
     {
-        Assert.Equal(25, Cases.Length);
+        Assert.Equal(26, Cases.Length);
         Assert.Equal(
-            25,
+            26,
             Cases.Select(item => item.Name)
                 .Distinct(StringComparer.Ordinal)
                 .Count());
@@ -336,7 +347,7 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Postgres));
         Assert.Equal(6, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
-        Assert.Equal(2, Cases.Count(item => item.TargetDialect == SqlAgentToolType.MsSqlServer));
+        Assert.Equal(3, Cases.Count(item => item.TargetDialect == SqlAgentToolType.MsSqlServer));
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MySQL);
         Assert.Equal(2, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Oracle));
     }

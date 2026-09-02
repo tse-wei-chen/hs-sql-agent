@@ -32,10 +32,10 @@ public sealed class DialectDmlGrammarMatrixTests
             + DmlPredicateGrammarMatrixTests.InsertSelectGrammarMatrix().Count();
 
         Assert.Equal(42, DmlGrammarMatrixCases.ExpectedCaseCount);
-        Assert.Equal(25, DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount);
+        Assert.Equal(26, DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount);
         Assert.Equal(360, cartesianMatrix);
         Assert.Equal(
-            427,
+            428,
             DmlGrammarMatrixCases.ExpectedCaseCount +
             DialectNativeDmlCapabilityMatrixTests.NativeDmlCaseCount +
             cartesianMatrix);

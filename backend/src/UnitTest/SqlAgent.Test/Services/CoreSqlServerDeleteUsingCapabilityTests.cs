@@ -27,6 +27,23 @@ public sealed class CoreSqlServerDeleteUsingCapabilityTests
     }
 
     [Fact]
+    public void Parse_SqlServerJoinedDeleteNativeSyntax_RendersSameProvider()
+    {
+        const string sql =
+            "DELETE FROM users FROM profiles WHERE users.id = profiles.user_id";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("sqlserver-native-joined-delete-v1"));
+
+        Assert.Contains("DELETE FROM", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" FROM ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("profiles", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Parse_SqlServerDeleteUsing_RemainsInvalidSourceGrammar()
     {
         var error = Assert.Throws<SqlParseException>(() =>
