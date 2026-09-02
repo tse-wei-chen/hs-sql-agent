@@ -49,6 +49,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected virtual bool SupportsFormattedDateParsing => true;
     protected virtual string TestUserIdColumn => "id";
     protected virtual string TestUserNameColumn => "Name";
+    protected virtual string TestUserAgeColumn => "age";
 
     protected abstract string TableNotFoundErrorCode { get; }
     protected abstract string ColumnNotFoundErrorCode { get; }
@@ -99,6 +100,108 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
     }
+
+    [Fact]
+    public async Task ExecuteRawQueryAsync_DifferentialSemanticOracleCorpus_ShouldMatchNativeEngine()
+    {
+        foreach (var sql in DifferentialSemanticOracleSql())
+        {
+            var translatedJson = await Strategy.ExecuteRawQueryAsync(
+                sql,
+                SqlAgentToolType.Postgres,
+                Fixture.ConnectionString,
+                TestContext.Current.CancellationToken);
+
+            var translatedRows = NormalizeJsonRows(translatedJson);
+            var nativeRows = await ExecuteNativeRowsAsync(sql);
+
+            Assert.Equal(
+                nativeRows,
+                translatedRows);
+        }
+    }
+
+    private IEnumerable<string> DifferentialSemanticOracleSql()
+    {
+        yield return
+            $"SELECT {TestUserIdColumn} AS item_id, " +
+            $"{TestUserNameColumn} AS item_name, " +
+            $"{TestUserAgeColumn} + 2 AS next_age " +
+            $"FROM {TestTableName} " +
+            $"WHERE {TestUserAgeColumn} >= 25 " +
+            $"ORDER BY {TestUserIdColumn}";
+
+        yield return
+            $"SELECT {TestOrdersUserIdColumn} AS owner_id, " +
+            $"COUNT(*) AS order_count " +
+            $"FROM {TestOrdersTableName} " +
+            $"GROUP BY {TestOrdersUserIdColumn} " +
+            $"HAVING COUNT(*) > 0 " +
+            $"ORDER BY {TestOrdersUserIdColumn}";
+
+        yield return
+            $"SELECT {TestUserIdColumn} AS item_id, " +
+            $"CASE WHEN {TestUserAgeColumn} >= 30 " +
+            $"THEN 'senior' ELSE 'junior' END AS age_band " +
+            $"FROM {TestTableName} " +
+            $"ORDER BY {TestUserIdColumn}";
+    }
+
+    private async Task<string[]> ExecuteNativeRowsAsync(string sql)
+    {
+        await using var connection = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var rows = new List<string>();
+
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            var values = new string[reader.FieldCount];
+            for (var index = 0; index < reader.FieldCount; index++)
+            {
+                values[index] = NormalizeNativeValue(reader.GetValue(index));
+            }
+
+            rows.Add(string.Join("\u001f", values));
+        }
+
+        return rows.ToArray();
+    }
+
+    private static string[] NormalizeJsonRows(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement
+            .EnumerateArray()
+            .Select(row => string.Join(
+                "\u001f",
+                row.EnumerateObject().Select(property => NormalizeJsonValue(property.Value))))
+            .ToArray();
+    }
+
+    private static string NormalizeNativeValue(object value) =>
+        value switch
+        {
+            DBNull => "<null>",
+            null => "<null>",
+            IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? "<null>"
+        };
+
+    private static string NormalizeJsonValue(JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Null => "<null>",
+            JsonValueKind.String => value.GetString() ?? "<null>",
+            JsonValueKind.Number when value.TryGetDecimal(out var number) =>
+                number.ToString(CultureInfo.InvariantCulture),
+            JsonValueKind.True => "True",
+            JsonValueKind.False => "False",
+            _ => value.ToString()
+        };
 
     [Fact]
     public async Task ExecuteRawQueryAsync_CteWhereOrder_ShouldCompileRenderAndExecute()
