@@ -458,13 +458,29 @@ module internal RewriteLexer =
                 let upper = text.ToUpperInvariant()
                 if keywords.Contains upper then add (Keyword upper) start i
                 else add (Identifier(text, false)) start i
-            elif i + 2 < length && sql.Substring(i, 3) = "<=>" then
-                add (Operator "<=>") i (i + 3)
-                i <- i + 3
+            elif i + 2 < length then
+                let triple = sql.Substring(i, 3)
+                match triple with
+                | "<=>"
+                | "->>" ->
+                    add (Operator triple) i (i + 3)
+                    i <- i + 3
+                | _ ->
+                    let pair = sql.Substring(i, 2)
+                    match pair with
+                    | "<>" | "!=" | ">=" | "<=" | "||" | "::" | "!~" | "->" ->
+                        add (Operator pair) i (i + 2)
+                        i <- i + 2
+                    | _ ->
+                        match c with
+                        | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' | '~' -> add (Operator(string c)) i (i + 1)
+                        | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
+                        | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
+                        i <- i + 1
             elif i + 1 < length then
                 let pair = sql.Substring(i, 2)
                 match pair with
-                | "<>" | "!=" | ">=" | "<=" | "||" | "::" | "!~" ->
+                | "<>" | "!=" | ">=" | "<=" | "||" | "::" | "!~" | "->" ->
                     add (Operator pair) i (i + 2)
                     i <- i + 2
                 | _ ->

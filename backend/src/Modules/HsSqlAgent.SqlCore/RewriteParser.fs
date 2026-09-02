@@ -23,6 +23,7 @@ module internal RewriteParser =
           MySqlPipes: MySqlPipesSemantics
           MySqlNoBackslashEscapes: bool
           MySqlNullSafeEqualitySyntax: CapabilityProof
+          MySqlJsonArrowSyntax: CapabilityProof
           DistinctFromSyntax: CapabilityProof
           Joins: JoinProofs
           Expressions: ExpressionProofs
@@ -76,6 +77,7 @@ module internal RewriteParser =
               MySqlPipes = RejectAmbiguousPipes
               MySqlNoBackslashEscapes = false
               MySqlNullSafeEqualitySyntax = ProvenCapability
+              MySqlJsonArrowSyntax = ProvenCapability
               DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
@@ -93,6 +95,7 @@ module internal RewriteParser =
               MySqlPipes = PipesAsConcat
               MySqlNoBackslashEscapes = false
               MySqlNullSafeEqualitySyntax = ProvenCapability
+              MySqlJsonArrowSyntax = ProvenCapability
               DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
@@ -119,6 +122,7 @@ module internal RewriteParser =
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
         member _.MySqlNoBackslashEscapes = semantics.MySqlNoBackslashEscapes
         member _.SourceMySqlNullSafeEqualitySyntax = semantics.MySqlNullSafeEqualitySyntax
+        member _.SourceMySqlJsonArrowSyntax = semantics.MySqlJsonArrowSyntax
         member _.SourceDistinctFromSyntax = semantics.DistinctFromSyntax
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
@@ -247,6 +251,36 @@ module internal RewriteParser =
     let private isMySqlRegexOperator token =
         isUnquotedIdentifierText "REGEXP" token
         || isUnquotedIdentifierText "RLIKE" token
+
+    let private requireMySqlJsonArrowSourceDialect (cursor: Cursor) (token: Token) (spelling: string) =
+        if cursor.Dialect <> SourceDialect.MySql then
+            let finish = token.Start + max token.Length 1
+            let message =
+                "MySQL JSON " + spelling
+                + " syntax is not valid for source dialect "
+                + sourceDialectName cursor.Dialect
+                + " in the Core source profile. Position "
+                + string token.Start
+                + ", span ["
+                + string token.Start
+                + ".."
+                + string finish
+                + ")."
+            raise (
+                SqlParseException(
+                    message,
+                    tokenDiagnostic
+                        "SQL_SOURCE_DIALECT_SYNTAX"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.DialectSyntax
+                        token
+                        message))
+
+    let private rejectSourceParseCapability (token: Token) message =
+        requireSourceParseCapability
+            token
+            (RejectedCapability(
+                CapabilityRejection.create CapabilitySide.SourceCapability message))
 
     let private requireRegexSourceDialect
         (cursor: Cursor)
@@ -855,6 +889,39 @@ module internal RewriteParser =
 
         while scanning do
             match cursor.Current.Kind with
+            | Operator "->"
+            | Operator "->>" ->
+                let operatorToken = cursor.Current
+                let spelling = if isOperator "->>" operatorToken then "'->>'" else "'->'"
+                requireMySqlJsonArrowSourceDialect cursor operatorToken spelling
+                if isOperator "->>" operatorToken then
+                    rejectSourceParseCapability
+                        operatorToken
+                        "SQL capability 'json.operator.mysql_unquoted_arrow' remains fail-closed because ->> has JSON_UNQUOTE(JSON_EXTRACT(...)) text-result semantics that are not represented by the canonical JSON extraction node."
+                requireSourceParseCapability operatorToken cursor.SourceMySqlJsonArrowSyntax
+                match Expr.unspan expression with
+                | Column _ -> ()
+                | _ ->
+                    rejectSourceParseCapability
+                        operatorToken
+                        "SQL capability 'json.operator.mysql_arrow' requires the MySQL source left operand to be a JSON column identifier; general expression operands are not admitted by the proven source grammar."
+                cursor.Advance()
+                let pathToken = cursor.Take()
+                let pathExpression =
+                    match pathToken.Kind with
+                    | StringLiteral path ->
+                        Literal(ScalarValue.Text path)
+                        |> Expr.withSpan { Start = pathToken.Start; Length = pathToken.Length }
+                    | _ ->
+                        fail pathToken "MySQL JSON -> requires a string-literal JSON path"
+                expression <-
+                    FunctionCall
+                        { Name = FunctionName.create "JSON_EXTRACT"
+                          Arguments = [ expression; pathExpression ]
+                          IsDistinct = false
+                          AggregateOrderBy = []
+                          AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                          AggregateSeparator = None }
             | Operator "::" ->
                 match tryParsePostfixCast cursor expression with
                 | Some casted ->

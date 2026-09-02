@@ -7,7 +7,29 @@ public sealed class CoreCapabilityMatrixVersionContractTests
     [Fact]
     public void MatrixVersion_IsCurrentCapabilityContract()
     {
-        Assert.Equal("2026-09-02.77", SqlCapabilityMatrix.Version);
+        Assert.Equal("2026-09-02.78", SqlCapabilityMatrix.Version);
+    }
+
+    [Fact]
+    public void MySqlJsonArrowCapability_IsVersionProven()
+    {
+        var undeclared = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MySQL).Capabilities,
+            item => item.Id == "json.operator.mysql_arrow");
+        var oldVersion = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(
+                SqlAgentToolType.MySQL,
+                new SqlProviderCapabilityProfile(SqlAgentToolType.MySQL, new Version(5, 7, 8))).Capabilities,
+            item => item.Id == "json.operator.mysql_arrow");
+        var supported = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(
+                SqlAgentToolType.MySQL,
+                new SqlProviderCapabilityProfile(SqlAgentToolType.MySQL, new Version(5, 7, 9))).Capabilities,
+            item => item.Id == "json.operator.mysql_arrow");
+
+        Assert.Equal(SqlCapabilityStatus.Rejected, undeclared.Status);
+        Assert.Equal(SqlCapabilityStatus.Rejected, oldVersion.Status);
+        Assert.Equal(SqlCapabilityStatus.Supported, supported.Status);
     }
 
     [Fact]
