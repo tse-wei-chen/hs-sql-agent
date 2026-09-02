@@ -56,6 +56,7 @@ public sealed class CoreCompileEvidenceTests
         Assert.Equal(SqlAgentToolType.MySQL, evidence.TargetProfile.Provider);
         Assert.Equal("8.4", evidence.SourceProfile.ServerVersion);
         Assert.Equal(["ANSI_QUOTES", "PIPES_AS_CONCAT"], evidence.SourceProfile.SessionModes);
+        Assert.Empty(evidence.SourceProfile.SessionSettings);
         Assert.Equal(["accounts", "users"], evidence.Policy.AllowedTables);
         Assert.Equal(25, evidence.Policy.QueryMaxRows);
         Assert.Equal("compile-evidence-v1", evidence.Policy.PolicyVersion);
@@ -264,12 +265,14 @@ public sealed class CoreCompileEvidenceTests
             modes.Add("ANSI_QUOTES");
             settings["sql_mode"] = "ANSI_QUOTES,PIPES_AS_CONCAT";
             settings["time_zone"] = "+00:00";
+            settings["password"] = "must-not-enter-compile-evidence";
         }
         else
         {
             modes.Add("ANSI_QUOTES");
             modes.Add("PIPES_AS_CONCAT");
             settings["time_zone"] = "+00:00";
+            settings["password"] = "must-not-enter-compile-evidence";
             settings["sql_mode"] = "ANSI_QUOTES,PIPES_AS_CONCAT";
         }
 

@@ -42,6 +42,25 @@ module internal CompileEvidenceBuilder =
         |> Seq.map (fun (name, value) -> SqlCompileSettingEvidence(name, value))
         |> ImmutableArray.CreateRange
 
+    let private relevantSessionModes provider (profile: SqlProviderCapabilityProfile) =
+        match provider with
+        | SqlAgentToolType.MySQL ->
+            [ "ANSI"; "ANSI_QUOTES"; "NO_BACKSLASH_ESCAPES"; "PIPES_AS_CONCAT" ]
+            |> Seq.filter profile.HasSessionMode
+            |> sortedStrings
+        | _ -> ImmutableArray<string>.Empty
+
+    let private relevantSessionSettings provider (profile: SqlProviderCapabilityProfile) =
+        match provider with
+        | SqlAgentToolType.MsSqlServer ->
+            [ "CONCAT_NULL_YIELDS_NULL" ]
+            |> Seq.choose (fun name ->
+                match profile.GetSessionSetting(name) with
+                | null -> None
+                | value -> Some(name, value))
+            |> settings
+        | _ -> ImmutableArray<SqlCompileSettingEvidence>.Empty
+
     let private profileEvidence provider (profile: SqlProviderCapabilityProfile | null) =
         let serverVersion, compatibilityLevel, sessionModes, sessionSettings =
             match profile with
@@ -55,18 +74,10 @@ module internal CompileEvidenceBuilder =
                     match value.ServerVersion with
                     | null -> null
                     | version -> version.ToString()
-                let modes =
-                    match value.SessionModes with
-                    | null -> ImmutableArray<string>.Empty
-                    | modes -> modes |> sortedStrings
-                let profileSettings =
-                    match value.SessionSettings with
-                    | null -> ImmutableArray<SqlCompileSettingEvidence>.Empty
-                    | items ->
-                        items
-                        |> Seq.map (fun pair -> pair.Key, pair.Value)
-                        |> settings
-                version, value.CompatibilityLevel, modes, profileSettings
+                version,
+                value.CompatibilityLevel,
+                relevantSessionModes provider value,
+                relevantSessionSettings provider value
 
         SqlCompileProfileEvidence(
             provider,
