@@ -573,7 +573,7 @@ module internal RewriteBinder =
                         AssignmentItems = update.AssignmentItems |> NonEmpty.map (bindAssignment scope)
                         Where = update.Where |> Option.map (bindExpr scope)
                         Returning =
-                            if dialect = SourceDialect.SQLite then
+                            if dialect = SqlAgentToolType.Sqlite then
                                 bindSqliteReturningTargetOnly baseScope update.Returning
                             else
                                 bindReturning scope update.Returning }
