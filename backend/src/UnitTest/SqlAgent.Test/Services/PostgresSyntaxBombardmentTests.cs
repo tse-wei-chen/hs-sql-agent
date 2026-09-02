@@ -1253,6 +1253,8 @@ public sealed class PostgresSyntaxBombardmentTests
         string sql,
         string expectedDiagnostic)
     {
+        Assert.False(string.IsNullOrWhiteSpace(name));
+
         var error = Assert.Throws<SqlParseException>(
             () => CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres));
 

@@ -38,9 +38,10 @@ public class ProviderRuntimeBoundaryTests
         Assert.Single(executorMethods);
         Assert.Contains(executorMethods[0].GetParameters(), parameter =>
             parameter.ParameterType == typeof(DbConnection));
-        Assert.Empty(typeof(CompiledSqlCommandExecutor).GetConstructors()
-            .SelectMany(constructor => constructor.GetParameters())
-            .Where(parameter => parameter.ParameterType == typeof(IDbConnectionFactory)));
+        Assert.DoesNotContain(
+            typeof(CompiledSqlCommandExecutor).GetConstructors()
+                .SelectMany(constructor => constructor.GetParameters()),
+            parameter => parameter.ParameterType == typeof(IDbConnectionFactory));
     }
 
     [Fact]

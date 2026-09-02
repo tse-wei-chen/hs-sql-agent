@@ -355,6 +355,8 @@ public sealed class PostgresDmlSyntaxBombardmentTests
         string sql,
         string expectedDiagnostic)
     {
+        Assert.False(string.IsNullOrWhiteSpace(name));
+
         var error = Assert.Throws<SqlParseException>(
             () => CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres));
 
