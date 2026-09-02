@@ -5,7 +5,7 @@ namespace SqlAgent.Test.Services;
 
 public sealed class PostgresJsonOperatorGrammarMatrixTests
 {
-    public const int ExpectedPositiveCaseCount = 15;
+    public const int ExpectedPositiveCaseCount = 18;
     public const int ExpectedNegativeCaseCount = 48;
 
     private static readonly string[] Contexts =
@@ -19,6 +19,7 @@ public sealed class PostgresJsonOperatorGrammarMatrixTests
     [
         "payload->'user'",
         "payload->>'user'",
+        "payload->'$.id'",
         "payload->0",
         "payload->>-1",
         "payload->'user'->'name'"

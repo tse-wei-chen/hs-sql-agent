@@ -5,7 +5,7 @@ namespace SqlAgent.Test.Services;
 public sealed class MySqlJsonArrowGrammarMatrixTests
 {
     public const int ExpectedPositiveCaseCount = 9;
-    public const int ExpectedNegativeCaseCount = 27;
+    public const int ExpectedNegativeCaseCount = 24;
 
     private static readonly string[] Contexts =
     [
@@ -35,7 +35,9 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
 
     public static IEnumerable<object[]> WrongDialectMatrix()
     {
-        foreach (var source in Enum.GetValues<SqlAgentToolType>().Where(value => value != SqlAgentToolType.MySQL))
+        foreach (var source in Enum.GetValues<SqlAgentToolType>().Where(
+                     value => value != SqlAgentToolType.MySQL
+                              && value != SqlAgentToolType.Postgres))
         foreach (var context in Contexts)
             yield return
             [
@@ -87,7 +89,7 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
     public void Matrices_HaveStableCoverage()
     {
         Assert.Equal(ExpectedPositiveCaseCount, PositiveMatrix().Count());
-        Assert.Equal(15, WrongDialectMatrix().Count());
+        Assert.Equal(12, WrongDialectMatrix().Count());
         Assert.Equal(6, VersionProofMatrix().Count());
         Assert.Equal(6, UnsupportedShapeMatrix().Count());
         Assert.Equal(
