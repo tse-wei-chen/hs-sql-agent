@@ -9,7 +9,7 @@ namespace SqlAgent.Test.Services;
 
 public sealed class CompilerDeterminismPropertyTests
 {
-    private sealed record DeterminismCase(
+    public sealed record DeterminismCase(
         string Name,
         string Sql,
         SqlAgentToolType Source,
@@ -19,7 +19,7 @@ public sealed class CompilerDeterminismPropertyTests
         SqlProviderCapabilityProfile? TargetProfile = null,
         DmlConflictTargetAssurance? ConflictAssurance = null);
 
-    private sealed record RejectedCase(
+    public sealed record RejectedCase(
         string Name,
         Func<SqlCoreTryResult<CompiledSqlCommand>> Compile);
 
