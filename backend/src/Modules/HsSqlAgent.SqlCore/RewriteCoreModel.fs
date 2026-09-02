@@ -603,9 +603,96 @@ module internal CoreModel =
 
     type Assignment = { Target: Identifier; Value: Expr }
 
+    type ConflictArithmeticOperator =
+        | ConflictAdd
+        | ConflictSubtract
+        | ConflictMultiply
+        | ConflictDivide
+        | ConflictModulo
+
+    type ConflictValue =
+        | ConflictProposedColumn of Identifier
+        | ConflictTargetColumn of Identifier
+        | ConflictLiteral of ScalarValue
+        | ConflictNegate of ConflictValue
+        | ConflictBinary of ConflictArithmeticOperator * ConflictValue * ConflictValue
+
+    module ConflictValue =
+        let private error =
+            "ON CONFLICT DO UPDATE conflict clause admits only deterministic scalar values composed from EXCLUDED columns, unqualified target columns, literals, unary +/- and arithmetic +, -, *, /, %. Functions, predicates, concatenation, casts, CASE and subqueries remain fail-closed."
+
+        let private singlePart identifier =
+            match Identifier.parts identifier with
+            | [ part ] -> Some(Identifier.create [ part ])
+            | _ -> None
+
+        let rec tryOfExpression expression =
+            match expression with
+            | Spanned(_, inner) -> tryOfExpression inner
+            | Column identifier ->
+                match Identifier.parts identifier with
+                | [ part ] -> Ok(ConflictTargetColumn(Identifier.create [ part ]))
+                | [ qualifier; part ]
+                    when not qualifier.WasQuoted
+                         && StringComparer.OrdinalIgnoreCase.Equals(qualifier.Value, "EXCLUDED") ->
+                    Ok(ConflictProposedColumn(Identifier.create [ part ]))
+                | _ -> Error error
+            | Literal value -> Ok(ConflictLiteral value)
+            | Unary(UnaryOperator.Positive, operand) -> tryOfExpression operand
+            | Unary(UnaryOperator.Negate, operand) ->
+                tryOfExpression operand |> Result.map ConflictNegate
+            | Binary(operator, left, right) ->
+                let mapped =
+                    match operator with
+                    | BinaryOperator.Add -> Some ConflictAdd
+                    | BinaryOperator.Subtract -> Some ConflictSubtract
+                    | BinaryOperator.Multiply -> Some ConflictMultiply
+                    | BinaryOperator.Divide -> Some ConflictDivide
+                    | BinaryOperator.Modulo -> Some ConflictModulo
+                    | _ -> None
+                match mapped with
+                | None -> Error error
+                | Some conflictOperator ->
+                    match tryOfExpression left, tryOfExpression right with
+                    | Ok leftValue, Ok rightValue ->
+                        Ok(ConflictBinary(conflictOperator, leftValue, rightValue))
+                    | Error message, _
+                    | _, Error message -> Error message
+            | _ -> Error error
+
+        let rec toExpression value =
+            let proposedIdentifier identifier =
+                match singlePart identifier with
+                | None -> invalidOp "Conflict proposed-row identifiers must contain exactly one part."
+                | Some column ->
+                    let excluded =
+                        { Value = "EXCLUDED"
+                          WasQuoted = false
+                          PreserveSpelling = false
+                          Span = Span.unknown }
+                    Identifier.create [ excluded; Identifier.parts column |> List.head ]
+            match value with
+            | ConflictProposedColumn identifier -> Column(proposedIdentifier identifier)
+            | ConflictTargetColumn identifier -> Column identifier
+            | ConflictLiteral scalar -> Literal scalar
+            | ConflictNegate operand -> Unary(UnaryOperator.Negate, toExpression operand)
+            | ConflictBinary(operator, left, right) ->
+                let binaryOperator =
+                    match operator with
+                    | ConflictAdd -> BinaryOperator.Add
+                    | ConflictSubtract -> BinaryOperator.Subtract
+                    | ConflictMultiply -> BinaryOperator.Multiply
+                    | ConflictDivide -> BinaryOperator.Divide
+                    | ConflictModulo -> BinaryOperator.Modulo
+                Binary(binaryOperator, toExpression left, toExpression right)
+
+        let trySimpleProposed = function
+            | ConflictProposedColumn identifier -> Some identifier
+            | _ -> None
+
     type ConflictAssignment =
         { Target: Identifier
-          Proposed: Identifier }
+          Value: ConflictValue }
 
     type InsertConflictAction =
         | DoNothing

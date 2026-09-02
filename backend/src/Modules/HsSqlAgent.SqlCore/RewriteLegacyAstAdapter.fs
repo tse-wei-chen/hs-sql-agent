@@ -532,8 +532,18 @@ module internal RewriteLegacyAstAdapter =
                 let assignments =
                     conflict.Assignments
                     |> Seq.map (fun assignment ->
+                        let value =
+                            if isNull assignment.Value then
+                                if obj.ReferenceEquals(assignment.ProposedColumn, null) then
+                                    raise (SqlCompilationException(
+                                        "INSERT conflict assignment requires either a direct proposed-row column or a structured deterministic Value expression."))
+                                ConflictProposedColumn(identifierOf assignment.ProposedColumn)
+                            else
+                                match assignment.Value |> exprOf |> ConflictValue.tryOfExpression with
+                                | Ok deterministic -> deterministic
+                                | Error message -> raise (SqlCompilationException(message))
                         { ConflictAssignment.Target = identifierOf assignment.Column
-                          Proposed = identifierOf assignment.ProposedColumn })
+                          Value = value })
                     |> Seq.toList
                     |> NonEmpty.ofList "conflictAssignments"
                 InsertConflictAction.UpdateProposedValues assignments

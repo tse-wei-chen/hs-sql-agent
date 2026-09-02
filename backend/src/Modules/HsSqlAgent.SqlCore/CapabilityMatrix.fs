@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.79"
+    static member Version = "2026-09-02.80"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -614,7 +614,7 @@ type SqlCapabilityMatrix private () =
                 cap("dml.nested_cte_scope","dml",nestedStatus,
                     if nestedStatus=translated then "Nested DML CTEs use scope-preserving direct lowering, including output ordinal ordering." else "Nested DML CTE scope remains fail-closed.")
                 cap("dml.advanced","dml",rejected,
-                    "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, arbitrary conflict-update expressions, and INSERT ... SELECT upsert remain outside the portable DML contract.")
+                    "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, conflict-update predicates/functions/subqueries, and unproven cross-provider rich conflict expressions remain outside the portable DML contract.")
                 cap("dml.returning_output","dml",returningStatus,
                     if returningStatus=translated then
                         match provider with
@@ -669,9 +669,9 @@ type SqlCapabilityMatrix private () =
                 cap("dml.upsert_merge","dml",upsertStatus,
                     if upsertStatus=translated then
                         if provider=SqlAgentToolType.Postgres then
-                            "PostgreSQL supports the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. Explicit-target DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and closed assignments of the form target = EXCLUDED.source. Targetless DO NOTHING is tracked separately by dml.conflict_do_nothing_any. Arbitrary expressions, predicates, named constraints, partial-index predicates, and typed approval execution remain fail-closed."
+                            "PostgreSQL supports the deterministic Core explicit conflict-target contract, including INSERT VALUES and assurance-backed INSERT SELECT. Explicit-target DO NOTHING permits multiple proposed rows; DO UPDATE remains limited to exactly one proposed row unless cardinality metadata proves a broader contract. Direct target = EXCLUDED.source assignments retain the existing portable lowering path. Native PostgreSQL additionally admits a closed deterministic conflict-update scalar algebra over EXCLUDED columns, unqualified current-row target columns, parameterized literals, unary +/- and arithmetic +, -, *, /, %. Rich expressions remain native-only; functions, predicates, concatenation, casts, CASE, subqueries, named constraints, partial-index predicates, and typed approval execution remain fail-closed."
                         else
-                            "SQLite ServerVersion 3.24+ target profiles support the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. Explicit-target DO NOTHING permits multiple proposed rows; DO UPDATE is limited to exactly one proposed row and target = EXCLUDED.source assignments. Targetless DO NOTHING is tracked separately by dml.conflict_do_nothing_any and remains native-only. The target version must be explicit; richer SQLite UPSERT grammar and typed approval execution remain fail-closed."
+                            "SQLite ServerVersion 3.24+ target profiles support the deterministic Core INSERT VALUES conflict contract with an explicit conflict-column target. Explicit-target DO NOTHING permits multiple proposed rows; DO UPDATE remains limited to exactly one proposed row unless cardinality metadata proves a broader contract. Direct target = EXCLUDED.source assignments retain the existing portable lowering path. Native SQLite additionally admits the closed deterministic conflict-update scalar algebra over EXCLUDED columns, unqualified current-row target columns, parameterized literals, unary +/- and arithmetic +, -, *, /, %. Targetless DO NOTHING remains native-only. The target version must be explicit; rich expressions are native-only and conflict predicates/functions/subqueries plus richer SQLite UPSERT grammar and typed approval execution remain fail-closed."
                     else
                         match provider with
                         | SqlAgentToolType.Sqlite ->

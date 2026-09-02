@@ -2007,10 +2007,12 @@ module internal RewriteParser =
                             fail cursor.Current ("ON CONFLICT UPDATE assigns column '" + targetPart.Value + "' more than once")
                         let target = singlePartIdentifier targetPart
                         expectOperator "=" cursor
-                        expectKeyword "EXCLUDED" cursor
-                        expectSymbol '.' cursor
-                        let proposed = singlePartIdentifier (identifierPart cursor)
-                        { Target = target; Proposed = proposed }
+                        let parsedValue = parseExpression cursor
+                        let value =
+                            match ConflictValue.tryOfExpression parsedValue with
+                            | Ok deterministic -> deterministic
+                            | Error message -> fail cursor.Current message
+                        { Target = target; Value = value }
                     assignments.Add(parseAssignment())
                     while acceptSymbol ',' cursor do assignments.Add(parseAssignment())
                     match cursor.Current.Kind with
@@ -2019,7 +2021,7 @@ module internal RewriteParser =
                     | Keyword "RETURNING" -> ()
                     | _ ->
                         fail cursor.Current
-                            "ON CONFLICT DO UPDATE conflict clause supports only target = EXCLUDED.source assignments; arbitrary expressions remain fail-closed"
+                            "ON CONFLICT DO UPDATE conflict clause contains an unsupported trailing clause; conflict predicates and richer vendor grammar remain fail-closed"
                     UpdateProposedValues(assignments |> Seq.toList |> NonEmpty.ofList "conflict assignments")
                 else fail cursor.Current "Expected NOTHING or UPDATE after ON CONFLICT DO"
             Some { TargetColumns = targets; Action = action }
@@ -2106,7 +2108,10 @@ module internal RewriteParser =
         expectSymbol ')' cursor
         let assignments =
             columns
-            |> Seq.map (fun column -> { Target = singlePartIdentifier column; Proposed = singlePartIdentifier column })
+            |> Seq.map (fun column ->
+                let identifier = singlePartIdentifier column
+                { Target = identifier
+                  Value = ConflictProposedColumn identifier })
             |> Seq.toList
         let action =
             UpdateProposedValues(NonEmpty.ofList "conflict assignments" assignments)
@@ -2142,7 +2147,7 @@ module internal RewriteParser =
         expectKeyword "SET" cursor
         let assignments = ResizeArray<Assignment>()
         let seenAssignments = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        let parseAssignment () =
+        let parseAssignment () : Assignment =
             let targetColumn = identifier cursor
             let parts = Identifier.parts targetColumn
             if parts.Length <> 1 then
