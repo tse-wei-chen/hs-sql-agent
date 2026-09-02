@@ -608,8 +608,10 @@ module internal RewriteBinder =
                             |> MergeUpdate)
                 let notMatched =
                     merge.NotMatched
-                    |> Option.map (fun insert ->
-                        { insert with Values = insert.Values |> NonEmpty.map (bindExpr sourceOnlyScope) })
+                    |> Option.map (fun mergeInsert ->
+                        { mergeInsert with
+                            SourceValues =
+                                mergeInsert.SourceValues |> NonEmpty.map (bindExpr sourceOnlyScope) })
                 MergeStatement
                     { merge with
                         Source = { merge.Source with Values = sourceValues }

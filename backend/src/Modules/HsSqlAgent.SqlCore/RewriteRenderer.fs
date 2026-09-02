@@ -1700,14 +1700,14 @@ module internal RewriteRenderer =
                 sql <- sql + " WHEN MATCHED THEN UPDATE SET " + rendered)
 
         merge.NotMatched
-        |> Option.iter (fun insert ->
+        |> Option.iter (fun mergeInsert ->
             let columns =
-                insert.Columns
+                mergeInsert.TargetColumns
                 |> NonEmpty.toList
                 |> List.map (renderIdentifier SqlServer)
                 |> String.concat ", "
             let values =
-                insert.Values
+                mergeInsert.SourceValues
                 |> NonEmpty.toList
                 |> List.map (renderExpr ctx)
                 |> String.concat ", "

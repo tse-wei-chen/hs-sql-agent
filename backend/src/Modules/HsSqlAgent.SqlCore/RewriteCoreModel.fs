@@ -748,8 +748,8 @@ module internal CoreModel =
         | MergeDelete
 
     type MergeInsertAction =
-        { Columns: NonEmpty<Identifier>
-          Values: NonEmpty<Expr> }
+        { TargetColumns: NonEmpty<Identifier>
+          SourceValues: NonEmpty<Expr> }
 
     type Merge =
         { Target: Identifier

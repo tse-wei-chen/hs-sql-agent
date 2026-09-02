@@ -670,8 +670,8 @@ module internal RewriteCompatibilityAstAdapter =
                 merge.NotMatched
                 |> Option.map (fun insert ->
                     HsSqlAgent.SqlCore.Core.Ast.MergeInsertClause(
-                        insert.Columns |> NonEmpty.toList |> List.map identifierOf |> ImmutableArray.CreateRange,
-                        insert.Values |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
+                        insert.TargetColumns |> NonEmpty.toList |> List.map identifierOf |> ImmutableArray.CreateRange,
+                        insert.SourceValues |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
                         unknown))
                 |> Option.defaultValue (Unchecked.defaultof<_>)
             HsSqlAgent.SqlCore.Core.Ast.MergeStatement(

@@ -613,7 +613,6 @@ module internal RewriteLegacyAstAdapter =
             let sourceColumns =
                 merge.SourceColumns
                 |> Seq.map (singlePart "MERGE source column")
-                |> Seq.map (Identifier.parts >> List.head)
                 |> Seq.toList
                 |> NonEmpty.ofList "merge source columns"
             let sourceValues =
@@ -642,12 +641,12 @@ module internal RewriteLegacyAstAdapter =
                 | None -> None
                 | Some insert ->
                     Some
-                        { MergeInsertAction.Columns =
+                        { MergeInsertAction.TargetColumns =
                             insert.Columns
                             |> Seq.map identifierOf
                             |> Seq.toList
                             |> NonEmpty.ofList "merge insert columns"
-                          Values =
+                          SourceValues =
                             insert.Values
                             |> Seq.map exprOf
                             |> Seq.toList

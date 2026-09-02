@@ -516,6 +516,17 @@ module internal RewritePlanCapabilityValidation =
             delete.Using |> List.iter (proveOrderingSource targetRuntime targetOrdering)
             delete.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
             delete.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
+        | MergeStatement merge ->
+            merge.Source.Values |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering)
+            proveOrderingExpr targetRuntime targetOrdering merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering))
 
     let private exactColumnSetMatch (left: string list) (right: string list) =
         let leftSet = HashSet<string>(left, StringComparer.OrdinalIgnoreCase)
@@ -747,7 +758,7 @@ module internal RewritePlanCapabilityValidation =
                     "Firebird UPDATE OR INSERT requires the canonical conflict target to match the complete resolved primary key exactly; general UNIQUE-key and non-unique MATCHING metadata are not represented yet."))
             validateFirebirdFullProposedRowUpdate insert assignments
 
-    let private mergeColumnReference expectedAlias expression =
+    let private mergeColumnReference (expectedAlias: IdentifierPart) expression =
         match Expr.unspan expression with
         | Column identifier
         | BoundColumn(identifier, _) ->
@@ -758,7 +769,10 @@ module internal RewritePlanCapabilityValidation =
             | _ -> None
         | _ -> None
 
-    let private validateMergeDirectValue sourceAlias sourceColumns expression =
+    let private validateMergeDirectValue
+        (sourceAlias: IdentifierPart)
+        (sourceColumns: HashSet<string>)
+        expression =
         match Expr.unspan expression with
         | Literal _ -> ()
         | _ ->
@@ -790,7 +804,7 @@ module internal RewritePlanCapabilityValidation =
                 "MERGE source column aliases must match the single VALUES row width exactly."))
         let sourceColumns =
             HashSet<string>(
-                sourceColumnList |> List.map (fun column -> column.Value),
+                sourceColumnList |> List.map (fun (column: IdentifierPart) -> column.Value),
                 StringComparer.OrdinalIgnoreCase)
         if sourceColumns.Count <> sourceColumnList.Length then
             raise (SqlCompilationException("MERGE source column aliases cannot contain duplicates."))
@@ -847,11 +861,11 @@ module internal RewritePlanCapabilityValidation =
                     validateMergeDirectValue merge.Source.Alias sourceColumns assignment.Value))
 
         merge.NotMatched
-        |> Option.iter (fun insert ->
-            if NonEmpty.length insert.Columns <> NonEmpty.length insert.Values then
+        |> Option.iter (fun mergeInsert ->
+            if NonEmpty.length mergeInsert.TargetColumns <> NonEmpty.length mergeInsert.SourceValues then
                 raise (SqlCompilationException("MERGE INSERT columns and values must have the same width."))
             let inserted = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            insert.Columns
+            mergeInsert.TargetColumns
             |> NonEmpty.iter (fun identifier ->
                 let parts = Identifier.parts identifier
                 if parts.Length <> 1 then
@@ -861,7 +875,7 @@ module internal RewritePlanCapabilityValidation =
                 if not (inserted.Add name) then
                     raise (SqlCompilationException(
                         "MERGE INSERT target column '" + name + "' is declared more than once.")))
-            insert.Values
+            mergeInsert.SourceValues
             |> NonEmpty.iter (validateMergeDirectValue merge.Source.Alias sourceColumns))
 
     let proveConflicts targetRuntime (proofs: ConflictProofs) document =
