@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.76"
+    static member Version = "2026-09-02.77"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -488,8 +488,14 @@ type SqlCapabilityMatrix private () =
                 cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")
                 cap("temporal.formatted_parse","temporal",(if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected),"Formatted parse uses declared provider lowering.")
                 cap("json.extract","json",jsonExtract,"Portable JSON extraction is provider-gated.")
-                cap("json.path.simple","json",translated,"Portable JSON paths are limited to constant property chains beginning at $.")
-                cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated.")
+                cap("json.path.simple","json",translated,"Portable JSON paths require constant paths beginning at $. Simple property chains remain portable wherever the enclosing JSON operation is supported.")
+                cap("json.path.array_index_extract","json",
+                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Sqlite then translated else rejected),
+                    if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Sqlite then
+                        "Constant non-negative array indexes in JSON extraction paths are represented as typed path segments and lower to PostgreSQL JSONB_EXTRACT_PATH or native JSON_EXTRACT."
+                    else
+                        "Array-index JSON extraction has no declared target contract for this provider.")
+                cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated. Array-index mutation remains fail-closed because missing/out-of-range update semantics differ across providers.")
                 cap("regex.match","regex",regexStatus,regexDetail)
                 cap("function.oracle_sysdate","function",(if provider=SqlAgentToolType.Oracle then supported else rejected),
                     if provider=SqlAgentToolType.Oracle then

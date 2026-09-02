@@ -30,7 +30,8 @@ public sealed class SqlGrammarBombardmentCoverageTests
             CrossDialectCastTypeGrammarMatrixTests.PostgresPostfixMatrix().Count() +
             CrossDialectCastTypeGrammarMatrixTests.CrossProviderMatrix().Count() +
             TemporalDateMathGrammarMatrixTests.ExpectedPositiveCaseCount +
-            AdvancedRegexGrammarMatrixTests.ExpectedPositiveCaseCount;
+            AdvancedRegexGrammarMatrixTests.ExpectedPositiveCaseCount +
+            AdvancedJsonPathGrammarMatrixTests.ExpectedPositiveCaseCount;
 
         var positiveDml =
             DmlGrammarMatrixCases.ExpectedCaseCount +
@@ -55,7 +56,8 @@ public sealed class SqlGrammarBombardmentCoverageTests
             CrossDialectCastTypeGrammarMatrixTests.NegativeMatrix().Count() +
             CrossDialectCastTypeGrammarMatrixTests.FirebirdSourceProfileNegativeMatrix().Count() +
             NegativeTemporalGrammarMutationMatrixTests.ExpectedCaseCount +
-            AdvancedRegexGrammarMatrixTests.ExpectedNegativeCaseCount;
+            AdvancedRegexGrammarMatrixTests.ExpectedNegativeCaseCount +
+            AdvancedJsonPathGrammarMatrixTests.ExpectedNegativeCaseCount;
 
         var negativeDml =
             NegativeDmlGrammarMutationMatrixTests.PolicyMutationMatrix().Count() +
@@ -69,12 +71,12 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
 
-        Assert.Equal(5207, positiveQuery);
+        Assert.Equal(5225, positiveQuery);
         Assert.Equal(434, positiveDml);
-        Assert.Equal(226, negativeQuery);
+        Assert.Equal(247, negativeQuery);
         Assert.Equal(83, negativeDml);
         Assert.Equal(
-            5950,
+            5989,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }

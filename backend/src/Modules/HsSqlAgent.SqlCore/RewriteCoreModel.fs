@@ -87,6 +87,65 @@ module internal CoreModel =
             PositiveRowCount value
         let value (PositiveRowCount value) = value
 
+    type JsonPathSegment =
+        | JsonProperty of string
+        | JsonArrayIndex of NonNegativeRowCount
+
+    type JsonPath = private JsonPath of NonEmpty<JsonPathSegment>
+
+    module JsonPath =
+        let private portablePath =
+            Regex(
+                "^\\$\\.[A-Za-z_][A-Za-z0-9_]*(?:\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                RegexOptions.CultureInvariant)
+
+        let private segmentToken =
+            Regex(
+                "[A-Za-z_][A-Za-z0-9_]*|\\[([0-9]+)\\]",
+                RegexOptions.CultureInvariant)
+
+        let tryParse (value: string) =
+            if String.IsNullOrWhiteSpace(value) || not (portablePath.IsMatch(value)) then
+                Error "JSON path is outside the portable property/array-index grammar."
+            else
+                let mutable failed = false
+                let segments =
+                    segmentToken.Matches(value.Substring(2))
+                    |> Seq.cast<Match>
+                    |> Seq.map (fun token ->
+                        if token.Value.StartsWith("[", StringComparison.Ordinal) then
+                            match Int32.TryParse(token.Groups[1].Value) with
+                            | true, index -> JsonArrayIndex(NonNegativeRowCount.create index)
+                            | false, _ ->
+                                failed <- true
+                                JsonArrayIndex(NonNegativeRowCount.create 0)
+                        else
+                            JsonProperty token.Value)
+                    |> Seq.toList
+                if failed then
+                    Error "JSON array index exceeds the portable Int32 range."
+                else
+                    match segments with
+                    | head :: tail -> Ok(JsonPath(NonEmpty.create head tail))
+                    | [] -> Error "JSON path must contain at least one segment."
+
+        let segments (JsonPath segments) = NonEmpty.toList segments
+
+        let hasArrayIndex path =
+            path
+            |> segments
+            |> List.exists (function JsonArrayIndex _ -> true | JsonProperty _ -> false)
+
+        let postgresSegments path =
+            path
+            |> segments
+            |> List.map (function
+                | JsonProperty value -> value
+                | JsonArrayIndex index -> string (NonNegativeRowCount.value index))
+
+        let postgresTextArray path =
+            "{" + String.concat "," (postgresSegments path) + "}"
+
     type UnaryOperator = Not | Negate | Positive
 
     type BinaryOperator =

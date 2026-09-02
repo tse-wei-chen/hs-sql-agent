@@ -1305,19 +1305,29 @@ module internal RewriteStages =
             Some(int64 value)
         | _ -> None
 
-    let private validateJsonPath provider arguments =
+    let private validateJsonPath provider canonicalName arguments =
         let path =
             match arguments |> List.tryItem 1 |> Option.map Expr.unspan with
             | Some(Literal(ScalarValue.Text value)) -> value
             | _ -> raise (targetCapabilityError provider "json.path.constant")
-        if not (System.Text.RegularExpressions.Regex.IsMatch(
-                    path,
-                    "^\\$\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
-                    System.Text.RegularExpressions.RegexOptions.CultureInvariant)) then
-            raise (SqlCompilationException(
-                "JSON path '" + path + "' is outside the portable Core property-chain subset. "
-                + "SQL capability 'json.path.property_chain' is not supported by provider "
-                + string provider + " for this Core plan."))
+        let parsedPath =
+            match JsonPath.tryParse path with
+            | Ok value -> value
+            | Error _ ->
+                raise (SqlCompilationException(
+                    "JSON path '" + path + "' is outside the portable Core property/array-index subset. "
+                    + "SQL capability 'json.path.property_chain' is not supported by provider "
+                    + string provider + " for this Core plan."))
+        if JsonPath.hasArrayIndex parsedPath then
+            match canonicalName with
+            | "CORE_JSON_EXTRACT"
+                when provider = SqlAgentToolType.Postgres
+                     || provider = SqlAgentToolType.MySQL
+                     || provider = SqlAgentToolType.Sqlite -> ()
+            | "CORE_JSON_SET" ->
+                raise (targetCapabilityError provider "json.path.mutation_array_index")
+            | _ ->
+                raise (targetCapabilityError provider "json.path.array_index_extract")
 
     let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
         let provider = TargetRuntime.provider targetRuntime
@@ -1408,7 +1418,7 @@ module internal RewriteStages =
                 | message -> raise (SqlCompilationException(message))
             | SqlCanonicalTargetCapabilityFamily.Json ->
                 match SqlJsonCapabilityRules.TargetValidationError(contract.Name, provider) with
-                | null -> validateJsonPath provider call.Arguments
+                | null -> validateJsonPath provider contract.Name call.Arguments
                 | message -> raise (SqlCompilationException(message))
             | SqlCanonicalTargetCapabilityFamily.Regex ->
                 match SqlRegexCapabilityRules.ProviderValidationError(provider) with
