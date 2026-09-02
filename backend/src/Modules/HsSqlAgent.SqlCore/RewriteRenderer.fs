@@ -1517,7 +1517,8 @@ module internal RewriteRenderer =
         let targetAlias =
             match update.TargetAlias with
             | None -> ""
-            | Some alias when ctx.Provider = PostgreSql -> " AS " + renderAlias ctx.Provider alias
+            | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
+                " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
         let mutable sql = "UPDATE " + renderIdentifier ctx.Provider update.Target + targetAlias + " SET " + assignments
         if not update.From.IsEmpty then
@@ -1531,7 +1532,8 @@ module internal RewriteRenderer =
         let targetAlias =
             match delete.TargetAlias with
             | None -> ""
-            | Some alias when ctx.Provider = PostgreSql -> " AS " + renderAlias ctx.Provider alias
+            | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
+                " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
         let mutable sql = "DELETE FROM " + renderIdentifier ctx.Provider delete.Target + targetAlias
         if not delete.Using.IsEmpty then

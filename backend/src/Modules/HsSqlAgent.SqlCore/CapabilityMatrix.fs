@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.71"
+    static member Version = "2026-09-02.72"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -509,10 +509,14 @@ type SqlCapabilityMatrix private () =
                 cap("dml.insert_implicit_columns","dml",supported,
                     "INSERT INTO table VALUES (...) and INSERT INTO table SELECT ... without an explicit target-column list are preserved only for same-provider native compilation. Core validates uniform implicit VALUES row width but does not guess target-table column order or source/target width for implicit INSERT ... SELECT, leaving the native provider to validate its own schema contract. Cross-provider translation and conflict handling without explicit target columns remain fail-closed.")
                 cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
-                cap("dml.target_alias","dml",(if provider=SqlAgentToolType.Postgres then supported else rejected),
-                    if provider=SqlAgentToolType.Postgres then
-                        "PostgreSQL UPDATE/DELETE target aliases are represented structurally, preserved across the CLR compatibility AST, participate in binder qualifier resolution, hide the original target name as PostgreSQL requires, and render natively."
-                    else
+                cap("dml.target_alias","dml",
+                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.Firebird then supported else rejected),
+                    match provider with
+                    | SqlAgentToolType.Postgres ->
+                        "PostgreSQL UPDATE/DELETE target aliases are represented structurally, preserved across the CLR compatibility AST, participate in binder qualifier resolution, hide the original target name, and render natively. The proven alias-hides-target contract can cross-lower with Firebird."
+                    | SqlAgentToolType.Firebird ->
+                        "Firebird UPDATE/DELETE target aliases are represented structurally and render with native AS alias syntax. Firebird requires the alias to replace the original target qualifier, matching the closed binder contract used for PostgreSQL; PostgreSQL and Firebird target aliases can therefore cross-lower within this proven intersection."
+                    | _ ->
                         "DML target aliases remain target-gated until an equivalent provider-specific mutation alias contract is declared.")
                 cap("dml.update.from","dml",
                     (if provider=SqlAgentToolType.Postgres then translated

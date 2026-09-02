@@ -378,14 +378,22 @@ module internal SqlStandaloneTimeCapabilityRules =
         else "Oracle has no standalone TIME data type. SQL capability 'literal.time' is not supported by provider Oracle for this Core plan."
 
 module internal SqlDmlTargetAliasCapabilityRules =
+    let private supported provider =
+        provider = SqlAgentToolType.Postgres
+        || provider = SqlAgentToolType.Firebird
+
     let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
-        if sourceDialect = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.target_alias' is currently declared only for the PostgreSQL source dialect; source dialect "
-             + string sourceDialect + " remains fail-closed."
+        if supported sourceDialect then null
+        else
+            "SQL capability 'dml.target_alias' is not valid for source dialect "
+            + string sourceDialect
+            + "; the current proven target-alias grammar is PostgreSQL/Firebird only and other providers remain fail-closed."
+
     let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.target_alias' currently has a declared lossless lowering only for PostgreSQL targets; target provider "
-             + string provider + " remains fail-closed."
+        if supported provider then null
+        else
+            "SQL capability 'dml.target_alias' has a declared lossless lowering only for PostgreSQL and Firebird targets; target provider "
+            + string provider + " remains fail-closed."
 
 module internal SqlDmlUpdateFromCapabilityRules =
     let SQLiteMinimumVersion = Version(3,33)

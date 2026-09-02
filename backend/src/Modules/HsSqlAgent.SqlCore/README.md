@@ -77,6 +77,11 @@ Firebird 5.0+ DSQL rich RETURNING uses the same proven scalar/predicate subset a
 with PostgreSQL when ordinary expression capabilities are proven. Firebird-specific OLD/NEW row
 contexts are not represented by the portable Core AST and remain outside this contract.
 
+PostgreSQL and Firebird UPDATE/DELETE target aliases share a proven alias-hides-original-target
+contract. Both are represented structurally and may cross-lower between those two providers; target
+aliases for the remaining providers stay fail-closed until their mutation-specific alias grammar and
+name-resolution rules are modeled.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and
