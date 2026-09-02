@@ -210,7 +210,7 @@ internal sealed class BoundaryConnection(
     public override string ConnectionString
     {
         get => _connectionString;
-        set => _connectionString = value;
+        set => _connectionString = value ?? string.Empty;
     }
 
     public override string Database => "syntax-boundary";
