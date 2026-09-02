@@ -205,6 +205,7 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                             : [parsed, targetDialect, validation, targetProfile, conflictTargetAssurance];
 
                 var compile = compileMethods
+                    .Where(method => method.GetParameters().Length >= compileLeading.Length)
                     .Where(method => LeadingArgumentsFit(
                         method.GetParameters(),
                         compileLeading))
@@ -750,6 +751,7 @@ static bool IsHarnessFailure(Outcome outcome)
 
     return outcome.ExceptionType is
         "System.MissingMethodException"
+        or "System.IndexOutOfRangeException"
         or "System.TypeLoadException"
         or "System.BadImageFormatException"
         or "System.IO.FileNotFoundException"
