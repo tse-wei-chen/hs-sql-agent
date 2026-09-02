@@ -658,7 +658,7 @@ module internal SqlDmlUpsertCapabilityRules =
 module internal SqlJoinCapabilityRules =
     let private sqliteMin = Version(3,39)
     let private normalize (kind: string) = kind.Trim().ToUpperInvariant()
-    let private sqliteError kind (profile: SqlProviderCapabilityProfile | null) side : string | null =
+    let private sqliteError (kind: string) (profile: SqlProviderCapabilityProfile | null) (side: string) : string | null =
         let cap = if kind = "RIGHT" then "join.right" else "join.full"
         match profile with
         | null ->
@@ -821,7 +821,7 @@ module internal SqlDistinctOnCapabilityRules =
 module internal SqlFetchPercentCapabilityRules =
     let OracleMinimumVersion = Version(12,1)
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
+    let private validationError (provider: SqlAgentToolType) (profile: SqlProviderCapabilityProfile | null) (side: string) : string | null =
         if provider <> SqlAgentToolType.Oracle then
             "SQL capability 'select.fetch_percent' is not supported by " + side
             + " provider " + string provider
@@ -853,7 +853,7 @@ module internal SqlFetchWithTiesCapabilityRules =
         | SqlAgentToolType.Oracle -> Some OracleMinimumVersion
         | _ -> None
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
+    let private validationError (provider: SqlAgentToolType) (profile: SqlProviderCapabilityProfile | null) (side: string) : string | null =
         match minimumVersion provider with
         | None ->
             "SQL capability 'select.fetch_with_ties' is not supported by " + side
