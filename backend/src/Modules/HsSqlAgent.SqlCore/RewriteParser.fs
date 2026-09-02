@@ -64,7 +64,8 @@ module internal RewriteParser =
               ReturningExpression = ProvenCapability
               TargetAlias = ProvenCapability
               UpdateFrom = ProvenCapability
-              DeleteUsing = ProvenCapability }
+              DeleteUsing = ProvenCapability
+              SqlServerOutput = OutputAssuranceNotRequired }
 
         let private permissiveOrdering =
             { NullsFirst = ProvenCapability
@@ -1194,10 +1195,59 @@ module internal RewriteParser =
                 | _ -> None
         { Expression = expression; Alias = alias }
 
+    and private parseSqlServerOutput operation cursor =
+        let outputToken = cursor.Current
+        if not (acceptKeyword "OUTPUT" cursor) then []
+        else
+            if cursor.Dialect <> SourceDialect.SqlServer then
+                fail outputToken "OUTPUT is valid only in the SQL Server source dialect"
+            requireSourceParseCapability outputToken cursor.SourceDml.Returning
+
+            let expectedImage =
+                match operation with
+                | DmlOperation.Insert
+                | DmlOperation.Update -> "INSERTED"
+                | DmlOperation.Delete -> "DELETED"
+                | value -> invalidArg "operation" ("Unsupported DML operation '" + string value + "'.")
+
+            let parseItem () =
+                let imageToken = cursor.Current
+                let image = identifierPart cursor
+                let imageName = image.Value.Trim().ToUpperInvariant()
+                if imageName <> expectedImage then
+                    fail imageToken (
+                        "SQL Server OUTPUT portable result rows require "
+                        + expectedImage
+                        + " for "
+                        + string operation
+                        + "; opposite-row-image semantics remain fail-closed")
+                expectSymbol '.' cursor
+
+                if acceptSymbol '*' cursor then
+                    ReturningWildcard None
+                else
+                    let column = singlePartIdentifier (identifierPart cursor)
+                    let alias =
+                        if acceptKeyword "AS" cursor then Some(aliasIdentifierPart cursor)
+                        else None
+                    if alias.IsNone then
+                        match cursor.Current.Kind with
+                        | Identifier _ -> fail cursor.Current "OUTPUT alias requires AS"
+                        | _ -> ()
+                    ReturningColumn(column, alias)
+
+            let items = ResizeArray<ReturningItem>()
+            items.Add(parseItem())
+            while acceptSymbol ',' cursor do items.Add(parseItem())
+            items |> Seq.toList
+
     and private parseReturning cursor =
+        let returningToken = cursor.Current
+        if isKeyword "RETURNING" returningToken && cursor.Dialect = SourceDialect.SqlServer then
+            fail returningToken "SQL Server source grammar uses OUTPUT rather than RETURNING"
         if not (acceptKeyword "RETURNING" cursor) then []
         else
-            requireSourceParseCapability cursor.Current cursor.SourceDml.Returning
+            requireSourceParseCapability returningToken cursor.SourceDml.Returning
 
             let parseItem () =
                 let expression = parseExpression cursor
@@ -1796,6 +1846,7 @@ module internal RewriteParser =
             while acceptSymbol ',' cursor do columns.Add(identifierPart cursor)
             expectSymbol ')' cursor
         ensureUniqueInsertColumns cursor (columns |> Seq.toList)
+        let output = parseSqlServerOutput DmlOperation.Insert cursor
         let input =
             if acceptKeyword "VALUES" cursor then
                 let rows = ResizeArray<NonEmpty<Expr>>()
@@ -1834,7 +1885,11 @@ module internal RewriteParser =
                 requireSourceParseCapability cursor.Current cursor.SourceOnConflict
                 parseConflict cursor
             else None
-        { Target = target; Columns = columns |> Seq.toList; Input = input; Conflict = conflict; Returning = parseReturning cursor }
+        { Target = target
+          Columns = columns |> Seq.toList
+          Input = input
+          Conflict = conflict
+          Returning = if output.IsEmpty then parseReturning cursor else output }
 
     and private parseFirebirdUpsert (cursor: Cursor) =
         expectKeyword "UPDATE" cursor
@@ -1911,6 +1966,7 @@ module internal RewriteParser =
             { Target = targetColumn; Value = parseExpression cursor }
         assignments.Add(parseAssignment())
         while acceptSymbol ',' cursor do assignments.Add(parseAssignment())
+        let output = parseSqlServerOutput DmlOperation.Update cursor
         let from =
             if acceptKeyword "FROM" cursor then
                 requireSourceParseCapability cursor.Current cursor.SourceDml.UpdateFrom
@@ -1921,13 +1977,14 @@ module internal RewriteParser =
           AssignmentItems = assignments |> Seq.toList |> NonEmpty.ofList "assignments"
           From = from
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
-          Returning = parseReturning cursor }
+          Returning = if output.IsEmpty then parseReturning cursor else output }
 
     and private parseDelete cursor =
         expectKeyword "DELETE" cursor
         expectKeyword "FROM" cursor
         let target = identifier cursor
         let targetAlias = parseDmlTargetAlias cursor
+        let output = parseSqlServerOutput DmlOperation.Delete cursor
         let using =
             if isKeyword "USING" cursor.Current then
                 let token = cursor.Current
@@ -1950,7 +2007,7 @@ module internal RewriteParser =
           TargetAlias = targetAlias
           Using = using
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
-          Returning = parseReturning cursor }
+          Returning = if output.IsEmpty then parseReturning cursor else output }
 
     let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."

@@ -90,6 +90,11 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
                     and not SqlAgentToolType.Oracle)
             .ToArray();
 
+    private static readonly GrammarVariant<SqlAgentToolType>[] NonSqlServerDialects =
+        AllDialects
+            .Where(item => item.Value != SqlAgentToolType.MsSqlServer)
+            .ToArray();
+
     private static readonly GrammarVariant<SqlAgentToolType>[] NonFirebirdDialects =
         AllDialects
             .Where(item => item.Value != SqlAgentToolType.Firebird)
@@ -122,6 +127,25 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
                 "insert-value",
                 "INSERT INTO users (name) VALUES (CAST('1' AS VARCHAR(20)))",
                 "INSERT INTO users (name) VALUES ('1'::VARCHAR(20))"))
+    ];
+
+    private static readonly GrammarVariant<Mutation>[] SqlServerOutputContexts =
+    [
+        new(
+            "insert-output",
+            new Mutation(
+                "insert-output",
+                "INSERT INTO users (id) OUTPUT INSERTED.id VALUES (1)")),
+        new(
+            "update-output",
+            new Mutation(
+                "update-output",
+                "UPDATE users SET id = 1 OUTPUT INSERTED.id WHERE id = 2")),
+        new(
+            "delete-output",
+            new Mutation(
+                "delete-output",
+                "DELETE FROM users OUTPUT DELETED.id WHERE id = 1"))
     ];
 
     private static readonly GrammarVariant<SyntaxMutation>[] InsertSelectLimitContexts =
@@ -260,6 +284,23 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
         ];
     }
 
+    public static IEnumerable<object[]> SqlServerOutputWrongSourceMatrix()
+    {
+        foreach (var (dialect, mutation) in
+                 SyntaxGrammarMatrix.Product(NonSqlServerDialects, SqlServerOutputContexts))
+        {
+            yield return
+            [
+                SyntaxGrammarMatrix.CaseName(
+                    dialect.Name,
+                    "sqlserver-output-wrong-source",
+                    mutation.Name),
+                dialect.Value,
+                mutation.Value.Sql
+            ];
+        }
+    }
+
     public static IEnumerable<object[]> FirebirdUpsertWrongSourceMatrix()
     {
         foreach (var dialect in NonFirebirdDialects)
@@ -333,6 +374,7 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
         var updateFrom = UpdateFromWrongSourceMatrix().ToArray();
         var deleteUsing = DeleteUsingWrongSourceMatrix().ToArray();
         var oracleDeleteUsing = OracleDeleteUsingVersionGateMatrix().ToArray();
+        var sqlServerOutput = SqlServerOutputWrongSourceMatrix().ToArray();
         var firebirdUpsert = FirebirdUpsertWrongSourceMatrix().ToArray();
         var postfix = WrongDialectPostfixCastDmlMatrix().ToArray();
         var insertSelectLimit = WrongDialectInsertSelectLimitMatrix().ToArray();
@@ -343,17 +385,19 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
         Assert.Equal(4, updateFrom.Length);
         Assert.Equal(4, deleteUsing.Length);
         Assert.Single(oracleDeleteUsing);
+        Assert.Equal(15, sqlServerOutput.Length);
         Assert.Equal(5, firebirdUpsert.Length);
         Assert.Equal(15, postfix.Length);
         Assert.Equal(3, insertSelectLimit.Length);
         Assert.Equal(6, crossProvider.Length);
         Assert.Equal(
-            68,
+            83,
             policy
                 .Concat(malformed)
                 .Concat(updateFrom)
                 .Concat(deleteUsing)
                 .Concat(oracleDeleteUsing)
+                .Concat(sqlServerOutput)
                 .Concat(firebirdUpsert)
                 .Concat(postfix)
                 .Concat(insertSelectLimit)
@@ -395,6 +439,7 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
     [Theory]
     [MemberData(nameof(MalformedDmlMatrix))]
     [MemberData(nameof(DeleteUsingWrongSourceMatrix))]
+    [MemberData(nameof(SqlServerOutputWrongSourceMatrix))]
     [MemberData(nameof(FirebirdUpsertWrongSourceMatrix))]
     public void MalformedOrWrongDialectDml_FailsClosedAtTypedParseStage(
         string name,

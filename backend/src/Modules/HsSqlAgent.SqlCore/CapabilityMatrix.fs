@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.74"
+    static member Version = "2026-09-02.75"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -599,7 +599,7 @@ type SqlCapabilityMatrix private () =
                         | SqlAgentToolType.Firebird ->
                             "Portable multi-row Firebird DSQL RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 5.0 or newer."
                         | SqlAgentToolType.MsSqlServer ->
-                            "SQL Server OUTPUT without INTO is trigger-sensitive. Core does not yet carry target-table trigger capability metadata, so result rows remain fail-closed instead of assuming OUTPUT can be returned directly to the client."
+                            "SQL Server OUTPUT without INTO is conditionally available for same-provider compilation when SqlPlanValidationContext carries metadata-backed DmlResultRowAssurance.NoEnabledTriggers for the exact target table and DML operation. The default matrix remains Rejected because it has no per-statement assurance input; cross-provider OUTPUT/RETURNING lowering remains fail-closed because SQL Server exposes the pre-trigger row image."
                         | SqlAgentToolType.Oracle ->
                             "Oracle DML RETURNING requires RETURNING INTO host or bind variables, which are outside the Core result-row execution contract."
                         | SqlAgentToolType.MySQL ->

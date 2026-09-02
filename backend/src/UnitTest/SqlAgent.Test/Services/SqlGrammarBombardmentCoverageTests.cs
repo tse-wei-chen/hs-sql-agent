@@ -61,17 +61,18 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.UpdateFromWrongSourceMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.DeleteUsingWrongSourceMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.OracleDeleteUsingVersionGateMatrix().Count() +
+            NegativeDmlGrammarMutationMatrixTests.SqlServerOutputWrongSourceMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.FirebirdUpsertWrongSourceMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.WrongDialectPostfixCastDmlMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
 
         Assert.Equal(5189, positiveQuery);
-        Assert.Equal(428, positiveDml);
+        Assert.Equal(431, positiveDml);
         Assert.Equal(196, negativeQuery);
-        Assert.Equal(68, negativeDml);
+        Assert.Equal(83, negativeDml);
         Assert.Equal(
-            5881,
+            5899,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }

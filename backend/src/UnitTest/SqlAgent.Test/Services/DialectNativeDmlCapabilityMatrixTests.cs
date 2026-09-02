@@ -14,7 +14,8 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     {
         None,
         PrimaryKeyId,
-        SoleUniqueId
+        SoleUniqueId,
+        SqlServerOutputNoTriggers
     }
 
     private sealed record NativeDmlCase(
@@ -252,6 +253,39 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             false,
             "DELETE FROM; AS ;u;WHERE"),
         new(
+            "sqlserver-insert-output",
+            "INSERT INTO users (id, name) OUTPUT INSERTED.id VALUES (1, 'Alice')",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Insert,
+            true,
+            "INSERT INTO;OUTPUT INSERTED.;VALUES"),
+        new(
+            "sqlserver-update-output",
+            "UPDATE users SET name = 'Alice' OUTPUT INSERTED.id WHERE id = 1",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Update,
+            true,
+            "UPDATE;OUTPUT INSERTED.;WHERE"),
+        new(
+            "sqlserver-delete-output",
+            "DELETE FROM users OUTPUT DELETED.id WHERE id = 1",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Delete,
+            true,
+            "DELETE FROM;OUTPUT DELETED.;WHERE"),
+        new(
             "sqlserver-update-from",
             "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
             SqlAgentToolType.MsSqlServer,
@@ -337,9 +371,9 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     [Fact]
     public void NativeDmlMatrix_HasStableCapabilityCoverage()
     {
-        Assert.Equal(26, Cases.Length);
+        Assert.Equal(29, Cases.Length);
         Assert.Equal(
-            26,
+            29,
             Cases.Select(item => item.Name)
                 .Distinct(StringComparer.Ordinal)
                 .Count());
@@ -347,7 +381,7 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Postgres));
         Assert.Equal(6, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
-        Assert.Equal(3, Cases.Count(item => item.TargetDialect == SqlAgentToolType.MsSqlServer));
+        Assert.Equal(6, Cases.Count(item => item.TargetDialect == SqlAgentToolType.MsSqlServer));
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MySQL);
         Assert.Equal(2, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Oracle));
     }
@@ -382,11 +416,21 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             sourceProfile);
         var assurance = Assurance(assuranceName);
 
+        var validationContext =
+            new SqlPlanValidationContext(
+                "dialect-native-dml-capability-matrix-v1");
+        if (Enum.Parse<AssuranceKind>(assuranceName) == AssuranceKind.SqlServerOutputNoTriggers)
+        {
+            validationContext = validationContext.WithDmlResultRowAssurance(
+                DmlResultRowAssurance.NoEnabledTriggers(
+                    "users",
+                    Operation(expectedKind)));
+        }
+
         var command = CoreDmlCompiler.CreateDefault().Compile(
             parsed,
             targetDialect,
-            new SqlPlanValidationContext(
-                "dialect-native-dml-capability-matrix-v1"),
+            validationContext,
             targetProfile: targetProfile,
             conflictTargetAssurance: assurance);
 
@@ -405,12 +449,22 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
         }
     }
 
+    private static DmlOperation Operation(SqlStatementKind kind) =>
+        kind switch
+        {
+            SqlStatementKind.Insert => DmlOperation.Insert,
+            SqlStatementKind.Update => DmlOperation.Update,
+            SqlStatementKind.Delete => DmlOperation.Delete,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+        };
+
     private static DmlConflictTargetAssurance? Assurance(string name) =>
         Enum.Parse<AssuranceKind>(name) switch
         {
             AssuranceKind.None => null,
             AssuranceKind.PrimaryKeyId =>
                 DmlConflictTargetAssurance.FromPrimaryKey(["id"]),
+            AssuranceKind.SqlServerOutputNoTriggers => null,
             AssuranceKind.SoleUniqueId =>
                 DmlConflictTargetAssurance.FromUniqueKey(
                     ["id"],

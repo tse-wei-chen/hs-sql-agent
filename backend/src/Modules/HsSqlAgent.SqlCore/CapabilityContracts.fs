@@ -531,7 +531,8 @@ module internal SqlDmlReturningCapabilityRules =
     let SourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version | null) : string | null =
         let supported =
             match sourceDialect with
-            | SqlAgentToolType.Postgres -> true
+            | SqlAgentToolType.Postgres
+            | SqlAgentToolType.MsSqlServer -> true
             | SqlAgentToolType.Sqlite -> atLeast sourceServerVersion sqliteVersion
             | SqlAgentToolType.Firebird -> atLeast sourceServerVersion firebirdVersion
             | _ -> false
@@ -540,7 +541,7 @@ module internal SqlDmlReturningCapabilityRules =
             match sourceDialect with
             | SqlAgentToolType.Sqlite -> "Raw SQLite RETURNING requires a source capability profile with ServerVersion 3.35 or newer."
             | SqlAgentToolType.Firebird -> "Portable multi-row Firebird DSQL RETURNING requires a source capability profile with ServerVersion 5.0 or newer."
-            | SqlAgentToolType.MsSqlServer -> "SQL Server uses OUTPUT rather than RETURNING; trigger-sensitive OUTPUT result semantics are not yet represented by the portable Core DML contract."
+            | SqlAgentToolType.MsSqlServer -> "SQL Server result-row source semantics use OUTPUT; RETURNING spelling remains invalid SQL Server grammar."
             | SqlAgentToolType.Oracle -> "Oracle RETURNING requires RETURNING INTO host or bind variables, which are not represented by the portable Core DML result-row contract."
             | SqlAgentToolType.MySQL -> "MySQL has no declared DML RETURNING result-row syntax in the Core MySQL 8.4 source profile."
             | _ -> "DML RETURNING is not represented for source dialect " + string sourceDialect + "."

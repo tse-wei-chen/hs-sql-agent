@@ -77,6 +77,13 @@ Firebird 5.0+ DSQL rich RETURNING uses the same proven scalar/predicate subset a
 with PostgreSQL when ordinary expression capabilities are proven. Firebird-specific OLD/NEW row
 contexts are not represented by the portable Core AST and remain outside this contract.
 
+SQL Server INSERT/UPDATE/DELETE OUTPUT is represented by the same closed result-row AST for a
+target-only column/wildcard subset and rendered with INSERTED/DELETED row images. Direct OUTPUT is
+admitted only for same-provider SQL Server compilation when the validation context carries
+metadata-backed DmlResultRowAssurance.NoEnabledTriggers for the exact target table and DML operation.
+Cross-provider RETURNING/OUTPUT lowering stays fail-closed because SQL Server OUTPUT exposes the
+pre-trigger row image while other providers do not share that trigger-timing contract.
+
 PostgreSQL and Firebird UPDATE/DELETE target aliases share a proven alias-hides-original-target
 contract. Both are represented structurally and may cross-lower between those two providers; target
 aliases for the remaining providers stay fail-closed until their mutation-specific alias grammar and
