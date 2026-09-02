@@ -434,7 +434,7 @@ module internal RewriteStructuralValidation =
             |> List.iter (fun item ->
                 visitNestedNoFromExpression item.Expression)
         | MergeStatement merge ->
-            if NonEmpty.length merge.Source.Columns <> NonEmpty.length merge.Source.SourceValues then
+            if NonEmpty.length merge.Source.SourceColumns <> NonEmpty.length merge.Source.SourceValues then
                 raise (SqlCompilationException(
                     "MERGE source column aliases must match the single VALUES row width exactly."))
             if merge.Matched.IsNone && merge.NotMatched.IsNone then
