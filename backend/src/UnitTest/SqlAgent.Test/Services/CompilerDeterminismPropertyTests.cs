@@ -25,13 +25,13 @@ public sealed class CompilerDeterminismPropertyTests
 
     public static TheoryData<DeterminismCase> PositiveCorpus => new()
     {
-        new(
+        new DeterminismCase(
             "postgres-cte-order-limit",
             "WITH active AS (SELECT id, name FROM users WHERE enabled = TRUE) SELECT id, name FROM active ORDER BY id LIMIT 10",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             false),
-        new(
+        new DeterminismCase(
             "mysql-ansi-quotes-profile",
             "SELECT \"name\" FROM users WHERE id = 1",
             SqlAgentToolType.MySQL,
@@ -39,31 +39,31 @@ public sealed class CompilerDeterminismPropertyTests
             false,
             MySqlProfile(),
             MySqlProfile()),
-        new(
+        new DeterminismCase(
             "sqlserver-top-order",
             "SELECT TOP (5) id, name FROM users ORDER BY id",
             SqlAgentToolType.MsSqlServer,
             SqlAgentToolType.MsSqlServer,
             false),
-        new(
+        new DeterminismCase(
             "sqlite-limit-offset",
             "SELECT id FROM users ORDER BY id LIMIT 5 OFFSET 2",
             SqlAgentToolType.Sqlite,
             SqlAgentToolType.Sqlite,
             false),
-        new(
+        new DeterminismCase(
             "oracle-offset-fetch",
             "SELECT id FROM users ORDER BY id OFFSET 2 ROWS FETCH NEXT 5 ROWS ONLY",
             SqlAgentToolType.Oracle,
             SqlAgentToolType.Oracle,
             false),
-        new(
+        new DeterminismCase(
             "firebird-first-skip",
             "SELECT FIRST 5 SKIP 2 id FROM users ORDER BY id",
             SqlAgentToolType.Firebird,
             SqlAgentToolType.Firebird,
             false),
-        new(
+        new DeterminismCase(
             "postgres-concat-to-sqlserver-profile",
             "SELECT first_name || last_name FROM users",
             SqlAgentToolType.Postgres,
@@ -71,13 +71,13 @@ public sealed class CompilerDeterminismPropertyTests
             false,
             new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres),
             SqlServerConcatProfile()),
-        new(
+        new DeterminismCase(
             "postgres-rich-conflict-update",
             "INSERT INTO inventory (id, quantity) VALUES (1, 3) ON CONFLICT (id) DO UPDATE SET quantity = quantity + excluded.quantity * 2",
             SqlAgentToolType.Postgres,
             SqlAgentToolType.Postgres,
             true),
-        new(
+        new DeterminismCase(
             "sqlite-rich-conflict-update-profile",
             "INSERT INTO inventory (id, quantity) VALUES (1, 3) ON CONFLICT (id) DO UPDATE SET quantity = quantity + excluded.quantity * 2",
             SqlAgentToolType.Sqlite,
@@ -85,7 +85,7 @@ public sealed class CompilerDeterminismPropertyTests
             true,
             Sqlite324(),
             Sqlite324()),
-        new(
+        new DeterminismCase(
             "sqlserver-single-row-merge-assured",
             "MERGE INTO inventory AS t USING (VALUES (1, 3)) AS s (id, quantity) ON t.id = s.id WHEN MATCHED THEN UPDATE SET quantity = s.quantity WHEN NOT MATCHED THEN INSERT (id, quantity) VALUES (s.id, s.quantity);",
             SqlAgentToolType.MsSqlServer,
@@ -94,13 +94,13 @@ public sealed class CompilerDeterminismPropertyTests
             null,
             null,
             DmlConflictTargetAssurance.FromPrimaryKey(["id"])),
-        new(
+        new DeterminismCase(
             "firebird-update-or-insert-to-postgres",
             "UPDATE OR INSERT INTO users (id, name) VALUES (1, 'Alice') MATCHING (id)",
             SqlAgentToolType.Firebird,
             SqlAgentToolType.Postgres,
             true),
-        new(
+        new DeterminismCase(
             "postgres-upsert-to-mysql-assured",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
             SqlAgentToolType.Postgres,
@@ -114,7 +114,7 @@ public sealed class CompilerDeterminismPropertyTests
                 isPrimaryKey: true,
                 enforcedUniqueKeyCount: 1,
                 hasUnsupportedEnforcedUniqueKeys: false)),
-        new(
+        new DeterminismCase(
             "postgres-update-returning",
             "UPDATE users SET name = 'Ada' WHERE id = 1 RETURNING id, name",
             SqlAgentToolType.Postgres,
@@ -124,7 +124,7 @@ public sealed class CompilerDeterminismPropertyTests
 
     public static TheoryData<RejectedCase> NegativeCorpus => new()
     {
-        new(
+        new RejectedCase(
             "parse-rejection",
             () => SqlCoreFacade.TryCompileQuery(
                 "SELECT FROM",
@@ -132,7 +132,7 @@ public sealed class CompilerDeterminismPropertyTests
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("determinism-negative-parse-v1"),
                 new SqlExecutionPlanPolicy())),
-        new(
+        new RejectedCase(
             "target-capability-rejection",
             () => SqlCoreFacade.TryCompileQuery(
                 "SELECT name FROM users WHERE name ILIKE 'a%'",
@@ -140,7 +140,7 @@ public sealed class CompilerDeterminismPropertyTests
                 SqlAgentToolType.MySQL,
                 new SqlPlanValidationContext("determinism-negative-target-v1"),
                 new SqlExecutionPlanPolicy())),
-        new(
+        new RejectedCase(
             "policy-rejection",
             () => SqlCoreFacade.TryCompileDml(
                 "UPDATE users SET name = 'Ada'",
