@@ -107,8 +107,6 @@ module internal RewriteRenderer =
         | Oracle -> SqlAgentToolType.Oracle
         | Firebird -> SqlAgentToolType.Firebird
 
-    let private jsonPropertyPath =
-        Regex("^\\$\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.CultureInvariant)
     let private capabilityError provider capability =
         "SQL capability '" + capability + "' is not supported by provider " + providerName provider + " for this Core plan."
 
@@ -396,6 +394,18 @@ module internal RewriteRenderer =
             | PostgreSql -> "(" + valueSql + " ~ " + patternSql + ")"
             | MySql | Oracle | SqlServer -> "REGEXP_LIKE(" + valueSql + ", " + patternSql + ")"
             | SQLite | Firebird -> invalidOp (capabilityError ctx.Provider "function.regex_match")
+        | Expr.PostgresJsonAccess(value, selector, resultKind) ->
+            if ctx.Provider <> PostgreSql then
+                invalidOp (capabilityError ctx.Provider "json.operator.postgres_arrow")
+            let selectorSql =
+                match selector with
+                | PostgresJsonProperty key -> ctx.Bind(box key)
+                | PostgresJsonArrayIndex index -> ctx.Bind(box index)
+            let operator =
+                match resultKind with
+                | JsonResult -> "->"
+                | TextResult -> "->>"
+            "(" + renderExpr ctx value + " " + operator + " " + selectorSql + ")"
         | Expr.FunctionCall call ->
             renderFunction ctx call
         | Expr.FilteredAggregate(value, predicate) ->
@@ -620,12 +630,16 @@ module internal RewriteRenderer =
             | null -> ()
             | message -> fail message
             let path = literalText canonical call.Arguments[1]
-            if not (jsonPropertyPath.IsMatch(path)) then
-                fail (
-                    "JSON path '" + path + "' is outside the portable Core property-chain subset. "
-                    + "Only paths such as '$.user.name' are supported; root-only paths, array indexes, wildcards, filters, "
-                    + "quoted property names, and recursive descent fail closed. SQL capability 'json.path.property_chain' "
-                    + "is not supported by provider " + string tool + " for this Core plan.")
+            let parsedPath =
+                match JsonPath.tryParse path with
+                | Ok value -> value
+                | Error _ ->
+                    fail (
+                        "JSON path '" + path + "' is outside the portable Core property/array-index subset. "
+                        + "SQL capability 'json.path.property_chain' is not supported by provider "
+                        + string tool + " for this Core plan.")
+            if canonical = "CORE_JSON_SET" && JsonPath.hasArrayIndex parsedPath then
+                fail (capabilityError ctx.Provider "json.path.mutation_array_index")
             let value = renderExpr ctx call.Arguments[0]
             let pathExpr () = renderExpr ctx call.Arguments[1]
             if canonical = "CORE_JSON_EXTRACT" then
@@ -635,8 +649,8 @@ module internal RewriteRenderer =
                     "JSON_EXTRACT(" + value + ", " + pathExpr () + ")"
                 | PostgreSql ->
                     let placeholders =
-                        path.Substring(2).Split('.', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)
-                        |> Array.map (fun segment -> ctx.Bind(box segment))
+                        JsonPath.postgresSegments parsedPath
+                        |> List.map (fun segment -> ctx.Bind(box segment))
                         |> String.concat ", "
                     "JSONB_EXTRACT_PATH(CAST(" + value + " AS jsonb), " + placeholders + ")"
                 | _ -> fail "JSON_EXTRACT is not supported losslessly by this provider."
@@ -644,9 +658,7 @@ module internal RewriteRenderer =
                 let newValue =
                     match ctx.Provider with
                     | PostgreSql ->
-                        let pgPath =
-                            "{" + String.concat "," (path.Substring(2).Split('.', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)) + "}"
-                        let pgPathPlaceholder = ctx.Bind(box pgPath)
+                        let pgPathPlaceholder = ctx.Bind(box (JsonPath.postgresTextArray parsedPath))
                         let rendered = renderExpr ctx call.Arguments[2]
                         "JSONB_SET(CAST(" + value + " AS jsonb), CAST(" + pgPathPlaceholder + " AS text[]), TO_JSONB(" + rendered + "))"
                     | MySql

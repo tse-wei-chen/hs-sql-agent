@@ -318,6 +318,12 @@ module internal RewriteFacadeAdapter =
           MySqlNullSafeEqualitySyntax =
             SqlDistinctFromCapabilityRules.MySqlNullSafeEqualitySourceSyntaxValidationError(source)
             |> sourceCapabilityProof
+          MySqlJsonArrowSyntax =
+            SqlJsonCapabilityRules.MySqlArrowSourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
+          PostgresJsonArrowSyntax =
+            SqlJsonCapabilityRules.PostgresArrowSourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           DistinctFromSyntax =
             SqlDistinctFromCapabilityRules.SourceSyntaxValidationError(source, sourceProfile)
             |> sourceCapabilityProof

@@ -42,6 +42,8 @@ module internal RewriteSourceValidation =
         | RegexMatch(value, pattern) ->
             verifySourceRegexExpr regexProof value
             verifySourceRegexExpr regexProof pattern
+        | PostgresJsonAccess(value, _, _) ->
+            verifySourceRegexExpr regexProof value
         | Unary(_, operand) -> verifySourceRegexExpr regexProof operand
         | Binary(_, left, right) ->
             verifySourceRegexExpr regexProof left
@@ -212,6 +214,8 @@ module internal RewriteSourceValidation =
         | RegexMatch(value, pattern) ->
             validateRawSourceExpr source orderingProofs mySqlPipes value
             validateRawSourceExpr source orderingProofs mySqlPipes pattern
+        | PostgresJsonAccess(value, _, _) ->
+            validateRawSourceExpr source orderingProofs mySqlPipes value
         | FunctionCall call ->
             call.Arguments |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
             call.AggregateOrderBy

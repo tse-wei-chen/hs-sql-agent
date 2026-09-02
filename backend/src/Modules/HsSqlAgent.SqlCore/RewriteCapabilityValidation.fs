@@ -93,6 +93,8 @@ module internal RewriteCapabilityValidation =
         | RegexMatch(value, pattern) ->
             proveFilterPredicate capabilityMessage proofs value
             proveFilterPredicate capabilityMessage proofs pattern
+        | PostgresJsonAccess(value, _, _) ->
+            proveFilterPredicate capabilityMessage proofs value
         | FunctionCall call ->
             call.Arguments |> List.iter (proveFilterPredicate capabilityMessage proofs)
             call.AggregateOrderBy |> List.iter (fun order -> proveFilterPredicate capabilityMessage proofs order.Expression)
@@ -166,6 +168,8 @@ module internal RewriteCapabilityValidation =
         | RegexMatch(value, pattern) ->
             proveFilterExpr capabilityMessage expressionProofs value
             proveFilterExpr capabilityMessage expressionProofs pattern
+        | PostgresJsonAccess(value, _, _) ->
+            proveFilterExpr capabilityMessage expressionProofs value
         | FunctionCall call ->
             if FunctionName.hasQuotedParts call.Name then
                 requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
@@ -327,6 +331,8 @@ module internal RewriteCapabilityValidation =
             requireExpressionCapability expressionProofs.RegexMatch
             proveTargetExpr targetRuntime expressionProofs value
             proveTargetExpr targetRuntime expressionProofs pattern
+        | PostgresJsonAccess(value, _, _) ->
+            proveTargetExpr targetRuntime expressionProofs value
         | FunctionCall call ->
             if FunctionName.hasQuotedParts call.Name then
                 requireExpressionCapability expressionProofs.QuotedFunction

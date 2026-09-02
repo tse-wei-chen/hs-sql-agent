@@ -73,6 +73,8 @@ module internal RewriteStructuralValidation =
         | RegexMatch(value, pattern) ->
             validateNestedCteExpr targetRuntime value
             validateNestedCteExpr targetRuntime pattern
+        | PostgresJsonAccess(value, _, _) ->
+            validateNestedCteExpr targetRuntime value
         | FunctionCall call ->
             call.Arguments |> List.iter (validateNestedCteExpr targetRuntime)
             call.AggregateOrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
@@ -213,6 +215,8 @@ module internal RewriteStructuralValidation =
         | RegexMatch(value, pattern) ->
             validateNoFromExpression false value
             validateNoFromExpression false pattern
+        | PostgresJsonAccess(value, _, _) ->
+            validateNoFromExpression false value
         | FunctionCall call ->
             let name =
                 FunctionName.value call.Name
@@ -286,6 +290,8 @@ module internal RewriteStructuralValidation =
         | RegexMatch(value, pattern) ->
             visitNestedNoFromExpression value
             visitNestedNoFromExpression pattern
+        | PostgresJsonAccess(value, _, _) ->
+            visitNestedNoFromExpression value
         | RawRegexCall(arguments, _) ->
             arguments |> List.iter visitNestedNoFromExpression
         | FunctionCall call ->

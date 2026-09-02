@@ -23,6 +23,8 @@ module internal RewriteParser =
           MySqlPipes: MySqlPipesSemantics
           MySqlNoBackslashEscapes: bool
           MySqlNullSafeEqualitySyntax: CapabilityProof
+          MySqlJsonArrowSyntax: CapabilityProof
+          PostgresJsonArrowSyntax: CapabilityProof
           DistinctFromSyntax: CapabilityProof
           Joins: JoinProofs
           Expressions: ExpressionProofs
@@ -76,6 +78,8 @@ module internal RewriteParser =
               MySqlPipes = RejectAmbiguousPipes
               MySqlNoBackslashEscapes = false
               MySqlNullSafeEqualitySyntax = ProvenCapability
+              MySqlJsonArrowSyntax = ProvenCapability
+              PostgresJsonArrowSyntax = ProvenCapability
               DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
@@ -93,6 +97,8 @@ module internal RewriteParser =
               MySqlPipes = PipesAsConcat
               MySqlNoBackslashEscapes = false
               MySqlNullSafeEqualitySyntax = ProvenCapability
+              MySqlJsonArrowSyntax = ProvenCapability
+              PostgresJsonArrowSyntax = ProvenCapability
               DistinctFromSyntax = ProvenCapability
               Joins = permissiveJoins
               Expressions = permissiveExpressions
@@ -119,6 +125,8 @@ module internal RewriteParser =
         member _.MySqlPipesAsConcat = semantics.MySqlPipes = PipesAsConcat
         member _.MySqlNoBackslashEscapes = semantics.MySqlNoBackslashEscapes
         member _.SourceMySqlNullSafeEqualitySyntax = semantics.MySqlNullSafeEqualitySyntax
+        member _.SourceMySqlJsonArrowSyntax = semantics.MySqlJsonArrowSyntax
+        member _.SourcePostgresJsonArrowSyntax = semantics.PostgresJsonArrowSyntax
         member _.SourceDistinctFromSyntax = semantics.DistinctFromSyntax
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
@@ -238,6 +246,73 @@ module internal RewriteParser =
         match token.Kind with Symbol value -> value = symbol | _ -> false
     let private isOperator operator (token: Token) =
         match token.Kind with Operator value -> value = operator | _ -> false
+
+    let private isUnquotedIdentifierText expected (token: Token) =
+        match token.Kind with
+        | Identifier(value, false) -> value.Equals(expected, StringComparison.OrdinalIgnoreCase)
+        | _ -> false
+
+    let private isMySqlRegexOperator token =
+        isUnquotedIdentifierText "REGEXP" token
+        || isUnquotedIdentifierText "RLIKE" token
+
+    let private requireMySqlJsonArrowSourceDialect (cursor: Cursor) (token: Token) (spelling: string) =
+        if cursor.Dialect <> SourceDialect.MySql then
+            let finish = token.Start + max token.Length 1
+            let message =
+                "MySQL JSON " + spelling
+                + " syntax is not valid for source dialect "
+                + sourceDialectName cursor.Dialect
+                + " in the Core source profile. Position "
+                + string token.Start
+                + ", span ["
+                + string token.Start
+                + ".."
+                + string finish
+                + ")."
+            raise (
+                SqlParseException(
+                    message,
+                    tokenDiagnostic
+                        "SQL_SOURCE_DIALECT_SYNTAX"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.DialectSyntax
+                        token
+                        message))
+
+    let private rejectSourceParseCapability (token: Token) message =
+        requireSourceParseCapability
+            token
+            (RejectedCapability(
+                CapabilityRejection.create CapabilitySide.SourceCapability message))
+
+    let private requireRegexSourceDialect
+        (cursor: Cursor)
+        (token: Token)
+        (expectedDialect: SourceDialect)
+        (spelling: string) =
+        if cursor.Dialect <> expectedDialect then
+            let finish = token.Start + max token.Length 1
+            let message =
+                spelling
+                + " regular-expression syntax is not valid for source dialect "
+                + sourceDialectName cursor.Dialect
+                + " in the Core source profile. Position "
+                + string token.Start
+                + ", span ["
+                + string token.Start
+                + ".."
+                + string finish
+                + ")."
+            raise (
+                SqlParseException(
+                    message,
+                    tokenDiagnostic
+                        "SQL_SOURCE_DIALECT_SYNTAX"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.DialectSyntax
+                        token
+                        message))
 
     let private acceptKeyword keyword (cursor: Cursor) =
         if isKeyword keyword cursor.Current then cursor.Advance(); true else false
@@ -603,6 +678,22 @@ module internal RewriteParser =
                 requireSourceCapability token cursor.SourceMySqlNullSafeEqualitySyntax
                 cursor.Advance()
                 Binary(BinaryOperator.NotDistinctFrom, left, parseAdd cursor)
+            | Operator "~"
+            | Operator "!~" ->
+                let token = cursor.Current
+                let negated = isOperator "!~" token
+                let spelling = if negated then "!~" else "~"
+                requireRegexSourceDialect cursor token SourceDialect.PostgreSql ("PostgreSQL '" + spelling + "'")
+                cursor.Advance()
+                let regex = RegexMatch(left, parseAdd cursor)
+                if negated then Unary(UnaryOperator.Not, regex) else regex
+            | Identifier(value, false)
+                when value.Equals("REGEXP", StringComparison.OrdinalIgnoreCase)
+                     || value.Equals("RLIKE", StringComparison.OrdinalIgnoreCase) ->
+                let token = cursor.Current
+                requireRegexSourceDialect cursor token SourceDialect.MySql ("MySQL " + value.ToUpperInvariant())
+                cursor.Advance()
+                RegexMatch(left, parseAdd cursor)
             | Keyword "LIKE" -> cursor.Advance(); parseLikeTail cursor left false false
             | Keyword "ILIKE" ->
                 requireSourceCapability cursor.Current cursor.SourceExpressions.ILike
@@ -626,6 +717,16 @@ module internal RewriteParser =
             | Keyword "BETWEEN" -> cursor.Advance(); parseBetweenTail cursor left false
             | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseInTail cursor left true
             | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseBetweenTail cursor left true
+            | Keyword "NOT" when isMySqlRegexOperator (cursor.Peek 1) ->
+                let token = cursor.Peek 1
+                let spelling =
+                    match token.Kind with
+                    | Identifier(value, false) -> value.ToUpperInvariant()
+                    | _ -> invalidOp "MySQL regex operator guard admitted a non-identifier token."
+                requireRegexSourceDialect cursor token SourceDialect.MySql ("MySQL NOT " + spelling)
+                cursor.Advance()
+                cursor.Advance()
+                Unary(UnaryOperator.Not, RegexMatch(left, parseAdd cursor))
             | Keyword "NOT" when isKeyword "LIKE" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseLikeTail cursor left true false
             | Keyword "NOT" when isKeyword "ILIKE" (cursor.Peek 1) ->
                 requireSourceCapability cursor.Current cursor.SourceExpressions.ILike
@@ -740,6 +841,27 @@ module internal RewriteParser =
             let target = parsePostfixCastType cursor
             Some(applyTypedCast cursor expression target)
 
+    and private parsePostgresJsonSelector (cursor: Cursor) =
+        let token = cursor.Current
+        match token.Kind with
+        | StringLiteral value ->
+            if value.IndexOf(' ') >= 0 then
+                fail token "PostgreSQL JSON property selector cannot contain NUL"
+            cursor.Advance()
+            PostgresJsonProperty value
+        | IntegerLiteral value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue ->
+            cursor.Advance()
+            PostgresJsonArrayIndex(int value)
+        | Operator "-" ->
+            let magnitude = cursor.Peek 1
+            match magnitude.Kind with
+            | IntegerLiteral value when value <= int64 Int32.MaxValue + 1L ->
+                cursor.Advance()
+                cursor.Advance()
+                PostgresJsonArrayIndex(int (-value))
+            | _ -> fail token "PostgreSQL JSON array selector requires a 32-bit integer"
+        | _ -> fail token "PostgreSQL JSON ->/->> requires a text property key or 32-bit integer array index"
+
     and private parseUnary cursor =
         let parseSigned signMultiplier operator =
             let sign = cursor.Take()
@@ -792,6 +914,72 @@ module internal RewriteParser =
 
         while scanning do
             match cursor.Current.Kind with
+            | Operator "->"
+            | Operator "->>" ->
+                let operatorToken = cursor.Current
+                let textResult = isOperator "->>" operatorToken
+                match cursor.Dialect with
+                | SourceDialect.MySql ->
+                    let spelling = if textResult then "'->>'" else "'->'"
+                    requireMySqlJsonArrowSourceDialect cursor operatorToken spelling
+                    if textResult then
+                        rejectSourceParseCapability
+                            operatorToken
+                            "SQL capability 'json.operator.mysql_unquoted_arrow' remains fail-closed because ->> has JSON_UNQUOTE(JSON_EXTRACT(...)) text-result semantics that are not represented by the canonical JSON extraction node."
+                    requireSourceParseCapability operatorToken cursor.SourceMySqlJsonArrowSyntax
+                    match Expr.unspan expression with
+                    | Column _ -> ()
+                    | _ ->
+                        rejectSourceParseCapability
+                            operatorToken
+                            "SQL capability 'json.operator.mysql_arrow' requires the MySQL source left operand to be a JSON column identifier; general expression operands are not admitted by the proven source grammar."
+                    cursor.Advance()
+                    let pathToken = cursor.Take()
+                    let pathExpression =
+                        match pathToken.Kind with
+                        | StringLiteral path ->
+                            Literal(ScalarValue.Text path)
+                            |> Expr.withSpan { Start = pathToken.Start; Length = pathToken.Length }
+                        | _ -> fail pathToken "MySQL JSON -> requires a string-literal JSON path"
+                    expression <-
+                        FunctionCall
+                            { Name = FunctionName.create "JSON_EXTRACT"
+                              Arguments = [ expression; pathExpression ]
+                              IsDistinct = false
+                              AggregateOrderBy = []
+                              AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
+                              AggregateSeparator = None }
+                | SourceDialect.PostgreSql ->
+                    requireSourceParseCapability operatorToken cursor.SourcePostgresJsonArrowSyntax
+                    cursor.Advance()
+                    expression <-
+                        PostgresJsonAccess(
+                            expression,
+                            parsePostgresJsonSelector cursor,
+                            if textResult then TextResult else JsonResult)
+                | _ ->
+                    let finish = operatorToken.Start + max operatorToken.Length 1
+                    let message =
+                        "JSON arrow operator "
+                        + (if textResult then "'->>'" else "'->'")
+                        + " is not valid for source dialect "
+                        + sourceDialectName cursor.Dialect
+                        + " in the Core source profile. Position "
+                        + string operatorToken.Start
+                        + ", span ["
+                        + string operatorToken.Start
+                        + ".."
+                        + string finish
+                        + ")."
+                    raise (
+                        SqlParseException(
+                            message,
+                            tokenDiagnostic
+                                "SQL_SOURCE_DIALECT_SYNTAX"
+                                SqlDiagnosticStage.SourceValidation
+                                SqlDiagnosticCategory.DialectSyntax
+                                operatorToken
+                                message))
             | Operator "::" ->
                 match tryParsePostfixCast cursor expression with
                 | Some casted ->

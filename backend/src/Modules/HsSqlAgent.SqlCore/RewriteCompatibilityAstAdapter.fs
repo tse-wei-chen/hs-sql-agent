@@ -216,10 +216,32 @@ module internal RewriteCompatibilityAstAdapter =
                 expressionSpan)
 
         | Expr.RegexMatch(value, pattern) ->
-            HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
-                identifierFromText "CORE_REGEX_MATCH",
-                [ exprOf value; exprOf pattern ] |> ImmutableArray.CreateRange,
-                false,
+            HsSqlAgent.SqlCore.Core.Ast.RegexExpr(
+                exprOf value,
+                exprOf pattern,
+                expressionSpan)
+
+        | Expr.PostgresJsonAccess(value, selector, resultKind) ->
+            let selectorKind, propertyKey, arrayIndex =
+                match selector with
+                | PostgresJsonProperty key ->
+                    HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property,
+                    key,
+                    Nullable<int>()
+                | PostgresJsonArrayIndex index ->
+                    HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex,
+                    null,
+                    Nullable<int>(index)
+            let result =
+                match resultKind with
+                | JsonResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Json
+                | TextResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Text
+            HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr(
+                exprOf value,
+                selectorKind,
+                propertyKey,
+                arrayIndex,
+                result,
                 expressionSpan)
 
         | Expr.FunctionCall call ->

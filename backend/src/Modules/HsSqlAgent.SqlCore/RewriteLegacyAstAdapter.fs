@@ -230,6 +230,31 @@ module internal RewriteLegacyAstAdapter =
             | _, Some operator -> Binary(operator, left, right)
             | _ -> failClosed ("binary operator '" + binary.Operator + "'") binary
 
+        | :? HsSqlAgent.SqlCore.Core.Ast.RegexExpr as regex ->
+            RegexMatch(exprOf regex.Value, exprOf regex.Pattern)
+
+        | :? HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr as json ->
+            let selector =
+                match json.SelectorKind with
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property
+                    when not (isNull json.PropertyKey) && not json.ArrayIndex.HasValue ->
+                    if json.PropertyKey.IndexOf(' ') >= 0 then
+                        raise (SqlCompilationException("PostgreSQL JSON property selector cannot contain NUL."))
+                    PostgresJsonProperty json.PropertyKey
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex
+                    when isNull json.PropertyKey && json.ArrayIndex.HasValue ->
+                    PostgresJsonArrayIndex json.ArrayIndex.Value
+                | _ ->
+                    raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
+            let result =
+                match json.ResultKind with
+                | HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Json -> JsonResult
+                | HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Text -> TextResult
+                | value ->
+                    raise (SqlCompilationException(
+                        "Unsupported PostgreSQL JSON result kind '" + string value + "'."))
+            PostgresJsonAccess(exprOf json.Value, selector, result)
+
         | :? HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr as functionCall ->
             let arguments = functionCall.Arguments |> Seq.map exprOf |> Seq.toList
             let identifier = identifierOf functionCall.Name

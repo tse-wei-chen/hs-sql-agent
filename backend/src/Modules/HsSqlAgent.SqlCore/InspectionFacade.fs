@@ -72,6 +72,8 @@ module private Inspection =
         | RegexMatch(value, pattern) ->
             inspectExpr state value
             inspectExpr state pattern
+        | PostgresJsonAccess(value, _, _) ->
+            inspectExpr state value
         | FilteredAggregate(value, predicate) ->
             inspectExpr state value
             inspectExpr state predicate

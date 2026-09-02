@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.76"
+    static member Version = "2026-09-02.79"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -227,6 +227,27 @@ type SqlCapabilityMatrix private () =
             | _ -> rejected
 
         let jsonExtract = if provider = SqlAgentToolType.Postgres || provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.Sqlite then translated else rejected
+        let postgresJsonArrowStatus, postgresJsonArrowDetail =
+            if provider <> SqlAgentToolType.Postgres then
+                rejected,
+                "PostgreSQL JSON -> / ->> are provider-native typed operators and remain fail-closed for cross-provider targets."
+            else
+                match profileServerVersion with
+                | Some version when version.CompareTo(SqlJsonCapabilityRules.PostgresArrowMinimumVersion) < 0 ->
+                    rejected,
+                    "PostgreSQL JSON -> / ->> require target ServerVersion 9.3+; declared version is "
+                    + version.ToString() + "."
+                | _ ->
+                    supported,
+                    "PostgreSQL JSON -> / ->> preserve native json/jsonb versus text result semantics through a dedicated closed AST node. Property and signed 32-bit array selectors are parameterized; cross-provider lowering remains fail-closed."
+
+        let mysqlJsonArrow =
+            if provider = SqlAgentToolType.MySQL
+               && SqlCapabilityMatrix.VersionAtLeast(
+                    profile,
+                    provider,
+                    SqlJsonCapabilityRules.MySqlArrowMinimumVersion) then supported
+            else rejected
         let jsonSet = if provider = SqlAgentToolType.Postgres || provider = SqlAgentToolType.MySQL || provider = SqlAgentToolType.Sqlite || provider = SqlAgentToolType.MsSqlServer then translated else rejected
         let booleanProjection = if providerWide then supported else rejected
         let booleanUpdate = if providerWide then translated else rejected
@@ -488,8 +509,20 @@ type SqlCapabilityMatrix private () =
                 cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")
                 cap("temporal.formatted_parse","temporal",(if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected),"Formatted parse uses declared provider lowering.")
                 cap("json.extract","json",jsonExtract,"Portable JSON extraction is provider-gated.")
-                cap("json.path.simple","json",translated,"Portable JSON paths are limited to constant property chains beginning at $.")
-                cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated.")
+                cap("json.operator.postgres_arrow","json",postgresJsonArrowStatus,postgresJsonArrowDetail)
+                cap("json.operator.mysql_arrow","json",mysqlJsonArrow,
+                    if provider = SqlAgentToolType.MySQL then
+                        "MySQL source -> is accepted only with an explicit ServerVersion 5.7.9+ source profile, a JSON column identifier on the left, and a literal JSON path on the right; it canonicalizes to JSON_EXTRACT. The ->> text-result operator remains fail-closed until JSON_UNQUOTE result semantics are modeled."
+                    else
+                        "MySQL JSON -> source spelling is not valid for this provider.")
+                cap("json.path.simple","json",translated,"Portable JSON paths require constant paths beginning at $. Simple property chains remain portable wherever the enclosing JSON operation is supported.")
+                cap("json.path.array_index_extract","json",
+                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Sqlite then translated else rejected),
+                    if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Sqlite then
+                        "Constant non-negative array indexes in JSON extraction paths are represented as typed path segments and lower to PostgreSQL JSONB_EXTRACT_PATH or native JSON_EXTRACT."
+                    else
+                        "Array-index JSON extraction has no declared target contract for this provider.")
+                cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated. Array-index mutation remains fail-closed because missing/out-of-range update semantics differ across providers.")
                 cap("regex.match","regex",regexStatus,regexDetail)
                 cap("function.oracle_sysdate","function",(if provider=SqlAgentToolType.Oracle then supported else rejected),
                     if provider=SqlAgentToolType.Oracle then

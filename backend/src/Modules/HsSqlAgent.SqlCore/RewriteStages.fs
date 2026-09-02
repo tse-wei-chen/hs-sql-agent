@@ -163,7 +163,7 @@ module internal RewriteStages =
         | DateAdd(_, amount, value)
         | DateDiff(_, amount, value) ->
             expressionReferencesColumn amount || expressionReferencesColumn value
-        | Unary(_, value) | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
+        | Unary(_, value) | Cast(value, _) | Extract(_, value) | PostgresJsonAccess(value, _, _) | IsNull(value, _) ->
             expressionReferencesColumn value
         | Binary(_, left, right) | RegexMatch(left, right) ->
             expressionReferencesColumn left || expressionReferencesColumn right
@@ -237,6 +237,14 @@ module internal RewriteStages =
         | Binary(_, left, right) | RegexMatch(left, right) ->
             validateAggregateExpr enforceSource source sourceProfile target targetProfile left
             validateAggregateExpr enforceSource source sourceProfile target targetProfile right
+        | PostgresJsonAccess(value, _, _) ->
+            match SqlJsonCapabilityRules.PostgresArrowSourceValidationError(source, sourceProfile) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            match SqlJsonCapabilityRules.PostgresArrowTargetValidationError(target, targetProfile) with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
         | Like(value, pattern, _, _, _) ->
             validateAggregateExpr enforceSource source sourceProfile target targetProfile value
             validateAggregateExpr enforceSource source sourceProfile target targetProfile pattern
@@ -475,6 +483,8 @@ module internal RewriteStages =
                     + ".")
         | RegexMatch(value, pattern) ->
             RegexMatch(normalizeExpr source target value, normalizeExpr source target pattern)
+        | PostgresJsonAccess(value, selector, resultKind) ->
+            PostgresJsonAccess(normalizeExpr source target value, selector, resultKind)
         | FunctionCall call ->
             normalizeFunction source target call
         | FilteredAggregate(value, predicate) ->
@@ -1036,6 +1046,8 @@ module internal RewriteStages =
         | RegexMatch(value, pattern) ->
             validateExpr allowedTables value
             validateExpr allowedTables pattern
+        | PostgresJsonAccess(value, _, _) ->
+            validateExpr allowedTables value
         | FunctionCall call ->
             ensureNoDistinctWildcard call
             call.Arguments |> List.iter (validateExpr allowedTables)
@@ -1130,6 +1142,7 @@ module internal RewriteStages =
         | Like(value, pattern, _, _, _) -> validateInsertValueScope value; validateInsertValueScope pattern
         | RawRegexCall _ -> invalidOp "Raw REGEXP_LIKE reached INSERT validation before canonicalization."
         | RegexMatch(value, pattern) -> validateInsertValueScope value; validateInsertValueScope pattern
+        | PostgresJsonAccess(value, _, _) -> validateInsertValueScope value
         | FunctionCall call ->
             call.Arguments |> List.iter validateInsertValueScope
             call.AggregateOrderBy |> List.iter (fun order -> validateInsertValueScope order.Expression)
@@ -1305,19 +1318,29 @@ module internal RewriteStages =
             Some(int64 value)
         | _ -> None
 
-    let private validateJsonPath provider arguments =
+    let private validateJsonPath provider canonicalName arguments =
         let path =
             match arguments |> List.tryItem 1 |> Option.map Expr.unspan with
             | Some(Literal(ScalarValue.Text value)) -> value
             | _ -> raise (targetCapabilityError provider "json.path.constant")
-        if not (System.Text.RegularExpressions.Regex.IsMatch(
-                    path,
-                    "^\\$\\.[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
-                    System.Text.RegularExpressions.RegexOptions.CultureInvariant)) then
-            raise (SqlCompilationException(
-                "JSON path '" + path + "' is outside the portable Core property-chain subset. "
-                + "SQL capability 'json.path.property_chain' is not supported by provider "
-                + string provider + " for this Core plan."))
+        let parsedPath =
+            match JsonPath.tryParse path with
+            | Ok value -> value
+            | Error _ ->
+                raise (SqlCompilationException(
+                    "JSON path '" + path + "' is outside the portable Core property/array-index subset. "
+                    + "SQL capability 'json.path.property_chain' is not supported by provider "
+                    + string provider + " for this Core plan."))
+        if JsonPath.hasArrayIndex parsedPath then
+            match canonicalName with
+            | "CORE_JSON_EXTRACT"
+                when provider = SqlAgentToolType.Postgres
+                     || provider = SqlAgentToolType.MySQL
+                     || provider = SqlAgentToolType.Sqlite -> ()
+            | "CORE_JSON_SET" ->
+                raise (targetCapabilityError provider "json.path.mutation_array_index")
+            | _ ->
+                raise (targetCapabilityError provider "json.path.array_index_extract")
 
     let private validateCanonicalFunction targetRuntime withinWindow (call: FunctionCall) =
         let provider = TargetRuntime.provider targetRuntime
@@ -1408,7 +1431,7 @@ module internal RewriteStages =
                 | message -> raise (SqlCompilationException(message))
             | SqlCanonicalTargetCapabilityFamily.Json ->
                 match SqlJsonCapabilityRules.TargetValidationError(contract.Name, provider) with
-                | null -> validateJsonPath provider call.Arguments
+                | null -> validateJsonPath provider contract.Name call.Arguments
                 | message -> raise (SqlCompilationException(message))
             | SqlCanonicalTargetCapabilityFamily.Regex ->
                 match SqlRegexCapabilityRules.ProviderValidationError(provider) with
@@ -1625,6 +1648,8 @@ module internal RewriteStages =
         | RegexMatch(value, pattern) ->
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
             validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
+        | PostgresJsonAccess(value, _, _) ->
+            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
         | FunctionCall call ->
             validateCanonicalFunction targetRuntime withinWindow call
             let name, isAggregate, isWindowFunction = canonicalFunctionKind call
@@ -1855,6 +1880,8 @@ module internal RewriteStages =
         | Binary(_, left, right) -> containsVolatileRandom left || containsVolatileRandom right
         | Like(value, pattern, _, _, _) | RegexMatch(value, pattern) ->
             containsVolatileRandom value || containsVolatileRandom pattern
+        | PostgresJsonAccess(value, _, _) ->
+            containsVolatileRandom value
         | RawRegexCall(arguments, _) -> arguments |> List.exists containsVolatileRandom
         | FilteredAggregate(value, predicate) ->
             containsVolatileRandom value || containsVolatileRandom predicate
