@@ -332,7 +332,7 @@ module internal RewriteParser =
         set [
             "FETCH"; "KEY"; "DATE"; "TIME"; "TIMESTAMP"; "ZONE"; "CONFLICT"; "EXCLUDED"; "PERCENT"
             "DELETE"; "UPDATE"; "INSERT"; "VALUES"; "ESCAPE"; "NOTHING"; "NEXT"; "TIES"
-            "WITHIN"; "WITHOUT"; "TOP"; "DUPLICATE"; "MATCHING"; "SEPARATOR"
+            "WITHIN"; "WITHOUT"; "TOP"; "DUPLICATE"; "MATCHING"; "MATCHED"; "SEPARATOR"
         ]
 
     let private isContextualIdentifierKeyword value =
