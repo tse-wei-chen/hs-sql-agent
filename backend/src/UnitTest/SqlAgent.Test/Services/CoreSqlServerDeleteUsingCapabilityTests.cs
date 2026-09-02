@@ -85,7 +85,8 @@ public sealed class CoreSqlServerDeleteUsingCapabilityTests
                 SqlAgentToolType.MsSqlServer,
                 new SqlPlanValidationContext("postgres-delete-using-returning-sqlserver-v1")));
 
-        Assert.Contains("RETURNING", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("OUTPUT", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("trigger", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

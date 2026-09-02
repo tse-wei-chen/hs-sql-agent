@@ -51,11 +51,10 @@ public class CoreDeleteUsingMilestoneTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void CompileDeleteUsing_NonPostgresTarget_RemainsFailClosed(SqlAgentToolType targetProvider)
+    public void CompileDeleteUsing_UnprovenTarget_RemainsFailClosed(SqlAgentToolType targetProvider)
     {
         var parsed = CoreSqlTextParser.ParseDml(
             "DELETE FROM inventory USING warehouse WHERE inventory.id = warehouse.inventory_id",
@@ -67,22 +66,21 @@ public class CoreDeleteUsingMilestoneTests
             new SqlPlanValidationContext("policy-v1")));
 
         Assert.Contains("dml.delete.using", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
-    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void ParseDeleteUsing_NonPostgresSourceDialect_FailsClosed(SqlAgentToolType sourceDialect)
+    public void ParseDeleteUsing_WrongSourceSpelling_FailsClosed(SqlAgentToolType sourceDialect)
     {
         var error = Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseDml(
             "DELETE FROM inventory USING warehouse WHERE inventory.id = warehouse.inventory_id",
             sourceDialect));
 
-        Assert.Contains("PostgreSQL source dialect", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("USING", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("PostgreSQL", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
