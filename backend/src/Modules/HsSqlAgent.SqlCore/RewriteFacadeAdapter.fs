@@ -5,6 +5,8 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
+open System.Security.Cryptography
+open System.Text
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Execution
 open HsSqlAgent.SqlCore.Core.Pipeline
@@ -378,6 +380,59 @@ module internal RewriteFacadeAdapter =
             | value ->
                 invalidOp ("Unsupported SQL Server concat target mode '" + string value + "'.")
         | value -> invalidArg "targetProvider" ("Unsupported target provider '" + string value + "'.")
+
+    let private structuralFingerprint (document: Document) =
+        document
+        |> sprintf "%A"
+        |> Encoding.UTF8.GetBytes
+        |> SHA256.HashData
+        |> Convert.ToHexString
+        |> fun value -> value.ToLowerInvariant()
+
+    let internal determinismFacts
+        sql
+        source
+        target
+        (sourceProfile: SqlProviderCapabilityProfile | null)
+        (targetProfile: SqlProviderCapabilityProfile | null) =
+
+        if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
+        if not (isNull sourceProfile) && sourceProfile.Provider <> source then
+            invalidArg "sourceProfile" "Source capability profile provider does not match source dialect."
+        if not (isNull targetProfile) && targetProfile.Provider <> target then
+            invalidArg "targetProfile" "Target capability profile provider does not match target provider."
+
+        let semantics = sourceSemantics source sourceProfile
+        let parserDialect = sourceDialect source
+        let runtime = targetRuntime target targetProfile
+        let parsed = parseSourceValidated sql source sourceProfile
+        let parsedDocument = Parsed.value parsed
+        let canonical =
+            parsed
+            |> RewriteBinder.bind source
+            |> RewriteStages.normalize
+                semantics.EnforceDialectSyntax
+                parserDialect
+                runtime
+                semantics.Expressions.RegexMatch
+                semantics.Ordering
+                semantics.MySqlPipes
+                sourceProfile
+                targetProfile
+        let canonicalDocument = Canonical.value canonical
+        let renormalized =
+            RewriteStages.normalizeDocumentForInspection
+                parserDialect
+                runtime
+                canonicalDocument
+        let canonicalFingerprint = structuralFingerprint canonicalDocument
+        let renormalizedFingerprint = structuralFingerprint renormalized
+
+        SqlDeterminismInspectionFacts(
+            structuralFingerprint parsedDocument,
+            canonicalFingerprint,
+            renormalizedFingerprint,
+            StringComparer.Ordinal.Equals(canonicalFingerprint, renormalizedFingerprint))
 
     let private columnSetAssurance (columns: ImmutableArray<string>) =
         if columns.IsDefaultOrEmpty then

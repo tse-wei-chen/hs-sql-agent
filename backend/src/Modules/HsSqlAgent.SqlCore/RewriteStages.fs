@@ -980,6 +980,9 @@ module internal RewriteStages =
                         NotMatched = notMatched }
         { document with Statement = statement }
 
+    let internal normalizeDocumentForInspection sourceDialect targetRuntime document =
+        normalizeDocument sourceDialect targetRuntime document
+
     let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile bound =
         Transition.normalize
             (fun document ->
