@@ -213,8 +213,7 @@ module internal CompileEvidenceBuilder =
             appendInt builder (int capability.Side)
             appendToken builder capability.Id
             appendToken builder capability.Category
-            appendInt builder (int capability.Status)
-            appendToken builder capability.Detail)
+            appendInt builder (int capability.Status))
 
     let private appendPolicy (builder: StringBuilder) (policy: SqlCompilePolicyEvidence) =
         appendToken builder policy.PolicyVersion
