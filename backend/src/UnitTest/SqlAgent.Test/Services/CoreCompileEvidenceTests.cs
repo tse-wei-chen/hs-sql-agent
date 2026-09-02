@@ -74,6 +74,40 @@ public sealed class CoreCompileEvidenceTests
     }
 
     [Fact]
+    public void SqlServerProfile_RecordsOnlyCapabilityRelevantSessionSetting()
+    {
+        var modes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CONCAT_NULL_YIELDS_NULL"] = "ON",
+            ["password"] = "must-not-enter-compile-evidence",
+            ["application_name"] = "irrelevant"
+        };
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer,
+            new Version(13, 0),
+            modes,
+            settings);
+
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT 1",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("compile-evidence-sqlserver-setting-v1"),
+            new SqlExecutionPlanPolicy(),
+            profile,
+            profile);
+
+        var evidence = Assert.IsType<SqlCompileEvidence>(command.CompileEvidence);
+        var setting = Assert.Single(evidence.TargetProfile.SessionSettings);
+        Assert.Equal("CONCAT_NULL_YIELDS_NULL", setting.Name);
+        Assert.Equal("ON", setting.Value);
+        Assert.DoesNotContain(
+            evidence.TargetProfile.SessionSettings,
+            item => item.Name.Contains("password", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void MergeCompile_RecordsExplicitConflictTargetAssurance()
     {
         var parsed = CoreSqlTextParser.ParseDml(MergeSql, SqlAgentToolType.MsSqlServer);
