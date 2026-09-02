@@ -464,18 +464,18 @@ module internal RewriteLexer =
             elif i + 1 < length then
                 let pair = sql.Substring(i, 2)
                 match pair with
-                | "<>" | "!=" | ">=" | "<=" | "||" | "::" ->
+                | "<>" | "!=" | ">=" | "<=" | "||" | "::" | "!~" ->
                     add (Operator pair) i (i + 2)
                     i <- i + 2
                 | _ ->
                     match c with
-                    | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
+                    | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' | '~' -> add (Operator(string c)) i (i + 1)
                     | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
                     | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                     i <- i + 1
             else
                 match c with
-                | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' -> add (Operator(string c)) i (i + 1)
+                | '+' | '-' | '*' | '/' | '%' | '=' | '>' | '<' | '~' -> add (Operator(string c)) i (i + 1)
                 | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
                 | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                 i <- i + 1

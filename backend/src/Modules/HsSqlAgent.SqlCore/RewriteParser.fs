@@ -239,6 +239,43 @@ module internal RewriteParser =
     let private isOperator operator (token: Token) =
         match token.Kind with Operator value -> value = operator | _ -> false
 
+    let private isUnquotedIdentifierText expected (token: Token) =
+        match token.Kind with
+        | Identifier(value, false) -> value.Equals(expected, StringComparison.OrdinalIgnoreCase)
+        | _ -> false
+
+    let private isMySqlRegexOperator token =
+        isUnquotedIdentifierText "REGEXP" token
+        || isUnquotedIdentifierText "RLIKE" token
+
+    let private requireRegexSourceDialect
+        (cursor: Cursor)
+        (token: Token)
+        (expectedDialect: SourceDialect)
+        (spelling: string) =
+        if cursor.Dialect <> expectedDialect then
+            let finish = token.Start + max token.Length 1
+            let message =
+                spelling
+                + " regular-expression syntax is not valid for source dialect "
+                + sourceDialectName cursor.Dialect
+                + " in the Core source profile. Position "
+                + string token.Start
+                + ", span ["
+                + string token.Start
+                + ".."
+                + string finish
+                + ")."
+            raise (
+                SqlParseException(
+                    message,
+                    tokenDiagnostic
+                        "SQL_SOURCE_DIALECT_SYNTAX"
+                        SqlDiagnosticStage.SourceValidation
+                        SqlDiagnosticCategory.DialectSyntax
+                        token
+                        message))
+
     let private acceptKeyword keyword (cursor: Cursor) =
         if isKeyword keyword cursor.Current then cursor.Advance(); true else false
     let private acceptSymbol symbol (cursor: Cursor) =
@@ -603,6 +640,22 @@ module internal RewriteParser =
                 requireSourceCapability token cursor.SourceMySqlNullSafeEqualitySyntax
                 cursor.Advance()
                 Binary(BinaryOperator.NotDistinctFrom, left, parseAdd cursor)
+            | Operator "~"
+            | Operator "!~" ->
+                let token = cursor.Current
+                let negated = isOperator "!~" token
+                let spelling = if negated then "!~" else "~"
+                requireRegexSourceDialect cursor token SourceDialect.PostgreSql ("PostgreSQL '" + spelling + "'")
+                cursor.Advance()
+                let regex = RegexMatch(left, parseAdd cursor)
+                if negated then Unary(UnaryOperator.Not, regex) else regex
+            | Identifier(value, false)
+                when value.Equals("REGEXP", StringComparison.OrdinalIgnoreCase)
+                     || value.Equals("RLIKE", StringComparison.OrdinalIgnoreCase) ->
+                let token = cursor.Current
+                requireRegexSourceDialect cursor token SourceDialect.MySql ("MySQL " + value.ToUpperInvariant())
+                cursor.Advance()
+                RegexMatch(left, parseAdd cursor)
             | Keyword "LIKE" -> cursor.Advance(); parseLikeTail cursor left false false
             | Keyword "ILIKE" ->
                 requireSourceCapability cursor.Current cursor.SourceExpressions.ILike
@@ -626,6 +679,16 @@ module internal RewriteParser =
             | Keyword "BETWEEN" -> cursor.Advance(); parseBetweenTail cursor left false
             | Keyword "NOT" when isKeyword "IN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseInTail cursor left true
             | Keyword "NOT" when isKeyword "BETWEEN" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseBetweenTail cursor left true
+            | Keyword "NOT" when isMySqlRegexOperator (cursor.Peek 1) ->
+                let token = cursor.Peek 1
+                let spelling =
+                    match token.Kind with
+                    | Identifier(value, false) -> value.ToUpperInvariant()
+                    | _ -> invalidOp "MySQL regex operator guard admitted a non-identifier token."
+                requireRegexSourceDialect cursor token SourceDialect.MySql ("MySQL NOT " + spelling)
+                cursor.Advance()
+                cursor.Advance()
+                Unary(UnaryOperator.Not, RegexMatch(left, parseAdd cursor))
             | Keyword "NOT" when isKeyword "LIKE" (cursor.Peek 1) -> cursor.Advance(); cursor.Advance(); parseLikeTail cursor left true false
             | Keyword "NOT" when isKeyword "ILIKE" (cursor.Peek 1) ->
                 requireSourceCapability cursor.Current cursor.SourceExpressions.ILike
