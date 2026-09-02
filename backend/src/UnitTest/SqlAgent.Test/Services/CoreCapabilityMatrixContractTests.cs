@@ -19,8 +19,11 @@ public class CoreCapabilityMatrixContractTests
             Assert.Single(matrix.Capabilities, item => item.Id == "dml.insert_select").Status);
         Assert.Equal(SqlCapabilityStatus.Translated,
             Assert.Single(matrix.Capabilities, item => item.Id == "ordering.ordinal").Status);
-        Assert.Contains("INSERT ... SELECT",
-            Assert.Single(matrix.Capabilities, item => item.Id == "dml.advanced").Detail,
+        var advanced = Assert.Single(matrix.Capabilities, item => item.Id == "dml.advanced");
+        Assert.Contains("general MERGE", advanced.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            "INSERT ... SELECT upsert remain outside",
+            advanced.Detail,
             StringComparison.OrdinalIgnoreCase);
     }
 
