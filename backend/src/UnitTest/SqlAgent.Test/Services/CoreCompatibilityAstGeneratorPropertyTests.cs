@@ -26,7 +26,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
     private sealed record AstCase(
         string Name,
         string EquivalentSql,
-        Func<SelectStatement> Build,
+        Func<SqlAgentToolType, SelectStatement> Build,
         string[] ReferencedTables,
         bool ContainsSubquery = false);
 
@@ -37,11 +37,11 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
         {
             foreach (var item in Cases())
             {
-                var parsed = new ParsedStatement(item.Build(), provider);
+                var parsed = new ParsedStatement(item.Build(provider), provider);
                 var first = CompileParsed(parsed, provider, item.Name);
                 var second = CompileParsed(parsed, provider, item.Name);
                 var fresh = CompileParsed(
-                    new ParsedStatement(item.Build(), provider),
+                    new ParsedStatement(item.Build(provider), provider),
                     provider,
                     item.Name);
                 var fromText = CompileText(item.EquivalentSql, provider, item.Name);
@@ -73,7 +73,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
         yield return new AstCase(
             "binary-predicate",
             "SELECT id, name FROM users WHERE id >= 1 ORDER BY id",
-            () => Select(
+            provider => Select(
                 [
                     Item(Column("id")),
                     Item(Column("name"))
@@ -85,15 +85,15 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
         yield return new AstCase(
             "arithmetic-projection",
             "SELECT id + 2 AS score FROM users WHERE id = 1",
-            () => Select(
-                [Item(Binary(Column("id"), "+", Literal(2)), "score")],
+            provider => Select(
+                [Item(Binary(Column("id"), "+", Literal(2)), Alias("score", provider))],
                 Binary(Column("id"), "=", Literal(1))),
             ["users"]);
 
         yield return new AstCase(
             "between-predicate",
             "SELECT id FROM users WHERE id BETWEEN 1 AND 3 ORDER BY id",
-            () => Select(
+            provider => Select(
                 [Item(Column("id"))],
                 new BetweenExpr(
                     Column("id"),
@@ -107,7 +107,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
         yield return new AstCase(
             "in-list-predicate",
             "SELECT id FROM users WHERE id IN (1, 2, 3) ORDER BY id",
-            () => Select(
+            provider => Select(
                 [Item(Column("id"))],
                 new InExpr(
                     Column("id"),
@@ -123,7 +123,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
         yield return new AstCase(
             "is-not-null-predicate",
             "SELECT name FROM users WHERE name IS NOT NULL ORDER BY id",
-            () => Select(
+            provider => Select(
                 [Item(Column("name"))],
                 new IsNullExpr(Column("name"), true, Span),
                 [Order(Column("id"))]),
@@ -132,7 +132,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
         yield return new AstCase(
             "function-call",
             "SELECT LOWER(name) AS normalized_name FROM users WHERE id = 1",
-            () => Select(
+            provider => Select(
                 [
                     Item(
                         new FunctionCallExpr(
@@ -140,7 +140,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
                             ImmutableArray.Create<SqlExpr>(Column("name")),
                             false,
                             Span),
-                        "normalized_name")
+                        Alias("normalized_name", provider))
                 ],
                 Binary(Column("id"), "=", Literal(1))),
             ["users"]);
@@ -194,6 +194,11 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
                 ? null!
                 : new IdentifierPart(alias, false, Span),
             Span);
+
+    private static string Alias(string value, SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.Oracle
+            ? value.ToUpperInvariant()
+            : value;
 
     private static OrderByItem Order(SqlExpr expression) =>
         new(expression, false, NullOrderingKind.Default, Span);
