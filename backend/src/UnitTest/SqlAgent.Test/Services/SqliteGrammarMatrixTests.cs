@@ -97,7 +97,7 @@ public sealed class SqliteGrammarMatrixTests
             " ORDER BY id LIMIT 2, 10", "OFFSET", new CanonicalPagingExpectation(10, 2)))
     ];
 
-    public static IEnumerable<object[]> SqliteCteGrammarMatrix()
+    public static IEnumerable<object?[]> SqliteCteGrammarMatrix()
     {
         foreach (var (cteForm, body, root, tail) in
                  SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Tails))

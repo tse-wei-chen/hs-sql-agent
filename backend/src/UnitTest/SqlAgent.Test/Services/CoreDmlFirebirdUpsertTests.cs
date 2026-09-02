@@ -16,7 +16,7 @@ public sealed class CoreDmlFirebirdUpsertTests
         Assert.Equal(InsertConflictActionKind.UpdateProposedValues, conflict.Action);
         Assert.Equal(["id"], conflict.TargetColumns.Select(IdentifierText).ToArray());
         Assert.Equal(["id", "name"], conflict.Assignments.Select(x => IdentifierText(x.Column)).ToArray());
-        Assert.Equal(["id", "name"], conflict.Assignments.Select(x => IdentifierText(x.ProposedColumn)).ToArray());
+        Assert.Equal(["id", "name"], conflict.Assignments.Select(x => IdentifierText(Assert.IsType<SqlIdentifier>(x.ProposedColumn))).ToArray());
     }
 
     [Fact]

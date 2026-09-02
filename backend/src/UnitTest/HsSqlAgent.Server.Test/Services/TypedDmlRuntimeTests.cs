@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Collections.Immutable;
 using System.Data;
 using System.Data.Common;
@@ -392,6 +393,7 @@ public class TypedDmlRuntimeTests
         private string _connectionString = connectionString;
         private ConnectionState _state = ConnectionState.Closed;
 
+        [AllowNull]
         public override string ConnectionString
         {
             get => _connectionString;

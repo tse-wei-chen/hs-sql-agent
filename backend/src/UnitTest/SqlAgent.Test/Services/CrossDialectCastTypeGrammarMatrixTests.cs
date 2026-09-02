@@ -206,7 +206,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
             "specify precision and scale")
     ];
 
-    public static IEnumerable<object[]> FirebirdSourceProfileNegativeMatrix()
+    public static IEnumerable<object?[]> FirebirdSourceProfileNegativeMatrix()
     {
         yield return
         [
@@ -222,7 +222,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         ];
     }
 
-    public static IEnumerable<object[]> PositiveMatrix()
+    public static IEnumerable<object?[]> PositiveMatrix()
     {
         foreach (var type in Types)
         foreach (var context in Contexts)
@@ -238,7 +238,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> PostgresPostfixMatrix()
+    public static IEnumerable<object?[]> PostgresPostfixMatrix()
     {
         foreach (var type in PostgresPostfixTypes)
         foreach (var context in Contexts)
@@ -259,7 +259,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> CrossProviderMatrix()
+    public static IEnumerable<object?[]> CrossProviderMatrix()
     {
         foreach (var item in CrossTargets)
         {
@@ -276,7 +276,7 @@ public sealed class CrossDialectCastTypeGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> NegativeMatrix()
+    public static IEnumerable<object?[]> NegativeMatrix()
     {
         foreach (var item in Negatives)
         {

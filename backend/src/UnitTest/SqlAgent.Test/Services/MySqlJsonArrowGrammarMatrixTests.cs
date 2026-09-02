@@ -21,7 +21,7 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
         SqlAgentToolType.Sqlite
     ];
 
-    public static IEnumerable<object[]> PositiveMatrix()
+    public static IEnumerable<object?[]> PositiveMatrix()
     {
         foreach (var target in Targets)
         foreach (var context in Contexts)
@@ -33,7 +33,7 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
             ];
     }
 
-    public static IEnumerable<object[]> WrongDialectMatrix()
+    public static IEnumerable<object?[]> WrongDialectMatrix()
     {
         foreach (var source in Enum.GetValues<SqlAgentToolType>().Where(
                      value => value != SqlAgentToolType.MySQL
@@ -47,7 +47,7 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
             ];
     }
 
-    public static IEnumerable<object[]> VersionProofMatrix()
+    public static IEnumerable<object?[]> VersionProofMatrix()
     {
         foreach (var context in Contexts)
         {
@@ -66,7 +66,7 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> UnsupportedShapeMatrix()
+    public static IEnumerable<object?[]> UnsupportedShapeMatrix()
     {
         foreach (var context in Contexts)
         {

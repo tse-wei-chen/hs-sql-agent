@@ -80,7 +80,7 @@ public class MemberServiceTests
                     {
                         MemberId = mr.MemberId,
                         RoleId = mr.RoleId,
-                        Role = roles.FirstOrDefault(r => r.Id == mr.RoleId)
+                        Role = roles.Single(r => r.Id == mr.RoleId)
                     });
                 }
             })
