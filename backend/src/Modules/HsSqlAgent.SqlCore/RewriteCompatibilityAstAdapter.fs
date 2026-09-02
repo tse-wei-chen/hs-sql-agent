@@ -221,6 +221,29 @@ module internal RewriteCompatibilityAstAdapter =
                 exprOf pattern,
                 expressionSpan)
 
+        | Expr.PostgresJsonAccess(value, selector, resultKind) ->
+            let selectorKind, propertyKey, arrayIndex =
+                match selector with
+                | PostgresJsonProperty key ->
+                    HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property,
+                    key,
+                    Nullable<int>()
+                | PostgresJsonArrayIndex index ->
+                    HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex,
+                    null,
+                    Nullable<int>(index)
+            let result =
+                match resultKind with
+                | JsonResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Json
+                | TextResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Text
+            HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr(
+                exprOf value,
+                selectorKind,
+                propertyKey,
+                arrayIndex,
+                result,
+                expressionSpan)
+
         | Expr.FunctionCall call ->
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(

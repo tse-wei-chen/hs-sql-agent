@@ -81,6 +81,7 @@ module internal RewritePlanCapabilityValidation =
         | Binary _ -> "BinaryExpr"
         | Like _ -> "BinaryExpr"
         | RawRegexCall _ | RegexMatch _ -> "RegexExpr"
+        | PostgresJsonAccess _ -> "PostgresJsonAccessExpr"
         | FunctionCall _ -> "FunctionCallExpr"
         | FilteredAggregate _ -> "FilterExpr"
         | Windowed _ -> "WindowedExpr"
@@ -316,6 +317,8 @@ module internal RewritePlanCapabilityValidation =
         | RegexMatch(value, pattern) ->
             proveOrderingExpr targetRuntime targetOrdering value
             proveOrderingExpr targetRuntime targetOrdering pattern
+        | PostgresJsonAccess(value, _, _) ->
+            proveOrderingExpr targetRuntime targetOrdering value
         | FunctionCall call ->
             call.Arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
             call.AggregateOrderBy

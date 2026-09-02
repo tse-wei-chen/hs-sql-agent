@@ -110,6 +110,29 @@ type RegexExpr(value: SqlExpr, pattern: SqlExpr, span: SourceSpan) =
     member _.Value = value
     member _.Pattern = pattern
 
+type PostgresJsonSelectorKind =
+    | Property = 0
+    | ArrayIndex = 1
+
+type JsonExtractionResultKind =
+    | Json = 0
+    | Text = 1
+
+[<Sealed>]
+type PostgresJsonAccessExpr(
+    value: SqlExpr,
+    selectorKind: PostgresJsonSelectorKind,
+    propertyKey: string,
+    arrayIndex: Nullable<int>,
+    resultKind: JsonExtractionResultKind,
+    span: SourceSpan) =
+    inherit SqlExpr(span)
+    member _.Value = value
+    member _.SelectorKind = selectorKind
+    member _.PropertyKey = propertyKey
+    member _.ArrayIndex = arrayIndex
+    member _.ResultKind = resultKind
+
 [<Sealed>]
 type FilterExpr(expression: SqlExpr, predicate: SqlExpr, span: SourceSpan) =
     inherit SqlExpr(span)

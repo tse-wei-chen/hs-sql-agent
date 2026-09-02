@@ -146,6 +146,14 @@ module internal CoreModel =
         let postgresTextArray path =
             "{" + String.concat "," (postgresSegments path) + "}"
 
+    type JsonExtractionResult =
+        | JsonResult
+        | TextResult
+
+    type PostgresJsonSelector =
+        | PostgresJsonProperty of string
+        | PostgresJsonArrayIndex of int
+
     type UnaryOperator = Not | Negate | Positive
 
     type BinaryOperator =
@@ -452,6 +460,7 @@ module internal CoreModel =
         | Like of value: Expr * pattern: Expr * escape: LikeEscape option * negated: bool * caseInsensitive: bool
         | RawRegexCall of arguments: Expr list * isDistinct: bool
         | RegexMatch of value: Expr * pattern: Expr
+        | PostgresJsonAccess of value: Expr * selector: PostgresJsonSelector * result: JsonExtractionResult
         | FunctionCall of FunctionCall
         | FilteredAggregate of Expr * Expr
         | Windowed of Expr * WindowSpec
@@ -719,6 +728,11 @@ module internal CoreModel =
             | RegexMatch(leftValue, leftPattern), RegexMatch(rightValue, rightPattern) ->
                 equivalent leftValue rightValue
                 && equivalent leftPattern rightPattern
+            | PostgresJsonAccess(leftValue, leftSelector, leftResult),
+              PostgresJsonAccess(rightValue, rightSelector, rightResult) ->
+                leftSelector = rightSelector
+                && leftResult = rightResult
+                && equivalent leftValue rightValue
             | FunctionCall leftCall, FunctionCall rightCall ->
                 leftCall.Name = rightCall.Name
                 && leftCall.IsDistinct = rightCall.IsDistinct

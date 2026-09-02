@@ -394,6 +394,18 @@ module internal RewriteRenderer =
             | PostgreSql -> "(" + valueSql + " ~ " + patternSql + ")"
             | MySql | Oracle | SqlServer -> "REGEXP_LIKE(" + valueSql + ", " + patternSql + ")"
             | SQLite | Firebird -> invalidOp (capabilityError ctx.Provider "function.regex_match")
+        | Expr.PostgresJsonAccess(value, selector, resultKind) ->
+            if ctx.Provider <> PostgreSql then
+                invalidOp (capabilityError ctx.Provider "json.operator.postgres_arrow")
+            let selectorSql =
+                match selector with
+                | PostgresJsonProperty key -> ctx.Bind(box key)
+                | PostgresJsonArrayIndex index -> ctx.Bind(box index)
+            let operator =
+                match resultKind with
+                | JsonResult -> "->"
+                | TextResult -> "->>"
+            "(" + renderExpr ctx value + " " + operator + " " + selectorSql + ")"
         | Expr.FunctionCall call ->
             renderFunction ctx call
         | Expr.FilteredAggregate(value, predicate) ->

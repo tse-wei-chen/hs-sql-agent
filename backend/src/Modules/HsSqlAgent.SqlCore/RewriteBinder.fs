@@ -156,6 +156,8 @@ module internal RewriteBinder =
             RawRegexCall(arguments |> List.map (bindExpr scope), isDistinct)
         | RegexMatch(value, pattern) ->
             RegexMatch(bindExpr scope value, bindExpr scope pattern)
+        | PostgresJsonAccess(value, selector, resultKind) ->
+            PostgresJsonAccess(bindExpr scope value, selector, resultKind)
         | FunctionCall call ->
             FunctionCall
                 { call with
@@ -229,6 +231,7 @@ module internal RewriteBinder =
         | Unary(_, operand)
         | Cast(operand, _)
         | Extract(_, operand)
+        | PostgresJsonAccess(operand, _, _)
         | IsNull(operand, _) -> recurse operand
         | Binary(_, left, right)
         | RegexMatch(left, right)
@@ -274,6 +277,7 @@ module internal RewriteBinder =
         | Unary(_, operand)
         | Cast(operand, _)
         | Extract(_, operand)
+        | PostgresJsonAccess(operand, _, _)
         | IsNull(operand, _) -> recurse operand
         | Binary(_, left, right)
         | RegexMatch(left, right)

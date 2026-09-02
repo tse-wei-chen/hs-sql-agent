@@ -964,6 +964,32 @@ module internal SqlDateOnlyCapabilityRules =
 
 module internal SqlJsonCapabilityRules =
     let MySqlArrowMinimumVersion = Version(5,7,9)
+    let PostgresArrowMinimumVersion = Version(9,3)
+
+    let private postgresArrowValidationError(
+        provider: SqlAgentToolType,
+        profile: SqlProviderCapabilityProfile | null,
+        side: string) : string | null =
+        if provider <> SqlAgentToolType.Postgres then
+            "SQL capability 'json.operator.postgres_arrow' is PostgreSQL-native and is not supported by "
+            + side + " provider " + string provider + "."
+        elif not (isNull profile)
+             && not (isNull profile.ServerVersion)
+             && profile.ServerVersion.CompareTo(PostgresArrowMinimumVersion) < 0 then
+            "SQL capability 'json.operator.postgres_arrow' requires PostgreSQL "
+            + side + " ServerVersion 9.3+; declared version is "
+            + profile.ServerVersion.ToString() + "."
+        else null
+
+    let PostgresArrowSourceValidationError(
+        provider: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) =
+        postgresArrowValidationError(provider, sourceProfile, "source")
+
+    let PostgresArrowTargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) =
+        postgresArrowValidationError(provider, targetProfile, "target")
 
     let MySqlArrowSourceValidationError(
         sourceDialect: SqlAgentToolType,
