@@ -5,7 +5,8 @@
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
-		<NoWarn>$(NoWarn);CS1591</NoWarn>
+		<!-- Prometheus HttpListener is intentionally prerelease; keep this package-scoped exception only. -->
+		<NoWarn>$(NoWarn);CS1591;NU5104</NoWarn>
 		<OutputType>Library</OutputType>
 		<IsPackable>true</IsPackable>
 	</PropertyGroup>
