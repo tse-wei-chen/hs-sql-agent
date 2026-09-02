@@ -144,6 +144,21 @@ type SqlCompileDecisionBoundary =
     | Policy = 8
     | RenderingInvariant = 9
 
+[<Sealed>]
+type SqlDeterminismInspectionFacts(
+    parseFingerprint: string,
+    canonicalFingerprint: string,
+    renormalizedCanonicalFingerprint: string,
+    normalizationIdempotent: bool) =
+    do
+        if String.IsNullOrWhiteSpace(parseFingerprint) then invalidArg (nameof parseFingerprint) "Parse fingerprint cannot be empty."
+        if String.IsNullOrWhiteSpace(canonicalFingerprint) then invalidArg (nameof canonicalFingerprint) "Canonical fingerprint cannot be empty."
+        if String.IsNullOrWhiteSpace(renormalizedCanonicalFingerprint) then invalidArg (nameof renormalizedCanonicalFingerprint) "Renormalized canonical fingerprint cannot be empty."
+    member _.ParseFingerprint = parseFingerprint
+    member _.CanonicalFingerprint = canonicalFingerprint
+    member _.RenormalizedCanonicalFingerprint = renormalizedCanonicalFingerprint
+    member _.NormalizationIdempotent = normalizationIdempotent
+
 type SqlCompileCapabilitySide =
     | Source = 0
     | Target = 1

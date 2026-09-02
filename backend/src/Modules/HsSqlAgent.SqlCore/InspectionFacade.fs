@@ -208,6 +208,32 @@ module private Inspection =
 
 [<AbstractClass; Sealed>]
 type SqlCoreInspection private () =
+    static member GetDeterminismFacts(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType) =
+
+        RewriteFacadeAdapter.determinismFacts
+            sql
+            sourceDialect
+            targetProvider
+            null
+            null
+
+    static member GetDeterminismFacts(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile,
+        targetProfile: SqlProviderCapabilityProfile) =
+
+        RewriteFacadeAdapter.determinismFacts
+            sql
+            sourceDialect
+            targetProvider
+            sourceProfile
+            targetProfile
+
     static member GetQueryFacts(sql: string, sourceDialect: SqlAgentToolType) =
         ArgumentNullException.ThrowIfNull(sql)
 
