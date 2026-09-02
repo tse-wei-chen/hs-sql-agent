@@ -60,6 +60,7 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.MalformedDmlMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.UpdateFromWrongSourceMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.DeleteUsingWrongSourceMatrix().Count() +
+            NegativeDmlGrammarMutationMatrixTests.OracleDeleteUsingVersionGateMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.FirebirdUpsertWrongSourceMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.WrongDialectPostfixCastDmlMatrix().Count() +
             NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count() +
