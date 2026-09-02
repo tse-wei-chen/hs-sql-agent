@@ -1929,8 +1929,21 @@ module internal RewriteParser =
         let target = identifier cursor
         let targetAlias = parseDmlTargetAlias cursor
         let using =
-            if acceptKeyword "USING" cursor then
-                if cursor.Dialect <> SourceDialect.PostgreSql then fail cursor.Current "DELETE ... USING is only supported in the PostgreSQL source dialect"
+            if isKeyword "USING" cursor.Current then
+                let token = cursor.Current
+                cursor.Advance()
+                if cursor.Dialect <> SourceDialect.PostgreSql
+                   && cursor.Dialect <> SourceDialect.Oracle then
+                    fail token "DELETE ... USING is valid only for PostgreSQL and Oracle 26+ source grammar"
+                requireSourceParseCapability token cursor.SourceDml.DeleteUsing
+                parseNamedDmlSources cursor
+            elif isKeyword "FROM" cursor.Current then
+                let token = cursor.Current
+                if cursor.Dialect <> SourceDialect.SqlServer
+                   && cursor.Dialect <> SourceDialect.Oracle then
+                    fail token "Joined DELETE ... FROM source grammar is valid only for SQL Server and Oracle 26+"
+                cursor.Advance()
+                requireSourceParseCapability token cursor.SourceDml.DeleteUsing
                 parseNamedDmlSources cursor
             else []
         { Target = target

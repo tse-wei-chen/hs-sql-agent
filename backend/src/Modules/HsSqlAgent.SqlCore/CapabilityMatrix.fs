@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.73"
+    static member Version = "2026-09-02.74"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -526,6 +526,11 @@ type SqlCapabilityMatrix private () =
                               profile,
                               provider,
                               SqlDmlUpdateFromCapabilityRules.SQLiteMinimumVersion) then supported
+                     elif provider=SqlAgentToolType.Oracle
+                          && SqlCapabilityMatrix.VersionAtLeast(
+                              profile,
+                              provider,
+                              SqlDmlUpdateFromCapabilityRules.OracleMinimumVersion) then supported
                      else rejected),
                     match provider with
                     | SqlAgentToolType.Postgres ->
@@ -539,16 +544,36 @@ type SqlCapabilityMatrix private () =
                         "SQLite 3.33+ UPDATE ... FROM is represented structurally and emitted natively when the target profile proves ServerVersion 3.33+. Cross-provider lowering remains fail-closed because duplicate-match row selection is not proven equivalent."
                     | SqlAgentToolType.Sqlite ->
                         "SQLite UPDATE ... FROM remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.33 or newer."
+                    | SqlAgentToolType.Oracle when SqlCapabilityMatrix.VersionAtLeast(
+                                                        profile,
+                                                        provider,
+                                                        SqlDmlUpdateFromCapabilityRules.OracleMinimumVersion) ->
+                        "Oracle 26+ direct-join UPDATE ... FROM is emitted natively for source=target Oracle. Cross-provider lowering remains fail-closed because Oracle raises ORA-30926 when a target row is matched more than once."
+                    | SqlAgentToolType.Oracle ->
+                        "Oracle UPDATE ... FROM requires an explicit target capability profile with ServerVersion 26.0 or newer."
                     | _ ->
                         "UPDATE ... FROM remains fail-closed for this target provider.")
                 cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
                 cap("dml.delete.using","dml",
-                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MsSqlServer then translated else rejected),
+                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MsSqlServer then translated
+                     elif provider=SqlAgentToolType.Oracle
+                          && SqlCapabilityMatrix.VersionAtLeast(
+                              profile,
+                              provider,
+                              SqlDmlDeleteUsingCapabilityRules.OracleMinimumVersion) then translated
+                     else rejected),
                     match provider with
                     | SqlAgentToolType.Postgres ->
-                        "PostgreSQL DELETE ... USING is represented structurally and emitted natively."
+                        "PostgreSQL DELETE ... USING is represented structurally and emitted natively. The proven joined-delete target-row contract can cross-lower with SQL Server and Oracle 26+."
                     | SqlAgentToolType.MsSqlServer ->
-                        "PostgreSQL DELETE ... USING without a Core DML target alias can lower to SQL Server joined DELETE by restating the target in the Transact-SQL FROM table_source. RETURNING/OUTPUT and target-alias contracts remain independently capability-gated."
+                        "PostgreSQL/Oracle joined-delete semantics lower to SQL Server DELETE target FROM table_source by restating the target in the Transact-SQL FROM list. SQL Server native DELETE ... FROM source grammar is represented by the same closed AST."
+                    | SqlAgentToolType.Oracle when SqlCapabilityMatrix.VersionAtLeast(
+                                                        profile,
+                                                        provider,
+                                                        SqlDmlDeleteUsingCapabilityRules.OracleMinimumVersion) ->
+                        "Oracle 26+ direct-join DELETE FROM/USING is represented by the closed joined-delete AST. Oracle documents duplicate source matches as deleting each target row once, allowing cross-lowering with the proven PostgreSQL/SQL Server joined-delete intersection."
+                    | SqlAgentToolType.Oracle ->
+                        "Oracle direct-join DELETE requires an explicit target capability profile with ServerVersion 26.0 or newer."
                     | _ ->
                         "Joined DELETE remains fail-closed for this target provider until an equivalent target-row contract is proven.")
                 cap("dml.insert_select","dml",translated,"INSERT SELECT is supported for statically-known source width.")

@@ -83,9 +83,16 @@ aliases for the remaining providers stay fail-closed until their mutation-specif
 name-resolution rules are modeled.
 
 PostgreSQL DELETE ... USING can lower to SQL Server joined DELETE for the proven no-target-alias
-shape by restating the target table in the Transact-SQL FROM source list. SQL Server source text does
-not gain PostgreSQL USING grammar, and RETURNING/OUTPUT remains independently fail-closed unless its
-own result-row contract is proven.
+shape by restating the target table in the Transact-SQL FROM source list. SQL Server native joined
+DELETE ... FROM source grammar is represented by the same closed AST, while PostgreSQL USING spelling
+remains invalid Transact-SQL source syntax.
+
+Oracle 26+ direct-join UPDATE ... FROM and DELETE ... {FROM|USING} are version-gated by explicit
+source and target profiles. Oracle joined UPDATE is same-provider native-only because duplicate target
+matches raise ORA-30926, which is not the portable behavior of the other joined-update providers.
+Oracle 26 joined DELETE participates in the PostgreSQL/SQL Server joined-delete intersection because
+Oracle documents duplicate source matches as deleting each target row once. RETURNING/OUTPUT remains
+independently capability-gated.
 
 ## Package boundaries
 

@@ -210,7 +210,7 @@ module internal RewriteFacadeAdapter =
             SqlDmlUpdateFromCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
           DeleteUsing =
-            SqlDmlDeleteUsingCapabilityRules.SourceValidationError(source)
+            SqlDmlDeleteUsingCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof }
 
     let private targetDmlProofs target (targetProfile: SqlProviderCapabilityProfile | null) : DmlProofs =
@@ -227,7 +227,7 @@ module internal RewriteFacadeAdapter =
             SqlDmlUpdateFromCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           DeleteUsing =
-            SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target)
+            SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof }
 
     let private sourceOnConflictProof source (sourceProfile: SqlProviderCapabilityProfile | null) =

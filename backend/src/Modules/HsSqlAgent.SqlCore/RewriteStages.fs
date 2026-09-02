@@ -390,9 +390,11 @@ module internal RewriteStages =
                && (source = SqlAgentToolType.MsSqlServer
                    || target = SqlAgentToolType.MsSqlServer
                    || source = SqlAgentToolType.Sqlite
-                   || target = SqlAgentToolType.Sqlite) then
+                   || target = SqlAgentToolType.Sqlite
+                   || source = SqlAgentToolType.Oracle
+                   || target = SqlAgentToolType.Oracle) then
                 raise (SqlCompilationException(
-                    "SQL capability 'dml.update.from' is native-only and remains fail-closed cross-provider when SQL Server or SQLite participates because duplicate-match and target-row selection semantics are not proven equivalent across providers. Source provider "
+                    "SQL capability 'dml.update.from' is native-only and remains fail-closed cross-provider when SQL Server, SQLite, or Oracle participates because duplicate-match and target-row selection semantics are not proven equivalent across providers. Source provider "
                     + string source + ", target provider " + string target + "."))
             update.AssignmentItems |> NonEmpty.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Value)
             update.From |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)

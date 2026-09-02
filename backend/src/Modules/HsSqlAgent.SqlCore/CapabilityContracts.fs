@@ -397,15 +397,16 @@ module internal SqlDmlTargetAliasCapabilityRules =
 
 module internal SqlDmlUpdateFromCapabilityRules =
     let SQLiteMinimumVersion = Version(3,33)
+    let OracleMinimumVersion = Version(26,0)
 
-    let private sqliteProfileAtLeast
+    let private profileAtLeast
         (provider: SqlAgentToolType)
-        (profile: SqlProviderCapabilityProfile | null) =
-        provider = SqlAgentToolType.Sqlite
-        && not (isNull profile)
+        (profile: SqlProviderCapabilityProfile | null)
+        (minimum: Version) =
+        not (isNull profile)
         && profile.Provider = provider
         && not (isNull profile.ServerVersion)
-        && profile.ServerVersion.CompareTo(SQLiteMinimumVersion) >= 0
+        && profile.ServerVersion.CompareTo(minimum) >= 0
 
     let private validationError
         (provider: SqlAgentToolType)
@@ -414,10 +415,14 @@ module internal SqlDmlUpdateFromCapabilityRules =
         match provider with
         | SqlAgentToolType.Postgres
         | SqlAgentToolType.MsSqlServer -> null
-        | SqlAgentToolType.Sqlite when sqliteProfileAtLeast provider profile -> null
+        | SqlAgentToolType.Sqlite when profileAtLeast provider profile SQLiteMinimumVersion -> null
+        | SqlAgentToolType.Oracle when profileAtLeast provider profile OracleMinimumVersion -> null
         | SqlAgentToolType.Sqlite ->
             "SQL capability 'dml.update.from' requires an explicit SQLite "
             + side + " capability profile with ServerVersion 3.33 or newer."
+        | SqlAgentToolType.Oracle ->
+            "SQL capability 'dml.update.from' requires an explicit Oracle "
+            + side + " capability profile with ServerVersion 26.0 or newer."
         | _ when side = "target" ->
             "SQL capability 'dml.update.from' remains fail-closed for target provider "
             + string provider + "; equivalent joined-mutation semantics are not yet proven."
@@ -436,17 +441,39 @@ module internal SqlDmlUpdateFromCapabilityRules =
         validationError provider targetProfile "target"
 
 module internal SqlDmlDeleteUsingCapabilityRules =
-    let SourceValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else
-            "SQL capability 'dml.delete.using' is owned by PostgreSQL source grammar; source provider "
-            + string provider
-            + " remains fail-closed and must use its provider-native joined-delete syntax."
+    let OracleMinimumVersion = Version(26,0)
 
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+    let private oracle26
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null) =
+        provider = SqlAgentToolType.Oracle
+        && not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(OracleMinimumVersion) >= 0
+
+    let SourceValidationError(
+        provider: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         match provider with
         | SqlAgentToolType.Postgres
         | SqlAgentToolType.MsSqlServer -> null
+        | SqlAgentToolType.Oracle when oracle26 provider sourceProfile -> null
+        | SqlAgentToolType.Oracle ->
+            "SQL capability 'dml.delete.using' requires an explicit Oracle source capability profile with ServerVersion 26.0 or newer."
+        | _ ->
+            "SQL capability 'dml.delete.using' is not valid for source provider "
+            + string provider + "; joined-delete source grammar remains fail-closed."
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MsSqlServer -> null
+        | SqlAgentToolType.Oracle when oracle26 provider targetProfile -> null
+        | SqlAgentToolType.Oracle ->
+            "SQL capability 'dml.delete.using' requires an explicit Oracle target capability profile with ServerVersion 26.0 or newer."
         | _ ->
             "SQL capability 'dml.delete.using' remains fail-closed for provider "
             + string provider
