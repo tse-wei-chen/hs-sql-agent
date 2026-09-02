@@ -614,7 +614,7 @@ type SqlCapabilityMatrix private () =
                 cap("dml.nested_cte_scope","dml",nestedStatus,
                     if nestedStatus=translated then "Nested DML CTEs use scope-preserving direct lowering, including output ordinal ordering." else "Nested DML CTE scope remains fail-closed.")
                 cap("dml.advanced","dml",rejected,
-                    "Portable column-only DML RETURNING is tracked separately by dml.returning_output, deterministic explicit-target INSERT conflict handling by dml.upsert_merge, and metadata-assured single-row SQL Server MERGE by dml.merge.single_row. General multi-row/table/query MERGE, Oracle MERGE, cross-provider MERGE lowering, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, and conflict-update predicates/functions/subqueries remain outside the proven contract.")
+                    "Portable column-only DML RETURNING is tracked separately by dml.returning_output, deterministic explicit-target INSERT conflict handling by dml.upsert_merge, and metadata-assured single-row SQL Server MERGE by dml.merge.single_row. general MERGE with multi-row/table/query sources, Oracle MERGE, cross-provider MERGE lowering, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, and conflict-update predicates/functions/subqueries remain outside the proven contract.")
                 cap("dml.returning_output","dml",returningStatus,
                     if returningStatus=translated then
                         match provider with
