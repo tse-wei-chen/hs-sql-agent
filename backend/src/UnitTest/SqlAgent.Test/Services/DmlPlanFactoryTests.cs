@@ -185,7 +185,7 @@ public class DmlPlanFactoryTests
         IReadOnlyList<DatabaseColumnMetadata> columns,
         IReadOnlyDictionary<string, IReadOnlyList<string>>? tablesBySchema = null,
         bool hasEnabledDmlTrigger = false)
-        : IProviderMetadataReader, IProviderDmlResultRowMetadataReader
+        : IProviderMetadataReader, HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader
     {
         private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _tablesBySchema =
             tablesBySchema ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);

@@ -16,8 +16,8 @@ public sealed class DmlPlanFactory(
     CoreSqlCompiler? queryCompiler = null)
 {
     private readonly DmlRowIdentityResolver _rowIdentityResolver = new(metadataReader);
-    private readonly IProviderDmlResultRowMetadataReader? _dmlResultRowMetadataReader =
-        metadataReader as IProviderDmlResultRowMetadataReader;
+    private readonly HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader? _dmlResultRowMetadataReader =
+        metadataReader as HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader;
     // Explicit legacy compilers remain an opt-in compatibility seam for tests/custom hosts.
     // The default production path is the F# typestate facade.
     private readonly CoreDmlCompiler? _dmlCompiler = dmlCompiler;
