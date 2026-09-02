@@ -22,7 +22,8 @@ type private SqlCoreTryState<'T> =
 [<Sealed>]
 type SqlCoreTryResult<'T> private (
     state: SqlCoreTryState<'T>,
-    diagnostics: IReadOnlyList<string>) =
+    diagnostics: IReadOnlyList<string>,
+    compileEvidence: SqlCompileEvidence) =
 
     static let noTypedDiagnostics : IReadOnlyList<SqlDiagnostic> =
         Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>
@@ -41,7 +42,8 @@ type SqlCoreTryResult<'T> private (
                 errorCode,
                 errorMessage,
                 typedDiagnostics),
-            diagnostics)
+            diagnostics,
+            null)
 
     new(
         success: bool,
@@ -59,22 +61,26 @@ type SqlCoreTryResult<'T> private (
 
     static member internal CapturedSuccess(
         value: 'T,
-        diagnostics: IReadOnlyList<string>) =
+        diagnostics: IReadOnlyList<string>,
+        compileEvidence: SqlCompileEvidence) =
         SqlCoreTryResult<'T>(
             CapturedSuccess value,
-            diagnostics)
+            diagnostics,
+            compileEvidence)
 
     static member internal CapturedFailure(
         errorCode: string,
         errorMessage: string,
         diagnostics: IReadOnlyList<string>,
-        typedDiagnostics: IReadOnlyList<SqlDiagnostic>) =
+        typedDiagnostics: IReadOnlyList<SqlDiagnostic>,
+        compileEvidence: SqlCompileEvidence) =
         SqlCoreTryResult<'T>(
             CapturedFailure(
                 errorCode,
                 errorMessage,
                 typedDiagnostics),
-            diagnostics)
+            diagnostics,
+            compileEvidence)
 
     member _.Success =
         match state with
@@ -101,6 +107,7 @@ type SqlCoreTryResult<'T> private (
         | LegacyState(_, _, _, errorMessage, _) -> errorMessage
 
     member _.Diagnostics = diagnostics
+    member _.CompileEvidence = compileEvidence
 
     member _.TypedDiagnostics =
         match state with
@@ -185,17 +192,25 @@ module private FacadeResult =
                             null))
                 | _ -> noTypedDiagnostics
 
+    let private evidenceForValue<'T> (value: 'T) =
+        match box value with
+        | :? CompiledSqlCommand as command -> command.CompileEvidence
+        | _ -> null
+
     let capture<'T> (action: unit -> 'T) : SqlCoreTryResult<'T> =
         try
+            let value = action()
             SqlCoreTryResult<'T>.CapturedSuccess(
-                action(),
-                noDiagnostics)
+                value,
+                noDiagnostics,
+                evidenceForValue value)
         with ex ->
             SqlCoreTryResult<'T>.CapturedFailure(
                 codeFor ex,
                 ex.Message,
                 noDiagnostics,
-                typedDiagnosticsFor ex)
+                typedDiagnosticsFor ex,
+                SqlCompileEvidence.TryGetFromException(ex))
 
 module private FacadeCompile =
     let validateProfile provider argumentName (profile: SqlProviderCapabilityProfile) =
