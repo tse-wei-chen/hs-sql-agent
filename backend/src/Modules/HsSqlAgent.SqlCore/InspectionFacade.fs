@@ -189,7 +189,7 @@ module private Inspection =
             delete.Returning |> List.iter (fun item -> inspectExpr state item.Expression)
         | Statement.MergeStatement merge ->
             state.Tables.Add(identifierText merge.Target) |> ignore
-            merge.Source.Values |> NonEmpty.iter (inspectExpr state)
+            merge.Source.SourceValues |> NonEmpty.iter (inspectExpr state)
             inspectExpr state merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
@@ -198,7 +198,7 @@ module private Inspection =
                     assignments |> NonEmpty.iter (fun item -> inspectExpr state item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.SourceValues |> NonEmpty.iter (inspectExpr state))
+                mergeInsert.InsertValues |> NonEmpty.iter (inspectExpr state))
 
         QueryFacts(
             state.Tables.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),

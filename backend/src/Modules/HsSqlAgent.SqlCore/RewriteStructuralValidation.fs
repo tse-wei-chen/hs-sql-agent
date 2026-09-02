@@ -176,7 +176,7 @@ module internal RewriteStructuralValidation =
             delete.Where |> Option.iter (validateNestedCteExpr targetRuntime)
             delete.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
         | MergeStatement merge ->
-            merge.Source.Values |> NonEmpty.iter (validateNestedCteExpr targetRuntime)
+            merge.Source.SourceValues |> NonEmpty.iter (validateNestedCteExpr targetRuntime)
             validateNestedCteExpr targetRuntime merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
@@ -185,7 +185,7 @@ module internal RewriteStructuralValidation =
                     assignments |> NonEmpty.iter (fun item -> validateNestedCteExpr targetRuntime item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.SourceValues |> NonEmpty.iter (validateNestedCteExpr targetRuntime))
+                mergeInsert.InsertValues |> NonEmpty.iter (validateNestedCteExpr targetRuntime))
 
 
     let private noFromReferenceError identifier =
@@ -434,12 +434,12 @@ module internal RewriteStructuralValidation =
             |> List.iter (fun item ->
                 visitNestedNoFromExpression item.Expression)
         | MergeStatement merge ->
-            if NonEmpty.length merge.Source.Columns <> NonEmpty.length merge.Source.Values then
+            if NonEmpty.length merge.Source.Columns <> NonEmpty.length merge.Source.SourceValues then
                 raise (SqlCompilationException(
                     "MERGE source column aliases must match the single VALUES row width exactly."))
             if merge.Matched.IsNone && merge.NotMatched.IsNone then
                 raise (SqlCompilationException("MERGE requires at least one WHEN action."))
-            merge.Source.Values |> NonEmpty.iter (validateNoFromExpression false)
+            merge.Source.SourceValues |> NonEmpty.iter (validateNoFromExpression false)
             visitNestedNoFromExpression merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
@@ -448,6 +448,6 @@ module internal RewriteStructuralValidation =
                     assignments |> NonEmpty.iter (fun item -> visitNestedNoFromExpression item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.SourceValues |> NonEmpty.iter visitNestedNoFromExpression)
+                mergeInsert.InsertValues |> NonEmpty.iter visitNestedNoFromExpression)
 
 
