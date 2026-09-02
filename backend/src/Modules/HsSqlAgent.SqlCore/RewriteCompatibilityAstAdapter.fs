@@ -194,7 +194,7 @@ module internal RewriteCompatibilityAstAdapter =
             let escapeText =
                 escape
                 |> Option.map (LikeEscape.value >> string)
-                |> Option.defaultValue null
+                |> Option.defaultValue (Unchecked.defaultof<_>)
             let like =
                 HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
                     exprOf value,
@@ -253,7 +253,7 @@ module internal RewriteCompatibilityAstAdapter =
                     expressionSpan)
             result.AggregateOrderBy <- call.AggregateOrderBy |> List.map orderByOf |> ImmutableArray.CreateRange
             result.AggregateOrderSyntax <- aggregateOrderSyntax call.AggregateOrderSyntax
-            result.AggregateSeparatorClause <- call.AggregateSeparator |> Option.defaultValue null
+            result.AggregateSeparatorClause <- call.AggregateSeparator |> Option.defaultValue (Unchecked.defaultof<_>)
             result
 
         | Expr.FilteredAggregate(value, predicate) ->
@@ -364,7 +364,7 @@ module internal RewriteCompatibilityAstAdapter =
         | TableSource.CteTable(identifier, alias) ->
             HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
                 identifierOf identifier,
-                alias |> Option.map partOf |> Option.defaultValue null,
+                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
                 unknown)
         | TableSource.DerivedTable(query, alias) ->
             HsSqlAgent.SqlCore.Core.Ast.DerivedTableSource(
@@ -441,7 +441,7 @@ module internal RewriteCompatibilityAstAdapter =
     and private selectItemOf (item: SelectItem) =
         HsSqlAgent.SqlCore.Core.Ast.SelectItem(
             exprOf item.Expression,
-            item.Alias |> Option.map partOf |> Option.defaultValue null,
+            item.Alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
             unknown)
 
     and private cteOf (cte: Cte) =
@@ -531,17 +531,17 @@ module internal RewriteCompatibilityAstAdapter =
         | ReturningItem.ReturningColumn(identifier, alias) ->
             HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
                 HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, unknown),
-                alias |> Option.map partOf |> Option.defaultValue null,
+                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
                 unknown)
         | ReturningItem.ReturningWildcard alias ->
             HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
                 exprOf (Expr.Wildcard None),
-                alias |> Option.map partOf |> Option.defaultValue null,
+                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
                 unknown)
         | ReturningItem.ReturningExpression(expression, alias) ->
             HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
                 exprOf expression,
-                alias |> Option.map partOf |> Option.defaultValue null,
+                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
                 unknown)
 
     let private conflictOf (conflict: InsertConflict) =
@@ -623,7 +623,7 @@ module internal RewriteCompatibilityAstAdapter =
                 HsSqlAgent.SqlCore.Core.Ast.UpdateStatement(
                     HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
                         identifierOf update.Target,
-                        update.TargetAlias |> Option.map partOf |> Option.defaultValue null,
+                        update.TargetAlias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
                         unknown),
                     update.Assignments
                     |> List.map (fun assignment ->
@@ -699,7 +699,7 @@ module internal RewriteCompatibilityAstAdapter =
                 HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
                     HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
                         identifierOf delete.Target,
-                        delete.TargetAlias |> Option.map partOf |> Option.defaultValue null,
+                        delete.TargetAlias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
                         unknown),
                     delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                     statementSpan)

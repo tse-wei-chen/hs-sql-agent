@@ -156,11 +156,13 @@ module private FacadeResult =
             | _ -> "SQLCORE_ERROR"
 
     let private typedDiagnosticsFor (ex: exn) =
-        match ex with
-        | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
-            singletonDiagnostic parseError.Diagnostic
-        | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
-            singletonDiagnostic compilationError.Diagnostic
+        let directDiagnostic : SqlDiagnostic | null =
+            match ex with
+            | :? SqlParseException as parseError -> parseError.Diagnostic
+            | :? SqlCompilationException as compilationError -> compilationError.Diagnostic
+            | _ -> null
+        match directDiagnostic with
+        | diagnostic when not (isNull diagnostic) -> singletonDiagnostic diagnostic
         | _ ->
             match dataDiagnostic ex with
             | Some diagnostic -> singletonDiagnostic diagnostic

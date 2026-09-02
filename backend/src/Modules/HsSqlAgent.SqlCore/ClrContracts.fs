@@ -247,9 +247,9 @@ type SqlCompileEvidence(
     do
         if String.IsNullOrWhiteSpace(schemaVersion) then invalidArg (nameof schemaVersion) "Compile-evidence schema version cannot be empty."
         if String.IsNullOrWhiteSpace(capabilityMatrixVersion) then invalidArg (nameof capabilityMatrixVersion) "Compile-evidence matrix version cannot be empty."
-        if isNull sourceProfile then nullArg (nameof sourceProfile)
-        if isNull targetProfile then nullArg (nameof targetProfile)
-        if isNull policy then nullArg (nameof policy)
+        if Object.ReferenceEquals(sourceProfile, null) then nullArg (nameof sourceProfile)
+        if Object.ReferenceEquals(targetProfile, null) then nullArg (nameof targetProfile)
+        if Object.ReferenceEquals(policy, null) then nullArg (nameof policy)
         if String.IsNullOrWhiteSpace(decisionCode) then invalidArg (nameof decisionCode) "Compile-evidence decision code cannot be empty."
         if String.IsNullOrWhiteSpace(evidenceFingerprint) then invalidArg (nameof evidenceFingerprint) "Compile-evidence fingerprint cannot be empty."
     member _.SchemaVersion = schemaVersion

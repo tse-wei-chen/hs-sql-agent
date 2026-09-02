@@ -104,7 +104,7 @@ and TemplateCaseSelectCondition() =
 
 and TemplateCaseBranch() =
     member val Condition: SelectCondition = Unchecked.defaultof<SelectCondition> with get, set
-    member val Value: SelectCondition = null with get, set
+    member val Value: SelectCondition = Unchecked.defaultof<SelectCondition> with get, set
 
 and [<AbstractClass>] WhereCondition() =
     member val IsOr = false with get, set

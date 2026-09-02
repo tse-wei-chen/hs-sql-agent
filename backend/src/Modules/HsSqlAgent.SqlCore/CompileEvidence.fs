@@ -289,7 +289,7 @@ module internal CompileEvidenceBuilder =
         decisionCode
         (planFingerprint: string | null) =
 
-        if isNull evidence then nullArg "evidence"
+        if Object.ReferenceEquals(evidence, null) then nullArg "evidence"
         let context =
             { SourceProfile = evidence.SourceProfile
               TargetProfile = evidence.TargetProfile

@@ -177,10 +177,10 @@ type QueryDefinitionCoreMapper private () =
 
     static member private MapFunction(
         name: string,
-        arguments: IEnumerable<SelectCondition>,
+        arguments: IEnumerable<SelectCondition> | null,
         distinct: bool,
-        filter: IReadOnlyCollection<WhereCondition>,
-        window: WindowDefinition) =
+        filter: IReadOnlyCollection<WhereCondition> | null,
+        window: WindowDefinition | null) =
         let args =
             if isNull arguments then ImmutableArray<SqlExpr>.Empty
             else arguments |> Seq.map QueryDefinitionCoreMapper.MapExpr |> QueryDefinitionCoreMapper.Immutable
@@ -290,15 +290,16 @@ type QueryDefinitionCoreMapper private () =
             raise (InvalidOperationException("Window frame bound '" + string bound.Kind + "' must not carry an offset."))
         WindowFrameBoundCore(kind, bound.Offset, unknown)
 
-    static member private MapWhereList(conditions: IReadOnlyList<WhereCondition>) : SqlExpr =
-        if isNull conditions || conditions.Count = 0 then Unchecked.defaultof<SqlExpr>
+    static member private MapWhereList(conditions: IReadOnlyList<WhereCondition> | null) : SqlExpr | null =
+        if isNull conditions || conditions.Count = 0 then null
         else
-            let mutable result : SqlExpr = null
+            let mutable result : SqlExpr | null = null
             for condition in conditions do
                 let current = QueryDefinitionCoreMapper.MapWhere(condition)
                 result <-
-                    if isNull result then current
-                    else BinaryExpr(result, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
+                    match result with
+                    | null -> current
+                    | previous -> BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
             result
 
     static member private MapWhere(condition: WhereCondition) : SqlExpr =
@@ -317,9 +318,9 @@ type QueryDefinitionCoreMapper private () =
                     expression.Operator,
                     expression.RightExpression)
             | :? GroupWhereCondition as group ->
-                let mapped = QueryDefinitionCoreMapper.MapWhereList(group.Groups)
-                if isNull mapped then raise (InvalidOperationException("Empty WHERE groups are not valid Core predicates."))
-                mapped
+                match QueryDefinitionCoreMapper.MapWhereList(group.Groups) with
+                | null -> raise (InvalidOperationException("Empty WHERE groups are not valid Core predicates."))
+                | mapped -> mapped
             | :? SubQueryWhereCondition as subquery ->
                 QueryDefinitionCoreMapper.MapSubQueryWhere(subquery)
             | value ->
@@ -327,14 +328,15 @@ type QueryDefinitionCoreMapper private () =
         if condition.IsNot then result <- UnaryExpr("NOT", result, unknown) :> SqlExpr
         result
 
-    static member private MapExpressionPredicate(left: SelectCondition, opText: string, right: SelectCondition) =
+    static member private MapExpressionPredicate(left: SelectCondition, opText: string, right: SelectCondition | null) =
         let op = QueryDefinitionCoreMapper.NormalizeComparisonOperator(opText)
         let leftExpr = QueryDefinitionCoreMapper.MapExpr(left)
-        if isNull right then
+        match right with
+        | null ->
             if op = "IS" || op = "IS NOT" then IsNullExpr(leftExpr, (op = "IS NOT"), unknown) :> SqlExpr
             else raise (InvalidOperationException("Predicate operator '" + op + "' requires a right-hand expression."))
-        else
-            BinaryExpr(leftExpr, op, QueryDefinitionCoreMapper.MapExpr(right), unknown) :> SqlExpr
+        | rightExpression ->
+            BinaryExpr(leftExpr, op, QueryDefinitionCoreMapper.MapExpr(rightExpression), unknown) :> SqlExpr
 
     static member private MapBasicWhere(basic: BasicWhereCondition) =
         if String.IsNullOrWhiteSpace(basic.FieldName) then
@@ -387,15 +389,16 @@ type QueryDefinitionCoreMapper private () =
         | value ->
             raise (InvalidOperationException("Unsupported GROUP BY node for Core AST mapping: " + value.GetType().Name))
 
-    static member private MapHavingList(conditions: IReadOnlyList<HavingCondition>) : SqlExpr =
-        if isNull conditions || conditions.Count = 0 then Unchecked.defaultof<SqlExpr>
+    static member private MapHavingList(conditions: IReadOnlyList<HavingCondition> | null) : SqlExpr | null =
+        if isNull conditions || conditions.Count = 0 then null
         else
-            let mutable result : SqlExpr = null
+            let mutable result : SqlExpr | null = null
             for condition in conditions do
                 let current = QueryDefinitionCoreMapper.MapHaving(condition)
                 result <-
-                    if isNull result then current
-                    else BinaryExpr(result, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
+                    match result with
+                    | null -> current
+                    | previous -> BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
             result
 
     static member private MapHaving(condition: HavingCondition) =
@@ -421,9 +424,9 @@ type QueryDefinitionCoreMapper private () =
             | :? ExpressionHavingCondition as expression ->
                 QueryDefinitionCoreMapper.MapExpressionPredicate(expression.LeftExpression, expression.Operator, expression.RightExpression)
             | :? GroupHavingCondition as group ->
-                let mapped = QueryDefinitionCoreMapper.MapHavingList(group.Groups)
-                if isNull mapped then raise (InvalidOperationException("Empty HAVING groups are not valid Core predicates."))
-                mapped
+                match QueryDefinitionCoreMapper.MapHavingList(group.Groups) with
+                | null -> raise (InvalidOperationException("Empty HAVING groups are not valid Core predicates."))
+                | mapped -> mapped
             | value ->
                 raise (InvalidOperationException("Unsupported HAVING node for Core AST mapping: " + value.GetType().Name))
         if condition.IsNot then result <- UnaryExpr("NOT", result, unknown) :> SqlExpr
