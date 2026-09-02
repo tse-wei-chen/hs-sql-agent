@@ -740,16 +740,16 @@ module internal CoreModel =
 
     type MergeSource =
         { Alias: IdentifierPart
-          Columns: NonEmpty<IdentifierPart>
-          Values: NonEmpty<Expr> }
+          SourceColumns: NonEmpty<IdentifierPart>
+          SourceValues: NonEmpty<Expr> }
 
     type MergeMatchedAction =
         | MergeUpdate of NonEmpty<Assignment>
         | MergeDelete
 
     type MergeInsertAction =
-        { TargetColumns: NonEmpty<Identifier>
-          SourceValues: NonEmpty<Expr> }
+        { InsertColumns: NonEmpty<Identifier>
+          InsertValues: NonEmpty<Expr> }
 
     type Merge =
         { Target: Identifier

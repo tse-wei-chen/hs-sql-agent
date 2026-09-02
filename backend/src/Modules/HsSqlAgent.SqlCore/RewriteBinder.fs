@@ -597,7 +597,7 @@ module internal RewriteBinder =
                 ensureDistinctAliases fullScope
                 let sourceOnlyScope =
                     { emptyScope with Sources = [ sourceBinding dialect syntheticSource ] }
-                let sourceValues = merge.Source.Values |> NonEmpty.map (bindExpr emptyScope)
+                let sourceValues = merge.Source.SourceValues |> NonEmpty.map (bindExpr emptyScope)
                 let matched =
                     merge.Matched
                     |> Option.map (function
@@ -610,11 +610,11 @@ module internal RewriteBinder =
                     merge.NotMatched
                     |> Option.map (fun mergeInsert ->
                         { mergeInsert with
-                            SourceValues =
-                                mergeInsert.SourceValues |> NonEmpty.map (bindExpr sourceOnlyScope) })
+                            InsertValues =
+                                mergeInsert.InsertValues |> NonEmpty.map (bindExpr sourceOnlyScope) })
                 MergeStatement
                     { merge with
-                        Source = { merge.Source with Values = sourceValues }
+                        Source = { merge.Source with SourceValues = sourceValues }
                         MatchPredicate = bindExpr fullScope merge.MatchPredicate
                         Matched = matched
                         NotMatched = notMatched }

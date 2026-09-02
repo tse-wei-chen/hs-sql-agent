@@ -2228,9 +2228,9 @@ module internal RewriteParser =
                     fail cursor.Current "MERGE INSERT columns and values must have the same width"
                 notMatchedAction <-
                     Some
-                        { MergeInsertAction.TargetColumns =
+                        { MergeInsertAction.InsertColumns =
                             columns |> Seq.toList |> NonEmpty.ofList "merge insert columns"
-                          SourceValues =
+                          InsertValues =
                             values |> Seq.toList |> NonEmpty.ofList "merge insert values" }
             else
                 fail cursor.Current "MERGE supports only WHEN MATCHED and WHEN NOT MATCHED actions in the canonical Core subset"
@@ -2244,8 +2244,8 @@ module internal RewriteParser =
           TargetAlias = targetAlias
           Source =
             { Alias = sourceAlias
-              Columns = sourceColumns |> Seq.toList |> NonEmpty.ofList "merge source columns"
-              Values = sourceValues |> Seq.toList |> NonEmpty.ofList "merge source values" }
+              SourceColumns = sourceColumns |> Seq.toList |> NonEmpty.ofList "merge source columns"
+              SourceValues = sourceValues |> Seq.toList |> NonEmpty.ofList "merge source values" }
           MatchPredicate = matchPredicate
           Matched = matchedAction
           NotMatched = notMatchedAction }

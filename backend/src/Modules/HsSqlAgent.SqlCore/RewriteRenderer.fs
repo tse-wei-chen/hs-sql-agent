@@ -1661,12 +1661,12 @@ module internal RewriteRenderer =
         if ctx.Provider <> SqlServer then
             invalidOp "Validated canonical MERGE reached a non-SQL Server renderer."
         let sourceColumns =
-            merge.Source.Columns
+            merge.Source.SourceColumns
             |> NonEmpty.toList
             |> List.map (renderAlias SqlServer)
             |> String.concat ", "
         let sourceValues =
-            merge.Source.Values
+            merge.Source.SourceValues
             |> NonEmpty.toList
             |> List.map (renderExpr ctx)
             |> String.concat ", "
@@ -1702,12 +1702,12 @@ module internal RewriteRenderer =
         merge.NotMatched
         |> Option.iter (fun mergeInsert ->
             let columns =
-                mergeInsert.TargetColumns
+                mergeInsert.InsertColumns
                 |> NonEmpty.toList
                 |> List.map (renderIdentifier SqlServer)
                 |> String.concat ", "
             let values =
-                mergeInsert.SourceValues
+                mergeInsert.InsertValues
                 |> NonEmpty.toList
                 |> List.map (renderExpr ctx)
                 |> String.concat ", "

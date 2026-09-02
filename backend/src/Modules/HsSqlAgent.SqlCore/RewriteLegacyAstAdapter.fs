@@ -641,12 +641,12 @@ module internal RewriteLegacyAstAdapter =
                 | None -> None
                 | Some insert ->
                     Some
-                        { MergeInsertAction.TargetColumns =
+                        { MergeInsertAction.InsertColumns =
                             insert.Columns
                             |> Seq.map identifierOf
                             |> Seq.toList
                             |> NonEmpty.ofList "merge insert columns"
-                          SourceValues =
+                          InsertValues =
                             insert.Values
                             |> Seq.map exprOf
                             |> Seq.toList
@@ -656,8 +656,8 @@ module internal RewriteLegacyAstAdapter =
                   TargetAlias = targetAlias
                   Source =
                     { Alias = sourceAlias
-                      Columns = sourceColumns
-                      Values = sourceValues }
+                      SourceColumns = sourceColumns
+                      SourceValues = sourceValues }
                   MatchPredicate = exprOf merge.MatchPredicate
                   Matched = matched
                   NotMatched = notMatched }

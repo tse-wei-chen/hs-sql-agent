@@ -517,7 +517,7 @@ module internal RewritePlanCapabilityValidation =
             delete.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
             delete.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
         | MergeStatement merge ->
-            merge.Source.Values |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering)
+            merge.Source.SourceValues |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering)
             proveOrderingExpr targetRuntime targetOrdering merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
@@ -526,7 +526,7 @@ module internal RewritePlanCapabilityValidation =
                     assignments |> NonEmpty.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.SourceValues |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering))
+                mergeInsert.InsertValues |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering))
 
     let private exactColumnSetMatch (left: string list) (right: string list) =
         let leftSet = HashSet<string>(left, StringComparer.OrdinalIgnoreCase)
@@ -798,8 +798,8 @@ module internal RewritePlanCapabilityValidation =
                 "SQL Server MERGE remains fail-closed without metadata-backed assurance for the complete unique or primary target match key."
                 proofs.MergeTargetKey
         let assuredSet = HashSet<string>(assured, StringComparer.OrdinalIgnoreCase)
-        let sourceColumnList = merge.Source.Columns |> NonEmpty.toList
-        if sourceColumnList.Length <> NonEmpty.length merge.Source.Values then
+        let sourceColumnList = merge.Source.SourceColumns |> NonEmpty.toList
+        if sourceColumnList.Length <> NonEmpty.length merge.Source.SourceValues then
             raise (SqlCompilationException(
                 "MERGE source column aliases must match the single VALUES row width exactly."))
         let sourceColumns =
@@ -862,10 +862,10 @@ module internal RewritePlanCapabilityValidation =
 
         merge.NotMatched
         |> Option.iter (fun mergeInsert ->
-            if NonEmpty.length mergeInsert.TargetColumns <> NonEmpty.length mergeInsert.SourceValues then
+            if NonEmpty.length mergeInsert.InsertColumns <> NonEmpty.length mergeInsert.InsertValues then
                 raise (SqlCompilationException("MERGE INSERT columns and values must have the same width."))
             let inserted = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            mergeInsert.TargetColumns
+            mergeInsert.InsertColumns
             |> NonEmpty.iter (fun identifier ->
                 let parts = Identifier.parts identifier
                 if parts.Length <> 1 then
@@ -875,7 +875,7 @@ module internal RewritePlanCapabilityValidation =
                 if not (inserted.Add name) then
                     raise (SqlCompilationException(
                         "MERGE INSERT target column '" + name + "' is declared more than once.")))
-            mergeInsert.SourceValues
+            mergeInsert.InsertValues
             |> NonEmpty.iter (validateMergeDirectValue merge.Source.Alias sourceColumns))
 
     let proveConflicts targetRuntime (proofs: ConflictProofs) document =
