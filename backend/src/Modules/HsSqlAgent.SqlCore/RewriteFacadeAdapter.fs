@@ -472,6 +472,84 @@ module internal RewriteFacadeAdapter =
 
     let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
 
+    let private decisionBoundaryForStage = function
+        | SqlDiagnosticStage.Lexical -> SqlCompileDecisionBoundary.Lexical
+        | SqlDiagnosticStage.Parse -> SqlCompileDecisionBoundary.Parse
+        | SqlDiagnosticStage.Binding -> SqlCompileDecisionBoundary.Binding
+        | SqlDiagnosticStage.SourceValidation -> SqlCompileDecisionBoundary.SourceValidation
+        | SqlDiagnosticStage.SemanticValidation -> SqlCompileDecisionBoundary.SemanticValidation
+        | SqlDiagnosticStage.TargetCapability -> SqlCompileDecisionBoundary.TargetCapability
+        | SqlDiagnosticStage.Policy -> SqlCompileDecisionBoundary.Policy
+        | SqlDiagnosticStage.RenderingInvariant -> SqlCompileDecisionBoundary.RenderingInvariant
+        | value -> invalidOp ("Unsupported SQL diagnostic stage '" + string value + "'.")
+
+    let private exceptionDecisionBoundary (ex: exn) =
+        let fromDiagnostic (diagnostic: SqlDiagnostic) =
+            decisionBoundaryForStage diagnostic.Stage
+        match ex with
+        | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
+            fromDiagnostic parseError.Diagnostic
+        | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
+            fromDiagnostic compilationError.Diagnostic
+        | _ ->
+            match ex.Data[diagnosticDataKey] with
+            | :? SqlDiagnostic as diagnostic -> fromDiagnostic diagnostic
+            | _ ->
+                match ex with
+                | :? SqlParseException -> SqlCompileDecisionBoundary.Parse
+                | :? UnauthorizedAccessException -> SqlCompileDecisionBoundary.Policy
+                | :? ArgumentException -> SqlCompileDecisionBoundary.InputValidation
+                | :? InvalidOperationException -> SqlCompileDecisionBoundary.SemanticValidation
+                | _ -> SqlCompileDecisionBoundary.InputValidation
+
+    let private exceptionDecisionCode (ex: exn) =
+        let diagnosticCode (diagnostic: SqlDiagnostic) = diagnostic.Code
+        match ex with
+        | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
+            diagnosticCode parseError.Diagnostic
+        | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
+            diagnosticCode compilationError.Diagnostic
+        | _ ->
+            match ex.Data[diagnosticDataKey] with
+            | :? SqlDiagnostic as diagnostic -> diagnosticCode diagnostic
+            | _ ->
+                match ex with
+                | :? SqlParseException -> "SQL_PARSE_ERROR"
+                | :? UnauthorizedAccessException -> "SQL_POLICY_DENIED"
+                | :? SqlCompilationException -> "SQL_COMPILATION_ERROR"
+                | :? ArgumentException -> "INVALID_ARGUMENT"
+                | _ -> "SQLCORE_ERROR"
+
+    let private attachRejectedEvidence context (ex: exn) =
+        let existing = SqlCompileEvidence.TryGetFromException(ex)
+        if isNull existing then
+            let evidence =
+                CompileEvidenceBuilder.build
+                    context
+                    SqlCompileVerdict.Rejected
+                    (exceptionDecisionBoundary ex)
+                    (exceptionDecisionCode ex)
+                    null
+            ex.Data[SqlCompileEvidence.DataKey] <- evidence
+
+    let private attachReclassifiedEvidence
+        (command: CompiledSqlCommand)
+        decisionBoundary
+        decisionCode
+        (ex: exn) =
+
+        match command.CompileEvidence with
+        | null -> ()
+        | translatedEvidence ->
+            let rejectedEvidence =
+                CompileEvidenceBuilder.reclassify
+                    translatedEvidence
+                    SqlCompileVerdict.Rejected
+                    decisionBoundary
+                    decisionCode
+                    null
+            ex.Data[SqlCompileEvidence.DataKey] <- rejectedEvidence
+
     let private compilationExceptionFrom (ex: InvalidOperationException) =
         match ex.Data[diagnosticDataKey] with
         | :? SqlDiagnostic as diagnostic ->
@@ -502,6 +580,30 @@ module internal RewriteFacadeAdapter =
             policy
             allowed
 
+    let private compileEvidenceContext
+        source
+        target
+        sourceProfile
+        targetProfile
+        conflictTargetAssurance
+        resultRowAssurance
+        policyVersion
+        (policy: RewritePolicy.ExecutionPolicy)
+        allowed =
+
+        CompileEvidenceBuilder.create
+            source
+            target
+            sourceProfile
+            targetProfile
+            conflictTargetAssurance
+            resultRowAssurance
+            policyVersion
+            policy.QueryMaxRows
+            (not policy.AllowUnboundedUpdate)
+            (not policy.AllowUnboundedDelete)
+            allowed
+
     let private run (options: RewritePipeline.CompileOptions) (sql: string) =
         try
             RewritePipeline.compileWithParsed options sql
@@ -516,31 +618,67 @@ module internal RewriteFacadeAdapter =
 
     let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        let parsed, rendered =
-            run
-                (compileOptions
-                    source
-                    (sourceSemantics source sourceProfile)
-                    target
-                    sourceProfile
-                    targetProfile
-                    conflictTargetAssurance
-                    resultRowAssurance
-                    policy
-                    allowed)
-                sql
-        let parameterValues = parameters target rendered.Parameters
-        let kind = RewriteCompatibilityAstAdapter.kind parsed
-        let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-        CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows)
+        let evidenceContext =
+            compileEvidenceContext
+                source
+                target
+                sourceProfile
+                targetProfile
+                conflictTargetAssurance
+                resultRowAssurance
+                policyVersion
+                policy
+                allowed
+        try
+            let parsed, rendered =
+                run
+                    (compileOptions
+                        source
+                        (sourceSemantics source sourceProfile)
+                        target
+                        sourceProfile
+                        targetProfile
+                        conflictTargetAssurance
+                        resultRowAssurance
+                        policy
+                        allowed)
+                    sql
+            let parameterValues = parameters target rendered.Parameters
+            let kind = RewriteCompatibilityAstAdapter.kind parsed
+            let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
+            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+            let evidence =
+                CompileEvidenceBuilder.build
+                    evidenceContext
+                    SqlCompileVerdict.Translated
+                    SqlCompileDecisionBoundary.Completed
+                    "SQL_COMPILE_TRANSLATED"
+                    fingerprint
+            CompiledSqlCommand.Create(
+                rendered.Sql,
+                parameterValues,
+                kind,
+                fingerprint,
+                target,
+                rendered.ReturnsRows,
+                evidence)
+        with ex ->
+            attachRejectedEvidence evidenceContext ex
+            reraise()
 
     let compileQueryValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
-        if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
+        if command.Kind <> SqlStatementKind.Query then
+            let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
+            attachReclassifiedEvidence
+                command
+                SqlCompileDecisionBoundary.InputValidation
+                "SQL_API_STATEMENT_KIND_MISMATCH"
+                error
+            raise error
         command
 
     let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
@@ -553,7 +691,15 @@ module internal RewriteFacadeAdapter =
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
         if command.Kind = SqlStatementKind.Query then
-            raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, DELETE, or MERGE."))
+            let error =
+                SqlCompilationException(
+                    "Unsupported DML statement: CompileDml requires INSERT, UPDATE, DELETE, or MERGE.")
+            attachReclassifiedEvidence
+                command
+                SqlCompileDecisionBoundary.InputValidation
+                "SQL_API_STATEMENT_KIND_MISMATCH"
+                error
+            raise error
         command
 
 
@@ -583,30 +729,59 @@ module internal RewriteFacadeAdapter =
 
     let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed =
         let source = parsed.SourceDialect
-        if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
-            // Preserve the source-dialect syntax check without making RawSql the executable source
-            // of truth. Callers of the compatibility ParsedStatement API may intentionally replace
-            // Statement after parsing; compilation must consume that statement, not silently reparse
-            // the original text.
-            parseSourceValidated parsed.RawSql source parsed.SourceProfile |> ignore
-        let rendered =
-            runParsed
-                (compileOptions
-                    source
-                    (parsedSourceSemantics parsed)
-                    target
-                    parsed.SourceProfile
-                    targetProfile
-                    conflictTargetAssurance
-                    resultRowAssurance
-                    policy
-                    allowed)
-                (RewriteLegacyAstAdapter.toParsed parsed.Statement)
-        let kind = legacyKind parsed.Statement
-        let parameterValues = parameters target rendered.Parameters
-        let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-        CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows)
+        let evidenceContext =
+            compileEvidenceContext
+                source
+                target
+                parsed.SourceProfile
+                targetProfile
+                conflictTargetAssurance
+                resultRowAssurance
+                policyVersion
+                policy
+                allowed
+        try
+            if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
+                // Preserve the source-dialect syntax check without making RawSql the executable source
+                // of truth. Callers of the compatibility ParsedStatement API may intentionally replace
+                // Statement after parsing; compilation must consume that statement, not silently reparse
+                // the original text.
+                parseSourceValidated parsed.RawSql source parsed.SourceProfile |> ignore
+            let rendered =
+                runParsed
+                    (compileOptions
+                        source
+                        (parsedSourceSemantics parsed)
+                        target
+                        parsed.SourceProfile
+                        targetProfile
+                        conflictTargetAssurance
+                        resultRowAssurance
+                        policy
+                        allowed)
+                    (RewriteLegacyAstAdapter.toParsed parsed.Statement)
+            let kind = legacyKind parsed.Statement
+            let parameterValues = parameters target rendered.Parameters
+            let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
+            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+            let evidence =
+                CompileEvidenceBuilder.build
+                    evidenceContext
+                    SqlCompileVerdict.Translated
+                    SqlCompileDecisionBoundary.Completed
+                    "SQL_COMPILE_TRANSLATED"
+                    fingerprint
+            CompiledSqlCommand.Create(
+                rendered.Sql,
+                parameterValues,
+                kind,
+                fingerprint,
+                target,
+                rendered.ReturnsRows,
+                evidence)
+        with ex ->
+            attachRejectedEvidence evidenceContext ex
+            reraise()
 
     let compileQueryParsedValidated (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
         ArgumentNullException.ThrowIfNull(parsed)
@@ -624,7 +799,13 @@ module internal RewriteFacadeAdapter =
                 (queryPolicy executionPolicy.QueryMaxRows)
                 (allowedTables validationContext.AllowedTables)
         if command.Kind <> SqlStatementKind.Query then
-            invalidArg "parsed" "CompileQuery requires a SELECT statement."
+            let error = ArgumentException("CompileQuery requires a SELECT statement.", "parsed")
+            attachReclassifiedEvidence
+                command
+                SqlCompileDecisionBoundary.InputValidation
+                "SQL_API_STATEMENT_KIND_MISMATCH"
+                error
+            raise error
         command
 
     let compileDmlParsedValidated (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
@@ -646,5 +827,13 @@ module internal RewriteFacadeAdapter =
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
         if command.Kind = SqlStatementKind.Query then
-            raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
+            let error =
+                SqlCompilationException(
+                    "Unsupported DML statement: CompileDml requires INSERT, UPDATE, DELETE, or MERGE.")
+            attachReclassifiedEvidence
+                command
+                SqlCompileDecisionBoundary.InputValidation
+                "SQL_API_STATEMENT_KIND_MISMATCH"
+                error
+            raise error
         command

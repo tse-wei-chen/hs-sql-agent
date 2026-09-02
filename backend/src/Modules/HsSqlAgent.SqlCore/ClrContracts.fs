@@ -128,6 +128,135 @@ type SqlParameterValue(name: string, value: obj) =
     member _.Name = name
     member _.Value = value
 
+type SqlCompileVerdict =
+    | Translated = 0
+    | Rejected = 1
+
+type SqlCompileDecisionBoundary =
+    | Completed = 0
+    | InputValidation = 1
+    | Lexical = 2
+    | Parse = 3
+    | Binding = 4
+    | SourceValidation = 5
+    | SemanticValidation = 6
+    | TargetCapability = 7
+    | Policy = 8
+    | RenderingInvariant = 9
+
+type SqlCompileCapabilitySide =
+    | Source = 0
+    | Target = 1
+
+type SqlCompileCapabilityStatus =
+    | Supported = 0
+    | Translated = 1
+    | Rejected = 2
+
+[<Sealed>]
+type SqlCompileSettingEvidence(name: string, value: string) =
+    do
+        if String.IsNullOrWhiteSpace(name) then invalidArg (nameof name) "Compile-evidence setting name cannot be empty."
+    member _.Name = name
+    member _.Value = value
+
+[<Sealed; AllowNullLiteral>]
+type SqlCompileProfileEvidence(
+    provider: SqlAgentToolType,
+    serverVersion: string | null,
+    compatibilityLevel: Nullable<int>,
+    sessionModes: ImmutableArray<string>,
+    sessionSettings: ImmutableArray<SqlCompileSettingEvidence>) =
+    member _.Provider = provider
+    member _.ServerVersion = serverVersion
+    member _.CompatibilityLevel = compatibilityLevel
+    member _.SessionModes = sessionModes
+    member _.SessionSettings = sessionSettings
+
+[<Sealed>]
+type SqlCompileCapabilityEvidence(
+    side: SqlCompileCapabilitySide,
+    id: string,
+    category: string,
+    status: SqlCompileCapabilityStatus,
+    detail: string) =
+    do
+        if String.IsNullOrWhiteSpace(id) then invalidArg (nameof id) "Compile-evidence capability id cannot be empty."
+    member _.Side = side
+    member _.Id = id
+    member _.Category = category
+    member _.Status = status
+    member _.Detail = detail
+
+[<Sealed; AllowNullLiteral>]
+type SqlCompilePolicyEvidence(
+    policyVersion: string,
+    queryMaxRows: int,
+    requireUpdatePredicate: bool,
+    requireDeletePredicate: bool,
+    allowedTables: ImmutableArray<string>) =
+    do
+        if String.IsNullOrWhiteSpace(policyVersion) then invalidArg (nameof policyVersion) "Compile-evidence policy version cannot be empty."
+        if queryMaxRows < 0 then invalidArg (nameof queryMaxRows) "Compile-evidence query row cap cannot be negative."
+    member _.PolicyVersion = policyVersion
+    member _.QueryMaxRows = queryMaxRows
+    member _.RequireUpdatePredicate = requireUpdatePredicate
+    member _.RequireDeletePredicate = requireDeletePredicate
+    member _.AllowedTables = allowedTables
+
+[<Sealed>]
+type SqlCompileAssuranceEvidence(
+    kind: string,
+    details: ImmutableArray<SqlCompileSettingEvidence>) =
+    do
+        if String.IsNullOrWhiteSpace(kind) then invalidArg (nameof kind) "Compile-evidence assurance kind cannot be empty."
+    member _.Kind = kind
+    member _.Details = details
+
+[<Sealed; AllowNullLiteral>]
+type SqlCompileEvidence(
+    schemaVersion: string,
+    capabilityMatrixVersion: string,
+    sourceProfile: SqlCompileProfileEvidence,
+    targetProfile: SqlCompileProfileEvidence,
+    sourceCapabilities: ImmutableArray<SqlCompileCapabilityEvidence>,
+    targetCapabilities: ImmutableArray<SqlCompileCapabilityEvidence>,
+    policy: SqlCompilePolicyEvidence,
+    assurances: ImmutableArray<SqlCompileAssuranceEvidence>,
+    verdict: SqlCompileVerdict,
+    decisionBoundary: SqlCompileDecisionBoundary,
+    decisionCode: string,
+    planFingerprint: string | null,
+    evidenceFingerprint: string) =
+    static let evidenceDataKey = "HsSqlAgent.SqlCore.CompileEvidence"
+    do
+        if String.IsNullOrWhiteSpace(schemaVersion) then invalidArg (nameof schemaVersion) "Compile-evidence schema version cannot be empty."
+        if String.IsNullOrWhiteSpace(capabilityMatrixVersion) then invalidArg (nameof capabilityMatrixVersion) "Compile-evidence matrix version cannot be empty."
+        if isNull sourceProfile then nullArg (nameof sourceProfile)
+        if isNull targetProfile then nullArg (nameof targetProfile)
+        if isNull policy then nullArg (nameof policy)
+        if String.IsNullOrWhiteSpace(decisionCode) then invalidArg (nameof decisionCode) "Compile-evidence decision code cannot be empty."
+        if String.IsNullOrWhiteSpace(evidenceFingerprint) then invalidArg (nameof evidenceFingerprint) "Compile-evidence fingerprint cannot be empty."
+    member _.SchemaVersion = schemaVersion
+    member _.CapabilityMatrixVersion = capabilityMatrixVersion
+    member _.SourceProfile = sourceProfile
+    member _.TargetProfile = targetProfile
+    member _.SourceCapabilities = sourceCapabilities
+    member _.TargetCapabilities = targetCapabilities
+    member _.Policy = policy
+    member _.Assurances = assurances
+    member _.Verdict = verdict
+    member _.DecisionBoundary = decisionBoundary
+    member _.DecisionCode = decisionCode
+    member _.PlanFingerprint = planFingerprint
+    member _.EvidenceFingerprint = evidenceFingerprint
+    static member internal DataKey = evidenceDataKey
+    static member TryGetFromException(error: Exception) : SqlCompileEvidence =
+        ArgumentNullException.ThrowIfNull(error)
+        match error.Data[evidenceDataKey] with
+        | :? SqlCompileEvidence as evidence -> evidence
+        | _ -> null
+
 [<Sealed; AllowNullLiteral>]
 type CompiledSqlCommand private (
     sql: string,
@@ -135,7 +264,8 @@ type CompiledSqlCommand private (
     kind: SqlStatementKind,
     planFingerprint: string,
     targetProvider: SqlAgentToolType,
-    returnsRows: bool) =
+    returnsRows: bool,
+    compileEvidence: SqlCompileEvidence) =
 
     new(
         sql: string,
@@ -149,7 +279,8 @@ type CompiledSqlCommand private (
             kind,
             planFingerprint,
             targetProvider,
-            false)
+            false,
+            null)
 
     member _.Sql = sql
     member _.Parameters = parameters
@@ -157,6 +288,7 @@ type CompiledSqlCommand private (
     member _.PlanFingerprint = planFingerprint
     member _.TargetProvider = targetProvider
     member _.ReturnsRows = returnsRows
+    member _.CompileEvidence = compileEvidence
 
     static member internal Create(
         sql: string,
@@ -171,26 +303,46 @@ type CompiledSqlCommand private (
             kind,
             planFingerprint,
             targetProvider,
-            returnsRows)
+            returnsRows,
+            null)
 
-type SqlCompilationException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) =
+    static member internal Create(
+        sql: string,
+        parameters: ImmutableArray<SqlParameterValue>,
+        kind: SqlStatementKind,
+        planFingerprint: string,
+        targetProvider: SqlAgentToolType,
+        returnsRows: bool,
+        compileEvidence: SqlCompileEvidence) =
+        CompiledSqlCommand(
+            sql,
+            parameters,
+            kind,
+            planFingerprint,
+            targetProvider,
+            returnsRows,
+            compileEvidence)
+
+type SqlCompilationException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) as this =
     inherit InvalidOperationException(message, innerException)
     new(message: string) = SqlCompilationException(message, null, null)
     new(message: string, innerException: Exception) = SqlCompilationException(message, innerException, null)
     new(message: string, diagnostic: SqlDiagnostic) = SqlCompilationException(message, null, diagnostic)
     member _.Diagnostic = diagnostic
+    member _.CompileEvidence = SqlCompileEvidence.TryGetFromException(this)
 
 namespace HsSqlAgent.SqlCore.SqlParsing
 
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
 
-type SqlParseException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) =
+type SqlParseException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) as this =
     inherit Exception(message, innerException)
     new(message: string) = SqlParseException(message, null, null)
     new(message: string, innerException: Exception) = SqlParseException(message, innerException, null)
     new(message: string, diagnostic: SqlDiagnostic) = SqlParseException(message, null, diagnostic)
     member _.Diagnostic = diagnostic
+    member _.CompileEvidence = SqlCompileEvidence.TryGetFromException(this)
 
 namespace HsSqlAgent.SqlCore.Models
 
