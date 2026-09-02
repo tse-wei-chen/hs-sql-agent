@@ -62,6 +62,16 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Setup Node.js
+      if: matrix.language == 'csharp'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Enable pnpm
+      if: matrix.language == 'csharp'
+      run: corepack enable pnpm
+
     - name: Setup .NET 10 SDK
       if: matrix.language == 'csharp'
       uses: actions/setup-dotnet@v4
