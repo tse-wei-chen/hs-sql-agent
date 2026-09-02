@@ -212,6 +212,9 @@ module internal RewriteFacadeAdapter =
           DeleteUsing =
             SqlDmlDeleteUsingCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
+          Merge =
+            SqlDmlMergeCapabilityRules.SourceValidationError(source)
+            |> sourceCapabilityProof
           SqlServerOutput = OutputAssuranceNotRequired }
 
     let private targetDmlProofs
@@ -260,6 +263,9 @@ module internal RewriteFacadeAdapter =
             |> targetCapabilityProof
           DeleteUsing =
             SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target, targetProfile)
+            |> targetCapabilityProof
+          Merge =
+            SqlDmlMergeCapabilityRules.TargetValidationError(source, target)
             |> targetCapabilityProof
           SqlServerOutput = outputAssurance }
 
@@ -390,14 +396,21 @@ module internal RewriteFacadeAdapter =
                 value.IsSoleEnforcedUniqueKey)
 
     let private conflictProofs source target (targetProfile: SqlProviderCapabilityProfile | null) (assurance: DmlConflictTargetAssurance | null) : ConflictProofs =
-        let firebirdPrimaryKey, sourceRows =
+        let firebirdPrimaryKey, sourceRows, mergeTargetKey =
             match assurance with
             | null ->
                 ColumnSetAssurance.MissingAssurance,
+                ColumnSetAssurance.MissingAssurance,
                 ColumnSetAssurance.MissingAssurance
             | value ->
+                let mergeColumns =
+                    if not value.MatchedUniqueKeyColumns.IsDefaultOrEmpty then
+                        value.MatchedUniqueKeyColumns
+                    else
+                        value.PrimaryKeyColumns
                 columnSetAssurance value.PrimaryKeyColumns,
-                columnSetAssurance value.SourceRowsUniqueByInsertColumns
+                columnSetAssurance value.SourceRowsUniqueByInsertColumns,
+                columnSetAssurance mergeColumns
         { SourceProvider = source
           DirectTarget =
             SqlDmlUpsertCapabilityRules.DirectTargetValidationError(target, targetProfile)
@@ -407,7 +420,8 @@ module internal RewriteFacadeAdapter =
             |> targetCapabilityProof
           FirebirdPrimaryKey = firebirdPrimaryKey
           MySqlUniqueKey = mySqlUniqueKeyAssurance assurance
-          SourceRowsUniqueByInsertColumns = sourceRows }
+          SourceRowsUniqueByInsertColumns = sourceRows
+          MergeTargetKey = mergeTargetKey }
 
     let private parameters targetProvider (values: (obj | null) list) =
         let prefix = if targetProvider = SqlAgentToolType.Oracle then ":p" else "@p"
@@ -539,7 +553,7 @@ module internal RewriteFacadeAdapter =
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
         if command.Kind = SqlStatementKind.Query then
-            raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, or DELETE."))
+            raise (SqlCompilationException("Unsupported DML statement: CompileDml requires INSERT, UPDATE, DELETE, or MERGE."))
         command
 
 
@@ -550,6 +564,7 @@ module internal RewriteFacadeAdapter =
         | :? HsSqlAgent.SqlCore.Core.Ast.InsertStatement -> SqlStatementKind.Insert
         | :? HsSqlAgent.SqlCore.Core.Ast.UpdateStatement -> SqlStatementKind.Update
         | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement -> SqlStatementKind.Delete
+        | :? HsSqlAgent.SqlCore.Core.Ast.MergeStatement -> SqlStatementKind.Merge
         | value -> raise (SqlCompilationException("Unsupported legacy statement '" + value.GetType().Name + "'."))
 
     let private parsedSourceSemantics (parsed: ParsedStatement) =

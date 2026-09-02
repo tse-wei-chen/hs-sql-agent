@@ -738,11 +738,33 @@ module internal CoreModel =
           Where: Expr option
           Returning: ReturningItem list }
 
+    type MergeSource =
+        { Alias: IdentifierPart
+          SourceColumns: NonEmpty<IdentifierPart>
+          SourceValues: NonEmpty<Expr> }
+
+    type MergeMatchedAction =
+        | MergeUpdate of NonEmpty<Assignment>
+        | MergeDelete
+
+    type MergeInsertAction =
+        { InsertColumns: NonEmpty<Identifier>
+          InsertValues: NonEmpty<Expr> }
+
+    type Merge =
+        { Target: Identifier
+          TargetAlias: IdentifierPart
+          Source: MergeSource
+          MatchPredicate: Expr
+          Matched: MergeMatchedAction option
+          NotMatched: MergeInsertAction option }
+
     type Statement =
         | QueryStatement of Query
         | InsertStatement of Insert
         | UpdateStatement of Update
         | DeleteStatement of Delete
+        | MergeStatement of Merge
 
     type Document = { Statement: Statement; Span: Span }
 

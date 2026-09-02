@@ -603,6 +603,65 @@ module internal RewriteLegacyAstAdapter =
                   Where = Option.ofObj update.Predicate |> Option.map exprOf
                   Returning = update.Returning |> Seq.map returningItemOf |> Seq.toList }
 
+        | :? HsSqlAgent.SqlCore.Core.Ast.MergeStatement as merge ->
+            let targetAlias =
+                Option.ofObj merge.Target.Alias
+                |> Option.map partOf
+                |> Option.defaultWith (fun () ->
+                    raise (SqlCompilationException("MERGE target alias is required by the canonical Core model.")))
+            let sourceAlias = partOf merge.SourceAlias
+            let sourceColumns =
+                merge.SourceColumns
+                |> Seq.map (singlePart "MERGE source column")
+                |> Seq.toList
+                |> NonEmpty.ofList "merge source columns"
+            let sourceValues =
+                merge.SourceValues
+                |> Seq.map exprOf
+                |> Seq.toList
+                |> NonEmpty.ofList "merge source values"
+            let matched =
+                match Option.ofObj merge.Matched with
+                | None -> None
+                | Some clause ->
+                    match clause.Kind with
+                    | HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Delete -> Some MergeDelete
+                    | HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Update ->
+                        clause.Assignments
+                        |> Seq.map (fun assignment ->
+                            { Assignment.Target = identifierOf assignment.Column
+                              Value = exprOf assignment.Value })
+                        |> Seq.toList
+                        |> NonEmpty.ofList "merge update assignments"
+                        |> MergeUpdate
+                        |> Some
+                    | value -> raise (SqlCompilationException("Unsupported MERGE matched action '" + string value + "'."))
+            let notMatched =
+                match Option.ofObj merge.NotMatched with
+                | None -> None
+                | Some insert ->
+                    Some
+                        { MergeInsertAction.InsertColumns =
+                            insert.Columns
+                            |> Seq.map identifierOf
+                            |> Seq.toList
+                            |> NonEmpty.ofList "merge insert columns"
+                          InsertValues =
+                            insert.Values
+                            |> Seq.map exprOf
+                            |> Seq.toList
+                            |> NonEmpty.ofList "merge insert values" }
+            Statement.MergeStatement
+                { Merge.Target = identifierOf merge.Target.Name
+                  TargetAlias = targetAlias
+                  Source =
+                    { Alias = sourceAlias
+                      SourceColumns = sourceColumns
+                      SourceValues = sourceValues }
+                  MatchPredicate = exprOf merge.MatchPredicate
+                  Matched = matched
+                  NotMatched = notMatched }
+
         | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement as delete ->
             Statement.DeleteStatement
                 { Delete.Target = identifierOf delete.Target.Name

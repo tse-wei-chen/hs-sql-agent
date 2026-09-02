@@ -260,6 +260,17 @@ module internal RewriteCapabilityValidation =
             delete.Using |> List.iter (proveFilterSource capabilityMessage expressionProofs)
             delete.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
             delete.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
+        | MergeStatement merge ->
+            merge.Source.SourceValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs)
+            proveFilterExpr capabilityMessage expressionProofs merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.InsertValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
 
     let rec private isRepeatableDistinctOperand expression =
         match expression with
@@ -491,6 +502,17 @@ module internal RewriteCapabilityValidation =
             delete.Using |> List.iter (proveTargetSource targetRuntime expressionProofs)
             delete.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
             delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+        | MergeStatement merge ->
+            merge.Source.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
+            proveTargetExpr targetRuntime expressionProofs merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.InsertValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
         document
 
 

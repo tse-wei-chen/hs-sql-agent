@@ -175,6 +175,17 @@ module internal RewriteStructuralValidation =
             delete.Using |> List.iter (validateNestedCteTable targetRuntime)
             delete.Where |> Option.iter (validateNestedCteExpr targetRuntime)
             delete.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
+        | MergeStatement merge ->
+            merge.Source.SourceValues |> NonEmpty.iter (validateNestedCteExpr targetRuntime)
+            validateNestedCteExpr targetRuntime merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> validateNestedCteExpr targetRuntime item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.InsertValues |> NonEmpty.iter (validateNestedCteExpr targetRuntime))
 
 
     let private noFromReferenceError identifier =
@@ -422,5 +433,21 @@ module internal RewriteStructuralValidation =
             delete.Returning
             |> List.iter (fun item ->
                 visitNestedNoFromExpression item.Expression)
+        | MergeStatement merge ->
+            if NonEmpty.length merge.Source.SourceColumns <> NonEmpty.length merge.Source.SourceValues then
+                raise (SqlCompilationException(
+                    "MERGE source column aliases must match the single VALUES row width exactly."))
+            if merge.Matched.IsNone && merge.NotMatched.IsNone then
+                raise (SqlCompilationException("MERGE requires at least one WHEN action."))
+            merge.Source.SourceValues |> NonEmpty.iter (validateNoFromExpression false)
+            visitNestedNoFromExpression merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> visitNestedNoFromExpression item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.InsertValues |> NonEmpty.iter visitNestedNoFromExpression)
 
 

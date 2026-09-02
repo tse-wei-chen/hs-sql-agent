@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.80"
+    static member Version = "2026-09-02.81"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -614,7 +614,7 @@ type SqlCapabilityMatrix private () =
                 cap("dml.nested_cte_scope","dml",nestedStatus,
                     if nestedStatus=translated then "Nested DML CTEs use scope-preserving direct lowering, including output ordinal ordering." else "Nested DML CTE scope remains fail-closed.")
                 cap("dml.advanced","dml",rejected,
-                    "Portable column-only DML RETURNING is tracked separately by dml.returning_output, and deterministic explicit-target INSERT conflict handling is tracked by dml.upsert_merge. Firebird metadata-assured UPDATE OR INSERT is also tracked by dml.upsert_merge; general MERGE, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, conflict-update predicates/functions/subqueries, and unproven cross-provider rich conflict expressions remain outside the portable DML contract.")
+                    "Portable column-only DML RETURNING is tracked separately by dml.returning_output, deterministic explicit-target INSERT conflict handling by dml.upsert_merge, and metadata-assured single-row SQL Server MERGE by dml.merge.single_row. general MERGE with multi-row/table/query sources, Oracle MERGE, cross-provider MERGE lowering, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, and conflict-update predicates/functions/subqueries remain outside the proven contract.")
                 cap("dml.returning_output","dml",returningStatus,
                     if returningStatus=translated then
                         match provider with
@@ -666,6 +666,14 @@ type SqlCapabilityMatrix private () =
                         | _ -> "Targetless conflict-ignore semantics are not modeled for this provider."
                     else
                         "Targetless ON CONFLICT DO NOTHING is available only for native PostgreSQL and version-proven SQLite; other providers remain fail-closed.")
+                cap("dml.merge.single_row","dml",rejected,
+                    match provider with
+                    | SqlAgentToolType.MsSqlServer ->
+                        "SQL Server has a conditional native MERGE path for one explicit USING (VALUES (...)) source row. The closed Core model admits at most one WHEN MATCHED action (UPDATE SET or DELETE) and one WHEN NOT MATCHED INSERT action. ON must be an AND-conjunction of target-alias = source-alias equality terms whose target columns exactly match a metadata-assured UNIQUE or PRIMARY KEY supplied through DmlConflictTargetAssurance. Source literals remain parameterized. The default matrix is Rejected because it has no per-statement key assurance; multi-row/table/query sources, richer action predicates/expressions, OUTPUT, cross-provider lowering, and typed approval execution remain fail-closed."
+                    | SqlAgentToolType.Oracle ->
+                        "Oracle MERGE has distinct source/action/version semantics and is not yet admitted by the canonical source grammar; it remains fail-closed."
+                    | _ ->
+                        "Canonical MERGE lowering is currently proven only for native SQL Server single-row USING (VALUES ...) statements; this provider remains fail-closed.")
                 cap("dml.upsert_merge","dml",upsertStatus,
                     if upsertStatus=translated then
                         if provider=SqlAgentToolType.Postgres then
@@ -680,8 +688,12 @@ type SqlCapabilityMatrix private () =
                             "MySQL ON DUPLICATE KEY UPDATE can fire on any UNIQUE or PRIMARY KEY and has no explicit conflict target. Core inventories provider-native enforced unique keys, including richer partial/expression/prefix shapes. The compiler has a conditional single-row DO UPDATE path only when an explicit ServerVersion 8.0.19+ target profile and statement-level assurance prove the matched explicit conflict target is the sole enforced native conflict source; it uses a proposed-row alias rather than deprecated VALUES(column). Because this capability matrix has no per-statement assurance input, the default capability remains Rejected and fail-closed; DO NOTHING, multiple native conflict sources, richer unsupported enforced unique sources, and typed approval execution remain rejected."
                         | SqlAgentToolType.Firebird ->
                             "Firebird raw UPDATE OR INSERT ... MATCHING is canonicalized only with an explicit MATCHING column list. Firebird target lowering is available only when DmlConflictTargetAssurance proves that the canonical conflict target equals the complete resolved primary key and the conflict update mirrors every supplied INSERT column as the same proposed-row column. Because this capability matrix has no per-statement primary-key assurance input, the default Firebird capability remains Rejected and fail-closed; DO NOTHING, partial updates, general UNIQUE-key matching, and general MERGE remain rejected."
+                        | SqlAgentToolType.MsSqlServer ->
+                            "SQL Server upsert remains Rejected by default because the capability matrix has no statement-level target-key assurance. A conditional native single-row MERGE path now exists: USING (VALUES (...)) fixes source cardinality at one row, and DmlConflictTargetAssurance must prove the complete target UNIQUE or PRIMARY KEY used by the ON equality conjunction. General multi-row MERGE, action predicates, richer expressions, OUTPUT, and typed approval execution remain fail-closed."
+                        | SqlAgentToolType.Oracle ->
+                            "Oracle requires MERGE-style source and match semantics, but the Oracle source/action grammar and corresponding target guarantees are not yet represented by the canonical MERGE contract, so it remains fail-closed."
                         | _ ->
-                            "This provider requires MERGE-style source and match semantics. Core has not yet modeled the source-row cardinality and match guarantees needed for a portable MERGE contract, so upsert remains fail-closed.")
+                            "This provider has no proven canonical MERGE lowering; upsert remains fail-closed.")
             ]
 
         ProviderSqlCapabilities(

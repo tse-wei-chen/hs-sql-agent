@@ -67,6 +67,7 @@ module internal RewriteParser =
               TargetAlias = ProvenCapability
               UpdateFrom = ProvenCapability
               DeleteUsing = ProvenCapability
+              Merge = ProvenCapability
               SqlServerOutput = OutputAssuranceNotRequired }
 
         let private permissiveOrdering =
@@ -331,7 +332,7 @@ module internal RewriteParser =
         set [
             "FETCH"; "KEY"; "DATE"; "TIME"; "TIMESTAMP"; "ZONE"; "CONFLICT"; "EXCLUDED"; "PERCENT"
             "DELETE"; "UPDATE"; "INSERT"; "VALUES"; "ESCAPE"; "NOTHING"; "NEXT"; "TIES"
-            "WITHIN"; "WITHOUT"; "TOP"; "DUPLICATE"; "MATCHING"; "SEPARATOR"
+            "WITHIN"; "WITHOUT"; "TOP"; "DUPLICATE"; "MATCHING"; "MATCHED"; "MERGE"; "SEPARATOR"
         ]
 
     let private isContextualIdentifierKeyword value =
@@ -2140,6 +2141,115 @@ module internal RewriteParser =
         while acceptSymbol ',' cursor do values.Add(parseTableSource cursor)
         values |> Seq.toList
 
+    and private parseMerge (cursor: Cursor) =
+        if cursor.Dialect <> SourceDialect.SqlServer then
+            fail cursor.Current "MERGE is currently modeled only for the SQL Server source dialect"
+        requireSourceParseCapability cursor.Current cursor.SourceDml.Merge
+        expectKeyword "MERGE" cursor
+        acceptKeyword "INTO" cursor |> ignore
+        let target = identifier cursor
+
+        let requiredAlias context =
+            if acceptKeyword "AS" cursor then
+                aliasIdentifierPart cursor
+            else
+                match cursor.Current.Kind with
+                | Identifier _ -> aliasIdentifierPart cursor
+                | Keyword value when isAliasKeyword value -> aliasIdentifierPart cursor
+                | _ -> fail cursor.Current ("MERGE requires an explicit " + context + " alias")
+
+        let targetAlias = requiredAlias "target"
+        expectKeyword "USING" cursor
+        expectSymbol '(' cursor
+        expectKeyword "VALUES" cursor
+        expectSymbol '(' cursor
+        let sourceValues = ResizeArray<Expr>()
+        sourceValues.Add(parseExpression cursor)
+        while acceptSymbol ',' cursor do sourceValues.Add(parseExpression cursor)
+        expectSymbol ')' cursor
+        expectSymbol ')' cursor
+        let sourceAlias = requiredAlias "source"
+        expectSymbol '(' cursor
+        let sourceColumns = ResizeArray<IdentifierPart>()
+        sourceColumns.Add(identifierPart cursor)
+        while acceptSymbol ',' cursor do sourceColumns.Add(identifierPart cursor)
+        expectSymbol ')' cursor
+        if sourceColumns.Count <> sourceValues.Count then
+            fail cursor.Current "MERGE source column aliases must match the single VALUES row width exactly"
+        ensureUniqueInsertColumns cursor (sourceColumns |> Seq.toList)
+
+        expectKeyword "ON" cursor
+        let matchPredicate = parseExpression cursor
+        let mutable matchedAction : MergeMatchedAction option = None
+        let mutable notMatchedAction : MergeInsertAction option = None
+
+        while acceptKeyword "WHEN" cursor do
+            if acceptKeyword "MATCHED" cursor then
+                if matchedAction.IsSome then
+                    fail cursor.Current "MERGE admits at most one WHEN MATCHED action in the canonical Core subset"
+                expectKeyword "THEN" cursor
+                if acceptKeyword "DELETE" cursor then
+                    matchedAction <- Some MergeDelete
+                elif acceptKeyword "UPDATE" cursor then
+                    expectKeyword "SET" cursor
+                    let assignments = ResizeArray<Assignment>()
+                    let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    let parseAssignment () : Assignment =
+                        let targetPart = identifierPart cursor
+                        if not (seen.Add targetPart.Value) then
+                            fail cursor.Current ("MERGE UPDATE assigns column '" + targetPart.Value + "' more than once")
+                        expectOperator "=" cursor
+                        { Target = singlePartIdentifier targetPart
+                          Value = parseExpression cursor }
+                    assignments.Add(parseAssignment())
+                    while acceptSymbol ',' cursor do assignments.Add(parseAssignment())
+                    matchedAction <-
+                        Some(MergeUpdate(assignments |> Seq.toList |> NonEmpty.ofList "merge update assignments"))
+                else
+                    fail cursor.Current "WHEN MATCHED supports only UPDATE SET or DELETE in the canonical Core subset"
+            elif acceptKeyword "NOT" cursor then
+                expectKeyword "MATCHED" cursor
+                if notMatchedAction.IsSome then
+                    fail cursor.Current "MERGE admits at most one WHEN NOT MATCHED action in the canonical Core subset"
+                expectKeyword "THEN" cursor
+                expectKeyword "INSERT" cursor
+                expectSymbol '(' cursor
+                let columns = ResizeArray<Identifier>()
+                columns.Add(singlePartIdentifier (identifierPart cursor))
+                while acceptSymbol ',' cursor do columns.Add(singlePartIdentifier (identifierPart cursor))
+                expectSymbol ')' cursor
+                expectKeyword "VALUES" cursor
+                expectSymbol '(' cursor
+                let values = ResizeArray<Expr>()
+                values.Add(parseExpression cursor)
+                while acceptSymbol ',' cursor do values.Add(parseExpression cursor)
+                expectSymbol ')' cursor
+                if columns.Count <> values.Count then
+                    fail cursor.Current "MERGE INSERT columns and values must have the same width"
+                notMatchedAction <-
+                    Some
+                        { MergeInsertAction.InsertColumns =
+                            columns |> Seq.toList |> NonEmpty.ofList "merge insert columns"
+                          InsertValues =
+                            values |> Seq.toList |> NonEmpty.ofList "merge insert values" }
+            else
+                fail cursor.Current "MERGE supports only WHEN MATCHED and WHEN NOT MATCHED actions in the canonical Core subset"
+
+        if matchedAction.IsNone && notMatchedAction.IsNone then
+            fail cursor.Current "MERGE requires at least one WHEN action"
+        if not (isSymbol ';' cursor.Current) then
+            fail cursor.Current "SQL Server MERGE requires a terminating semicolon in the canonical Core source grammar"
+
+        { Target = target
+          TargetAlias = targetAlias
+          Source =
+            { Alias = sourceAlias
+              SourceColumns = sourceColumns |> Seq.toList |> NonEmpty.ofList "merge source columns"
+              SourceValues = sourceValues |> Seq.toList |> NonEmpty.ofList "merge source values" }
+          MatchPredicate = matchPredicate
+          Matched = matchedAction
+          NotMatched = notMatchedAction }
+
     and private parseUpdate cursor =
         expectKeyword "UPDATE" cursor
         let target = identifier cursor
@@ -2216,7 +2326,8 @@ module internal RewriteParser =
                 InsertStatement(parseFirebirdUpsert cursor)
             | Keyword "UPDATE" -> UpdateStatement(parseUpdate cursor)
             | Keyword "DELETE" -> DeleteStatement(parseDelete cursor)
-            | _ -> fail cursor.Current "Expected SELECT, INSERT, UPDATE, or DELETE"
+            | Keyword "MERGE" -> MergeStatement(parseMerge cursor)
+            | _ -> fail cursor.Current "Expected SELECT, INSERT, UPDATE, DELETE, or MERGE"
         acceptSymbol ';' cursor |> ignore
         match cursor.Current.Kind with End -> () | _ -> fail cursor.Current "Unexpected trailing token"
         Parsed.create { Statement = statement; Span = { Start = start; Length = sql.Length - start } }

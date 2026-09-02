@@ -644,6 +644,56 @@ module internal RewriteCompatibilityAstAdapter =
             result.Returning <- update.Returning |> List.map returningOf |> ImmutableArray.CreateRange
             result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
+        | Statement.MergeStatement merge ->
+            let matched =
+                merge.Matched
+                |> Option.map (function
+                    | MergeDelete ->
+                        HsSqlAgent.SqlCore.Core.Ast.MergeMatchedClause(
+                            HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Delete,
+                            ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.Assignment>.Empty,
+                            unknown)
+                    | MergeUpdate assignments ->
+                        HsSqlAgent.SqlCore.Core.Ast.MergeMatchedClause(
+                            HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Update,
+                            assignments
+                            |> NonEmpty.toList
+                            |> List.map (fun assignment ->
+                                HsSqlAgent.SqlCore.Core.Ast.Assignment(
+                                    identifierOf assignment.Target,
+                                    exprOf assignment.Value,
+                                    unknown))
+                            |> ImmutableArray.CreateRange,
+                            unknown))
+                |> Option.defaultValue (Unchecked.defaultof<_>)
+            let notMatched =
+                merge.NotMatched
+                |> Option.map (fun insert ->
+                    HsSqlAgent.SqlCore.Core.Ast.MergeInsertClause(
+                        insert.InsertColumns |> NonEmpty.toList |> List.map identifierOf |> ImmutableArray.CreateRange,
+                        insert.InsertValues |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
+                        unknown))
+                |> Option.defaultValue (Unchecked.defaultof<_>)
+            HsSqlAgent.SqlCore.Core.Ast.MergeStatement(
+                HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
+                    identifierOf merge.Target,
+                    partOf merge.TargetAlias,
+                    unknown),
+                partOf merge.Source.Alias,
+                merge.Source.SourceColumns
+                |> NonEmpty.toList
+                |> List.map (fun column ->
+                    HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
+                        ImmutableArray.Create(partOf column),
+                        unknown))
+                |> ImmutableArray.CreateRange,
+                merge.Source.SourceValues |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
+                exprOf merge.MatchPredicate,
+                matched,
+                notMatched,
+                statementSpan)
+            :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+
         | Statement.DeleteStatement delete ->
             let result =
                 HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
@@ -678,3 +728,4 @@ module internal RewriteCompatibilityAstAdapter =
         | Statement.InsertStatement _ -> SqlStatementKind.Insert
         | Statement.UpdateStatement _ -> SqlStatementKind.Update
         | Statement.DeleteStatement _ -> SqlStatementKind.Delete
+        | Statement.MergeStatement _ -> SqlStatementKind.Merge

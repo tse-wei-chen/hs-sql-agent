@@ -129,6 +129,17 @@ module internal RewriteSourceValidation =
             delete.Using |> List.iter (verifySourceRegexSource regexProof)
             delete.Where |> Option.iter (verifySourceRegexExpr regexProof)
             delete.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
+        | MergeStatement merge ->
+            merge.Source.SourceValues |> NonEmpty.iter (verifySourceRegexExpr regexProof)
+            verifySourceRegexExpr regexProof merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> verifySourceRegexExpr regexProof item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.InsertValues |> NonEmpty.iter (verifySourceRegexExpr regexProof))
 
     let private validateRawSourceFunction source expression =
         match Expr.unspan expression with
@@ -316,5 +327,16 @@ module internal RewriteSourceValidation =
             delete.Using |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
             delete.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
             delete.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
+        | MergeStatement merge ->
+            merge.Source.SourceValues |> NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+            validateRawSourceExpr source orderingProofs mySqlPipes merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.InsertValues |> NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
 
 

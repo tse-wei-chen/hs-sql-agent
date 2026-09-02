@@ -187,6 +187,18 @@ module private Inspection =
             delete.Using |> List.iter (inspectSource state scope)
             delete.Where |> Option.iter (inspectExpr state)
             delete.Returning |> List.iter (fun item -> inspectExpr state item.Expression)
+        | Statement.MergeStatement merge ->
+            state.Tables.Add(identifierText merge.Target) |> ignore
+            merge.Source.SourceValues |> NonEmpty.iter (inspectExpr state)
+            inspectExpr state merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> inspectExpr state item.Value))
+            merge.NotMatched
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.InsertValues |> NonEmpty.iter (inspectExpr state))
 
         QueryFacts(
             state.Tables.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
