@@ -61,6 +61,7 @@ module internal RewritePlanCapabilityValidation =
             update.From |> List.iter (proveJoinSource capabilityMessage proofs)
         | DeleteStatement delete ->
             delete.Using |> List.iter (proveJoinSource capabilityMessage proofs)
+        | MergeStatement _ -> ()
 
     let private requireDmlCapability capabilityMessage = function
         | ProvenCapability -> ()
@@ -261,6 +262,8 @@ module internal RewritePlanCapabilityValidation =
             if delete.TargetAlias.IsSome then requireDmlCapability capabilityMessage proofs.TargetAlias
             if not delete.Using.IsEmpty then requireDmlCapability capabilityMessage proofs.DeleteUsing
             proveReturning capabilityMessage proofs DmlOperation.Delete delete.Target delete.Returning
+        | MergeStatement _ ->
+            requireDmlCapability capabilityMessage proofs.Merge
 
     let private orderingProviderName = function
         | MySqlRuntime -> "MySQL"
@@ -744,6 +747,95 @@ module internal RewritePlanCapabilityValidation =
                     "Firebird UPDATE OR INSERT requires the canonical conflict target to match the complete resolved primary key exactly; general UNIQUE-key and non-unique MATCHING metadata are not represented yet."))
             validateFirebirdFullProposedRowUpdate insert assignments
 
+    let private mergeColumnReference expectedAlias expression =
+        match Expr.unspan expression with
+        | Column identifier
+        | BoundColumn(identifier, _) ->
+            match Identifier.parts identifier with
+            | [ qualifier; column ]
+                when StringComparer.OrdinalIgnoreCase.Equals(qualifier.Value, expectedAlias.Value) ->
+                Some column.Value
+            | _ -> None
+        | _ -> None
+
+    let private validateMergeDirectValue sourceAlias sourceColumns expression =
+        match Expr.unspan expression with
+        | Literal _ -> ()
+        | _ ->
+            match mergeColumnReference sourceAlias expression with
+            | Some column when sourceColumns.Contains column -> ()
+            | _ ->
+                raise (SqlCompilationException(
+                    "Canonical MERGE UPDATE/INSERT values admit only literals or direct columns from the explicit single-row source alias; richer expressions remain fail-closed."))
+
+    let private validateMerge targetRuntime (proofs: ConflictProofs) (merge: Merge) =
+        match targetRuntime with
+        | SqlServerRuntime _ -> ()
+        | _ ->
+            raise (SqlCompilationException(
+                "SQL capability 'dml.merge.single_row' is currently proven only for native SQL Server."))
+
+        if proofs.SourceProvider <> SqlAgentToolType.MsSqlServer then
+            raise (SqlCompilationException(
+                "SQL capability 'dml.merge.single_row' is native-only and requires SQL Server source semantics."))
+
+        let assured =
+            assuredColumns
+                "SQL Server MERGE remains fail-closed without metadata-backed assurance for the complete unique or primary target match key."
+                proofs.MergeTargetKey
+        let assuredSet = HashSet<string>(assured, StringComparer.OrdinalIgnoreCase)
+        let sourceColumns =
+            HashSet<string>(
+                merge.Source.Columns |> NonEmpty.toList |> List.map (fun column -> column.Value),
+                StringComparer.OrdinalIgnoreCase)
+        let matchedTargetColumns = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+        let rec collectMatch expression =
+            match Expr.unspan expression with
+            | Binary(BinaryOperator.And, left, right) ->
+                collectMatch left
+                collectMatch right
+            | Binary(BinaryOperator.Equal, left, right) ->
+                let targetLeft = mergeColumnReference merge.TargetAlias left
+                let targetRight = mergeColumnReference merge.TargetAlias right
+                let sourceLeft = mergeColumnReference merge.Source.Alias left
+                let sourceRight = mergeColumnReference merge.Source.Alias right
+                match targetLeft, sourceRight, targetRight, sourceLeft with
+                | Some targetColumn, Some sourceColumn, _, _
+                | _, _, Some targetColumn, Some sourceColumn ->
+                    if not (sourceColumns.Contains sourceColumn) then
+                        raise (SqlCompilationException(
+                            "MERGE match predicate references undeclared source column '" + sourceColumn + "'."))
+                    if not (matchedTargetColumns.Add targetColumn) then
+                        raise (SqlCompilationException(
+                            "MERGE match predicate repeats target key column '" + targetColumn + "'."))
+                | _ ->
+                    raise (SqlCompilationException(
+                        "Canonical MERGE match predicates admit only AND-conjoined equality terms between the explicit target alias and source alias."))
+            | _ ->
+                raise (SqlCompilationException(
+                    "Canonical MERGE match predicates admit only AND-conjoined equality terms between the explicit target alias and source alias."))
+
+        collectMatch merge.MatchPredicate
+        if not (matchedTargetColumns.SetEquals assuredSet) then
+            raise (SqlCompilationException(
+                "MERGE match predicate target columns must match the complete metadata-assured unique or primary key exactly."))
+
+        merge.Matched
+        |> Option.iter (function
+            | MergeDelete -> ()
+            | MergeUpdate assignments ->
+                assignments
+                |> NonEmpty.iter (fun assignment ->
+                    validateMergeDirectValue merge.Source.Alias sourceColumns assignment.Value))
+
+        merge.NotMatched
+        |> Option.iter (fun insert ->
+            if NonEmpty.length insert.Columns <> NonEmpty.length insert.Values then
+                raise (SqlCompilationException("MERGE INSERT columns and values must have the same width."))
+            insert.Values
+            |> NonEmpty.iter (validateMergeDirectValue merge.Source.Alias sourceColumns))
+
     let proveConflicts targetRuntime (proofs: ConflictProofs) document =
         match document.Statement with
         | InsertStatement insert ->
@@ -758,6 +850,7 @@ module internal RewritePlanCapabilityValidation =
                     validateMySqlConflict proofs conflict
                 | FirebirdRuntime ->
                     validateFirebirdConflict proofs insert conflict
+        | MergeStatement merge -> validateMerge targetRuntime proofs merge
         | QueryStatement _ | UpdateStatement _ | DeleteStatement _ -> ()
 
 

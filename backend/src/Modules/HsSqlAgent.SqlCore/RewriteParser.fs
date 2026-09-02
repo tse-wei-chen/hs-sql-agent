@@ -67,6 +67,7 @@ module internal RewriteParser =
               TargetAlias = ProvenCapability
               UpdateFrom = ProvenCapability
               DeleteUsing = ProvenCapability
+              Merge = ProvenCapability
               SqlServerOutput = OutputAssuranceNotRequired }
 
         let private permissiveOrdering =
@@ -2143,6 +2144,7 @@ module internal RewriteParser =
     and private parseMerge (cursor: Cursor) =
         if cursor.Dialect <> SourceDialect.SqlServer then
             fail cursor.Current "MERGE is currently modeled only for the SQL Server source dialect"
+        requireSourceParseCapability cursor.Current cursor.SourceDml.Merge
         expectKeyword "MERGE" cursor
         acceptKeyword "INTO" cursor |> ignore
         let target = identifier cursor

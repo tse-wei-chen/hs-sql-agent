@@ -1657,6 +1657,64 @@ module internal RewriteRenderer =
         delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         sql + renderTrailingReturning ctx delete.Returning
 
+    let private renderMerge (ctx: RenderContext) (merge: Merge) =
+        if ctx.Provider <> SqlServer then
+            invalidOp "Validated canonical MERGE reached a non-SQL Server renderer."
+        let sourceColumns =
+            merge.Source.Columns
+            |> NonEmpty.toList
+            |> List.map (renderAlias SqlServer)
+            |> String.concat ", "
+        let sourceValues =
+            merge.Source.Values
+            |> NonEmpty.toList
+            |> List.map (renderExpr ctx)
+            |> String.concat ", "
+        let mutable sql =
+            "MERGE INTO "
+            + renderIdentifier SqlServer merge.Target
+            + " AS "
+            + renderAlias SqlServer merge.TargetAlias
+            + " USING (VALUES ("
+            + sourceValues
+            + ")) AS "
+            + renderAlias SqlServer merge.Source.Alias
+            + " ("
+            + sourceColumns
+            + ") ON "
+            + renderPredicate ctx merge.MatchPredicate
+
+        merge.Matched
+        |> Option.iter (function
+            | MergeDelete ->
+                sql <- sql + " WHEN MATCHED THEN DELETE"
+            | MergeUpdate assignments ->
+                let rendered =
+                    assignments
+                    |> NonEmpty.toList
+                    |> List.map (fun assignment ->
+                        renderIdentifier SqlServer assignment.Target
+                        + " = "
+                        + renderExpr ctx assignment.Value)
+                    |> String.concat ", "
+                sql <- sql + " WHEN MATCHED THEN UPDATE SET " + rendered)
+
+        merge.NotMatched
+        |> Option.iter (fun insert ->
+            let columns =
+                insert.Columns
+                |> NonEmpty.toList
+                |> List.map (renderIdentifier SqlServer)
+                |> String.concat ", "
+            let values =
+                insert.Values
+                |> NonEmpty.toList
+                |> List.map (renderExpr ctx)
+                |> String.concat ", "
+            sql <- sql + " WHEN NOT MATCHED THEN INSERT (" + columns + ") VALUES (" + values + ")")
+
+        sql + ";"
+
     let private providerForRuntime = function
         | TargetRuntime.PostgreSqlRuntime -> Provider.PostgreSql
         | TargetRuntime.MySqlRuntime -> Provider.MySql
@@ -1675,4 +1733,5 @@ module internal RewriteRenderer =
             | Statement.InsertStatement insert -> renderInsert ctx insert, not insert.Returning.IsEmpty
             | Statement.UpdateStatement update -> renderUpdate ctx update, not update.Returning.IsEmpty
             | Statement.DeleteStatement delete -> renderDelete ctx delete, not delete.Returning.IsEmpty
+            | Statement.MergeStatement merge -> renderMerge ctx merge, false
         { Sql = sql; Parameters = ctx.Parameters; ReturnsRows = returnsRows }

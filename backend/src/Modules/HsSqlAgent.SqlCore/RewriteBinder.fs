@@ -583,6 +583,39 @@ module internal RewriteBinder =
                                 bindTargetOnlyReturning dialect baseScope update.Returning
                             else
                                 bindReturning scope update.Returning }
+            | MergeStatement merge ->
+                let emptyScope : Scope =
+                    { Id = 0; Parent = None; Sources = []; VisibleCtes = []; Dialect = dialect }
+                let targetSource = NamedTable(merge.Target, Some merge.TargetAlias)
+                let sourceIdentifier = Identifier.create [ merge.Source.Alias ]
+                let syntheticSource = CteTable(sourceIdentifier, Some merge.Source.Alias)
+                let fullScope =
+                    { emptyScope with
+                        Sources =
+                            [ sourceBinding dialect targetSource
+                              sourceBinding dialect syntheticSource ] }
+                ensureDistinctAliases fullScope
+                let sourceOnlyScope =
+                    { emptyScope with Sources = [ sourceBinding dialect syntheticSource ] }
+                let sourceValues = merge.Source.Values |> NonEmpty.map (bindExpr emptyScope)
+                let matched =
+                    merge.Matched
+                    |> Option.map (function
+                        | MergeDelete -> MergeDelete
+                        | MergeUpdate assignments ->
+                            assignments
+                            |> NonEmpty.map (bindAssignment fullScope)
+                            |> MergeUpdate)
+                let notMatched =
+                    merge.NotMatched
+                    |> Option.map (fun insert ->
+                        { insert with Values = insert.Values |> NonEmpty.map (bindExpr sourceOnlyScope) })
+                MergeStatement
+                    { merge with
+                        Source = { merge.Source with Values = sourceValues }
+                        MatchPredicate = bindExpr fullScope merge.MatchPredicate
+                        Matched = matched
+                        NotMatched = notMatched }
             | DeleteStatement delete ->
                 let baseScope : Scope =
                     { Id = 0

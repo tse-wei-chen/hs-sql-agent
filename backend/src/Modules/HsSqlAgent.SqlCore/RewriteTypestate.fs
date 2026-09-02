@@ -72,6 +72,7 @@ module internal Typestate =
           TargetAlias: CapabilityProof
           UpdateFrom: CapabilityProof
           DeleteUsing: CapabilityProof
+          Merge: CapabilityProof
           SqlServerOutput: SqlServerOutputAssurance }
 
     type ColumnSetAssurance =
@@ -88,7 +89,8 @@ module internal Typestate =
           MySqlConditionalTarget: CapabilityProof
           FirebirdPrimaryKey: ColumnSetAssurance
           MySqlUniqueKey: MySqlUniqueKeyAssurance
-          SourceRowsUniqueByInsertColumns: ColumnSetAssurance }
+          SourceRowsUniqueByInsertColumns: ColumnSetAssurance
+          MergeTargetKey: ColumnSetAssurance }
 
     type SqlServerConcatLowering =
         | NativePipes

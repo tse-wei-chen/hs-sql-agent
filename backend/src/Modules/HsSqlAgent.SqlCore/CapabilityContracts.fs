@@ -565,6 +565,22 @@ module internal SqlDmlReturningCapabilityRules =
             | SqlAgentToolType.MySQL -> "MySQL has no declared DML RETURNING result-row equivalent in the Core MySQL 8.4 target profile."
             | _ -> "DML result rows are not represented for target provider " + string provider + "."
 
+module internal SqlDmlMergeCapabilityRules =
+    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
+        if sourceDialect = SqlAgentToolType.MsSqlServer then null
+        else
+            "Canonical MERGE source grammar is currently modeled only for SQL Server single-row USING (VALUES ...) statements; source dialect "
+            + string sourceDialect + " remains fail-closed."
+
+    let TargetValidationError(sourceDialect: SqlAgentToolType, targetProvider: SqlAgentToolType) : string | null =
+        if sourceDialect = SqlAgentToolType.MsSqlServer
+           && targetProvider = SqlAgentToolType.MsSqlServer then
+            null
+        elif targetProvider = SqlAgentToolType.MsSqlServer then
+            "SQL capability 'dml.merge.single_row' is native-only: SQL Server MERGE is enabled only for SQL Server source semantics with explicit target-key assurance."
+        else
+            "SQL capability 'dml.merge.single_row' is currently supported only for native SQL Server. Oracle MERGE and cross-provider MERGE lowering remain fail-closed until their source/action and concurrency semantics are proven."
+
 module internal SqlDmlUpsertCapabilityRules =
     let private sqliteVersion = Version(3,24)
     let private mysqlAliasVersion = Version(8,0,19)
