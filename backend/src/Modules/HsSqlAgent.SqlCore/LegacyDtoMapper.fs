@@ -150,7 +150,14 @@ type QueryDefinitionCoreMapper private () =
 
     static member private MapSource(definition: QueryDefinition) : TableSource | null =
         match definition.FromQuery with
-        | fromQuery when not (Object.ReferenceEquals(fromQuery, null)) ->
+        | null ->
+            if String.IsNullOrWhiteSpace(definition.TableName) then null
+            else
+                NamedTableSource(
+                    QueryDefinitionCoreMapper.Identifier(definition.TableName),
+                    QueryDefinitionCoreMapper.NormalizeAlias(definition.Alias),
+                    unknown) :> TableSource
+        | fromQuery ->
             let alias =
                 match definition.Alias with
                 | null -> fromQuery.Alias
@@ -161,30 +168,23 @@ type QueryDefinitionCoreMapper private () =
                     alias,
                     "A derived table must have an explicit alias in the Core AST.")
             DerivedTableSource(QueryDefinitionCoreMapper.Map(fromQuery), normalizedAlias, unknown) :> TableSource
-        | _ when String.IsNullOrWhiteSpace(definition.TableName) ->
-            null
-        | _ ->
-            NamedTableSource(
-                QueryDefinitionCoreMapper.Identifier(definition.TableName),
-                QueryDefinitionCoreMapper.NormalizeAlias(definition.Alias),
-                unknown) :> TableSource
 
     static member private MapJoin(join: JoinCondition) =
         let source : TableSource =
             match join.SubQuery with
-            | subQuery when not (Object.ReferenceEquals(subQuery, null)) ->
-                let alias =
-                    QueryDefinitionCoreMapper.RequireAlias(
-                        join.Alias,
-                        "A joined derived table must have an explicit alias in the Core AST.")
-                DerivedTableSource(QueryDefinitionCoreMapper.Map(subQuery), alias, unknown) :> TableSource
-            | _ ->
+            | null ->
                 if String.IsNullOrWhiteSpace(join.Table) then
                     raise (InvalidOperationException("JOIN must specify either a table or a subquery."))
                 NamedTableSource(
                     QueryDefinitionCoreMapper.Identifier(join.Table),
                     QueryDefinitionCoreMapper.NormalizeAlias(join.Alias),
                     unknown) :> TableSource
+            | subQuery ->
+                let alias =
+                    QueryDefinitionCoreMapper.RequireAlias(
+                        join.Alias,
+                        "A joined derived table must have an explicit alias in the Core AST.")
+                DerivedTableSource(QueryDefinitionCoreMapper.Map(subQuery), alias, unknown) :> TableSource
 
         let predicate = QueryDefinitionCoreMapper.MapWhereList(join.OnConditions)
         if join.Type <> JoinType.Cross && isNull predicate then
@@ -258,11 +258,9 @@ type QueryDefinitionCoreMapper private () =
                         QueryDefinitionCoreMapper.MapWhere(c.Condition),
                         LiteralExpr(c.Value, unknown)))
                 |> QueryDefinitionCoreMapper.Immutable
-            let elseExpression : SqlExpr | null =
-                match caseExpr.ElseValue with
-                | null -> null
-                | value -> LiteralExpr(value, unknown) :> SqlExpr
-            CaseExpr(branches, elseExpression, unknown) :> SqlExpr
+            match caseExpr.ElseValue with
+            | null -> CaseExpr(branches, null, unknown) :> SqlExpr
+            | value -> CaseExpr(branches, LiteralExpr(value, unknown), unknown) :> SqlExpr
         | :? SubQuerySelectCondition as subquery ->
             SubqueryExpr(QueryDefinitionCoreMapper.Map(QueryDefinitionCoreMapper.ToDefinition(subquery)), unknown) :> SqlExpr
         | :? TemplateSqlTokenSelectCondition as token ->
@@ -302,15 +300,10 @@ type QueryDefinitionCoreMapper private () =
             | WindowFrameUnit.Rows -> WindowFrameUnitKind.Rows
             | WindowFrameUnit.Range -> WindowFrameUnitKind.Range
             | value -> raise (ArgumentOutOfRangeException("frame.Unit", value, "Unknown window frame unit."))
-        let endBound : WindowFrameBoundCore | null =
-            match frame.End with
-            | null -> null
-            | value -> QueryDefinitionCoreMapper.MapWindowBound(value)
-        WindowFrame(
-            unitKind,
-            QueryDefinitionCoreMapper.MapWindowBound(frame.Start),
-            endBound,
-            unknown)
+        let startBound = QueryDefinitionCoreMapper.MapWindowBound(frame.Start)
+        match frame.End with
+        | null -> WindowFrame(unitKind, startBound, null, unknown)
+        | value -> WindowFrame(unitKind, startBound, QueryDefinitionCoreMapper.MapWindowBound(value), unknown)
 
     static member private MapWindowBound(bound: WindowFrameBound) =
         let kind =
@@ -334,14 +327,17 @@ type QueryDefinitionCoreMapper private () =
         | null -> null
         | values when values.Count = 0 -> null
         | values ->
-            let mutable result : SqlExpr | null = null
+            let mutable result : SqlExpr option = None
             for condition in values do
                 let current = QueryDefinitionCoreMapper.MapWhere(condition)
                 result <-
                     match result with
-                    | null -> current
-                    | previous -> BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
-            result
+                    | None -> Some current
+                    | Some previous ->
+                        Some (BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr)
+            match result with
+            | None -> null
+            | Some value -> value
 
     static member private MapWhere(condition: WhereCondition) : SqlExpr =
         let mutable result : SqlExpr =
@@ -439,14 +435,17 @@ type QueryDefinitionCoreMapper private () =
         | null -> null
         | values when values.Count = 0 -> null
         | values ->
-            let mutable result : SqlExpr | null = null
+            let mutable result : SqlExpr option = None
             for condition in values do
                 let current = QueryDefinitionCoreMapper.MapHaving(condition)
                 result <-
                     match result with
-                    | null -> current
-                    | previous -> BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
-            result
+                    | None -> Some current
+                    | Some previous ->
+                        Some (BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr)
+            match result with
+            | None -> null
+            | Some value -> value
 
     static member private MapHaving(condition: HavingCondition) =
         let mutable result : SqlExpr =
