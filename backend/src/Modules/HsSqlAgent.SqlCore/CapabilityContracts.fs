@@ -669,7 +669,7 @@ module internal SqlJoinCapabilityRules =
                 "SQL capability '" + cap + "' requires a declared SQLite " + side + " capability profile with ServerVersion 3.39+."
             | version when version.CompareTo(sqliteMin) < 0 ->
                 "SQL capability '" + cap + "' requires SQLite " + side + " ServerVersion 3.39+; declared version is " + version.ToString() + "."
-            | _ -> null
+            | _ -> (null : string | null)
 
     let SourceValidationError(joinKind: string, sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         let kind = normalize joinKind
@@ -731,8 +731,8 @@ module internal SqlRecursiveCteCapabilityRules =
                     "SQL capability 'select.recursive_cte' requires an explicit " + side
                     + " ServerVersion for provider " + string provider
                     + "; minimum proven version is " + minimum.ToString() + "."
-                | null -> null
-                | version when version.CompareTo(minimum) >= 0 -> null
+                | null -> (null : string | null)
+                | version when version.CompareTo(minimum) >= 0 -> (null : string | null)
                 | version ->
                     "SQL capability 'select.recursive_cte' requires " + string provider + " " + side
                     + " ServerVersion " + minimum.ToString() + "+; declared version is "
@@ -831,8 +831,8 @@ module internal SqlFetchPercentCapabilityRules =
             | null -> null
             | value ->
                 match value.ServerVersion with
-                | null -> null
-                | version when version.CompareTo(OracleMinimumVersion) >= 0 -> null
+                | null -> (null : string | null)
+                | version when version.CompareTo(OracleMinimumVersion) >= 0 -> (null : string | null)
                 | version ->
                     "SQL capability 'select.fetch_percent' requires Oracle "
                     + side + " ServerVersion " + OracleMinimumVersion.ToString()

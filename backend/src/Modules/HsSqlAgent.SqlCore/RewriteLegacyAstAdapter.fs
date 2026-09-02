@@ -234,15 +234,22 @@ module internal RewriteLegacyAstAdapter =
 
         | :? HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr as json ->
             let selector =
-                match json.SelectorKind, json.PropertyKey, json.ArrayIndex.HasValue with
-                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property, null, _ ->
-                    raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
-                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property, key, false ->
-                    if key.IndexOf('\u0000') >= 0 then
-                        raise (SqlCompilationException("PostgreSQL JSON property selector cannot contain NUL."))
-                    PostgresJsonProperty key
-                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex, null, true ->
-                    PostgresJsonArrayIndex json.ArrayIndex.Value
+                match json.SelectorKind with
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property ->
+                    match json.PropertyKey with
+                    | null ->
+                        raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
+                    | key when json.ArrayIndex.HasValue ->
+                        raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
+                    | key ->
+                        if key.IndexOf('\u0000') >= 0 then
+                            raise (SqlCompilationException("PostgreSQL JSON property selector cannot contain NUL."))
+                        PostgresJsonProperty key
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex ->
+                    match json.PropertyKey, json.ArrayIndex.HasValue with
+                    | null, true -> PostgresJsonArrayIndex json.ArrayIndex.Value
+                    | _ ->
+                        raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
                 | _ ->
                     raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
             let result =
