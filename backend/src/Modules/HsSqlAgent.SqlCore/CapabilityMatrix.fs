@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-01.68"
+    static member Version = "2026-09-02.76"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -199,6 +199,19 @@ type SqlCapabilityMatrix private () =
             | SqlAgentToolType.Postgres -> translated
             | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(3,35)) -> translated
             | SqlAgentToolType.Firebird when SqlCapabilityMatrix.VersionAtLeast(profile, provider, Version(5,0)) -> translated
+            | _ -> rejected
+
+        let richReturningStatus =
+            match provider with
+            | SqlAgentToolType.Postgres -> translated
+            | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(
+                                                profile,
+                                                provider,
+                                                SqlDmlReturningExpressionCapabilityRules.SQLiteMinimumVersion) -> translated
+            | SqlAgentToolType.Firebird when SqlCapabilityMatrix.VersionAtLeast(
+                                                  profile,
+                                                  provider,
+                                                  SqlDmlReturningExpressionCapabilityRules.FirebirdMinimumVersion) -> translated
             | _ -> rejected
 
         let targetlessDoNothingStatus =
@@ -496,24 +509,73 @@ type SqlCapabilityMatrix private () =
                 cap("dml.insert_implicit_columns","dml",supported,
                     "INSERT INTO table VALUES (...) and INSERT INTO table SELECT ... without an explicit target-column list are preserved only for same-provider native compilation. Core validates uniform implicit VALUES row width but does not guess target-table column order or source/target width for implicit INSERT ... SELECT, leaving the native provider to validate its own schema contract. Cross-provider translation and conflict handling without explicit target columns remain fail-closed.")
                 cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
-                cap("dml.target_alias","dml",(if provider=SqlAgentToolType.Postgres then supported else rejected),
-                    if provider=SqlAgentToolType.Postgres then
-                        "PostgreSQL UPDATE/DELETE target aliases are represented structurally, preserved across the CLR compatibility AST, participate in binder qualifier resolution, hide the original target name as PostgreSQL requires, and render natively."
-                    else
+                cap("dml.target_alias","dml",
+                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.Firebird then supported else rejected),
+                    match provider with
+                    | SqlAgentToolType.Postgres ->
+                        "PostgreSQL UPDATE/DELETE target aliases are represented structurally, preserved across the CLR compatibility AST, participate in binder qualifier resolution, hide the original target name, and render natively. The proven alias-hides-target contract can cross-lower with Firebird."
+                    | SqlAgentToolType.Firebird ->
+                        "Firebird UPDATE/DELETE target aliases are represented structurally and render with native AS alias syntax. Firebird requires the alias to replace the original target qualifier, matching the closed binder contract used for PostgreSQL; PostgreSQL and Firebird target aliases can therefore cross-lower within this proven intersection."
+                    | _ ->
                         "DML target aliases remain target-gated until an equivalent provider-specific mutation alias contract is declared.")
                 cap("dml.update.from","dml",
                     (if provider=SqlAgentToolType.Postgres then translated
                      elif provider=SqlAgentToolType.MsSqlServer then supported
+                     elif provider=SqlAgentToolType.Sqlite
+                          && SqlCapabilityMatrix.VersionAtLeast(
+                              profile,
+                              provider,
+                              SqlDmlUpdateFromCapabilityRules.SQLiteMinimumVersion) then supported
+                     elif provider=SqlAgentToolType.Oracle
+                          && SqlCapabilityMatrix.VersionAtLeast(
+                              profile,
+                              provider,
+                              SqlDmlUpdateFromCapabilityRules.OracleMinimumVersion) then supported
                      else rejected),
                     match provider with
                     | SqlAgentToolType.Postgres ->
                         "PostgreSQL UPDATE ... FROM is represented structurally and emitted natively."
                     | SqlAgentToolType.MsSqlServer ->
                         "SQL Server UPDATE <object> SET ... FROM <table_source> is preserved natively for source=target SQL Server when no Core target alias is present. Cross-provider UPDATE ... FROM remains fail-closed because duplicate-match and target-row selection semantics are not proven equivalent."
+                    | SqlAgentToolType.Sqlite when SqlCapabilityMatrix.VersionAtLeast(
+                                                        profile,
+                                                        provider,
+                                                        SqlDmlUpdateFromCapabilityRules.SQLiteMinimumVersion) ->
+                        "SQLite 3.33+ UPDATE ... FROM is represented structurally and emitted natively when the target profile proves ServerVersion 3.33+. Cross-provider lowering remains fail-closed because duplicate-match row selection is not proven equivalent."
+                    | SqlAgentToolType.Sqlite ->
+                        "SQLite UPDATE ... FROM remains fail-closed unless the target capability profile explicitly declares ServerVersion 3.33 or newer."
+                    | SqlAgentToolType.Oracle when SqlCapabilityMatrix.VersionAtLeast(
+                                                        profile,
+                                                        provider,
+                                                        SqlDmlUpdateFromCapabilityRules.OracleMinimumVersion) ->
+                        "Oracle 26+ direct-join UPDATE ... FROM is emitted natively for source=target Oracle. Cross-provider lowering remains fail-closed because Oracle raises ORA-30926 when a target row is matched more than once."
+                    | SqlAgentToolType.Oracle ->
+                        "Oracle UPDATE ... FROM requires an explicit target capability profile with ServerVersion 26.0 or newer."
                     | _ ->
                         "UPDATE ... FROM remains fail-closed for this target provider.")
                 cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
-                cap("dml.delete.using","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"DELETE USING is currently PostgreSQL-only.")
+                cap("dml.delete.using","dml",
+                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MsSqlServer then translated
+                     elif provider=SqlAgentToolType.Oracle
+                          && SqlCapabilityMatrix.VersionAtLeast(
+                              profile,
+                              provider,
+                              SqlDmlDeleteUsingCapabilityRules.OracleMinimumVersion) then translated
+                     else rejected),
+                    match provider with
+                    | SqlAgentToolType.Postgres ->
+                        "PostgreSQL DELETE ... USING is represented structurally and emitted natively. The proven joined-delete target-row contract can cross-lower with SQL Server and Oracle 26+."
+                    | SqlAgentToolType.MsSqlServer ->
+                        "PostgreSQL/Oracle joined-delete semantics lower to SQL Server DELETE target FROM table_source by restating the target in the Transact-SQL FROM list. SQL Server native DELETE ... FROM source grammar is represented by the same closed AST."
+                    | SqlAgentToolType.Oracle when SqlCapabilityMatrix.VersionAtLeast(
+                                                        profile,
+                                                        provider,
+                                                        SqlDmlDeleteUsingCapabilityRules.OracleMinimumVersion) ->
+                        "Oracle 26+ direct-join DELETE FROM/USING is represented by the closed joined-delete AST. Oracle documents duplicate source matches as deleting each target row once, allowing cross-lowering with the proven PostgreSQL/SQL Server joined-delete intersection."
+                    | SqlAgentToolType.Oracle ->
+                        "Oracle direct-join DELETE requires an explicit target capability profile with ServerVersion 26.0 or newer."
+                    | _ ->
+                        "Joined DELETE remains fail-closed for this target provider until an equivalent target-row contract is proven.")
                 cap("dml.insert_select","dml",translated,"INSERT SELECT is supported for statically-known source width.")
                 cap("dml.insert_select.cte_scope","dml",translated,"Statement-root CTE INSERT SELECT placement is provider-aware.")
                 cap("dml.nested_cte_scope","dml",nestedStatus,
@@ -537,12 +599,30 @@ type SqlCapabilityMatrix private () =
                         | SqlAgentToolType.Firebird ->
                             "Portable multi-row Firebird DSQL RETURNING remains fail-closed unless the target capability profile explicitly declares ServerVersion 5.0 or newer."
                         | SqlAgentToolType.MsSqlServer ->
-                            "SQL Server OUTPUT without INTO is trigger-sensitive. Core does not yet carry target-table trigger capability metadata, so result rows remain fail-closed instead of assuming OUTPUT can be returned directly to the client."
+                            "SQL Server OUTPUT without INTO is conditionally available for same-provider compilation when SqlPlanValidationContext carries metadata-backed DmlResultRowAssurance.NoEnabledTriggers for the exact target table and DML operation. The default matrix remains Rejected because it has no per-statement assurance input; cross-provider OUTPUT/RETURNING lowering remains fail-closed because SQL Server exposes the pre-trigger row image."
                         | SqlAgentToolType.Oracle ->
                             "Oracle DML RETURNING requires RETURNING INTO host or bind variables, which are outside the Core result-row execution contract."
                         | SqlAgentToolType.MySQL ->
                             "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."
                         | _ -> "DML RETURNING result rows remain fail-closed.")
+                cap("dml.returning.expression","dml",richReturningStatus,
+                    if richReturningStatus=translated then
+                        match provider with
+                        | SqlAgentToolType.Postgres ->
+                            "PostgreSQL rich RETURNING admits the proven binder-resolved local-row scalar/predicate subset, including local FROM/USING row sources. Subqueries, windows, aggregates, correlated references, and unproven functions remain fail-closed."
+                        | SqlAgentToolType.Sqlite ->
+                            "SQLite 3.35+ rich RETURNING admits the proven scalar/predicate subset only for same-provider native compilation and only over the modified target table. UPDATE FROM auxiliary tables are deliberately outside RETURNING scope. Top-level aggregates, windows, subqueries, and unproven functions remain fail-closed."
+                        | SqlAgentToolType.Firebird ->
+                            "Firebird 5.0+ DSQL rich RETURNING admits the same proven scalar/predicate subset and can participate in cross-provider lowering when the ordinary expression capabilities are also proven. Firebird-specific OLD/NEW contexts are intentionally outside the portable Core model."
+                        | _ -> "Rich RETURNING is enabled by the declared provider/runtime contract."
+                    else
+                        match provider with
+                        | SqlAgentToolType.Sqlite ->
+                            "SQLite rich RETURNING requires an explicit target capability profile with ServerVersion 3.35 or newer."
+                        | SqlAgentToolType.Firebird ->
+                            "Firebird rich DSQL RETURNING requires an explicit target capability profile with ServerVersion 5.0 or newer."
+                        | _ ->
+                            "Rich RETURNING expressions remain fail-closed for this target provider.")
                 cap("dml.conflict_do_nothing_any","dml",targetlessDoNothingStatus,
                     if targetlessDoNothingStatus=translated then
                         match provider with

@@ -57,6 +57,8 @@ public sealed class DialectGrammarMatrixCoverageTests
             + NegativeDmlGrammarMutationMatrixTests.MalformedDmlMatrix().Count()
             + NegativeDmlGrammarMutationMatrixTests.UpdateFromWrongSourceMatrix().Count()
             + NegativeDmlGrammarMutationMatrixTests.DeleteUsingWrongSourceMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.OracleDeleteUsingVersionGateMatrix().Count()
+            + NegativeDmlGrammarMutationMatrixTests.SqlServerOutputWrongSourceMatrix().Count()
             + NegativeDmlGrammarMutationMatrixTests.FirebirdUpsertWrongSourceMatrix().Count()
             + NegativeDmlGrammarMutationMatrixTests.WrongDialectPostfixCastDmlMatrix().Count()
             + NegativeDmlGrammarMutationMatrixTests.WrongDialectInsertSelectLimitMatrix().Count()
@@ -73,14 +75,14 @@ public sealed class DialectGrammarMatrixCoverageTests
             NegativeTablePolicyMatrixTests.TablePolicyMutationMatrix().Count();
 
         Assert.Equal(117, queryGrammar);
-        Assert.Equal(68, dmlGrammar);
+        Assert.Equal(83, dmlGrammar);
         Assert.Equal(18, targetCapability);
         Assert.Equal(30, binding);
         Assert.Equal(2, queryPolicy);
         Assert.Equal(48, lexical);
         Assert.Equal(24, tablePolicy);
         Assert.Equal(
-            307,
+            322,
             queryGrammar
             + dmlGrammar
             + targetCapability

@@ -201,32 +201,67 @@ module internal RewriteFacadeAdapter =
             SqlDmlReturningCapabilityRules.SourceValidationError(source, sourceVersion)
             |> sourceCapabilityProof
           ReturningExpression =
-            SqlDmlReturningExpressionCapabilityRules.SourceValidationError(source)
+            SqlDmlReturningExpressionCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
           TargetAlias =
             SqlDmlTargetAliasCapabilityRules.SourceValidationError(source)
             |> sourceCapabilityProof
           UpdateFrom =
-            SqlDmlUpdateFromCapabilityRules.SourceValidationError(source)
+            SqlDmlUpdateFromCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
-          DeleteUsing = CapabilityProof.ProvenCapability }
+          DeleteUsing =
+            SqlDmlDeleteUsingCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
+          SqlServerOutput = OutputAssuranceNotRequired }
 
-    let private targetDmlProofs target (targetProfile: SqlProviderCapabilityProfile | null) : DmlProofs =
-        { Returning =
-            SqlDmlReturningCapabilityRules.TargetValidationError(target, targetProfile)
-            |> targetCapabilityProof
+    let private targetDmlProofs
+        source
+        target
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        (resultRowAssurance: DmlResultRowAssurance | null) : DmlProofs =
+
+        let returning =
+            if source = SqlAgentToolType.MsSqlServer || target = SqlAgentToolType.MsSqlServer then
+                if source <> target then
+                    rejectedTarget (
+                        "SQL Server OUTPUT and RETURNING row-image semantics are native-only until trigger timing is proven equivalent across providers. Source provider "
+                        + string source
+                        + ", target provider "
+                        + string target
+                        + ".")
+                elif isNull resultRowAssurance then
+                    rejectedTarget (
+                        "SQL Server OUTPUT without INTO requires metadata-backed statement assurance proving the target table has no enabled trigger for the DML operation.")
+                else
+                    ProvenCapability
+            else
+                SqlDmlReturningCapabilityRules.TargetValidationError(target, targetProfile)
+                |> targetCapabilityProof
+
+        let outputAssurance =
+            if target <> SqlAgentToolType.MsSqlServer then
+                OutputAssuranceNotRequired
+            elif isNull resultRowAssurance then
+                MissingSqlServerOutputAssurance
+            else
+                AssuredNoEnabledOutputTriggers(
+                    resultRowAssurance.TargetTable,
+                    resultRowAssurance.Operation)
+
+        { Returning = returning
           ReturningExpression =
-            SqlDmlReturningExpressionCapabilityRules.TargetValidationError(target)
+            SqlDmlReturningExpressionCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           TargetAlias =
             SqlDmlTargetAliasCapabilityRules.TargetValidationError(target)
             |> targetCapabilityProof
           UpdateFrom =
-            SqlDmlUpdateFromCapabilityRules.TargetValidationError(target)
+            SqlDmlUpdateFromCapabilityRules.TargetValidationError(target, targetProfile)
             |> targetCapabilityProof
           DeleteUsing =
-            SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target)
-            |> targetCapabilityProof }
+            SqlDmlDeleteUsingCapabilityRules.TargetValidationError(target, targetProfile)
+            |> targetCapabilityProof
+          SqlServerOutput = outputAssurance }
 
     let private sourceOnConflictProof source (sourceProfile: SqlProviderCapabilityProfile | null) =
         let sourceVersion : Version | null =
@@ -430,19 +465,19 @@ module internal RewriteFacadeAdapter =
             semantics
             sourceProfile
 
-    let private verifiedTarget source target targetProfile =
+    let private verifiedTarget source target targetProfile resultRowAssurance =
         RewritePipeline.VerifiedTarget.create
             (targetRuntime target targetProfile)
             targetProfile
             (targetExpressionProofs source target targetProfile)
             (targetJoinProofs target targetProfile)
             (targetNullOrdering target)
-            (targetDmlProofs target targetProfile)
+            (targetDmlProofs source target targetProfile resultRowAssurance)
 
-    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance policy allowed =
+    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance resultRowAssurance policy allowed =
         RewritePipeline.createOptions
             (verifiedSource source semantics sourceProfile)
-            (verifiedTarget source target targetProfile)
+            (verifiedTarget source target targetProfile resultRowAssurance)
             (conflictProofs source target targetProfile conflictTargetAssurance)
             policy
             allowed
@@ -459,7 +494,7 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed sql =
+    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let parsed, rendered =
             run
@@ -470,6 +505,7 @@ module internal RewriteFacadeAdapter =
                     sourceProfile
                     targetProfile
                     conflictTargetAssurance
+                    resultRowAssurance
                     policy
                     allowed)
                 sql
@@ -483,7 +519,7 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
         if command.Kind <> SqlStatementKind.Query then invalidArg "sql" "CompileQuery requires a SELECT statement."
         command
 
@@ -492,7 +528,7 @@ module internal RewriteFacadeAdapter =
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command =
             try
-                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
+                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
@@ -524,7 +560,7 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) policyVersion policy allowed =
+    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed =
         let source = parsed.SourceDialect
         if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
             // Preserve the source-dialect syntax check without making RawSql the executable source
@@ -541,6 +577,7 @@ module internal RewriteFacadeAdapter =
                     parsed.SourceProfile
                     targetProfile
                     conflictTargetAssurance
+                    resultRowAssurance
                     policy
                     allowed)
                 (RewriteLegacyAstAdapter.toParsed parsed.Statement)
@@ -561,6 +598,7 @@ module internal RewriteFacadeAdapter =
                 target
                 targetProfile
                 null
+                null
                 validationContext.PolicyVersion
                 (queryPolicy executionPolicy.QueryMaxRows)
                 (allowedTables validationContext.AllowedTables)
@@ -579,6 +617,7 @@ module internal RewriteFacadeAdapter =
                     target
                     targetProfile
                     conflictTargetAssurance
+                    validationContext.DmlResultRowAssurance
                     validationContext.PolicyVersion
                     (dmlPolicy policy)
                     (allowedTables validationContext.AllowedTables)

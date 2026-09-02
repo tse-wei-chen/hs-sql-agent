@@ -378,44 +378,150 @@ module internal SqlStandaloneTimeCapabilityRules =
         else "Oracle has no standalone TIME data type. SQL capability 'literal.time' is not supported by provider Oracle for this Core plan."
 
 module internal SqlDmlTargetAliasCapabilityRules =
+    let private supported provider =
+        provider = SqlAgentToolType.Postgres
+        || provider = SqlAgentToolType.Firebird
+
     let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
-        if sourceDialect = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.target_alias' is currently declared only for the PostgreSQL source dialect; source dialect "
-             + string sourceDialect + " remains fail-closed."
+        if supported sourceDialect then null
+        else
+            "SQL capability 'dml.target_alias' is not valid for source dialect "
+            + string sourceDialect
+            + "; the current proven target-alias grammar is PostgreSQL/Firebird only and other providers remain fail-closed."
+
     let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.target_alias' currently has a declared lossless lowering only for PostgreSQL targets; target provider "
-             + string provider + " remains fail-closed."
+        if supported provider then null
+        else
+            "SQL capability 'dml.target_alias' has a declared lossless lowering only for PostgreSQL and Firebird targets; target provider "
+            + string provider + " remains fail-closed."
 
 module internal SqlDmlUpdateFromCapabilityRules =
-    let private supported provider =
-        provider = SqlAgentToolType.Postgres || provider = SqlAgentToolType.MsSqlServer
+    let SQLiteMinimumVersion = Version(3,33)
+    let OracleMinimumVersion = Version(26,0)
 
-    let SourceValidationError(provider: SqlAgentToolType) : string | null =
-        if supported provider then null
-        else "SQL capability 'dml.update.from' is not valid for source provider " + string provider
-             + " in the current Core source grammar."
+    let private profileAtLeast
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (minimum: Version) =
+        not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(minimum) >= 0
 
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if supported provider then null
-        else "SQL capability 'dml.update.from' remains fail-closed for provider " + string provider
-             + "; equivalent joined-mutation semantics are not yet proven."
+    let private validationError
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (side: string) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MsSqlServer -> null
+        | SqlAgentToolType.Sqlite when profileAtLeast provider profile SQLiteMinimumVersion -> null
+        | SqlAgentToolType.Oracle when profileAtLeast provider profile OracleMinimumVersion -> null
+        | SqlAgentToolType.Sqlite ->
+            "SQL capability 'dml.update.from' requires an explicit SQLite "
+            + side + " capability profile with ServerVersion 3.33 or newer."
+        | SqlAgentToolType.Oracle ->
+            "SQL capability 'dml.update.from' requires an explicit Oracle "
+            + side + " capability profile with ServerVersion 26.0 or newer."
+        | _ when side = "target" ->
+            "SQL capability 'dml.update.from' remains fail-closed for target provider "
+            + string provider + "; equivalent joined-mutation semantics are not yet proven."
+        | _ ->
+            "SQL capability 'dml.update.from' is not valid for source provider "
+            + string provider + " in the current Core source grammar."
+
+    let SourceValidationError(
+        provider: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
 
 module internal SqlDmlDeleteUsingCapabilityRules =
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.delete.using' remains fail-closed for provider " + string provider
-             + "; equivalent joined-delete, target-row, alias, and duplicate-match semantics are not yet proven."
+    let OracleMinimumVersion = Version(26,0)
+
+    let private oracle26
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null) =
+        provider = SqlAgentToolType.Oracle
+        && not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(OracleMinimumVersion) >= 0
+
+    let SourceValidationError(
+        provider: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MsSqlServer -> null
+        | SqlAgentToolType.Oracle when oracle26 provider sourceProfile -> null
+        | SqlAgentToolType.Oracle ->
+            "SQL capability 'dml.delete.using' requires an explicit Oracle source capability profile with ServerVersion 26.0 or newer."
+        | _ ->
+            "SQL capability 'dml.delete.using' is not valid for source provider "
+            + string provider + "; joined-delete source grammar remains fail-closed."
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MsSqlServer -> null
+        | SqlAgentToolType.Oracle when oracle26 provider targetProfile -> null
+        | SqlAgentToolType.Oracle ->
+            "SQL capability 'dml.delete.using' requires an explicit Oracle target capability profile with ServerVersion 26.0 or newer."
+        | _ ->
+            "SQL capability 'dml.delete.using' remains fail-closed for provider "
+            + string provider
+            + "; no equivalent joined-delete lowering is proven."
 
 module internal SqlDmlReturningExpressionCapabilityRules =
-    let SourceValidationError(sourceDialect: SqlAgentToolType) : string | null =
-        if sourceDialect = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.returning.expression' is currently declared only for the PostgreSQL source dialect; source dialect "
-             + string sourceDialect + " remains fail-closed."
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.returning.expression' is currently lowered only for PostgreSQL targets; target provider "
-             + string provider + " remains fail-closed."
+    let SQLiteMinimumVersion = Version(3,35)
+    let FirebirdMinimumVersion = Version(5,0)
+
+    let private profileAtLeast
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (minimum: Version) =
+        not (isNull profile)
+        && profile.Provider = provider
+        && not (isNull profile.ServerVersion)
+        && profile.ServerVersion.CompareTo(minimum) >= 0
+
+    let private validationError
+        (provider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (side: string) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres -> null
+        | SqlAgentToolType.Sqlite when profileAtLeast provider profile SQLiteMinimumVersion -> null
+        | SqlAgentToolType.Firebird when profileAtLeast provider profile FirebirdMinimumVersion -> null
+        | SqlAgentToolType.Sqlite ->
+            "SQL capability 'dml.returning.expression' requires an explicit SQLite "
+            + side + " capability profile with ServerVersion 3.35 or newer."
+        | SqlAgentToolType.Firebird ->
+            "SQL capability 'dml.returning.expression' requires an explicit Firebird "
+            + side + " capability profile with ServerVersion 5.0 or newer."
+        | _ when side = "target" ->
+            "SQL capability 'dml.returning.expression' remains fail-closed for target provider "
+            + string provider + "; no proven rich RETURNING equivalent is declared."
+        | _ ->
+            "SQL capability 'dml.returning.expression' is not valid for source dialect "
+            + string provider + " in the current Core source grammar."
+
+    let SourceValidationError(
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError sourceDialect sourceProfile "source"
+
+    let TargetValidationError(
+        provider: SqlAgentToolType,
+        targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError provider targetProfile "target"
 
 module internal SqlDmlReturningCapabilityRules =
     let private sqliteVersion = Version(3,35)
@@ -425,7 +531,8 @@ module internal SqlDmlReturningCapabilityRules =
     let SourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version | null) : string | null =
         let supported =
             match sourceDialect with
-            | SqlAgentToolType.Postgres -> true
+            | SqlAgentToolType.Postgres
+            | SqlAgentToolType.MsSqlServer -> true
             | SqlAgentToolType.Sqlite -> atLeast sourceServerVersion sqliteVersion
             | SqlAgentToolType.Firebird -> atLeast sourceServerVersion firebirdVersion
             | _ -> false
@@ -434,7 +541,7 @@ module internal SqlDmlReturningCapabilityRules =
             match sourceDialect with
             | SqlAgentToolType.Sqlite -> "Raw SQLite RETURNING requires a source capability profile with ServerVersion 3.35 or newer."
             | SqlAgentToolType.Firebird -> "Portable multi-row Firebird DSQL RETURNING requires a source capability profile with ServerVersion 5.0 or newer."
-            | SqlAgentToolType.MsSqlServer -> "SQL Server uses OUTPUT rather than RETURNING; trigger-sensitive OUTPUT result semantics are not yet represented by the portable Core DML contract."
+            | SqlAgentToolType.MsSqlServer -> "SQL Server result-row source semantics use OUTPUT; RETURNING spelling remains invalid SQL Server grammar."
             | SqlAgentToolType.Oracle -> "Oracle RETURNING requires RETURNING INTO host or bind variables, which are not represented by the portable Core DML result-row contract."
             | SqlAgentToolType.MySQL -> "MySQL has no declared DML RETURNING result-row syntax in the Core MySQL 8.4 source profile."
             | _ -> "DML RETURNING is not represented for source dialect " + string sourceDialect + "."

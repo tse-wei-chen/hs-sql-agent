@@ -1345,6 +1345,29 @@ module internal RewriteRenderer =
                 " RETURNING " + (items |> List.map (fun item -> renderExpr ctx item.Expression + (item.Alias |> Option.map (fun alias -> " AS " + renderAlias ctx.Provider alias) |> Option.defaultValue "")) |> String.concat ", ")
             | _ -> invalidOp "RETURNING is not supported by the target provider."
 
+    let private renderSqlServerOutput image (ctx: RenderContext) (items: ReturningItem list) =
+        if List.isEmpty items then ""
+        else
+            let renderItem = function
+                | ReturningColumn(identifier, alias) ->
+                    if Identifier.parts identifier |> List.length <> 1 then
+                        invalidOp "Validated SQL Server OUTPUT requires target-only single-part columns."
+                    image
+                    + "."
+                    + renderIdentifier SqlServer identifier
+                    + (alias
+                       |> Option.map (fun value -> " AS " + renderAlias SqlServer value)
+                       |> Option.defaultValue "")
+                | ReturningWildcard None -> image + ".*"
+                | ReturningWildcard(Some _) ->
+                    invalidOp "Validated SQL Server OUTPUT wildcard cannot be aliased."
+                | ReturningExpression _ ->
+                    invalidOp "Validated SQL Server OUTPUT does not admit rich expressions."
+            " OUTPUT " + (items |> List.map renderItem |> String.concat ", ")
+
+    let private renderTrailingReturning (ctx: RenderContext) items =
+        if ctx.Provider = SqlServer then "" else renderReturning ctx items
+
     let private renderConflict (ctx: RenderContext) conflict =
         match conflict with
         | None -> ""
@@ -1379,7 +1402,7 @@ module internal RewriteRenderer =
                 |> NonEmpty.toList
                 |> List.map (renderIdentifier ctx.Provider)
                 |> String.concat ", "
-            "UPDATE OR INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + " VALUES (" + values + ") MATCHING (" + targets + ")" + renderReturning ctx insert.Returning
+            "UPDATE OR INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + " VALUES (" + values + ") MATCHING (" + targets + ")" + renderTrailingReturning ctx insert.Returning
         | MySql, Some conflict ->
             let values =
                 match insert.Input with
@@ -1446,19 +1469,19 @@ module internal RewriteRenderer =
                         + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
                         + ")")
                     |> String.concat ""
-                "INSERT ALL" + parts + " SELECT 1 FROM DUAL" + renderReturning ctx insert.Returning
+                "INSERT ALL" + parts + " SELECT 1 FROM DUAL" + renderTrailingReturning ctx insert.Returning
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
-                prefix + " " + withClause + source + renderReturning ctx insert.Returning
-            | QuerySource query -> prefix + " " + renderQuery ctx query + renderReturning ctx insert.Returning
+                prefix + " " + withClause + source + renderTrailingReturning ctx insert.Returning
+            | QuerySource query -> prefix + " " + renderQuery ctx query + renderTrailingReturning ctx insert.Returning
             | Values rows ->
                 prefix + " VALUES "
                 + (rows |> NonEmpty.toList |> List.map (fun row ->
                     "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
                    |> String.concat ", ")
-                + renderReturning ctx insert.Returning
-            | DefaultValues -> prefix + " DEFAULT VALUES" + renderReturning ctx insert.Returning
+                + renderTrailingReturning ctx insert.Returning
+            | DefaultValues -> prefix + " DEFAULT VALUES" + renderTrailingReturning ctx insert.Returning
         | Firebird, None ->
             let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
             match insert.Input with
@@ -1471,21 +1494,28 @@ module internal RewriteRenderer =
                        + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
                        + " FROM RDB$DATABASE")
                    |> String.concat " UNION ALL ")
-                + renderReturning ctx insert.Returning
+                + renderTrailingReturning ctx insert.Returning
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
-                prefix + " " + withClause + source + renderReturning ctx insert.Returning
-            | QuerySource query -> prefix + " " + renderQuery ctx query + renderReturning ctx insert.Returning
+                prefix + " " + withClause + source + renderTrailingReturning ctx insert.Returning
+            | QuerySource query -> prefix + " " + renderQuery ctx query + renderTrailingReturning ctx insert.Returning
             | Values rows ->
                 prefix + " VALUES "
                 + (rows |> NonEmpty.toList |> List.map (fun row ->
                     "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
                    |> String.concat ", ")
-                + renderReturning ctx insert.Returning
-            | DefaultValues -> prefix + " DEFAULT VALUES" + renderReturning ctx insert.Returning
+                + renderTrailingReturning ctx insert.Returning
+            | DefaultValues -> prefix + " DEFAULT VALUES" + renderTrailingReturning ctx insert.Returning
         | _ ->
-            let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
+            let prefix =
+                "INSERT INTO "
+                + renderIdentifier ctx.Provider insert.Target
+                + columns
+                + (if ctx.Provider = SqlServer then
+                       renderSqlServerOutput "INSERTED" ctx insert.Returning
+                   else
+                       "")
             match insert.Input with
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
@@ -1493,52 +1523,90 @@ module internal RewriteRenderer =
                 match ctx.Provider with
                 | PostgreSql | SqlServer | SQLite ->
                     withClause + prefix + " " + source
-                    + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+                    + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
                 | MySql ->
                     prefix + " " + withClause + source
-                    + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+                    + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
                 | Oracle | Firebird ->
                     invalidOp "Provider-specific INSERT ... SELECT path was not selected."
             | QuerySource query ->
                 prefix + " " + renderQuery ctx query
-                + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+                + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
             | Values rows ->
                 prefix + " VALUES "
                 + (rows |> NonEmpty.toList |> List.map (fun row ->
                     "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
                    |> String.concat ", ")
-                + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+                + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
             | DefaultValues ->
                 prefix + " DEFAULT VALUES"
-                + renderConflict ctx insert.Conflict + renderReturning ctx insert.Returning
+                + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
 
     let private renderUpdate (ctx: RenderContext) (update: Update) =
         let assignments = update.Assignments |> List.map (fun (assignment: Assignment) -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value) |> String.concat ", "
         let targetAlias =
             match update.TargetAlias with
             | None -> ""
-            | Some alias when ctx.Provider = PostgreSql -> " AS " + renderAlias ctx.Provider alias
+            | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
+                " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
-        let mutable sql = "UPDATE " + renderIdentifier ctx.Provider update.Target + targetAlias + " SET " + assignments
+        let mutable sql =
+            "UPDATE "
+            + renderIdentifier ctx.Provider update.Target
+            + targetAlias
+            + " SET "
+            + assignments
+            + (if ctx.Provider = SqlServer then
+                   renderSqlServerOutput "INSERTED" ctx update.Returning
+               else
+                   "")
         if not update.From.IsEmpty then
-            if ctx.Provider <> PostgreSql && ctx.Provider <> SqlServer then
+            if ctx.Provider <> PostgreSql
+               && ctx.Provider <> SqlServer
+               && ctx.Provider <> SQLite
+               && ctx.Provider <> Oracle then
                 invalidOp "UPDATE ... FROM is not supported by the target provider."
             sql <- sql + " FROM " + (update.From |> List.map (renderSource ctx) |> String.concat ", ")
         update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
-        sql + renderReturning ctx update.Returning
+        sql + renderTrailingReturning ctx update.Returning
 
     let private renderDelete (ctx: RenderContext) (delete: Delete) =
         let targetAlias =
             match delete.TargetAlias with
             | None -> ""
-            | Some alias when ctx.Provider = PostgreSql -> " AS " + renderAlias ctx.Provider alias
+            | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
+                " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
-        let mutable sql = "DELETE FROM " + renderIdentifier ctx.Provider delete.Target + targetAlias
+        let renderedTarget = renderIdentifier ctx.Provider delete.Target
+        let mutable sql =
+            "DELETE FROM "
+            + renderedTarget
+            + targetAlias
+            + (if ctx.Provider = SqlServer then
+                   renderSqlServerOutput "DELETED" ctx delete.Returning
+               else
+                   "")
         if not delete.Using.IsEmpty then
-            if ctx.Provider <> PostgreSql then invalidOp "DELETE ... USING is not supported by the target provider."
-            sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+            match ctx.Provider with
+            | PostgreSql ->
+                sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+            | SqlServer ->
+                if delete.TargetAlias.IsSome then
+                    invalidOp "SQL Server joined DELETE target aliases require FROM-scope alias declaration and are not represented by the current Core DML target-alias shape."
+                sql <-
+                    sql
+                    + " FROM "
+                    + renderedTarget
+                    + ", "
+                    + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+            | Oracle ->
+                if delete.TargetAlias.IsSome then
+                    invalidOp "Oracle direct-join DELETE target aliases are not represented by the current Core target-alias lowering."
+                sql <- sql + " FROM " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+            | _ ->
+                invalidOp "Joined DELETE is not supported by the target provider."
         delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
-        sql + renderReturning ctx delete.Returning
+        sql + renderTrailingReturning ctx delete.Returning
 
     let private providerForRuntime = function
         | TargetRuntime.PostgreSqlRuntime -> Provider.PostgreSql

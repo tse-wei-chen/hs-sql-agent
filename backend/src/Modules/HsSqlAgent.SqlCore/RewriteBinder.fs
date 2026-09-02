@@ -534,6 +534,18 @@ module internal RewriteBinder =
             | ReturningExpression(expression, alias) ->
                 ReturningExpression(bindExpr scope expression, alias))
 
+    let private bindTargetOnlyReturning dialect scope items =
+        try
+            bindReturning scope items
+        with
+        | :? InvalidOperationException as ex ->
+            let prefix =
+                if dialect = SqlAgentToolType.MsSqlServer then
+                    "SQL Server OUTPUT may reference only the modified target row image in the portable subset. "
+                else
+                    "SQLite RETURNING expressions may reference only the modified target table; auxiliary UPDATE FROM sources are not visible to RETURNING. "
+            raise (InvalidOperationException(prefix + ex.Message, ex))
+
     let private bindDocument dialect (document: Document) : Document =
         let statement =
             match document.Statement with
@@ -562,7 +574,11 @@ module internal RewriteBinder =
                         From = from
                         AssignmentItems = update.AssignmentItems |> NonEmpty.map (bindAssignment scope)
                         Where = update.Where |> Option.map (bindExpr scope)
-                        Returning = bindReturning scope update.Returning }
+                        Returning =
+                            if dialect = SqlAgentToolType.Sqlite || dialect = SqlAgentToolType.MsSqlServer then
+                                bindTargetOnlyReturning dialect baseScope update.Returning
+                            else
+                                bindReturning scope update.Returning }
             | DeleteStatement delete ->
                 let baseScope : Scope =
                     { Id = 0
@@ -575,7 +591,11 @@ module internal RewriteBinder =
                     { delete with
                         Using = usingSources
                         Where = delete.Where |> Option.map (bindExpr scope)
-                        Returning = bindReturning scope delete.Returning }
+                        Returning =
+                            if dialect = SqlAgentToolType.MsSqlServer then
+                                bindTargetOnlyReturning dialect baseScope delete.Returning
+                            else
+                                bindReturning scope delete.Returning }
         { document with Statement = statement }
 
     let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"

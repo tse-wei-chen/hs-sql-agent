@@ -86,6 +86,66 @@ public class DmlPlanFactoryTests
     }
 
     [Fact]
+    public async Task CreateAsync_SqlServerOutput_UsesResolvedTargetTriggerMetadataAssurance()
+    {
+        var metadata = new StubMetadataReader(
+        [
+            new DatabaseColumnMetadata("dbo", "users", "id", "int", true, 1),
+            new DatabaseColumnMetadata("dbo", "users", "status", "nvarchar", false)
+        ],
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dbo"] = ["users"]
+        });
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users SET status = 'disabled' OUTPUT INSERTED.id WHERE id = 7",
+            SqlAgentToolType.MsSqlServer);
+
+        var plan = await new DmlPlanFactory(metadata).CreateAsync(
+            "connection",
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext(
+                "sqlserver-output-metadata-v1",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo.users" }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(plan.MutationCommand.ReturnsRows);
+        Assert.Contains("OUTPUT INSERTED.", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(("dbo", "users", DmlOperation.Update), metadata.LastTriggerRequest);
+    }
+
+    [Fact]
+    public async Task CreateAsync_SqlServerOutput_WithEnabledTrigger_FailsClosed()
+    {
+        var metadata = new StubMetadataReader(
+        [
+            new DatabaseColumnMetadata("dbo", "users", "id", "int", true, 1),
+            new DatabaseColumnMetadata("dbo", "users", "status", "nvarchar", false)
+        ],
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dbo"] = ["users"]
+        },
+        hasEnabledDmlTrigger: true);
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users SET status = 'disabled' OUTPUT INSERTED.id WHERE id = 7",
+            SqlAgentToolType.MsSqlServer);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new DmlPlanFactory(metadata).CreateAsync(
+                "connection",
+                parsed,
+                SqlAgentToolType.MsSqlServer,
+                new SqlPlanValidationContext("sqlserver-output-trigger-v1"),
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("OUTPUT", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("enabled UPDATE trigger", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(("dbo", "users", DmlOperation.Update), metadata.LastTriggerRequest);
+    }
+
+    [Fact]
     public async Task CreateAsync_Strict_RejectsMissingPrimaryKey()
     {
         var parsed = CoreSqlTextParser.ParseDml(
@@ -123,11 +183,14 @@ public class DmlPlanFactoryTests
 
     private sealed class StubMetadataReader(
         IReadOnlyList<DatabaseColumnMetadata> columns,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? tablesBySchema = null)
-        : IProviderMetadataReader
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? tablesBySchema = null,
+        bool hasEnabledDmlTrigger = false)
+        : IProviderMetadataReader, HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader
     {
         private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _tablesBySchema =
             tablesBySchema ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+        public (string Schema, string Table, DmlOperation Operation)? LastTriggerRequest { get; private set; }
 
         public Task<IReadOnlyList<string>> GetSchemasAsync(
             string connectionString,
@@ -156,5 +219,16 @@ public class DmlPlanFactoryTests
             string table,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<DatabaseUniqueKeyMetadata>>([]);
+
+        public Task<bool> HasEnabledDmlTriggerAsync(
+            string connectionString,
+            string schema,
+            string table,
+            DmlOperation operation,
+            CancellationToken cancellationToken = default)
+        {
+            LastTriggerRequest = (schema, table, operation);
+            return Task.FromResult(hasEnabledDmlTrigger);
+        }
     }
 }

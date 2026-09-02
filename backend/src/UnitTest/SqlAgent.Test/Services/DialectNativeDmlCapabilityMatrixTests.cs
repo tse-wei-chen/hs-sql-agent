@@ -14,7 +14,8 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     {
         None,
         PrimaryKeyId,
-        SoleUniqueId
+        SoleUniqueId,
+        SqlServerOutputNoTriggers
     }
 
     private sealed record NativeDmlCase(
@@ -153,6 +154,28 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             false,
             "ON CONFLICT;DO UPDATE;excluded"),
         new(
+            "sqlite-update-from-333",
+            "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Sqlite,
+            new Version(3, 33),
+            new Version(3, 33),
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            false,
+            "UPDATE; FROM ;profiles"),
+        new(
+            "sqlite-update-returning-expression-335",
+            "UPDATE users SET score = score + 1 WHERE id = 1 RETURNING score + 2 AS next_score",
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Sqlite,
+            new Version(3, 35),
+            new Version(3, 35),
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            true,
+            "UPDATE;RETURNING;next_score"),
+        new(
             "firebird-insert-returning-5",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') RETURNING id",
             SqlAgentToolType.Firebird,
@@ -174,6 +197,17 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             SqlStatementKind.Update,
             true,
             "UPDATE;RETURNING"),
+        new(
+            "firebird-update-returning-expression-5",
+            "UPDATE users SET score = score + 1 WHERE id = 1 RETURNING score + 2 AS next_score",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Firebird,
+            new Version(5, 0),
+            new Version(5, 0),
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            true,
+            "UPDATE;RETURNING;next_score"),
         new(
             "firebird-delete-returning-5",
             "DELETE FROM users WHERE id = 1 RETURNING id",
@@ -197,6 +231,94 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             true,
             "UPDATE OR INSERT INTO;MATCHING;RETURNING"),
         new(
+            "firebird-update-target-alias",
+            "UPDATE users AS u SET name = 'Alice' WHERE u.id = 1",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Firebird,
+            null,
+            null,
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            false,
+            "UPDATE; AS ;u;WHERE"),
+        new(
+            "firebird-delete-target-alias",
+            "DELETE FROM users AS u WHERE u.id = 1",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Firebird,
+            null,
+            null,
+            AssuranceKind.None,
+            SqlStatementKind.Delete,
+            false,
+            "DELETE FROM; AS ;u;WHERE"),
+        new(
+            "sqlserver-insert-output",
+            "INSERT INTO users (id, name) OUTPUT INSERTED.id VALUES (1, 'Alice')",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Insert,
+            true,
+            "INSERT INTO;OUTPUT INSERTED.;VALUES"),
+        new(
+            "sqlserver-update-output",
+            "UPDATE users SET name = 'Alice' OUTPUT INSERTED.id WHERE id = 1",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Update,
+            true,
+            "UPDATE;OUTPUT INSERTED.;WHERE"),
+        new(
+            "sqlserver-delete-output",
+            "DELETE FROM users OUTPUT DELETED.id WHERE id = 1",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Delete,
+            true,
+            "DELETE FROM;OUTPUT DELETED.;WHERE"),
+        new(
+            "sqlserver-insert-output-wildcard",
+            "INSERT INTO users (id, name) OUTPUT INSERTED.* VALUES (1, 'Alice')",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Insert,
+            true,
+            "INSERT INTO;OUTPUT INSERTED.*;VALUES"),
+        new(
+            "sqlserver-update-output-wildcard",
+            "UPDATE users SET name = 'Alice' OUTPUT INSERTED.* WHERE id = 1",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Update,
+            true,
+            "UPDATE;OUTPUT INSERTED.*;WHERE"),
+        new(
+            "sqlserver-delete-output-wildcard",
+            "DELETE FROM users OUTPUT DELETED.* WHERE id = 1",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.SqlServerOutputNoTriggers,
+            SqlStatementKind.Delete,
+            true,
+            "DELETE FROM;OUTPUT DELETED.*;WHERE"),
+        new(
             "sqlserver-update-from",
             "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
             SqlAgentToolType.MsSqlServer,
@@ -207,6 +329,50 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             SqlStatementKind.Update,
             false,
             "UPDATE; FROM ;profiles"),
+        new(
+            "sqlserver-delete-from",
+            "DELETE FROM users FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.None,
+            SqlStatementKind.Delete,
+            false,
+            "DELETE FROM; FROM ;profiles;WHERE"),
+        new(
+            "postgres-delete-using-to-sqlserver",
+            "DELETE FROM users USING profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MsSqlServer,
+            null,
+            null,
+            AssuranceKind.None,
+            SqlStatementKind.Delete,
+            false,
+            "DELETE FROM; FROM ;profiles;WHERE"),
+        new(
+            "oracle26-update-from",
+            "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Oracle,
+            new Version(26, 0),
+            new Version(26, 0),
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            false,
+            "UPDATE; FROM ;profiles;WHERE"),
+        new(
+            "oracle26-delete-from",
+            "DELETE FROM users FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Oracle,
+            new Version(26, 0),
+            new Version(26, 0),
+            AssuranceKind.None,
+            SqlStatementKind.Delete,
+            false,
+            "DELETE FROM; FROM ;profiles;WHERE"),
         new(
             "mysql-assured-upsert-8019",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
@@ -238,21 +404,19 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     [Fact]
     public void NativeDmlMatrix_HasStableCapabilityCoverage()
     {
-        Assert.Equal(17, Cases.Length);
+        Assert.Equal(32, Cases.Length);
         Assert.Equal(
-            17,
+            32,
             Cases.Select(item => item.Name)
                 .Distinct(StringComparer.Ordinal)
                 .Count());
 
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Postgres));
-        Assert.Equal(4, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
-        Assert.Equal(4, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
-        Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MsSqlServer);
+        Assert.Equal(6, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
+        Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
+        Assert.Equal(9, Cases.Count(item => item.TargetDialect == SqlAgentToolType.MsSqlServer));
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MySQL);
-        Assert.DoesNotContain(
-            Cases,
-            item => item.TargetDialect == SqlAgentToolType.Oracle);
+        Assert.Equal(2, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Oracle));
     }
 
     [Theory]
@@ -285,11 +449,21 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             sourceProfile);
         var assurance = Assurance(assuranceName);
 
+        var validationContext =
+            new SqlPlanValidationContext(
+                "dialect-native-dml-capability-matrix-v1");
+        if (Enum.Parse<AssuranceKind>(assuranceName) == AssuranceKind.SqlServerOutputNoTriggers)
+        {
+            validationContext = validationContext.WithDmlResultRowAssurance(
+                DmlResultRowAssurance.NoEnabledTriggers(
+                    "users",
+                    Operation(expectedKind)));
+        }
+
         var command = CoreDmlCompiler.CreateDefault().Compile(
             parsed,
             targetDialect,
-            new SqlPlanValidationContext(
-                "dialect-native-dml-capability-matrix-v1"),
+            validationContext,
             targetProfile: targetProfile,
             conflictTargetAssurance: assurance);
 
@@ -308,12 +482,22 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
         }
     }
 
+    private static DmlOperation Operation(SqlStatementKind kind) =>
+        kind switch
+        {
+            SqlStatementKind.Insert => DmlOperation.Insert,
+            SqlStatementKind.Update => DmlOperation.Update,
+            SqlStatementKind.Delete => DmlOperation.Delete,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+        };
+
     private static DmlConflictTargetAssurance? Assurance(string name) =>
         Enum.Parse<AssuranceKind>(name) switch
         {
             AssuranceKind.None => null,
             AssuranceKind.PrimaryKeyId =>
                 DmlConflictTargetAssurance.FromPrimaryKey(["id"]),
+            AssuranceKind.SqlServerOutputNoTriggers => null,
             AssuranceKind.SoleUniqueId =>
                 DmlConflictTargetAssurance.FromUniqueKey(
                     ["id"],

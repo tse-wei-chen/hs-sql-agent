@@ -61,12 +61,18 @@ module internal Typestate =
           StandaloneTime: CapabilityProof
           FilterPredicate: FilterPredicateProofs }
 
+    type SqlServerOutputAssurance =
+        | OutputAssuranceNotRequired
+        | MissingSqlServerOutputAssurance
+        | AssuredNoEnabledOutputTriggers of targetTable: string * operation: DmlOperation
+
     type DmlProofs =
         { Returning: CapabilityProof
           ReturningExpression: CapabilityProof
           TargetAlias: CapabilityProof
           UpdateFrom: CapabilityProof
-          DeleteUsing: CapabilityProof }
+          DeleteUsing: CapabilityProof
+          SqlServerOutput: SqlServerOutputAssurance }
 
     type ColumnSetAssurance =
         | MissingAssurance

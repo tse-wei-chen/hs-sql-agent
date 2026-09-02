@@ -16,6 +16,8 @@ public sealed class DmlPlanFactory(
     CoreSqlCompiler? queryCompiler = null)
 {
     private readonly DmlRowIdentityResolver _rowIdentityResolver = new(metadataReader);
+    private readonly HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader? _dmlResultRowMetadataReader =
+        metadataReader as HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader;
     // Explicit legacy compilers remain an opt-in compatibility seam for tests/custom hosts.
     // The default production path is the F# typestate facade.
     private readonly CoreDmlCompiler? _dmlCompiler = dmlCompiler;
@@ -66,19 +68,35 @@ public sealed class DmlPlanFactory(
             cancellationToken);
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(identity.Schema, identity.Table),
-            null,
+            target.Alias,
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedStatement);
+        var effectiveValidationContext = await PrepareResultRowValidationContextAsync(
+            connectionString,
+            resolvedStatement,
+            targetProvider,
+            validationContext,
+            operation,
+            identity.Schema,
+            identity.Table,
+            cancellationToken);
 
         var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
-            validationContext,
+            effectiveValidationContext,
             compilationPolicy,
             targetProfile);
 
         var identityColumns = identity.Columns;
+        var auxiliarySources = MutationSources(resolvedStatement);
+        if (!auxiliarySources.IsDefaultOrEmpty && identityColumns.IsDefaultOrEmpty)
+        {
+            throw new InvalidOperationException(
+                "Joined UPDATE/DELETE approval requires resolved target row identity so duplicate auxiliary matches can be collapsed to the affected target-row set.");
+        }
+
         var selectItems = identityColumns.IsDefaultOrEmpty
             ? ImmutableArray.Create(new SelectItem(
                 new LiteralExpr(1, SourceSpan.Unknown),
@@ -86,17 +104,24 @@ public sealed class DmlPlanFactory(
                 SourceSpan.Unknown))
             : identityColumns
                 .Select(column => new SelectItem(
-                    new ColumnExpr(MetadataIdentifier(column), SourceSpan.Unknown),
+                    new ColumnExpr(TargetIdentityIdentifier(resolvedTarget, column), SourceSpan.Unknown),
                     null,
                     SourceSpan.Unknown))
                 .ToImmutableArray();
+        var matchJoins = auxiliarySources
+            .Select(source => new JoinSource(
+                "CROSS",
+                source,
+                null!,
+                SourceSpan.Unknown))
+            .ToImmutableArray();
 
         var matchStatement = new SelectStatement(
             ImmutableArray<CteDefinition>.Empty,
-            false,
+            !auxiliarySources.IsDefaultOrEmpty,
             selectItems,
             resolvedTarget,
-            ImmutableArray<JoinSource>.Empty,
+            matchJoins,
             predicate,
             ImmutableArray<SqlExpr>.Empty,
             null,
@@ -162,15 +187,24 @@ public sealed class DmlPlanFactory(
             cancellationToken);
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
-            null,
+            insert.Target.Alias,
             insert.Target.Span);
         var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedInsert);
+        var effectiveValidationContext = await PrepareResultRowValidationContextAsync(
+            connectionString,
+            resolvedInsert,
+            targetProvider,
+            validationContext,
+            DmlOperation.Insert,
+            targetResolution.Schema,
+            targetResolution.Table,
+            cancellationToken);
 
         var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
-            validationContext,
+            effectiveValidationContext,
             compilationPolicy,
             targetProfile);
         var previewRows = BuildInsertPreviewRows(resolvedInsert, values);
@@ -198,6 +232,77 @@ public sealed class DmlPlanFactory(
             MaxAffectedRows: maxAffectedRows,
             ApprovalMode: DmlApprovalMode.InsertValues,
             InsertRows: previewRows);
+    }
+
+    private async Task<SqlPlanValidationContext> PrepareResultRowValidationContextAsync(
+        string connectionString,
+        SqlStatement resolvedStatement,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlOperation operation,
+        string schema,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        if (targetProvider != SqlAgentToolType.MsSqlServer || !ReturnsRows(resolvedStatement))
+            return validationContext;
+
+        if (_dmlResultRowMetadataReader is null)
+        {
+            throw new InvalidOperationException(
+                "SQL Server OUTPUT requires provider trigger metadata support; no DML result-row metadata reader is available for the resolved target.");
+        }
+
+        var hasEnabledTrigger = await _dmlResultRowMetadataReader.HasEnabledDmlTriggerAsync(
+            connectionString,
+            schema,
+            table,
+            operation,
+            cancellationToken);
+
+        if (hasEnabledTrigger)
+        {
+            throw new InvalidOperationException(
+                $"SQL Server OUTPUT without INTO remains fail-closed because resolved target '{schema}.{table}' has an enabled {operation.ToString().ToUpperInvariant()} trigger.");
+        }
+
+        var metadataBackedContext = new SqlPlanValidationContext(
+            validationContext.PolicyVersion,
+            validationContext.AllowedTables);
+
+        return metadataBackedContext.WithDmlResultRowAssurance(
+            DmlResultRowAssurance.NoEnabledTriggers(
+                $"{schema}.{table}",
+                operation));
+    }
+
+    private static bool ReturnsRows(SqlStatement statement) => statement switch
+    {
+        InsertStatement insert => !insert.Returning.IsDefaultOrEmpty,
+        UpdateStatement update => !update.Returning.IsDefaultOrEmpty,
+        DeleteStatement delete => !delete.Returning.IsDefaultOrEmpty,
+        _ => false
+    };
+
+    private static ImmutableArray<TableSource> MutationSources(SqlStatement statement) => statement switch
+    {
+        UpdateStatement update when !update.FromSources.IsDefaultOrEmpty => update.FromSources,
+        UpdateStatement update => update.From.Cast<TableSource>().ToImmutableArray(),
+        DeleteStatement delete when !delete.UsingSources.IsDefaultOrEmpty => delete.UsingSources,
+        DeleteStatement delete => delete.Using.Cast<TableSource>().ToImmutableArray(),
+        _ => ImmutableArray<TableSource>.Empty
+    };
+
+    private static SqlIdentifier TargetIdentityIdentifier(
+        NamedTableSource target,
+        string column)
+    {
+        var qualifier = target.Alias ?? target.Name.Parts[^1];
+        return new SqlIdentifier(
+            ImmutableArray.Create(
+                qualifier,
+                new IdentifierPart(column, true, SourceSpan.Unknown)),
+            SourceSpan.Unknown);
     }
 
     private CompiledSqlCommand CompileMutation(
@@ -338,6 +443,7 @@ public sealed class DmlPlanFactory(
                     update.Span)
                 {
                     From = update.From,
+                    FromSources = update.FromSources,
                     Returning = update.Returning
                 };
                 return clone;
@@ -350,6 +456,7 @@ public sealed class DmlPlanFactory(
                     delete.Span)
                 {
                     Using = delete.Using,
+                    UsingSources = delete.UsingSources,
                     Returning = delete.Returning
                 };
                 return clone;

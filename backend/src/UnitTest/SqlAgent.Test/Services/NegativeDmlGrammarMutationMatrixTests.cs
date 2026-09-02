@@ -83,6 +83,18 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
             .Where(item => item.Value != SqlAgentToolType.Postgres)
             .ToArray();
 
+    private static readonly GrammarVariant<SqlAgentToolType>[] DeleteUsingGrammarWrongSourceDialects =
+        AllDialects
+            .Where(item =>
+                item.Value is not SqlAgentToolType.Postgres
+                    and not SqlAgentToolType.Oracle)
+            .ToArray();
+
+    private static readonly GrammarVariant<SqlAgentToolType>[] NonSqlServerDialects =
+        AllDialects
+            .Where(item => item.Value != SqlAgentToolType.MsSqlServer)
+            .ToArray();
+
     private static readonly GrammarVariant<SqlAgentToolType>[] NonFirebirdDialects =
         AllDialects
             .Where(item => item.Value != SqlAgentToolType.Firebird)
@@ -115,6 +127,25 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
                 "insert-value",
                 "INSERT INTO users (name) VALUES (CAST('1' AS VARCHAR(20)))",
                 "INSERT INTO users (name) VALUES ('1'::VARCHAR(20))"))
+    ];
+
+    private static readonly GrammarVariant<Mutation>[] SqlServerOutputContexts =
+    [
+        new(
+            "insert-output",
+            new Mutation(
+                "insert-output",
+                "INSERT INTO users (id) OUTPUT INSERTED.id VALUES (1)")),
+        new(
+            "update-output",
+            new Mutation(
+                "update-output",
+                "UPDATE users SET id = 1 OUTPUT INSERTED.id WHERE id = 2")),
+        new(
+            "delete-output",
+            new Mutation(
+                "delete-output",
+                "DELETE FROM users OUTPUT DELETED.id WHERE id = 1"))
     ];
 
     private static readonly GrammarVariant<SyntaxMutation>[] InsertSelectLimitContexts =
@@ -230,7 +261,7 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
 
     public static IEnumerable<object[]> DeleteUsingWrongSourceMatrix()
     {
-        foreach (var dialect in NonPostgresDialects)
+        foreach (var dialect in DeleteUsingGrammarWrongSourceDialects)
         {
             yield return
             [
@@ -239,6 +270,33 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
                     "delete-using-wrong-source"),
                 dialect.Value,
                 "DELETE FROM users USING profiles WHERE users.id = profiles.user_id"
+            ];
+        }
+    }
+
+    public static IEnumerable<object[]> OracleDeleteUsingVersionGateMatrix()
+    {
+        yield return
+        [
+            "Oracle__delete-using-requires-26",
+            SqlAgentToolType.Oracle,
+            "DELETE FROM users USING profiles WHERE users.id = profiles.user_id"
+        ];
+    }
+
+    public static IEnumerable<object[]> SqlServerOutputWrongSourceMatrix()
+    {
+        foreach (var (dialect, mutation) in
+                 SyntaxGrammarMatrix.Product(NonSqlServerDialects, SqlServerOutputContexts))
+        {
+            yield return
+            [
+                SyntaxGrammarMatrix.CaseName(
+                    dialect.Name,
+                    "sqlserver-output-wrong-source",
+                    mutation.Name),
+                dialect.Value,
+                mutation.Value.Sql
             ];
         }
     }
@@ -315,6 +373,8 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
         var malformed = MalformedDmlMatrix().ToArray();
         var updateFrom = UpdateFromWrongSourceMatrix().ToArray();
         var deleteUsing = DeleteUsingWrongSourceMatrix().ToArray();
+        var oracleDeleteUsing = OracleDeleteUsingVersionGateMatrix().ToArray();
+        var sqlServerOutput = SqlServerOutputWrongSourceMatrix().ToArray();
         var firebirdUpsert = FirebirdUpsertWrongSourceMatrix().ToArray();
         var postfix = WrongDialectPostfixCastDmlMatrix().ToArray();
         var insertSelectLimit = WrongDialectInsertSelectLimitMatrix().ToArray();
@@ -323,17 +383,21 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
         Assert.Equal(12, policy.Length);
         Assert.Equal(18, malformed.Length);
         Assert.Equal(4, updateFrom.Length);
-        Assert.Equal(5, deleteUsing.Length);
+        Assert.Equal(4, deleteUsing.Length);
+        Assert.Single(oracleDeleteUsing);
+        Assert.Equal(15, sqlServerOutput.Length);
         Assert.Equal(5, firebirdUpsert.Length);
         Assert.Equal(15, postfix.Length);
         Assert.Equal(3, insertSelectLimit.Length);
         Assert.Equal(6, crossProvider.Length);
         Assert.Equal(
-            68,
+            83,
             policy
                 .Concat(malformed)
                 .Concat(updateFrom)
                 .Concat(deleteUsing)
+                .Concat(oracleDeleteUsing)
+                .Concat(sqlServerOutput)
                 .Concat(firebirdUpsert)
                 .Concat(postfix)
                 .Concat(insertSelectLimit)
@@ -375,6 +439,7 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
     [Theory]
     [MemberData(nameof(MalformedDmlMatrix))]
     [MemberData(nameof(DeleteUsingWrongSourceMatrix))]
+    [MemberData(nameof(SqlServerOutputWrongSourceMatrix))]
     [MemberData(nameof(FirebirdUpsertWrongSourceMatrix))]
     public void MalformedOrWrongDialectDml_FailsClosedAtTypedParseStage(
         string name,
@@ -390,6 +455,26 @@ public sealed class NegativeDmlGrammarMutationMatrixTests
         Assert.Equal("SQL_PARSE_GRAMMAR", diagnostic.Code);
         Assert.Equal(SqlDiagnosticStage.Parse, diagnostic.Stage);
         Assert.Equal(SqlDiagnosticCategory.Syntax, diagnostic.Category);
+        Assert.NotNull(diagnostic.Span);
+        Assert.True(diagnostic.Span.Length > 0, name);
+    }
+
+    [Theory]
+    [MemberData(nameof(OracleDeleteUsingVersionGateMatrix))]
+    public void OracleDeleteUsing_WithoutVersion26_FailsAtSourceCapabilityStage(
+        string name,
+        SqlAgentToolType dialect,
+        string sql)
+    {
+        var result = TryCompile(dialect, dialect, sql);
+
+        Assert.False(result.Success, name);
+        Assert.Equal("SQL_PARSE_ERROR", result.ErrorCode);
+
+        var diagnostic = Assert.Single(result.TypedDiagnostics);
+        Assert.Equal("SQL_SOURCE_CAPABILITY_REJECTED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Capability, diagnostic.Category);
         Assert.NotNull(diagnostic.Span);
         Assert.True(diagnostic.Span.Length > 0, name);
     }

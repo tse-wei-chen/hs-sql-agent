@@ -213,9 +213,31 @@ module internal RewritePlanCapabilityValidation =
                 "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
                 + returningNodeName expression)
 
-    let private proveReturning capabilityMessage (proofs: DmlProofs) (items: ReturningItem list) =
+    let private proveSqlServerOutputAssurance (proofs: DmlProofs) operation target =
+        match proofs.SqlServerOutput with
+        | OutputAssuranceNotRequired -> ()
+        | MissingSqlServerOutputAssurance ->
+            raise (SqlCompilationException(
+                "SQL capability 'dml.returning_output' requires metadata-backed assurance that the SQL Server target has no enabled trigger for the DML operation."))
+        | AssuredNoEnabledOutputTriggers(assuredTarget, assuredOperation) ->
+            let actualTarget = Identifier.text target
+            if assuredOperation <> operation
+               || not (StringComparer.OrdinalIgnoreCase.Equals(assuredTarget, actualTarget)) then
+                raise (SqlCompilationException(
+                    "SQL capability 'dml.returning_output' assurance does not match the compiled SQL Server mutation. Expected target "
+                    + actualTarget
+                    + " and operation "
+                    + string operation
+                    + "; assurance declared target "
+                    + assuredTarget
+                    + " and operation "
+                    + string assuredOperation
+                    + "."))
+
+    let private proveReturning capabilityMessage (proofs: DmlProofs) operation target (items: ReturningItem list) =
         if not (List.isEmpty items) then
             requireDmlCapability capabilityMessage proofs.Returning
+            proveSqlServerOutputAssurance proofs operation target
             let rich =
                 items
                 |> List.choose (function
@@ -229,15 +251,15 @@ module internal RewritePlanCapabilityValidation =
         match document.Statement with
         | QueryStatement _ -> ()
         | InsertStatement insert ->
-            proveReturning capabilityMessage proofs insert.Returning
+            proveReturning capabilityMessage proofs DmlOperation.Insert insert.Target insert.Returning
         | UpdateStatement update ->
             if update.TargetAlias.IsSome then requireDmlCapability capabilityMessage proofs.TargetAlias
             if not update.From.IsEmpty then requireDmlCapability capabilityMessage proofs.UpdateFrom
-            proveReturning capabilityMessage proofs update.Returning
+            proveReturning capabilityMessage proofs DmlOperation.Update update.Target update.Returning
         | DeleteStatement delete ->
             if delete.TargetAlias.IsSome then requireDmlCapability capabilityMessage proofs.TargetAlias
             if not delete.Using.IsEmpty then requireDmlCapability capabilityMessage proofs.DeleteUsing
-            proveReturning capabilityMessage proofs delete.Returning
+            proveReturning capabilityMessage proofs DmlOperation.Delete delete.Target delete.Returning
 
     let private orderingProviderName = function
         | MySqlRuntime -> "MySQL"

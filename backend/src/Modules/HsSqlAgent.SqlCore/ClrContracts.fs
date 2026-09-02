@@ -435,10 +435,34 @@ type DmlConflictTargetAssurance(primaryKeyColumns: ImmutableArray<string>) =
         value
 
 [<Sealed>]
-type SqlPlanValidationContext(policyVersion: string, allowedTables: IReadOnlySet<string>) =
-    new(policyVersion: string) = SqlPlanValidationContext(policyVersion, null)
+type DmlResultRowAssurance private (targetTable: string, operation: DmlOperation) =
+    member _.TargetTable = targetTable
+    member _.Operation = operation
+
+    static member NoEnabledTriggers(targetTable: string, operation: DmlOperation) =
+        if String.IsNullOrWhiteSpace(targetTable) then
+            invalidArg "targetTable" "DML result-row assurance requires a non-empty target table."
+        DmlResultRowAssurance(targetTable.Trim(), operation)
+
+[<Sealed>]
+type SqlPlanValidationContext private (
+    policyVersion: string,
+    allowedTables: IReadOnlySet<string>,
+    dmlResultRowAssurance: DmlResultRowAssurance | null) =
+
+    new(policyVersion: string) =
+        SqlPlanValidationContext(policyVersion, null, null)
+
+    new(policyVersion: string, allowedTables: IReadOnlySet<string>) =
+        SqlPlanValidationContext(policyVersion, allowedTables, null)
+
     member _.PolicyVersion = policyVersion
     member _.AllowedTables = allowedTables
+    member _.DmlResultRowAssurance = dmlResultRowAssurance
+
+    member _.WithDmlResultRowAssurance(assurance: DmlResultRowAssurance) =
+        ArgumentNullException.ThrowIfNull(assurance)
+        SqlPlanValidationContext(policyVersion, allowedTables, assurance)
 
 [<Sealed>]
 type SqlExecutionPlanPolicy(queryMaxRows: int) =

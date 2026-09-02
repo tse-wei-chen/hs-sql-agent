@@ -53,16 +53,30 @@ public sealed class CoreDmlReturningRawExpressionTests
     }
 
     [Fact]
-    public void Parse_SqliteRawReturningExpression_RemainsPortableColumnOnly()
+    public void ParseAndCompile_Sqlite335RawReturningExpression_UsesCanonicalExpressionItem()
     {
         var profile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Sqlite,
             ServerVersion: new Version(3, 35));
 
-        Assert.Throws<SqlCompilationException>(() =>
-            CoreSqlTextParser.ParseDml(
-                "DELETE FROM users WHERE id = 1 RETURNING id + id",
-                SqlAgentToolType.Sqlite,
-                profile));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING id + id AS doubled_id",
+            SqlAgentToolType.Sqlite,
+            profile);
+
+        var delete = Assert.IsType<DeleteStatement>(parsed.Statement);
+        var item = Assert.IsType<DmlReturningExpressionItem>(Assert.Single(delete.Returning));
+        Assert.IsType<BinaryExpr>(item.Expression);
+        Assert.Equal("doubled_id", item.Alias?.Value);
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Sqlite,
+            new SqlPlanValidationContext("sqlite-rich-returning-raw-v1"),
+            targetProfile: profile);
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("doubled_id", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 }
