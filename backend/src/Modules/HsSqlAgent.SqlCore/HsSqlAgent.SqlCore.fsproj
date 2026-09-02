@@ -39,6 +39,7 @@
     <Compile Include="LegacyDtoMapper.fs" />
     <Compile Include="CapabilityContracts.fs" />
     <Compile Include="CapabilityMatrix.fs" />
+    <Compile Include="CompileEvidence.fs" />
     <Compile Include="TranslationContracts.fs" />
     <Compile Include="RuntimeContracts.fs" />
     <Compile Include="RewriteCoreModel.fs" />
