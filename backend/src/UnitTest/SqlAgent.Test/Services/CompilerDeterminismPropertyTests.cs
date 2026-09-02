@@ -21,7 +21,7 @@ public sealed class CompilerDeterminismPropertyTests
 
     public sealed record RejectedCase(
         string Name,
-        Func<SqlCoreTryResult<CompiledSqlCommand>> Compile);
+        Func<SqlCoreTryResult<CompiledSqlCommand?>> Compile);
 
     public static TheoryData<DeterminismCase> PositiveCorpus => new()
     {
@@ -256,33 +256,33 @@ public sealed class CompilerDeterminismPropertyTests
         {
             if (item.SourceProfile is not null)
             {
-                return SqlCoreFacade.CompileQuery(
+                return RequireCommand(SqlCoreFacade.CompileQuery(
                     item.Sql,
                     item.Source,
                     item.Target,
                     validation,
                     new SqlExecutionPlanPolicy(100),
                     item.SourceProfile,
-                    item.TargetProfile!);
+                    item.TargetProfile!));
             }
 
             if (item.TargetProfile is not null)
             {
-                return SqlCoreFacade.CompileQuery(
+                return RequireCommand(SqlCoreFacade.CompileQuery(
                     item.Sql,
                     item.Source,
                     item.Target,
                     validation,
                     new SqlExecutionPlanPolicy(100),
-                    item.TargetProfile);
+                    item.TargetProfile));
             }
 
-            return SqlCoreFacade.CompileQuery(
+            return RequireCommand(SqlCoreFacade.CompileQuery(
                 item.Sql,
                 item.Source,
                 item.Target,
                 validation,
-                new SqlExecutionPlanPolicy(100));
+                new SqlExecutionPlanPolicy(100)));
         }
 
         var parsed = CoreSqlTextParser.ParseDml(
@@ -290,14 +290,18 @@ public sealed class CompilerDeterminismPropertyTests
             item.Source,
             item.SourceProfile);
 
-        return SqlCoreFacade.CompileDml(
+        return RequireCommand(SqlCoreFacade.CompileDml(
             parsed,
             item.Target,
             validation,
             new DmlCompilationPolicy(),
             item.TargetProfile,
-            item.ConflictAssurance);
+            item.ConflictAssurance));
     }
+
+    private static CompiledSqlCommand RequireCommand(CompiledSqlCommand? command) =>
+        command ?? throw new InvalidOperationException(
+            "Determinism corpus compile unexpectedly returned null.");
 
     private static (string Name, string Type, string Value) ParameterSnapshot(
         SqlParameterValue parameter)
