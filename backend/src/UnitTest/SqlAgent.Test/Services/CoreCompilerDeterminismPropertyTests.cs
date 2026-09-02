@@ -34,37 +34,37 @@ public sealed class CoreCompilerDeterminismPropertyTests
                 var validation = Validation();
                 var policy = new SqlExecutionPlanPolicy(100);
 
-                var textFirst = SqlCoreFacade.CompileQuery(
+                var textFirst = RequireCommand(SqlCoreFacade.CompileQuery(
                     sql,
                     provider,
                     provider,
                     validation,
-                    policy);
-                var textSecond = SqlCoreFacade.CompileQuery(
+                    policy), label + " text-first");
+                var textSecond = RequireCommand(SqlCoreFacade.CompileQuery(
                     sql,
                     provider,
                     provider,
                     validation,
-                    policy);
+                    policy), label + " text-second");
 
                 var parsed = CoreSqlTextParser.ParseQuery(sql, provider);
-                var parsedFirst = SqlCoreFacade.CompileQuery(
+                var parsedFirst = RequireCommand(SqlCoreFacade.CompileQuery(
                     parsed,
                     provider,
                     validation,
-                    policy);
-                var parsedSecond = SqlCoreFacade.CompileQuery(
+                    policy), label + " parsed-first");
+                var parsedSecond = RequireCommand(SqlCoreFacade.CompileQuery(
                     parsed,
                     provider,
                     validation,
-                    policy);
+                    policy), label + " parsed-second");
 
                 var freshParsed = CoreSqlTextParser.ParseQuery(sql, provider);
-                var freshParsedCommand = SqlCoreFacade.CompileQuery(
+                var freshParsedCommand = RequireCommand(SqlCoreFacade.CompileQuery(
                     freshParsed,
                     provider,
                     validation,
-                    policy);
+                    policy), label + " fresh-parsed");
 
                 AssertEquivalent(textFirst, textSecond, label + " text-repeat");
                 AssertEquivalent(textFirst, parsedFirst, label + " text-vs-parsed");
@@ -87,32 +87,32 @@ public sealed class CoreCompilerDeterminismPropertyTests
                     var label = $"dml provider={provider} seed={seed} sql={sql}";
                     var validation = Validation();
 
-                    var textFirst = SqlCoreFacade.CompileDml(
+                    var textFirst = RequireCommand(SqlCoreFacade.CompileDml(
                         sql,
                         provider,
                         provider,
-                        validation);
-                    var textSecond = SqlCoreFacade.CompileDml(
+                        validation), label + " text-first");
+                    var textSecond = RequireCommand(SqlCoreFacade.CompileDml(
                         sql,
                         provider,
                         provider,
-                        validation);
+                        validation), label + " text-second");
 
                     var parsed = CoreSqlTextParser.ParseDml(sql, provider);
-                    var parsedFirst = SqlCoreFacade.CompileDml(
+                    var parsedFirst = RequireCommand(SqlCoreFacade.CompileDml(
                         parsed,
                         provider,
-                        validation);
-                    var parsedSecond = SqlCoreFacade.CompileDml(
+                        validation), label + " parsed-first");
+                    var parsedSecond = RequireCommand(SqlCoreFacade.CompileDml(
                         parsed,
                         provider,
-                        validation);
+                        validation), label + " parsed-second");
 
                     var freshParsed = CoreSqlTextParser.ParseDml(sql, provider);
-                    var freshParsedCommand = SqlCoreFacade.CompileDml(
+                    var freshParsedCommand = RequireCommand(SqlCoreFacade.CompileDml(
                         freshParsed,
                         provider,
-                        validation);
+                        validation), label + " fresh-parsed");
 
                     AssertEquivalent(textFirst, textSecond, label + " text-repeat");
                     AssertEquivalent(textFirst, parsedFirst, label + " text-vs-parsed");
@@ -192,7 +192,7 @@ public sealed class CoreCompilerDeterminismPropertyTests
         var third = first + 2;
         var prefix = $"u{seed % 5}";
 
-        return seed % 4 switch
+        return (seed % 4) switch
         {
             0 => $"SELECT id, name FROM users WHERE id >= {first} AND id < {second} ORDER BY id ASC",
             1 => $"SELECT id + {third} AS score, name FROM users WHERE name LIKE '{prefix}%' OR id = {first} ORDER BY id DESC",
@@ -215,6 +215,12 @@ public sealed class CoreCompilerDeterminismPropertyTests
         new(
             PolicyVersion,
             new HashSet<string>(new[] { "users" }, StringComparer.OrdinalIgnoreCase));
+
+    private static CompiledSqlCommand RequireCommand(CompiledSqlCommand? command, string label)
+    {
+        Assert.NotNull(command);
+        return command!;
+    }
 
     private static void AssertEquivalent(
         CompiledSqlCommand expected,
@@ -275,5 +281,5 @@ public sealed class CoreCompilerDeterminismPropertyTests
     private sealed record RejectedCase(
         string Name,
         string Sql,
-        Func<SqlCoreTryResult<CompiledSqlCommand>> Compile);
+        Func<SqlCoreTryResult<CompiledSqlCommand?>> Compile);
 }
