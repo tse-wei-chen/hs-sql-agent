@@ -58,8 +58,8 @@ public sealed class CompilerDeterminismPropertyTests
             SqlAgentToolType.Oracle,
             false),
         new DeterminismCase(
-            "firebird-first-skip",
-            "SELECT FIRST 5 SKIP 2 id FROM users ORDER BY id",
+            "firebird-offset-fetch",
+            "SELECT id FROM users ORDER BY id OFFSET 2 ROWS FETCH NEXT 5 ROWS ONLY",
             SqlAgentToolType.Firebird,
             SqlAgentToolType.Firebird,
             false),
