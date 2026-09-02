@@ -196,7 +196,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
             Span);
 
     private static string Alias(string value, SqlAgentToolType provider) =>
-        provider == SqlAgentToolType.Oracle
+        provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
             ? value.ToUpperInvariant()
             : value;
 
