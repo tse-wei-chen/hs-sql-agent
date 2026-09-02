@@ -51,6 +51,7 @@ public sealed class CoreCompileEvidenceTests
         Assert.Equal(SqlCapabilityMatrix.Version, evidence.CapabilityMatrixVersion);
         Assert.Equal(SqlCompileVerdict.Translated, evidence.Verdict);
         Assert.Equal(SqlCompileDecisionBoundary.Completed, evidence.DecisionBoundary);
+        Assert.Equal("SQL_COMPILE_TRANSLATED", evidence.DecisionCode);
         Assert.Equal(SqlAgentToolType.MySQL, evidence.SourceProfile.Provider);
         Assert.Equal(SqlAgentToolType.MySQL, evidence.TargetProfile.Provider);
         Assert.Equal("8.4", evidence.SourceProfile.ServerVersion);
@@ -136,6 +137,7 @@ public sealed class CoreCompileEvidenceTests
 
         Assert.Equal(SqlCompileVerdict.Rejected, evidence.Verdict);
         Assert.Equal(SqlCompileDecisionBoundary.TargetCapability, evidence.DecisionBoundary);
+        Assert.False(string.IsNullOrWhiteSpace(evidence.DecisionCode));
         Assert.Null(evidence.PlanFingerprint);
         Assert.Equal(evidence.EvidenceFingerprint, secondEvidence.EvidenceFingerprint);
     }
@@ -170,6 +172,41 @@ public sealed class CoreCompileEvidenceTests
         Assert.Same(evidence, SqlCompileEvidence.TryGetFromException(error));
         Assert.Equal(SqlCompileVerdict.Rejected, evidence.Verdict);
         Assert.Equal(SqlCompileDecisionBoundary.TargetCapability, evidence.DecisionBoundary);
+    }
+
+    [Fact]
+    public void TryCompileQuery_WithDmlStatement_ReclassifiesTranslatedInnerCommandAsRejectedApiBoundary()
+    {
+        var result = SqlCoreFacade.TryCompileQuery(
+            "UPDATE users SET name = 'Ada' WHERE id = 1",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("compile-evidence-query-kind-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.False(result.Success);
+        var evidence = Assert.IsType<SqlCompileEvidence>(result.CompileEvidence);
+        Assert.Equal(SqlCompileVerdict.Rejected, evidence.Verdict);
+        Assert.Equal(SqlCompileDecisionBoundary.InputValidation, evidence.DecisionBoundary);
+        Assert.Equal("SQL_API_STATEMENT_KIND_MISMATCH", evidence.DecisionCode);
+        Assert.Null(evidence.PlanFingerprint);
+    }
+
+    [Fact]
+    public void TryCompileDml_WithQueryStatement_ReclassifiesTranslatedInnerCommandAsRejectedApiBoundary()
+    {
+        var result = SqlCoreFacade.TryCompileDml(
+            "SELECT 1",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("compile-evidence-dml-kind-v1"));
+
+        Assert.False(result.Success);
+        var evidence = Assert.IsType<SqlCompileEvidence>(result.CompileEvidence);
+        Assert.Equal(SqlCompileVerdict.Rejected, evidence.Verdict);
+        Assert.Equal(SqlCompileDecisionBoundary.InputValidation, evidence.DecisionBoundary);
+        Assert.Equal("SQL_API_STATEMENT_KIND_MISMATCH", evidence.DecisionCode);
+        Assert.Null(evidence.PlanFingerprint);
     }
 
     [Fact]

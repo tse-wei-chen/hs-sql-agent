@@ -225,6 +225,7 @@ type SqlCompileEvidence(
     assurances: ImmutableArray<SqlCompileAssuranceEvidence>,
     verdict: SqlCompileVerdict,
     decisionBoundary: SqlCompileDecisionBoundary,
+    decisionCode: string,
     planFingerprint: string | null,
     evidenceFingerprint: string) =
     static let evidenceDataKey = "HsSqlAgent.SqlCore.CompileEvidence"
@@ -234,6 +235,7 @@ type SqlCompileEvidence(
         if isNull sourceProfile then nullArg (nameof sourceProfile)
         if isNull targetProfile then nullArg (nameof targetProfile)
         if isNull policy then nullArg (nameof policy)
+        if String.IsNullOrWhiteSpace(decisionCode) then invalidArg (nameof decisionCode) "Compile-evidence decision code cannot be empty."
         if String.IsNullOrWhiteSpace(evidenceFingerprint) then invalidArg (nameof evidenceFingerprint) "Compile-evidence fingerprint cannot be empty."
     member _.SchemaVersion = schemaVersion
     member _.CapabilityMatrixVersion = capabilityMatrixVersion
@@ -245,6 +247,7 @@ type SqlCompileEvidence(
     member _.Assurances = assurances
     member _.Verdict = verdict
     member _.DecisionBoundary = decisionBoundary
+    member _.DecisionCode = decisionCode
     member _.PlanFingerprint = planFingerprint
     member _.EvidenceFingerprint = evidenceFingerprint
     static member internal DataKey = evidenceDataKey

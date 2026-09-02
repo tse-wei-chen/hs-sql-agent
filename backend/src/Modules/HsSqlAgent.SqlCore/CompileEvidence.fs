@@ -235,7 +235,7 @@ module internal CompileEvidenceBuilder =
                 appendToken builder detail.Name
                 appendToken builder detail.Value))
 
-    let private fingerprint context verdict decisionBoundary =
+    let private fingerprint context verdict decisionBoundary decisionCode =
         let builder = StringBuilder()
         appendToken builder schemaVersion
         appendToken builder SqlCapabilityMatrix.Version
@@ -247,11 +247,14 @@ module internal CompileEvidenceBuilder =
         appendAssurances builder context.Assurances
         appendInt builder (int verdict)
         appendInt builder (int decisionBoundary)
+        appendToken builder decisionCode
         SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
-    let build context verdict decisionBoundary (planFingerprint: string | null) =
+    let build context verdict decisionBoundary decisionCode (planFingerprint: string | null) =
+        if String.IsNullOrWhiteSpace(decisionCode) then
+            invalidArg "decisionCode" "Compile-evidence decision code cannot be empty."
         let normalizedPlanFingerprint =
             if String.IsNullOrWhiteSpace(planFingerprint) then null else planFingerprint
         SqlCompileEvidence(
@@ -265,5 +268,23 @@ module internal CompileEvidenceBuilder =
             context.Assurances,
             verdict,
             decisionBoundary,
+            decisionCode,
             normalizedPlanFingerprint,
-            fingerprint context verdict decisionBoundary)
+            fingerprint context verdict decisionBoundary decisionCode)
+
+    let reclassify
+        (evidence: SqlCompileEvidence)
+        verdict
+        decisionBoundary
+        decisionCode
+        (planFingerprint: string | null) =
+
+        if isNull evidence then nullArg "evidence"
+        let context =
+            { SourceProfile = evidence.SourceProfile
+              TargetProfile = evidence.TargetProfile
+              SourceCapabilities = evidence.SourceCapabilities
+              TargetCapabilities = evidence.TargetCapabilities
+              Policy = evidence.Policy
+              Assurances = evidence.Assurances }
+        build context verdict decisionBoundary decisionCode planFingerprint
