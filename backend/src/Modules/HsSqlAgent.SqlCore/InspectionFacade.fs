@@ -197,8 +197,8 @@ module private Inspection =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> inspectExpr state item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (inspectExpr state))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (inspectExpr state))
 
         QueryFacts(
             state.Tables.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),

@@ -184,8 +184,8 @@ module internal RewriteStructuralValidation =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> validateNestedCteExpr targetRuntime item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (validateNestedCteExpr targetRuntime))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (validateNestedCteExpr targetRuntime))
 
 
     let private noFromReferenceError identifier =
@@ -447,7 +447,7 @@ module internal RewriteStructuralValidation =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> visitNestedNoFromExpression item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter visitNestedNoFromExpression)
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter visitNestedNoFromExpression)
 
 

@@ -422,8 +422,8 @@ module internal RewriteStages =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
 
     let private emptyFunction name arguments =
         { FunctionCall.Name = FunctionName.create name
@@ -966,8 +966,10 @@ module internal RewriteStages =
                             |> MergeUpdate)
                 let notMatched =
                     merge.NotMatched
-                    |> Option.map (fun insert ->
-                        { insert with Values = insert.Values |> NonEmpty.map (normalizeExpr source target) })
+                    |> Option.map (fun mergeInsert ->
+                        { mergeInsert with
+                            SourceValues =
+                                mergeInsert.SourceValues |> NonEmpty.map (normalizeExpr source target) })
                 MergeStatement
                     { merge with
                         Source =
@@ -1265,8 +1267,8 @@ module internal RewriteStages =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> validateExpr allowedTables item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (validateExpr allowedTables))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (validateExpr allowedTables))
         document
 
     type private ClauseContext =
@@ -2013,8 +2015,8 @@ module internal RewriteStages =
                     |> NonEmpty.iter (fun item ->
                         validateSemanticExpr targetRuntime AssignmentClause false false item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues
                 |> NonEmpty.iter (validateSemanticExpr targetRuntime InsertValueClause false false))
 
     let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =

@@ -269,8 +269,8 @@ module internal RewriteCapabilityValidation =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
 
     let rec private isRepeatableDistinctOperand expression =
         match expression with
@@ -511,8 +511,8 @@ module internal RewriteCapabilityValidation =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
         document
 
 

@@ -138,8 +138,8 @@ module internal RewriteSourceValidation =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> verifySourceRegexExpr regexProof item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (verifySourceRegexExpr regexProof))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (verifySourceRegexExpr regexProof))
 
     let private validateRawSourceFunction source expression =
         match Expr.unspan expression with
@@ -336,7 +336,7 @@ module internal RewriteSourceValidation =
                 | MergeUpdate assignments ->
                     assignments |> NonEmpty.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Value))
             merge.NotMatched
-            |> Option.iter (fun insert ->
-                insert.Values |> NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
+            |> Option.iter (fun mergeInsert ->
+                mergeInsert.SourceValues |> NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
 
 
