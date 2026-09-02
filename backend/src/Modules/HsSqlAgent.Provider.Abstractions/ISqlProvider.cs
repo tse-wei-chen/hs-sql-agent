@@ -35,6 +35,22 @@ public interface IProviderMetadataReader
     Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schema, string table, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Optional provider metadata contract for DML result-row semantics whose validity depends on
+/// provider-native trigger state. Implementations must fail closed when trigger metadata cannot be
+/// proven complete; returning false is an assurance that no enabled trigger exists for the exact
+/// resolved table and DML operation.
+/// </summary>
+public interface IProviderDmlResultRowMetadataReader
+{
+    Task<bool> HasEnabledDmlTriggerAsync(
+        string connectionString,
+        string schema,
+        string table,
+        DmlOperation operation,
+        CancellationToken cancellationToken = default);
+}
+
 public interface IProviderErrorMapper
 {
     Exception Map(Exception exception, string operation);

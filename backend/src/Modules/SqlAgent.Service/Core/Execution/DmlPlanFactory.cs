@@ -16,6 +16,8 @@ public sealed class DmlPlanFactory(
     CoreSqlCompiler? queryCompiler = null)
 {
     private readonly DmlRowIdentityResolver _rowIdentityResolver = new(metadataReader);
+    private readonly IProviderDmlResultRowMetadataReader? _dmlResultRowMetadataReader =
+        metadataReader as IProviderDmlResultRowMetadataReader;
     // Explicit legacy compilers remain an opt-in compatibility seam for tests/custom hosts.
     // The default production path is the F# typestate facade.
     private readonly CoreDmlCompiler? _dmlCompiler = dmlCompiler;
@@ -70,11 +72,20 @@ public sealed class DmlPlanFactory(
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedStatement);
+        var effectiveValidationContext = await PrepareResultRowValidationContextAsync(
+            connectionString,
+            resolvedStatement,
+            targetProvider,
+            validationContext,
+            operation,
+            identity.Schema,
+            identity.Table,
+            cancellationToken);
 
         var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
-            validationContext,
+            effectiveValidationContext,
             compilationPolicy,
             targetProfile);
 
@@ -166,11 +177,20 @@ public sealed class DmlPlanFactory(
             insert.Target.Span);
         var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedInsert);
+        var effectiveValidationContext = await PrepareResultRowValidationContextAsync(
+            connectionString,
+            resolvedInsert,
+            targetProvider,
+            validationContext,
+            DmlOperation.Insert,
+            targetResolution.Schema,
+            targetResolution.Table,
+            cancellationToken);
 
         var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
-            validationContext,
+            effectiveValidationContext,
             compilationPolicy,
             targetProfile);
         var previewRows = BuildInsertPreviewRows(resolvedInsert, values);
@@ -199,6 +219,56 @@ public sealed class DmlPlanFactory(
             ApprovalMode: DmlApprovalMode.InsertValues,
             InsertRows: previewRows);
     }
+
+    private async Task<SqlPlanValidationContext> PrepareResultRowValidationContextAsync(
+        string connectionString,
+        SqlStatement resolvedStatement,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlOperation operation,
+        string schema,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        if (targetProvider != SqlAgentToolType.MsSqlServer || !ReturnsRows(resolvedStatement))
+            return validationContext;
+
+        if (_dmlResultRowMetadataReader is null)
+        {
+            throw new InvalidOperationException(
+                "SQL Server OUTPUT requires provider trigger metadata support; no DML result-row metadata reader is available for the resolved target.");
+        }
+
+        var hasEnabledTrigger = await _dmlResultRowMetadataReader.HasEnabledDmlTriggerAsync(
+            connectionString,
+            schema,
+            table,
+            operation,
+            cancellationToken);
+
+        if (hasEnabledTrigger)
+        {
+            throw new InvalidOperationException(
+                $"SQL Server OUTPUT without INTO remains fail-closed because resolved target '{schema}.{table}' has an enabled {operation.ToString().ToUpperInvariant()} trigger.");
+        }
+
+        var metadataBackedContext = new SqlPlanValidationContext(
+            validationContext.PolicyVersion,
+            validationContext.AllowedTables);
+
+        return metadataBackedContext.WithDmlResultRowAssurance(
+            DmlResultRowAssurance.NoEnabledTriggers(
+                $"{schema}.{table}",
+                operation));
+    }
+
+    private static bool ReturnsRows(SqlStatement statement) => statement switch
+    {
+        InsertStatement insert => !insert.Returning.IsDefaultOrEmpty,
+        UpdateStatement update => !update.Returning.IsDefaultOrEmpty,
+        DeleteStatement delete => !delete.Returning.IsDefaultOrEmpty,
+        _ => false
+    };
 
     private CompiledSqlCommand CompileMutation(
         ParsedStatement parsed,

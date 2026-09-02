@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.SqlServer;
 
-public class MsSqlServerProvider : SqlProviderBase
+public class MsSqlServerProvider : SqlProviderBase, IProviderDmlResultRowMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
@@ -78,6 +78,67 @@ public class MsSqlServerProvider : SqlProviderBase
         var rows = await connection.QueryAsync(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
         return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE, (bool)r.IS_PRIMARY_KEY,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
+    }
+
+    public async Task<bool> HasEnabledDmlTriggerAsync(
+        string connectionString,
+        string schemaName,
+        string tableName,
+        DmlOperation operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(schemaName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+
+        var eventType = operation switch
+        {
+            DmlOperation.Insert => "INSERT",
+            DmlOperation.Update => "UPDATE",
+            DmlOperation.Delete => "DELETE",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(operation),
+                operation,
+                "SQL Server DML trigger metadata supports INSERT, UPDATE, and DELETE only.")
+        };
+
+        using var connection = CreateConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            DECLARE @qualified nvarchar(517) =
+                QUOTENAME(@schemaName) + N'.' + QUOTENAME(@tableName);
+            DECLARE @objectId int = OBJECT_ID(@qualified, N'U');
+
+            SELECT
+                @objectId AS OBJECT_ID,
+                HAS_PERMS_BY_NAME(@qualified, 'OBJECT', 'VIEW DEFINITION') AS CAN_VIEW_DEFINITION,
+                CAST(CASE WHEN @objectId IS NOT NULL AND EXISTS (
+                    SELECT 1
+                    FROM sys.triggers tr
+                    JOIN sys.trigger_events te ON te.object_id = tr.object_id
+                    WHERE tr.parent_id = @objectId
+                      AND tr.is_disabled = 0
+                      AND te.type_desc = @eventType
+                ) THEN 1 ELSE 0 END AS bit) AS HAS_ENABLED_TRIGGER;";
+
+        var row = await connection.QuerySingleAsync(new CommandDefinition(
+            sql,
+            new { schemaName, tableName, eventType },
+            cancellationToken: cancellationToken));
+
+        if (row.OBJECT_ID is null)
+        {
+            throw new InvalidOperationException(
+                $"SQL Server trigger metadata could not resolve target table '{schemaName}.{tableName}'.");
+        }
+
+        if (row.CAN_VIEW_DEFINITION is null || Convert.ToInt32(row.CAN_VIEW_DEFINITION) != 1)
+        {
+            throw new InvalidOperationException(
+                $"SQL Server OUTPUT trigger assurance for '{schemaName}.{tableName}' requires VIEW DEFINITION metadata visibility; Core remains fail-closed when trigger metadata completeness cannot be proven.");
+        }
+
+        return (bool)row.HAS_ENABLED_TRIGGER;
     }
 
     public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
