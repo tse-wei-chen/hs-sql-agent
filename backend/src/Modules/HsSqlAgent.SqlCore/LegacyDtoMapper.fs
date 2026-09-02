@@ -138,7 +138,9 @@ type QueryDefinitionCoreMapper private () =
             ctes,
             definition.Distinct,
             projection,
-            QueryDefinitionCoreMapper.MapSource(definition),
+            (match QueryDefinitionCoreMapper.MapSource(definition) with
+             | None -> null
+             | Some source -> source),
             joins,
             QueryDefinitionCoreMapper.MapWhereList(definition.WhereColumnsAndValues),
             groupBy,
@@ -148,15 +150,16 @@ type QueryDefinitionCoreMapper private () =
             (if includeTail then definition.Offset else Nullable()),
             unknown)
 
-    static member private MapSource(definition: QueryDefinition) : TableSource | null =
+    static member private MapSource(definition: QueryDefinition) : TableSource option =
         match definition.FromQuery with
         | null ->
-            if String.IsNullOrWhiteSpace(definition.TableName) then null
+            if String.IsNullOrWhiteSpace(definition.TableName) then None
             else
-                NamedTableSource(
-                    QueryDefinitionCoreMapper.Identifier(definition.TableName),
-                    QueryDefinitionCoreMapper.NormalizeAlias(definition.Alias),
-                    unknown) :> TableSource
+                Some (
+                    NamedTableSource(
+                        QueryDefinitionCoreMapper.Identifier(definition.TableName),
+                        QueryDefinitionCoreMapper.NormalizeAlias(definition.Alias),
+                        unknown) :> TableSource)
         | fromQuery ->
             let alias =
                 match definition.Alias with
@@ -167,7 +170,11 @@ type QueryDefinitionCoreMapper private () =
                 QueryDefinitionCoreMapper.RequireAlias(
                     alias,
                     "A derived table must have an explicit alias in the Core AST.")
-            DerivedTableSource(QueryDefinitionCoreMapper.Map(fromQuery), normalizedAlias, unknown) :> TableSource
+            Some (
+                DerivedTableSource(
+                    QueryDefinitionCoreMapper.Map(fromQuery),
+                    normalizedAlias,
+                    unknown) :> TableSource)
 
     static member private MapJoin(join: JoinCondition) =
         let source : TableSource =

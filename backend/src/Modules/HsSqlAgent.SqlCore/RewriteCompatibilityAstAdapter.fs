@@ -225,11 +225,11 @@ module internal RewriteCompatibilityAstAdapter =
                 match selector with
                 | PostgresJsonProperty key ->
                     HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property,
-                    key,
+                    (key : string | null),
                     Nullable<int>()
                 | PostgresJsonArrayIndex index ->
                     HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex,
-                    null,
+                    (null : string | null),
                     Nullable<int>(index)
             let result =
                 match resultKind with

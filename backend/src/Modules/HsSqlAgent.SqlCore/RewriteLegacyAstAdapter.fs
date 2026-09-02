@@ -234,14 +234,14 @@ module internal RewriteLegacyAstAdapter =
 
         | :? HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr as json ->
             let selector =
-                match json.SelectorKind with
-                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property
-                    when not (isNull json.PropertyKey) && not json.ArrayIndex.HasValue ->
-                    if json.PropertyKey.IndexOf(' ') >= 0 then
+                match json.SelectorKind, json.PropertyKey, json.ArrayIndex.HasValue with
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property, null, _ ->
+                    raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property, key, false ->
+                    if key.IndexOf('\u0000') >= 0 then
                         raise (SqlCompilationException("PostgreSQL JSON property selector cannot contain NUL."))
-                    PostgresJsonProperty json.PropertyKey
-                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex
-                    when isNull json.PropertyKey && json.ArrayIndex.HasValue ->
+                    PostgresJsonProperty key
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex, null, true ->
                     PostgresJsonArrayIndex json.ArrayIndex.Value
                 | _ ->
                     raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
@@ -532,13 +532,16 @@ module internal RewriteLegacyAstAdapter =
                     conflict.Assignments
                     |> Seq.map (fun assignment ->
                         let value =
-                            if isNull assignment.Value then
-                                if obj.ReferenceEquals(assignment.ProposedColumn, null) then
+                            match assignment.Value with
+                            | null ->
+                                match assignment.ProposedColumn with
+                                | null ->
                                     raise (SqlCompilationException(
                                         "INSERT conflict assignment requires either a direct proposed-row column or a structured deterministic Value expression."))
-                                ConflictProposedColumn(identifierOf assignment.ProposedColumn)
-                            else
-                                match assignment.Value |> exprOf |> ConflictValue.tryOfExpression with
+                                | proposedColumn ->
+                                    ConflictProposedColumn(identifierOf proposedColumn)
+                            | expression ->
+                                match expression |> exprOf |> ConflictValue.tryOfExpression with
                                 | Ok deterministic -> deterministic
                                 | Error message -> raise (SqlCompilationException(message))
                         { ConflictAssignment.Target = identifierOf assignment.Column

@@ -269,7 +269,7 @@ module internal SqlConcatCapabilityRules =
                 SqlServerConcatTargetMode.PlusOperator
             | _ -> sqlServerPlusFallback profile
 
-    let SqlServerTargetValidationError(targetProfile: SqlProviderCapabilityProfile | null) : string | null =
+    let SqlServerTargetValidationError(targetProfile: SqlProviderCapabilityProfile | null) : string =
         let version, compatibility, concatNull =
             match targetProfile with
             | null -> "undeclared", "undeclared", "undeclared"
@@ -658,7 +658,7 @@ module internal SqlDmlUpsertCapabilityRules =
 module internal SqlJoinCapabilityRules =
     let private sqliteMin = Version(3,39)
     let private normalize (kind: string) = kind.Trim().ToUpperInvariant()
-    let private sqliteError kind (profile: SqlProviderCapabilityProfile | null) side =
+    let private sqliteError kind (profile: SqlProviderCapabilityProfile | null) side : string | null =
         let cap = if kind = "RIGHT" then "join.right" else "join.full"
         match profile with
         | null ->
@@ -821,7 +821,7 @@ module internal SqlDistinctOnCapabilityRules =
 module internal SqlFetchPercentCapabilityRules =
     let OracleMinimumVersion = Version(12,1)
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
         if provider <> SqlAgentToolType.Oracle then
             "SQL capability 'select.fetch_percent' is not supported by " + side
             + " provider " + string provider
@@ -853,7 +853,7 @@ module internal SqlFetchWithTiesCapabilityRules =
         | SqlAgentToolType.Oracle -> Some OracleMinimumVersion
         | _ -> None
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
         match minimumVersion provider with
         | None ->
             "SQL capability 'select.fetch_with_ties' is not supported by " + side
@@ -880,7 +880,7 @@ module internal SqlFetchWithTiesCapabilityRules =
 module internal SqlLateralDerivedTableCapabilityRules =
     let PostgresMinimumVersion = Version(9,3)
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
         if provider <> SqlAgentToolType.Postgres then
             "SQL capability 'select.lateral_derived' is not supported by " + side
             + " provider " + string provider
@@ -1410,14 +1410,17 @@ module internal SqlCanonicalFunctionRegistry =
             | true, value -> value
             | _ -> null
     let IsDirectPortable(name: string) =
-        let c = Find(name)
-        not (isNull c) && c.IsDirectPortable
+        match Find(name) with
+        | null -> false
+        | contract -> contract.IsDirectPortable
     let IsAggregate(name: string) =
-        let c = Find(name)
-        not (isNull c) && c.Kind = SqlCanonicalFunctionKind.Aggregate
+        match Find(name) with
+        | null -> false
+        | contract -> contract.Kind = SqlCanonicalFunctionKind.Aggregate
     let IsWindow(name: string) =
-        let c = Find(name)
-        not (isNull c) && c.Kind = SqlCanonicalFunctionKind.Window
+        match Find(name) with
+        | null -> false
+        | contract -> contract.Kind = SqlCanonicalFunctionKind.Window
 
 type internal SqlSourceFunctionCanonicalizationKind =
     | DateAdd = 0
