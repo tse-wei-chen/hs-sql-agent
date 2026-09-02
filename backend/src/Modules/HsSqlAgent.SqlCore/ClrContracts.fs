@@ -160,10 +160,10 @@ type SqlCompileSettingEvidence(name: string, value: string) =
     member _.Name = name
     member _.Value = value
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type SqlCompileProfileEvidence(
     provider: SqlAgentToolType,
-    serverVersion: string,
+    serverVersion: string | null,
     compatibilityLevel: Nullable<int>,
     sessionModes: ImmutableArray<string>,
     sessionSettings: ImmutableArray<SqlCompileSettingEvidence>) =
@@ -188,7 +188,7 @@ type SqlCompileCapabilityEvidence(
     member _.Status = status
     member _.Detail = detail
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type SqlCompilePolicyEvidence(
     policyVersion: string,
     queryMaxRows: int,
@@ -225,7 +225,7 @@ type SqlCompileEvidence(
     assurances: ImmutableArray<SqlCompileAssuranceEvidence>,
     verdict: SqlCompileVerdict,
     decisionBoundary: SqlCompileDecisionBoundary,
-    planFingerprint: string,
+    planFingerprint: string | null,
     evidenceFingerprint: string) =
     static let evidenceDataKey = "HsSqlAgent.SqlCore.CompileEvidence"
     do

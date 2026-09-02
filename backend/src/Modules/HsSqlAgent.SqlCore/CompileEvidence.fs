@@ -100,12 +100,17 @@ module internal CompileEvidenceBuilder =
         if columns.IsDefaultOrEmpty then String.Empty
         else String.Join("|", columns)
 
+    let private nonNullText (value: string | null) =
+        match value with
+        | null -> String.Empty
+        | nonNull -> nonNull
+
     let private conflictAssuranceEvidence (assurance: DmlConflictTargetAssurance) =
         let details =
             [
                 "primaryKeyColumns", joinColumns assurance.PrimaryKeyColumns
                 "matchedUniqueKeyColumns", joinColumns assurance.MatchedUniqueKeyColumns
-                "matchedUniqueKeyName", (if isNull assurance.MatchedUniqueKeyName then String.Empty else assurance.MatchedUniqueKeyName)
+                "matchedUniqueKeyName", nonNullText assurance.MatchedUniqueKeyName
                 "matchedUniqueKeyIsPrimaryKey", assurance.MatchedUniqueKeyIsPrimaryKey.ToString(CultureInfo.InvariantCulture)
                 "enforcedUniqueKeyCount", assurance.EnforcedUniqueKeyCount.ToString(CultureInfo.InvariantCulture)
                 "hasUnsupportedEnforcedUniqueKeys", assurance.HasUnsupportedEnforcedUniqueKeys.ToString(CultureInfo.InvariantCulture)
@@ -174,12 +179,13 @@ module internal CompileEvidenceBuilder =
             assuranceEvidence conflictTargetAssurance resultRowAssurance }
 
     let private appendToken (builder: StringBuilder) (value: string | null) =
-        if isNull value then
+        match value with
+        | null ->
             builder.Append("-1:;") |> ignore
-        else
-            builder.Append(value.Length).Append(':').Append(value).Append(';') |> ignore
+        | nonNull ->
+            builder.Append(nonNull.Length).Append(':').Append(nonNull).Append(';') |> ignore
 
-    let private appendInt (builder: StringBuilder) value =
+    let private appendInt (builder: StringBuilder) (value: int) =
         appendToken builder (value.ToString(CultureInfo.InvariantCulture))
 
     let private appendBool (builder: StringBuilder) value =
