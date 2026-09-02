@@ -31,7 +31,7 @@ public sealed class RuntimeAdminControllerDbConnectionTests
 
         foreach (var name in names)
         {
-            var property = Assert.IsType<PropertyInfo>(
+            var property = Assert.IsAssignableFrom<PropertyInfo>(
                 typeof(TestDbConnectionRequest).GetProperty(name));
 
             var nullability = context.Create(property);
