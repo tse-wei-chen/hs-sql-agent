@@ -21,11 +21,11 @@ public static class RuntimeServerProfileVerifier
         }
 
         var identity = NormalizeIdentity(openConnection.ServerVersion);
-        return new VerifiedRuntimeServerProfile(
-            new SqlProviderCapabilityProfile(
-                provider,
-                ServerVersion: ParseServerVersion(identity)),
-            identity);
+        var serverVersion = ParseServerVersion(identity);
+        var targetProfile = serverVersion is null
+            ? new SqlProviderCapabilityProfile(provider)
+            : new SqlProviderCapabilityProfile(provider, ServerVersion: serverVersion);
+        return new VerifiedRuntimeServerProfile(targetProfile, identity);
     }
 
     public static void EnsureMatches(

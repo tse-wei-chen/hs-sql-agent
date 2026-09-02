@@ -162,7 +162,7 @@ public sealed class SqlServerGrammarMatrixTests
                 new CanonicalPagingExpectation(10, 5)))
     ];
 
-    public static IEnumerable<object[]> SqlServerCteGrammarMatrix()
+    public static IEnumerable<object?[]> SqlServerCteGrammarMatrix()
     {
         foreach (var (cteForm, body, root, paging) in
                  SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Paging))

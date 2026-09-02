@@ -102,7 +102,7 @@ public sealed class OracleGrammarMatrixTests
             "FETCH NEXT", new CanonicalPagingExpectation(10, 5)))
     ];
 
-    public static IEnumerable<object[]> OracleCteGrammarMatrix()
+    public static IEnumerable<object?[]> OracleCteGrammarMatrix()
     {
         foreach (var (cteForm, body, root, tail) in
                  SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Tails))

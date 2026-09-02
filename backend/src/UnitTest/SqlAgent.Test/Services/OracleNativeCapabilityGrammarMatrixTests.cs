@@ -109,7 +109,7 @@ public sealed class OracleNativeCapabilityGrammarMatrixTests
                 true))
     ];
 
-    public static IEnumerable<object[]> OracleNativeCapabilityMatrix()
+    public static IEnumerable<object?[]> OracleNativeCapabilityMatrix()
     {
         foreach (var (placement, source, ordering, fetch) in
                  SyntaxGrammarMatrix.Product(

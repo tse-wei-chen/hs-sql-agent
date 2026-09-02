@@ -386,8 +386,8 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             "ON DUPLICATE KEY UPDATE;__core_proposed")
     ];
 
-    public static IEnumerable<object[]> NativeDmlMatrix() =>
-        Cases.Select(item => new object[]
+    public static IEnumerable<object?[]> NativeDmlMatrix() =>
+        Cases.Select(item => new object?[]
         {
             item.Name,
             item.Sql,

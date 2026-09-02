@@ -10,9 +10,9 @@ namespace SqlAgent.Test.Services;
 
 public sealed class DialectDmlGrammarMatrixTests
 {
-    public static IEnumerable<object[]> SixDialectDmlMatrix() =>
+    public static IEnumerable<object?[]> SixDialectDmlMatrix() =>
         DmlGrammarMatrixCases.All()
-            .Select(item => new object[]
+            .Select(item => new object?[]
             {
                 item.Name,
                 item.Dialect,

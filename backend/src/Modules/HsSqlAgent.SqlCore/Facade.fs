@@ -23,7 +23,7 @@ type private SqlCoreTryState<'T> =
 type SqlCoreTryResult<'T> private (
     state: SqlCoreTryState<'T>,
     diagnostics: IReadOnlyList<string>,
-    compileEvidence: SqlCompileEvidence) =
+    compileEvidence: SqlCompileEvidence | null) =
 
     static let noTypedDiagnostics : IReadOnlyList<SqlDiagnostic> =
         Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>
@@ -62,7 +62,7 @@ type SqlCoreTryResult<'T> private (
     static member internal CapturedSuccess(
         value: 'T,
         diagnostics: IReadOnlyList<string>,
-        compileEvidence: SqlCompileEvidence) =
+        compileEvidence: SqlCompileEvidence | null) =
         SqlCoreTryResult<'T>(
             CapturedSuccess value,
             diagnostics,
@@ -73,7 +73,7 @@ type SqlCoreTryResult<'T> private (
         errorMessage: string,
         diagnostics: IReadOnlyList<string>,
         typedDiagnostics: IReadOnlyList<SqlDiagnostic>,
-        compileEvidence: SqlCompileEvidence) =
+        compileEvidence: SqlCompileEvidence | null) =
         SqlCoreTryResult<'T>(
             CapturedFailure(
                 errorCode,
@@ -156,12 +156,13 @@ module private FacadeResult =
             | _ -> "SQLCORE_ERROR"
 
     let private typedDiagnosticsFor (ex: exn) =
-        match ex with
-        | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
-            singletonDiagnostic parseError.Diagnostic
-        | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
-            singletonDiagnostic compilationError.Diagnostic
-        | _ ->
+        let directDiagnostic : SqlDiagnostic | null =
+            match ex with
+            | :? SqlParseException as parseError -> parseError.Diagnostic
+            | :? SqlCompilationException as compilationError -> compilationError.Diagnostic
+            | _ -> null
+        match directDiagnostic with
+        | null ->
             match dataDiagnostic ex with
             | Some diagnostic -> singletonDiagnostic diagnostic
             | None ->
@@ -191,6 +192,7 @@ module private FacadeResult =
                             ex.Message,
                             null))
                 | _ -> noTypedDiagnostics
+        | diagnostic -> singletonDiagnostic diagnostic
 
     let private evidenceForValue<'T> (value: 'T) =
         match box value with

@@ -102,7 +102,7 @@ public sealed class FirebirdGrammarMatrixTests
             new CanonicalPagingExpectation(10, 5)))
     ];
 
-    public static IEnumerable<object[]> FirebirdCteGrammarMatrix()
+    public static IEnumerable<object?[]> FirebirdCteGrammarMatrix()
     {
         foreach (var (cteForm, body, root, tail) in
                  SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Tails))

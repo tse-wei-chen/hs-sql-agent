@@ -1,4 +1,3 @@
-#nowarn "3261" "3262"
 
 namespace HsSqlAgent.SqlCore.Rewrite
 
@@ -246,12 +245,13 @@ module internal RewriteFacadeAdapter =
         let outputAssurance =
             if target <> SqlAgentToolType.MsSqlServer then
                 OutputAssuranceNotRequired
-            elif isNull resultRowAssurance then
-                MissingSqlServerOutputAssurance
             else
-                AssuredNoEnabledOutputTriggers(
-                    resultRowAssurance.TargetTable,
-                    resultRowAssurance.Operation)
+                match resultRowAssurance with
+                | null -> MissingSqlServerOutputAssurance
+                | assurance ->
+                    AssuredNoEnabledOutputTriggers(
+                        assurance.TargetTable,
+                        assurance.Operation)
 
         { Returning = returning
           ReturningExpression =
@@ -397,10 +397,16 @@ module internal RewriteFacadeAdapter =
         (targetProfile: SqlProviderCapabilityProfile | null) =
 
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        if not (isNull sourceProfile) && sourceProfile.Provider <> source then
+        match sourceProfile with
+        | null -> ()
+        | profile when profile.Provider <> source ->
             invalidArg "sourceProfile" "Source capability profile provider does not match source dialect."
-        if not (isNull targetProfile) && targetProfile.Provider <> target then
+        | _ -> ()
+        match targetProfile with
+        | null -> ()
+        | profile when profile.Provider <> target ->
             invalidArg "targetProfile" "Target capability profile provider does not match target provider."
+        | _ -> ()
 
         let semantics = sourceSemantics source sourceProfile
         let parserDialect = sourceDialect source
@@ -541,12 +547,13 @@ module internal RewriteFacadeAdapter =
     let private exceptionDecisionBoundary (ex: exn) =
         let fromDiagnostic (diagnostic: SqlDiagnostic) =
             decisionBoundaryForStage diagnostic.Stage
-        match ex with
-        | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
-            fromDiagnostic parseError.Diagnostic
-        | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
-            fromDiagnostic compilationError.Diagnostic
-        | _ ->
+        let directDiagnostic : SqlDiagnostic | null =
+            match ex with
+            | :? SqlParseException as parseError -> parseError.Diagnostic
+            | :? SqlCompilationException as compilationError -> compilationError.Diagnostic
+            | _ -> null
+        match directDiagnostic with
+        | null ->
             match ex.Data[diagnosticDataKey] with
             | :? SqlDiagnostic as diagnostic -> fromDiagnostic diagnostic
             | _ ->
@@ -556,15 +563,17 @@ module internal RewriteFacadeAdapter =
                 | :? ArgumentException -> SqlCompileDecisionBoundary.InputValidation
                 | :? InvalidOperationException -> SqlCompileDecisionBoundary.SemanticValidation
                 | _ -> SqlCompileDecisionBoundary.InputValidation
+        | diagnostic -> fromDiagnostic diagnostic
 
     let private exceptionDecisionCode (ex: exn) =
         let diagnosticCode (diagnostic: SqlDiagnostic) = diagnostic.Code
-        match ex with
-        | :? SqlParseException as parseError when not (isNull parseError.Diagnostic) ->
-            diagnosticCode parseError.Diagnostic
-        | :? SqlCompilationException as compilationError when not (isNull compilationError.Diagnostic) ->
-            diagnosticCode compilationError.Diagnostic
-        | _ ->
+        let directDiagnostic : SqlDiagnostic | null =
+            match ex with
+            | :? SqlParseException as parseError -> parseError.Diagnostic
+            | :? SqlCompilationException as compilationError -> compilationError.Diagnostic
+            | _ -> null
+        match directDiagnostic with
+        | null ->
             match ex.Data[diagnosticDataKey] with
             | :? SqlDiagnostic as diagnostic -> diagnosticCode diagnostic
             | _ ->
@@ -574,6 +583,7 @@ module internal RewriteFacadeAdapter =
                 | :? SqlCompilationException -> "SQL_COMPILATION_ERROR"
                 | :? ArgumentException -> "INVALID_ARGUMENT"
                 | _ -> "SQLCORE_ERROR"
+        | diagnostic -> diagnosticCode diagnostic
 
     let private attachRejectedEvidence context (ex: exn) =
         let existing = SqlCompileEvidence.TryGetFromException(ex)
@@ -796,12 +806,16 @@ module internal RewriteFacadeAdapter =
                 policy
                 allowed
         try
-            if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
-                // Preserve the source-dialect syntax check without making RawSql the executable source
-                // of truth. Callers of the compatibility ParsedStatement API may intentionally replace
-                // Statement after parsing; compilation must consume that statement, not silently reparse
-                // the original text.
-                parseSourceValidated parsed.RawSql source parsed.SourceProfile |> ignore
+            if parsed.EnforceSourceDialectSyntax then
+                match parsed.RawSql with
+                | null -> ()
+                | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
+                | rawSql ->
+                    // Preserve the source-dialect syntax check without making RawSql the executable source
+                    // of truth. Callers of the compatibility ParsedStatement API may intentionally replace
+                    // Statement after parsing; compilation must consume that statement, not silently reparse
+                    // the original text.
+                    parseSourceValidated rawSql source parsed.SourceProfile |> ignore
             let rendered =
                 runParsed
                     (compileOptions

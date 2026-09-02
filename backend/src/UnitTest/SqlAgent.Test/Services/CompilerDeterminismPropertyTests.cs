@@ -21,7 +21,7 @@ public sealed class CompilerDeterminismPropertyTests
 
     public sealed record RejectedCase(
         string Name,
-        Func<SqlCoreTryResult<CompiledSqlCommand?>> Compile);
+        Func<SqlCoreTryResult<CompiledSqlCommand>> Compile);
 
     public static TheoryData<DeterminismCase> PositiveCorpus => new()
     {

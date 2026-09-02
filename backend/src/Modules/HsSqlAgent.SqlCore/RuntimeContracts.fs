@@ -46,7 +46,7 @@ type DmlFingerprintService private () =
                 typeName + ":" + JsonSerializer.Serialize(nonNullValue, valueType)
 
     static member ComputePlanFingerprint(mutationCommand: CompiledSqlCommand, policyVersion: string) =
-        if isNull mutationCommand then nullArg "mutationCommand"
+        if Object.ReferenceEquals(mutationCommand, null) then nullArg "mutationCommand"
         if String.IsNullOrWhiteSpace(policyVersion) then invalidArg "policyVersion" "Policy version cannot be empty."
         use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
         DmlFingerprintService.Append(hash, mutationCommand.TargetProvider.ToString())

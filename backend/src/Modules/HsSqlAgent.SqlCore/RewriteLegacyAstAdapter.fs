@@ -1,4 +1,3 @@
-#nowarn "3261" "3262"
 
 namespace HsSqlAgent.SqlCore.Rewrite
 
@@ -236,14 +235,21 @@ module internal RewriteLegacyAstAdapter =
         | :? HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr as json ->
             let selector =
                 match json.SelectorKind with
-                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property
-                    when not (isNull json.PropertyKey) && not json.ArrayIndex.HasValue ->
-                    if json.PropertyKey.IndexOf(' ') >= 0 then
-                        raise (SqlCompilationException("PostgreSQL JSON property selector cannot contain NUL."))
-                    PostgresJsonProperty json.PropertyKey
-                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex
-                    when isNull json.PropertyKey && json.ArrayIndex.HasValue ->
-                    PostgresJsonArrayIndex json.ArrayIndex.Value
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property ->
+                    match json.PropertyKey with
+                    | null ->
+                        raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
+                    | key when json.ArrayIndex.HasValue ->
+                        raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
+                    | key ->
+                        if key.IndexOf('\u0000') >= 0 then
+                            raise (SqlCompilationException("PostgreSQL JSON property selector cannot contain NUL."))
+                        PostgresJsonProperty key
+                | HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex ->
+                    match json.PropertyKey, json.ArrayIndex.HasValue with
+                    | null, true -> PostgresJsonArrayIndex json.ArrayIndex.Value
+                    | _ ->
+                        raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
                 | _ ->
                     raise (SqlCompilationException("Invalid PostgreSQL JSON selector compatibility shape."))
             let result =
@@ -533,13 +539,16 @@ module internal RewriteLegacyAstAdapter =
                     conflict.Assignments
                     |> Seq.map (fun assignment ->
                         let value =
-                            if isNull assignment.Value then
-                                if obj.ReferenceEquals(assignment.ProposedColumn, null) then
+                            match assignment.Value with
+                            | null ->
+                                match assignment.ProposedColumn with
+                                | null ->
                                     raise (SqlCompilationException(
                                         "INSERT conflict assignment requires either a direct proposed-row column or a structured deterministic Value expression."))
-                                ConflictProposedColumn(identifierOf assignment.ProposedColumn)
-                            else
-                                match assignment.Value |> exprOf |> ConflictValue.tryOfExpression with
+                                | proposedColumn ->
+                                    ConflictProposedColumn(identifierOf proposedColumn)
+                            | expression ->
+                                match expression |> exprOf |> ConflictValue.tryOfExpression with
                                 | Ok deterministic -> deterministic
                                 | Error message -> raise (SqlCompilationException(message))
                         { ConflictAssignment.Target = identifierOf assignment.Column

@@ -1,4 +1,3 @@
-#nowarn "3261" "3262"
 
 namespace HsSqlAgent.SqlCore.SqlTranslation.Diagnostics
 
@@ -178,7 +177,7 @@ module private FunctionCatalog =
 
 [<Sealed>]
 type FunctionRegistry(definitions: IEnumerable<FunctionDefinition>) =
-    let values = if isNull definitions then nullArg "definitions" else definitions |> Seq.toArray
+    let values = if Object.ReferenceEquals(definitions, null) then nullArg "definitions" else definitions |> Seq.toArray
     interface IFunctionRegistry with
         member _.Find(dialect, functionName, argumentCount) =
             values

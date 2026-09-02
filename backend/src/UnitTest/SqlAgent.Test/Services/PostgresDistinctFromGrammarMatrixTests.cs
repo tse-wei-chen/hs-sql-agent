@@ -133,7 +133,7 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
             "<=>")
     ];
 
-    public static IEnumerable<object[]> PositiveMatrix()
+    public static IEnumerable<object?[]> PositiveMatrix()
     {
         foreach (var op in Operators)
         foreach (var operands in Operands)
@@ -150,7 +150,7 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> NativeSourceMatrix()
+    public static IEnumerable<object?[]> NativeSourceMatrix()
     {
         foreach (var source in NativeSources)
         {
@@ -173,7 +173,7 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> CrossProviderTargetMatrix()
+    public static IEnumerable<object?[]> CrossProviderTargetMatrix()
     {
         foreach (var target in CrossTargets)
         foreach (var op in Operators)
@@ -191,7 +191,7 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> UnsupportedSourceMatrix()
+    public static IEnumerable<object?[]> UnsupportedSourceMatrix()
     {
         foreach (var op in Operators)
         {
@@ -237,7 +237,7 @@ public sealed class CrossDialectDistinctFromGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> UnsupportedTargetMatrix()
+    public static IEnumerable<object?[]> UnsupportedTargetMatrix()
     {
         foreach (var op in Operators)
         {

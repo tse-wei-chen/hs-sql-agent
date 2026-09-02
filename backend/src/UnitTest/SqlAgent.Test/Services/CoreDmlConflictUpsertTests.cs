@@ -18,7 +18,7 @@ public sealed class CoreDmlConflictUpsertTests
         Assert.Equal(InsertConflictActionKind.UpdateProposedValues, conflict.Action);
         Assert.Equal(["id"], conflict.TargetColumns.Select(IdentifierText).ToArray());
         Assert.Equal(["name", "email"], conflict.Assignments.Select(x => IdentifierText(x.Column)).ToArray());
-        Assert.Equal(["name", "email"], conflict.Assignments.Select(x => IdentifierText(x.ProposedColumn)).ToArray());
+        Assert.Equal(["name", "email"], conflict.Assignments.Select(x => IdentifierText(Assert.IsType<SqlIdentifier>(x.ProposedColumn))).ToArray());
     }
 
     [Fact]

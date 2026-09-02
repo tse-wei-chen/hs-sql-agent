@@ -148,7 +148,7 @@ public sealed class CoreGrammarTokenizerFuzzTests
         ?? throw new InvalidOperationException(
             $"Tokenizer fuzz compile unexpectedly returned null for {provider}: {Escape(sql)}");
 
-    private static SqlCoreTryResult<CompiledSqlCommand?> TryCompile(
+    private static SqlCoreTryResult<CompiledSqlCommand> TryCompile(
         string sql,
         SqlAgentToolType provider) =>
         SqlCoreFacade.TryCompileQuery(

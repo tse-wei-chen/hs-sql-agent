@@ -137,7 +137,7 @@ public sealed class PostgresGrammarMatrixTests
             new TailVariant(" ORDER BY id LIMIT 10 OFFSET 2", "OFFSET"))
     ];
 
-    public static IEnumerable<object[]> PostgresCteGrammarMatrix()
+    public static IEnumerable<object?[]> PostgresCteGrammarMatrix()
     {
         foreach (var (cteForm, body, root, tail) in
                  SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Tails))

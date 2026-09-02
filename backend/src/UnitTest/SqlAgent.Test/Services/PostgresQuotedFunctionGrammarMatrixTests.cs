@@ -337,8 +337,10 @@ public sealed class PostgresQuotedFunctionGrammarMatrixTests
         string name,
         string sql,
         string _,
-        string __)
+        string tables)
     {
+        Assert.False(string.IsNullOrWhiteSpace(tables), name);
+
         var error = Assert.Throws<SqlCompilationException>(
             () => Compile(sql, SqlAgentToolType.Sqlite));
 

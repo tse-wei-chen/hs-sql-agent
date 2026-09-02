@@ -181,7 +181,7 @@ public sealed class DmlPredicateGrammarMatrixTests
                 true))
     ];
 
-    public static IEnumerable<object[]> UpdatePredicateGrammarMatrix()
+    public static IEnumerable<object?[]> UpdatePredicateGrammarMatrix()
     {
         foreach (var (dialect, assignment, predicate) in
                  SyntaxGrammarMatrix.Product(
@@ -206,7 +206,7 @@ public sealed class DmlPredicateGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> DeletePredicateGrammarMatrix()
+    public static IEnumerable<object?[]> DeletePredicateGrammarMatrix()
     {
         foreach (var (dialect, predicate) in
                  SyntaxGrammarMatrix.Product(Dialects, Predicates))
@@ -225,7 +225,7 @@ public sealed class DmlPredicateGrammarMatrixTests
         }
     }
 
-    public static IEnumerable<object[]> InsertSelectGrammarMatrix()
+    public static IEnumerable<object?[]> InsertSelectGrammarMatrix()
     {
         foreach (var (dialect, projection, predicate) in
                  SyntaxGrammarMatrix.Product(

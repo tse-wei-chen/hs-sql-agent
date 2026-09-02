@@ -111,7 +111,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
                 [Item(Column("id"))],
                 new InExpr(
                     Column("id"),
-                    ImmutableArray.Create<SqlExpr?>(
+                    ImmutableArray.Create<SqlExpr>(
                         Literal(1),
                         Literal(2),
                         Literal(3)),
@@ -137,7 +137,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
                     Item(
                         new FunctionCallExpr(
                             SqlIdentifier.Unquoted("LOWER"),
-                            ImmutableArray.Create<SqlExpr?>(Column("name")),
+                            ImmutableArray.Create<SqlExpr>(Column("name")),
                             false,
                             Span),
                         Alias("normalized_name", provider))
@@ -178,7 +178,7 @@ public sealed class CoreCompatibilityAstGeneratorPropertyTests
                 Span),
             ImmutableArray<JoinSource>.Empty,
             predicate,
-            ImmutableArray<SqlExpr?>.Empty,
+            ImmutableArray<SqlExpr>.Empty,
             null!,
             orderBy is null
                 ? ImmutableArray<OrderByItem>.Empty

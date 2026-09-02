@@ -1,4 +1,3 @@
-#nowarn "3261" "3262"
 
 namespace HsSqlAgent.SqlCore.Models
 
@@ -8,6 +7,21 @@ open System.Collections.Immutable
 open System.Globalization
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Core.Compilation
+
+module private CapabilityProfile =
+    let versionAtLeast (actual: Version | null) (required: Version) =
+        match actual with
+        | null -> false
+        | version -> version.CompareTo(required) >= 0
+
+    let profileAtLeast
+        (expectedProvider: SqlAgentToolType)
+        (profile: SqlProviderCapabilityProfile | null)
+        (required: Version) =
+        match profile with
+        | null -> false
+        | value when value.Provider <> expectedProvider -> false
+        | value -> versionAtLeast value.ServerVersion required
 
 type internal SqlServerConcatTargetMode =
     | Rejected = 0
@@ -192,26 +206,35 @@ module internal SqlSourceDialectGrammarRules =
         SqlSourceDialectGrammarContract(flags, rowLimit)
 
     let UsesMySqlAnsiQuotedIdentifiers(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
-        sourceDialect = SqlAgentToolType.MySQL
-        && not (isNull sourceProfile)
-        && sourceProfile.Provider = SqlAgentToolType.MySQL
-        && (sourceProfile.HasSessionMode("ANSI_QUOTES") || sourceProfile.HasSessionMode("ANSI"))
+        if sourceDialect <> SqlAgentToolType.MySQL then false
+        else
+            match sourceProfile with
+            | null -> false
+            | profile when profile.Provider = SqlAgentToolType.MySQL ->
+                profile.HasSessionMode("ANSI_QUOTES") || profile.HasSessionMode("ANSI")
+            | _ -> false
 
     let UsesMySqlNoBackslashEscapes(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
-        sourceDialect = SqlAgentToolType.MySQL
-        && not (isNull sourceProfile)
-        && sourceProfile.Provider = SqlAgentToolType.MySQL
-        && sourceProfile.HasSessionMode("NO_BACKSLASH_ESCAPES")
+        if sourceDialect <> SqlAgentToolType.MySQL then false
+        else
+            match sourceProfile with
+            | null -> false
+            | profile when profile.Provider = SqlAgentToolType.MySQL ->
+                profile.HasSessionMode("NO_BACKSLASH_ESCAPES")
+            | _ -> false
 
 module internal SqlConcatCapabilityRules =
     let private v14 = Version(14,0)
     let private v17 = Version(17,0)
 
     let SupportsMySqlPipesAsConcat(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
-        sourceDialect = SqlAgentToolType.MySQL
-        && not (isNull sourceProfile)
-        && sourceProfile.Provider = SqlAgentToolType.MySQL
-        && (sourceProfile.HasSessionMode("PIPES_AS_CONCAT") || sourceProfile.HasSessionMode("ANSI"))
+        if sourceDialect <> SqlAgentToolType.MySQL then false
+        else
+            match sourceProfile with
+            | null -> false
+            | profile when profile.Provider = SqlAgentToolType.MySQL ->
+                profile.HasSessionMode("PIPES_AS_CONCAT") || profile.HasSessionMode("ANSI")
+            | _ -> false
 
     let SourceSemanticValidationError(sourceDialect: SqlAgentToolType) : string | null =
         if sourceDialect = SqlAgentToolType.MySQL then
@@ -223,22 +246,46 @@ module internal SqlConcatCapabilityRules =
             "Raw SQL Server source operator '||' remains fail-closed. SQL Server 2025 (17.x) introduces ANSI pipes concatenation, but Core has not yet declared a T-SQL 17.x source grammar/precedence contract."
         else null
 
-    let EvaluateSqlServerTarget(targetProfile: SqlProviderCapabilityProfile | null) =
-        if isNull targetProfile || targetProfile.Provider <> SqlAgentToolType.MsSqlServer then SqlServerConcatTargetMode.Rejected
-        elif not (isNull targetProfile.ServerVersion)
-             && targetProfile.ServerVersion.CompareTo(v17) >= 0
-             && targetProfile.CompatibilityLevel.HasValue
-             && targetProfile.CompatibilityLevel.Value >= 170 then SqlServerConcatTargetMode.NativePipes
-        elif not (isNull targetProfile.ServerVersion) && targetProfile.ServerVersion.CompareTo(v14) >= 0 then SqlServerConcatTargetMode.PlusOperator
-        else
-            let setting = targetProfile.GetSessionSetting("CONCAT_NULL_YIELDS_NULL")
-            if String.Equals(setting, "ON", StringComparison.OrdinalIgnoreCase) then SqlServerConcatTargetMode.PlusOperator
-            else SqlServerConcatTargetMode.Rejected
+    let private sqlServerPlusFallback (profile: SqlProviderCapabilityProfile) =
+        match profile.GetSessionSetting("CONCAT_NULL_YIELDS_NULL") with
+        | setting when String.Equals(setting, "ON", StringComparison.OrdinalIgnoreCase) ->
+            SqlServerConcatTargetMode.PlusOperator
+        | _ -> SqlServerConcatTargetMode.Rejected
 
-    let SqlServerTargetValidationError(targetProfile: SqlProviderCapabilityProfile | null) : string | null =
-        let version = if isNull targetProfile || isNull targetProfile.ServerVersion then "undeclared" else targetProfile.ServerVersion.ToString()
-        let compatibility = if isNull targetProfile || not targetProfile.CompatibilityLevel.HasValue then "undeclared" else string targetProfile.CompatibilityLevel.Value
-        let concatNull = if isNull targetProfile then "undeclared" else targetProfile.GetSessionSetting("CONCAT_NULL_YIELDS_NULL") |> Option.ofObj |> Option.defaultValue "undeclared"
+    let EvaluateSqlServerTarget(targetProfile: SqlProviderCapabilityProfile | null) =
+        match targetProfile with
+        | null -> SqlServerConcatTargetMode.Rejected
+        | profile when profile.Provider <> SqlAgentToolType.MsSqlServer ->
+            SqlServerConcatTargetMode.Rejected
+        | profile ->
+            match profile.ServerVersion with
+            | null -> sqlServerPlusFallback profile
+            | version
+                when version.CompareTo(v17) >= 0
+                     && profile.CompatibilityLevel.HasValue
+                     && profile.CompatibilityLevel.Value >= 170 ->
+                SqlServerConcatTargetMode.NativePipes
+            | version when version.CompareTo(v14) >= 0 ->
+                SqlServerConcatTargetMode.PlusOperator
+            | _ -> sqlServerPlusFallback profile
+
+    let SqlServerTargetValidationError(targetProfile: SqlProviderCapabilityProfile | null) : string =
+        let version, compatibility, concatNull =
+            match targetProfile with
+            | null -> "undeclared", "undeclared", "undeclared"
+            | profile ->
+                let version =
+                    match profile.ServerVersion with
+                    | null -> "undeclared"
+                    | value -> value.ToString()
+                let compatibility =
+                    if profile.CompatibilityLevel.HasValue then string profile.CompatibilityLevel.Value
+                    else "undeclared"
+                let concatNull =
+                    match profile.GetSessionSetting("CONCAT_NULL_YIELDS_NULL") with
+                    | null -> "undeclared"
+                    | value -> value
+                version, compatibility, concatNull
         "SQL capability 'expression.concat' for SQL Server requires declared runtime proof. "
         + "ServerVersion 17.0+ with CompatibilityLevel 170+ uses native ANSI ||; "
         + "ServerVersion 14.0+ uses + because CONCAT_NULL_YIELDS_NULL is always ON; "
@@ -258,10 +305,7 @@ module internal SqlDistinctFromCapabilityRules =
         (profile: SqlProviderCapabilityProfile | null)
         provider
         (minimum: Version) =
-        not (isNull profile)
-        && profile.Provider = provider
-        && not (isNull profile.ServerVersion)
-        && profile.ServerVersion.CompareTo(minimum) >= 0
+        CapabilityProfile.profileAtLeast provider profile minimum
 
     let SourceSyntaxValidationError(
         sourceDialect: SqlAgentToolType,
@@ -403,10 +447,7 @@ module internal SqlDmlUpdateFromCapabilityRules =
         (provider: SqlAgentToolType)
         (profile: SqlProviderCapabilityProfile | null)
         (minimum: Version) =
-        not (isNull profile)
-        && profile.Provider = provider
-        && not (isNull profile.ServerVersion)
-        && profile.ServerVersion.CompareTo(minimum) >= 0
+        CapabilityProfile.profileAtLeast provider profile minimum
 
     let private validationError
         (provider: SqlAgentToolType)
@@ -447,10 +488,7 @@ module internal SqlDmlDeleteUsingCapabilityRules =
         (provider: SqlAgentToolType)
         (profile: SqlProviderCapabilityProfile | null) =
         provider = SqlAgentToolType.Oracle
-        && not (isNull profile)
-        && profile.Provider = provider
-        && not (isNull profile.ServerVersion)
-        && profile.ServerVersion.CompareTo(OracleMinimumVersion) >= 0
+        && CapabilityProfile.profileAtLeast provider profile OracleMinimumVersion
 
     let SourceValidationError(
         provider: SqlAgentToolType,
@@ -487,10 +525,7 @@ module internal SqlDmlReturningExpressionCapabilityRules =
         (provider: SqlAgentToolType)
         (profile: SqlProviderCapabilityProfile | null)
         (minimum: Version) =
-        not (isNull profile)
-        && profile.Provider = provider
-        && not (isNull profile.ServerVersion)
-        && profile.ServerVersion.CompareTo(minimum) >= 0
+        CapabilityProfile.profileAtLeast provider profile minimum
 
     let private validationError
         (provider: SqlAgentToolType)
@@ -526,7 +561,8 @@ module internal SqlDmlReturningExpressionCapabilityRules =
 module internal SqlDmlReturningCapabilityRules =
     let private sqliteVersion = Version(3,35)
     let private firebirdVersion = Version(5,0)
-    let private atLeast (actual: Version) required = not (isNull actual) && actual.CompareTo(required) >= 0
+    let private atLeast (actual: Version | null) required =
+        CapabilityProfile.versionAtLeast actual required
 
     let SourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version | null) : string | null =
         let supported =
@@ -551,9 +587,9 @@ module internal SqlDmlReturningCapabilityRules =
             match provider with
             | SqlAgentToolType.Postgres -> true
             | SqlAgentToolType.Sqlite ->
-                not (isNull targetProfile) && targetProfile.Provider = provider && atLeast targetProfile.ServerVersion sqliteVersion
+                CapabilityProfile.profileAtLeast provider targetProfile sqliteVersion
             | SqlAgentToolType.Firebird ->
-                not (isNull targetProfile) && targetProfile.Provider = provider && atLeast targetProfile.ServerVersion firebirdVersion
+                CapabilityProfile.profileAtLeast provider targetProfile firebirdVersion
             | _ -> false
         if supported then null
         else
@@ -584,9 +620,10 @@ module internal SqlDmlMergeCapabilityRules =
 module internal SqlDmlUpsertCapabilityRules =
     let private sqliteVersion = Version(3,24)
     let private mysqlAliasVersion = Version(8,0,19)
-    let private atLeastVersion (actual: Version) required = not (isNull actual) && actual.CompareTo(required) >= 0
+    let private atLeastVersion (actual: Version | null) required =
+        CapabilityProfile.versionAtLeast actual required
     let private profileAtLeast (profile: SqlProviderCapabilityProfile | null) provider required =
-        not (isNull profile) && profile.Provider = provider && atLeastVersion profile.ServerVersion required
+        CapabilityProfile.profileAtLeast provider profile required
 
     let OnConflictSourceValidationError(sourceDialect: SqlAgentToolType, sourceServerVersion: Version | null) : string | null =
         let supported =
@@ -621,13 +658,18 @@ module internal SqlDmlUpsertCapabilityRules =
 module internal SqlJoinCapabilityRules =
     let private sqliteMin = Version(3,39)
     let private normalize (kind: string) = kind.Trim().ToUpperInvariant()
-    let private sqliteError kind (profile: SqlProviderCapabilityProfile | null) side =
+    let private sqliteError (kind: string) (profile: SqlProviderCapabilityProfile | null) (side: string) : string | null =
         let cap = if kind = "RIGHT" then "join.right" else "join.full"
-        if isNull profile || isNull profile.ServerVersion then
+        match profile with
+        | null ->
             "SQL capability '" + cap + "' requires a declared SQLite " + side + " capability profile with ServerVersion 3.39+."
-        elif profile.ServerVersion.CompareTo(sqliteMin) < 0 then
-            "SQL capability '" + cap + "' requires SQLite " + side + " ServerVersion 3.39+; declared version is " + profile.ServerVersion.ToString() + "."
-        else null
+        | value ->
+            match value.ServerVersion with
+            | null ->
+                "SQL capability '" + cap + "' requires a declared SQLite " + side + " capability profile with ServerVersion 3.39+."
+            | version when version.CompareTo(sqliteMin) < 0 ->
+                "SQL capability '" + cap + "' requires SQLite " + side + " ServerVersion 3.39+; declared version is " + version.ToString() + "."
+            | _ -> (null : string | null)
 
     let SourceValidationError(joinKind: string, sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         let kind = normalize joinKind
@@ -676,18 +718,25 @@ module internal SqlRecursiveCteCapabilityRules =
             "SQL capability 'select.recursive_cte' is not supported by " + side
             + " provider " + string provider
             + "; this provider does not use the modeled WITH RECURSIVE syntax contract."
-        | Some minimum when (isNull profile || isNull profile.ServerVersion) && requiresExplicitVersion provider ->
-            "SQL capability 'select.recursive_cte' requires an explicit " + side
-            + " ServerVersion for provider " + string provider
-            + "; minimum proven version is " + minimum.ToString() + "."
-        | Some _ when isNull profile || isNull profile.ServerVersion ->
-            null
-        | Some minimum when profile.ServerVersion.CompareTo(minimum) >= 0 ->
-            null
         | Some minimum ->
-            "SQL capability 'select.recursive_cte' requires " + string provider + " " + side
-            + " ServerVersion " + minimum.ToString() + "+; declared version is "
-            + profile.ServerVersion.ToString() + "."
+            match profile with
+            | null when requiresExplicitVersion provider ->
+                "SQL capability 'select.recursive_cte' requires an explicit " + side
+                + " ServerVersion for provider " + string provider
+                + "; minimum proven version is " + minimum.ToString() + "."
+            | null -> null
+            | value ->
+                match value.ServerVersion with
+                | null when requiresExplicitVersion provider ->
+                    "SQL capability 'select.recursive_cte' requires an explicit " + side
+                    + " ServerVersion for provider " + string provider
+                    + "; minimum proven version is " + minimum.ToString() + "."
+                | null -> (null : string | null)
+                | version when version.CompareTo(minimum) >= 0 -> (null : string | null)
+                | version ->
+                    "SQL capability 'select.recursive_cte' requires " + string provider + " " + side
+                    + " ServerVersion " + minimum.ToString() + "+; declared version is "
+                    + version.ToString() + "."
 
     let SourceValidationError(
         provider: SqlAgentToolType,
@@ -772,19 +821,22 @@ module internal SqlDistinctOnCapabilityRules =
 module internal SqlFetchPercentCapabilityRules =
     let OracleMinimumVersion = Version(12,1)
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+    let private validationError (provider: SqlAgentToolType) (profile: SqlProviderCapabilityProfile | null) (side: string) : string | null =
         if provider <> SqlAgentToolType.Oracle then
             "SQL capability 'select.fetch_percent' is not supported by " + side
             + " provider " + string provider
             + "; FETCH ... PERCENT is currently modeled only as Oracle-native row-limiting semantics."
-        elif isNull profile || isNull profile.ServerVersion then
-            null
-        elif profile.ServerVersion.CompareTo(OracleMinimumVersion) >= 0 then
-            null
         else
-            "SQL capability 'select.fetch_percent' requires Oracle "
-            + side + " ServerVersion " + OracleMinimumVersion.ToString()
-            + "+; declared version is " + profile.ServerVersion.ToString() + "."
+            match profile with
+            | null -> null
+            | value ->
+                match value.ServerVersion with
+                | null -> (null : string | null)
+                | version when version.CompareTo(OracleMinimumVersion) >= 0 -> (null : string | null)
+                | version ->
+                    "SQL capability 'select.fetch_percent' requires Oracle "
+                    + side + " ServerVersion " + OracleMinimumVersion.ToString()
+                    + "+; declared version is " + version.ToString() + "."
 
     let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider sourceProfile "source"
@@ -801,18 +853,23 @@ module internal SqlFetchWithTiesCapabilityRules =
         | SqlAgentToolType.Oracle -> Some OracleMinimumVersion
         | _ -> None
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+    let private validationError (provider: SqlAgentToolType) (profile: SqlProviderCapabilityProfile | null) (side: string) : string | null =
         match minimumVersion provider with
         | None ->
             "SQL capability 'select.fetch_with_ties' is not supported by " + side
             + " provider " + string provider
             + "; FETCH ... WITH TIES remains fail-closed."
-        | Some minimum when isNull profile || isNull profile.ServerVersion -> null
-        | Some minimum when profile.ServerVersion.CompareTo(minimum) >= 0 -> null
         | Some minimum ->
-            "SQL capability 'select.fetch_with_ties' requires " + string provider + " "
-            + side + " ServerVersion " + minimum.ToString()
-            + "+; declared version is " + profile.ServerVersion.ToString() + "."
+            match profile with
+            | null -> null
+            | value ->
+                match value.ServerVersion with
+                | null -> null
+                | version when version.CompareTo(minimum) >= 0 -> null
+                | version ->
+                    "SQL capability 'select.fetch_with_ties' requires " + string provider + " "
+                    + side + " ServerVersion " + minimum.ToString()
+                    + "+; declared version is " + version.ToString() + "."
 
     let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider sourceProfile "source"
@@ -823,16 +880,21 @@ module internal SqlFetchWithTiesCapabilityRules =
 module internal SqlLateralDerivedTableCapabilityRules =
     let PostgresMinimumVersion = Version(9,3)
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
         if provider <> SqlAgentToolType.Postgres then
             "SQL capability 'select.lateral_derived' is not supported by " + side
             + " provider " + string provider
             + "; LATERAL derived-table correlation remains fail-closed."
-        elif not (isNull profile) && not (isNull profile.ServerVersion)
-             && profile.ServerVersion.CompareTo(PostgresMinimumVersion) < 0 then
-            "SQL capability 'select.lateral_derived' requires PostgreSQL " + side
-            + " ServerVersion 9.3+; declared version is " + profile.ServerVersion.ToString() + "."
-        else null
+        else
+            match profile with
+            | null -> null
+            | value ->
+                match value.ServerVersion with
+                | null -> null
+                | version when version.CompareTo(PostgresMinimumVersion) < 0 ->
+                    "SQL capability 'select.lateral_derived' requires PostgreSQL " + side
+                    + " ServerVersion 9.3+; declared version is " + version.ToString() + "."
+                | _ -> null
 
     let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider sourceProfile "source"
@@ -863,15 +925,25 @@ module internal SqlAggregateFilterCapabilityRules =
         match minimum provider with
         | None -> "SQL capability 'expression.filter' is not supported by provider " + string provider + " for " + side + " SQL."
         | Some min when provider = SqlAgentToolType.Postgres ->
-            if not (isNull profile) && not (isNull profile.ServerVersion) && profile.ServerVersion.CompareTo(min) < 0 then
-                "SQL capability 'expression.filter' requires Postgres " + side + " ServerVersion 9.4+; declared version is " + profile.ServerVersion.ToString() + "."
-            else null
+            match profile with
+            | null -> null
+            | value ->
+                match value.ServerVersion with
+                | null -> null
+                | version when version.CompareTo(min) < 0 ->
+                    "SQL capability 'expression.filter' requires Postgres " + side + " ServerVersion 9.4+; declared version is " + version.ToString() + "."
+                | _ -> null
         | Some min ->
-            if isNull profile || isNull profile.ServerVersion then
+            match profile with
+            | null ->
                 "SQL capability 'expression.filter' requires a declared " + string provider + " " + side + " capability profile with ServerVersion " + min.ToString() + "+."
-            elif profile.ServerVersion.CompareTo(min) < 0 then
-                "SQL capability 'expression.filter' requires " + string provider + " " + side + " ServerVersion " + min.ToString() + "+; declared version is " + profile.ServerVersion.ToString() + "."
-            else null
+            | value ->
+                match value.ServerVersion with
+                | null ->
+                    "SQL capability 'expression.filter' requires a declared " + string provider + " " + side + " capability profile with ServerVersion " + min.ToString() + "+."
+                | version when version.CompareTo(min) < 0 ->
+                    "SQL capability 'expression.filter' requires " + string provider + " " + side + " ServerVersion " + min.ToString() + "+; declared version is " + version.ToString() + "."
+                | _ -> null
 
     let PredicateValidationError(provider: SqlAgentToolType, side: string, feature: SqlAggregateFilterPredicateFeature) : string | null =
         if provider <> SqlAgentToolType.Oracle then null
@@ -887,10 +959,7 @@ module internal SqlAggregateFilterCapabilityRules =
 module internal SqlFirebirdTimeZoneTypeCapabilityRules =
     let MinimumVersion = Version(4,0)
     let SupportsTargetProfile(targetProfile: SqlProviderCapabilityProfile | null) =
-        not (isNull targetProfile)
-        && targetProfile.Provider = SqlAgentToolType.Firebird
-        && not (isNull targetProfile.ServerVersion)
-        && targetProfile.ServerVersion.CompareTo(MinimumVersion) >= 0
+        CapabilityProfile.profileAtLeast SqlAgentToolType.Firebird targetProfile MinimumVersion
 
     let CastSourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         if provider <> SqlAgentToolType.Firebird || SupportsTargetProfile(sourceProfile) then null
@@ -922,12 +991,13 @@ module internal SqlRegexCapabilityRules =
         match provider with
         | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL | SqlAgentToolType.Oracle -> true
         | SqlAgentToolType.MsSqlServer ->
-            not (isNull targetProfile)
-            && targetProfile.Provider = SqlAgentToolType.MsSqlServer
-            && not (isNull targetProfile.ServerVersion)
-            && targetProfile.ServerVersion.CompareTo(minVersion) >= 0
-            && targetProfile.CompatibilityLevel.HasValue
-            && targetProfile.CompatibilityLevel.Value >= 170
+            match targetProfile with
+            | null -> false
+            | profile when profile.Provider <> SqlAgentToolType.MsSqlServer -> false
+            | profile ->
+                CapabilityProfile.versionAtLeast profile.ServerVersion minVersion
+                && profile.CompatibilityLevel.HasValue
+                && profile.CompatibilityLevel.Value >= 170
         | _ -> false
 
     let ProviderValidationError(provider: SqlAgentToolType) : string | null =
@@ -989,13 +1059,17 @@ module internal SqlJsonCapabilityRules =
         if provider <> SqlAgentToolType.Postgres then
             "SQL capability 'json.operator.postgres_arrow' is PostgreSQL-native and is not supported by "
             + side + " provider " + string provider + "."
-        elif not (isNull profile)
-             && not (isNull profile.ServerVersion)
-             && profile.ServerVersion.CompareTo(PostgresArrowMinimumVersion) < 0 then
-            "SQL capability 'json.operator.postgres_arrow' requires PostgreSQL "
-            + side + " ServerVersion 9.3+; declared version is "
-            + profile.ServerVersion.ToString() + "."
-        else null
+        else
+            match profile with
+            | null -> null
+            | value ->
+                match value.ServerVersion with
+                | null -> null
+                | version when version.CompareTo(PostgresArrowMinimumVersion) < 0 ->
+                    "SQL capability 'json.operator.postgres_arrow' requires PostgreSQL "
+                    + side + " ServerVersion 9.3+; declared version is "
+                    + version.ToString() + "."
+                | _ -> null
 
     let PostgresArrowSourceValidationError(
         provider: SqlAgentToolType,
@@ -1012,10 +1086,7 @@ module internal SqlJsonCapabilityRules =
         sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         let proven =
             sourceDialect = SqlAgentToolType.MySQL
-            && not (isNull sourceProfile)
-            && sourceProfile.Provider = SqlAgentToolType.MySQL
-            && not (isNull sourceProfile.ServerVersion)
-            && sourceProfile.ServerVersion.CompareTo(MySqlArrowMinimumVersion) >= 0
+            && CapabilityProfile.profileAtLeast SqlAgentToolType.MySQL sourceProfile MySqlArrowMinimumVersion
         if proven then null
         elif sourceDialect = SqlAgentToolType.MySQL then
             "SQL capability 'json.operator.mysql_arrow' requires an explicit MySQL source capability profile with ServerVersion 5.7.9 or newer."
@@ -1339,14 +1410,17 @@ module internal SqlCanonicalFunctionRegistry =
             | true, value -> value
             | _ -> null
     let IsDirectPortable(name: string) =
-        let c = Find(name)
-        not (isNull c) && c.IsDirectPortable
+        match Find(name) with
+        | null -> false
+        | contract -> contract.IsDirectPortable
     let IsAggregate(name: string) =
-        let c = Find(name)
-        not (isNull c) && c.Kind = SqlCanonicalFunctionKind.Aggregate
+        match Find(name) with
+        | null -> false
+        | contract -> contract.Kind = SqlCanonicalFunctionKind.Aggregate
     let IsWindow(name: string) =
-        let c = Find(name)
-        not (isNull c) && c.Kind = SqlCanonicalFunctionKind.Window
+        match Find(name) with
+        | null -> false
+        | contract -> contract.Kind = SqlCanonicalFunctionKind.Window
 
 type internal SqlSourceFunctionCanonicalizationKind =
     | DateAdd = 0

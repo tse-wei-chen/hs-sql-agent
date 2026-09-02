@@ -1,4 +1,3 @@
-#nowarn "3261" "3262"
 
 namespace HsSqlAgent.SqlCore
 
@@ -246,12 +245,16 @@ type SqlCoreInspection private () =
     static member GetQueryFacts(parsed: ParsedStatement) =
         ArgumentNullException.ThrowIfNull(parsed)
 
-        if parsed.EnforceSourceDialectSyntax && not (String.IsNullOrWhiteSpace(parsed.RawSql)) then
-            RewriteFacadeAdapter.parseSourceValidated
-                parsed.RawSql
-                parsed.SourceDialect
-                parsed.SourceProfile
-            |> ignore
+        if parsed.EnforceSourceDialectSyntax then
+            match parsed.RawSql with
+            | null -> ()
+            | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
+            | rawSql ->
+                RewriteFacadeAdapter.parseSourceValidated
+                    rawSql
+                    parsed.SourceDialect
+                    parsed.SourceProfile
+                |> ignore
 
         RewriteLegacyAstAdapter.toParsed parsed.Statement
         |> RewriteBinder.bind parsed.SourceDialect

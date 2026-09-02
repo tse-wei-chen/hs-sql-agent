@@ -1,4 +1,3 @@
-#nowarn "3261" "3262"
 
 namespace HsSqlAgent.SqlCore.SqlParsing
 
@@ -19,24 +18,27 @@ type CoreSqlTextParser private () =
     static member private ValidateSourceProfile(
         sourceDialect: SqlAgentToolType,
         sourceProfile: SqlProviderCapabilityProfile | null) =
-        match SqlProviderCapabilityProfileRules.ValidationIssue(sourceProfile, sourceDialect) with
-        | SqlProviderCapabilityProfileValidationIssue.None -> ()
-        | SqlProviderCapabilityProfileValidationIssue.ProviderMismatch ->
-            raise (ArgumentException(
-                "Source capability profile declares provider "
-                + string sourceProfile.Provider
-                + ", but parser source dialect is "
-                + string sourceDialect
-                + ".",
-                "sourceProfile"))
-        | SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel ->
-            raise (ArgumentOutOfRangeException(
-                "sourceProfile",
-                sourceProfile.CompatibilityLevel,
-                "Provider compatibility level must be non-negative."))
-        | value ->
-            raise (InvalidOperationException(
-                "Unsupported source capability profile validation issue '" + string value + "'."))
+        match sourceProfile with
+        | null -> ()
+        | profile ->
+            match SqlProviderCapabilityProfileRules.ValidationIssue(profile, sourceDialect) with
+            | SqlProviderCapabilityProfileValidationIssue.None -> ()
+            | SqlProviderCapabilityProfileValidationIssue.ProviderMismatch ->
+                raise (ArgumentException(
+                    "Source capability profile declares provider "
+                    + string profile.Provider
+                    + ", but parser source dialect is "
+                    + string sourceDialect
+                    + ".",
+                    "sourceProfile"))
+            | SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel ->
+                raise (ArgumentOutOfRangeException(
+                    "sourceProfile",
+                    profile.CompatibilityLevel,
+                    "Provider compatibility level must be non-negative."))
+            | value ->
+                raise (InvalidOperationException(
+                    "Unsupported source capability profile validation issue '" + string value + "'."))
 
     static member private Parse(
         sql: string,

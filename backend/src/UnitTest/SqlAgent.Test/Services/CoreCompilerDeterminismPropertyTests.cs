@@ -281,5 +281,5 @@ public sealed class CoreCompilerDeterminismPropertyTests
     private sealed record RejectedCase(
         string Name,
         string Sql,
-        Func<SqlCoreTryResult<CompiledSqlCommand?>> Compile);
+        Func<SqlCoreTryResult<CompiledSqlCommand>> Compile);
 }

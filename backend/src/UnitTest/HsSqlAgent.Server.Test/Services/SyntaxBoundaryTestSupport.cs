@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Data;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
@@ -205,10 +206,11 @@ internal sealed class BoundaryConnection(
     private string _connectionString = connectionString;
     private ConnectionState _state = ConnectionState.Closed;
 
+    [AllowNull]
     public override string ConnectionString
     {
         get => _connectionString;
-        set => _connectionString = value;
+        set => _connectionString = value ?? string.Empty;
     }
 
     public override string Database => "syntax-boundary";

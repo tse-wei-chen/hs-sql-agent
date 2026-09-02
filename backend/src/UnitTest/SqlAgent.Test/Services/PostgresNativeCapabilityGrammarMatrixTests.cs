@@ -107,7 +107,7 @@ public sealed class PostgresNativeCapabilityGrammarMatrixTests
                 true))
     ];
 
-    public static IEnumerable<object[]> PostgresNativeCapabilityMatrix()
+    public static IEnumerable<object?[]> PostgresNativeCapabilityMatrix()
     {
         foreach (var (placement, select, lateral, ordering, fetch) in
                  SyntaxGrammarMatrix.Product(

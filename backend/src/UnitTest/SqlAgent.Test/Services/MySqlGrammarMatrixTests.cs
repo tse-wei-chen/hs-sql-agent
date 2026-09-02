@@ -164,7 +164,7 @@ public sealed class MySqlGrammarMatrixTests
             new TailVariant(" ORDER BY id LIMIT 2, 10", "LIMIT"))
     ];
 
-    public static IEnumerable<object[]> MySqlCteGrammarMatrix()
+    public static IEnumerable<object?[]> MySqlCteGrammarMatrix()
     {
         foreach (var (cteForm, body, root, tail) in
                  SyntaxGrammarMatrix.Product(CteForms, Bodies, Roots, Tails))

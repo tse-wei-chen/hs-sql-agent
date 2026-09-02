@@ -1,4 +1,3 @@
-#nowarn "3261" "3262"
 
 namespace HsSqlAgent.SqlCore.Core.Mapping
 
@@ -28,9 +27,17 @@ type QueryDefinitionCoreMapper private () =
                 IdentifierPart(part, false, unknown))
         SqlIdentifier(QueryDefinitionCoreMapper.Immutable(parts), unknown)
 
-    static member private NormalizeAlias(alias: string) =
-        if String.IsNullOrWhiteSpace(alias) then Unchecked.defaultof<IdentifierPart>
-        else IdentifierPart(alias.Trim(), false, unknown)
+    static member private NormalizeAlias(alias: string | null) : IdentifierPart | null =
+        match alias with
+        | null -> null
+        | value when String.IsNullOrWhiteSpace(value) -> null
+        | value -> IdentifierPart(value.Trim(), false, unknown)
+
+    static member private RequireAlias(alias: string | null, errorMessage: string) =
+        match alias with
+        | null -> raise (InvalidOperationException(errorMessage))
+        | value when String.IsNullOrWhiteSpace(value) -> raise (InvalidOperationException(errorMessage))
+        | value -> value.Trim()
 
     static member private MapOperator(op: ArithmeticOperator) =
         match op with
@@ -54,7 +61,7 @@ type QueryDefinitionCoreMapper private () =
         let normalized =
             String.Join(
                 " ",
-                (if isNull op then "=" else op)
+                (if Object.ReferenceEquals(op, null) then "=" else op)
                     .Split(' ', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries))
                 .ToUpperInvariant()
         match normalized with
@@ -78,12 +85,15 @@ type QueryDefinitionCoreMapper private () =
 
     static member Map(definition: QueryDefinition) : SqlStatement =
         ArgumentNullException.ThrowIfNull(definition)
-        let includeTail = isNull definition.CombineConditions || definition.CombineConditions.Count = 0
-        let head = QueryDefinitionCoreMapper.MapSelectStatement(definition, includeTail)
-        if includeTail then head :> SqlStatement
-        else
+        match definition.CombineConditions with
+        | null ->
+            QueryDefinitionCoreMapper.MapSelectStatement(definition, true) :> SqlStatement
+        | conditions when conditions.Count = 0 ->
+            QueryDefinitionCoreMapper.MapSelectStatement(definition, true) :> SqlStatement
+        | conditions ->
+            let head = QueryDefinitionCoreMapper.MapSelectStatement(definition, false)
             let operations =
-                definition.CombineConditions
+                conditions
                 |> Seq.map (fun c ->
                     SetOperation(
                         QueryDefinitionCoreMapper.MapSetOperation(c.Type),
@@ -100,9 +110,10 @@ type QueryDefinitionCoreMapper private () =
 
     static member private MapSelectStatement(definition: QueryDefinition, includeTail: bool) =
         let ctes =
-            if isNull definition.CteConditions then ImmutableArray<CteDefinition>.Empty
-            else
-                definition.CteConditions
+            match definition.CteConditions with
+            | null -> ImmutableArray<CteDefinition>.Empty
+            | conditions ->
+                conditions
                 |> Seq.map (fun c ->
                     CteDefinition(
                         QueryDefinitionCoreMapper.Identifier(c.CteAliasName),
@@ -111,20 +122,25 @@ type QueryDefinitionCoreMapper private () =
                         unknown))
                 |> QueryDefinitionCoreMapper.Immutable
         let joins =
-            if isNull definition.Joins then ImmutableArray<JoinSource>.Empty
-            else definition.Joins |> Seq.map QueryDefinitionCoreMapper.MapJoin |> QueryDefinitionCoreMapper.Immutable
+            match definition.Joins with
+            | null -> ImmutableArray<JoinSource>.Empty
+            | values -> values |> Seq.map QueryDefinitionCoreMapper.MapJoin |> QueryDefinitionCoreMapper.Immutable
         let projection =
-            if isNull definition.SelectColumns then ImmutableArray<SelectItem>.Empty
-            else definition.SelectColumns |> Seq.map QueryDefinitionCoreMapper.MapSelectItem |> QueryDefinitionCoreMapper.Immutable
+            match definition.SelectColumns with
+            | null -> ImmutableArray<SelectItem>.Empty
+            | values -> values |> Seq.map QueryDefinitionCoreMapper.MapSelectItem |> QueryDefinitionCoreMapper.Immutable
         let groupBy =
-            if isNull definition.GroupByConditions then ImmutableArray<SqlExpr>.Empty
-            else definition.GroupByConditions |> Seq.map QueryDefinitionCoreMapper.MapGroupBy |> QueryDefinitionCoreMapper.Immutable
+            match definition.GroupByConditions with
+            | null -> ImmutableArray<SqlExpr>.Empty
+            | values -> values |> Seq.map QueryDefinitionCoreMapper.MapGroupBy |> QueryDefinitionCoreMapper.Immutable
 
         SelectStatement(
             ctes,
             definition.Distinct,
             projection,
-            QueryDefinitionCoreMapper.MapSource(definition),
+            (match QueryDefinitionCoreMapper.MapSource(definition) with
+             | None -> null
+             | Some source -> source),
             joins,
             QueryDefinitionCoreMapper.MapWhereList(definition.WhereColumnsAndValues),
             groupBy,
@@ -134,33 +150,48 @@ type QueryDefinitionCoreMapper private () =
             (if includeTail then definition.Offset else Nullable()),
             unknown)
 
-    static member private MapSource(definition: QueryDefinition) : TableSource =
-        if not (isNull definition.FromQuery) then
-            let alias = if String.IsNullOrWhiteSpace(definition.Alias) then definition.FromQuery.Alias else definition.Alias
-            if String.IsNullOrWhiteSpace(alias) then
-                raise (InvalidOperationException("A derived table must have an explicit alias in the Core AST."))
-            DerivedTableSource(QueryDefinitionCoreMapper.Map(definition.FromQuery), alias.Trim(), unknown) :> TableSource
-        elif String.IsNullOrWhiteSpace(definition.TableName) then
-            Unchecked.defaultof<TableSource>
-        else
-            NamedTableSource(
-                QueryDefinitionCoreMapper.Identifier(definition.TableName),
-                QueryDefinitionCoreMapper.NormalizeAlias(definition.Alias),
-                unknown) :> TableSource
+    static member private MapSource(definition: QueryDefinition) : TableSource option =
+        match definition.FromQuery with
+        | null ->
+            if String.IsNullOrWhiteSpace(definition.TableName) then None
+            else
+                Some (
+                    NamedTableSource(
+                        QueryDefinitionCoreMapper.Identifier(definition.TableName),
+                        QueryDefinitionCoreMapper.NormalizeAlias(definition.Alias),
+                        unknown) :> TableSource)
+        | fromQuery ->
+            let alias =
+                match definition.Alias with
+                | null -> fromQuery.Alias
+                | value when String.IsNullOrWhiteSpace(value) -> fromQuery.Alias
+                | value -> value
+            let normalizedAlias =
+                QueryDefinitionCoreMapper.RequireAlias(
+                    alias,
+                    "A derived table must have an explicit alias in the Core AST.")
+            Some (
+                DerivedTableSource(
+                    QueryDefinitionCoreMapper.Map(fromQuery),
+                    normalizedAlias,
+                    unknown) :> TableSource)
 
     static member private MapJoin(join: JoinCondition) =
         let source : TableSource =
-            if not (isNull join.SubQuery) then
-                if String.IsNullOrWhiteSpace(join.Alias) then
-                    raise (InvalidOperationException("A joined derived table must have an explicit alias in the Core AST."))
-                DerivedTableSource(QueryDefinitionCoreMapper.Map(join.SubQuery), join.Alias.Trim(), unknown) :> TableSource
-            else
+            match join.SubQuery with
+            | null ->
                 if String.IsNullOrWhiteSpace(join.Table) then
                     raise (InvalidOperationException("JOIN must specify either a table or a subquery."))
                 NamedTableSource(
                     QueryDefinitionCoreMapper.Identifier(join.Table),
                     QueryDefinitionCoreMapper.NormalizeAlias(join.Alias),
                     unknown) :> TableSource
+            | subQuery ->
+                let alias =
+                    QueryDefinitionCoreMapper.RequireAlias(
+                        join.Alias,
+                        "A joined derived table must have an explicit alias in the Core AST.")
+                DerivedTableSource(QueryDefinitionCoreMapper.Map(subQuery), alias, unknown) :> TableSource
 
         let predicate = QueryDefinitionCoreMapper.MapWhereList(join.OnConditions)
         if join.Type <> JoinType.Cross && isNull predicate then
@@ -177,25 +208,30 @@ type QueryDefinitionCoreMapper private () =
 
     static member private MapFunction(
         name: string,
-        arguments: IEnumerable<SelectCondition>,
+        arguments: IEnumerable<SelectCondition> | null,
         distinct: bool,
-        filter: IReadOnlyCollection<WhereCondition>,
-        window: WindowDefinition) =
+        filter: IReadOnlyCollection<WhereCondition> | null,
+        window: WindowDefinition | null) =
         let args =
-            if isNull arguments then ImmutableArray<SqlExpr>.Empty
-            else arguments |> Seq.map QueryDefinitionCoreMapper.MapExpr |> QueryDefinitionCoreMapper.Immutable
+            match arguments with
+            | null -> ImmutableArray<SqlExpr>.Empty
+            | values -> values |> Seq.map QueryDefinitionCoreMapper.MapExpr |> QueryDefinitionCoreMapper.Immutable
         let mutable result : SqlExpr =
             FunctionCallExpr(
                 QueryDefinitionCoreMapper.Identifier(name),
                 args,
                 distinct,
                 unknown) :> SqlExpr
-        if not (isNull filter) && filter.Count > 0 then
-            let predicate = QueryDefinitionCoreMapper.MapWhereList(List<WhereCondition>(filter))
-            if isNull predicate then raise (InvalidOperationException("Function FILTER for '" + name + "' cannot be empty."))
-            result <- FilterExpr(result, predicate, unknown) :> SqlExpr
-        if not (isNull window) then
-            result <- WindowedExpr(result, QueryDefinitionCoreMapper.MapWindow(window), unknown) :> SqlExpr
+        match filter with
+        | null -> ()
+        | values when values.Count = 0 -> ()
+        | values ->
+            match QueryDefinitionCoreMapper.MapWhereList(List<WhereCondition>(values)) with
+            | null -> raise (InvalidOperationException("Function FILTER for '" + name + "' cannot be empty."))
+            | predicate -> result <- FilterExpr(result, predicate, unknown) :> SqlExpr
+        match window with
+        | null -> ()
+        | value -> result <- WindowedExpr(result, QueryDefinitionCoreMapper.MapWindow(value), unknown) :> SqlExpr
         result
 
     static member private MapExpr(condition: SelectCondition) : SqlExpr =
@@ -229,10 +265,9 @@ type QueryDefinitionCoreMapper private () =
                         QueryDefinitionCoreMapper.MapWhere(c.Condition),
                         LiteralExpr(c.Value, unknown)))
                 |> QueryDefinitionCoreMapper.Immutable
-            CaseExpr(
-                branches,
-                (if isNull caseExpr.ElseValue then Unchecked.defaultof<SqlExpr> else LiteralExpr(caseExpr.ElseValue, unknown) :> SqlExpr),
-                unknown) :> SqlExpr
+            match caseExpr.ElseValue with
+            | null -> CaseExpr(branches, null, unknown) :> SqlExpr
+            | value -> CaseExpr(branches, LiteralExpr(value, unknown), unknown) :> SqlExpr
         | :? SubQuerySelectCondition as subquery ->
             SubqueryExpr(QueryDefinitionCoreMapper.Map(QueryDefinitionCoreMapper.ToDefinition(subquery)), unknown) :> SqlExpr
         | :? TemplateSqlTokenSelectCondition as token ->
@@ -253,12 +288,17 @@ type QueryDefinitionCoreMapper private () =
 
     static member private MapWindow(window: WindowDefinition) =
         let partition =
-            if isNull window.PartitionBy then ImmutableArray<SqlExpr>.Empty
-            else window.PartitionBy |> Seq.map QueryDefinitionCoreMapper.MapGroupBy |> QueryDefinitionCoreMapper.Immutable
+            match window.PartitionBy with
+            | null -> ImmutableArray<SqlExpr>.Empty
+            | values -> values |> Seq.map QueryDefinitionCoreMapper.MapGroupBy |> QueryDefinitionCoreMapper.Immutable
+        let frame : WindowFrame | null =
+            match window.Frame with
+            | null -> null
+            | value -> QueryDefinitionCoreMapper.MapWindowFrame(value)
         WindowSpec(
             partition,
             QueryDefinitionCoreMapper.MapOrderBy(window.OrderBy),
-            (if isNull window.Frame then Unchecked.defaultof<WindowFrame> else QueryDefinitionCoreMapper.MapWindowFrame(window.Frame)),
+            frame,
             unknown)
 
     static member private MapWindowFrame(frame: WindowFrameDefinition) =
@@ -267,11 +307,10 @@ type QueryDefinitionCoreMapper private () =
             | WindowFrameUnit.Rows -> WindowFrameUnitKind.Rows
             | WindowFrameUnit.Range -> WindowFrameUnitKind.Range
             | value -> raise (ArgumentOutOfRangeException("frame.Unit", value, "Unknown window frame unit."))
-        WindowFrame(
-            unitKind,
-            QueryDefinitionCoreMapper.MapWindowBound(frame.Start),
-            (if isNull frame.End then Unchecked.defaultof<WindowFrameBoundCore> else QueryDefinitionCoreMapper.MapWindowBound(frame.End)),
-            unknown)
+        let startBound = QueryDefinitionCoreMapper.MapWindowBound(frame.Start)
+        match frame.End with
+        | null -> WindowFrame(unitKind, startBound, null, unknown)
+        | value -> WindowFrame(unitKind, startBound, QueryDefinitionCoreMapper.MapWindowBound(value), unknown)
 
     static member private MapWindowBound(bound: WindowFrameBound) =
         let kind =
@@ -290,16 +329,22 @@ type QueryDefinitionCoreMapper private () =
             raise (InvalidOperationException("Window frame bound '" + string bound.Kind + "' must not carry an offset."))
         WindowFrameBoundCore(kind, bound.Offset, unknown)
 
-    static member private MapWhereList(conditions: IReadOnlyList<WhereCondition>) : SqlExpr =
-        if isNull conditions || conditions.Count = 0 then Unchecked.defaultof<SqlExpr>
-        else
-            let mutable result : SqlExpr = null
-            for condition in conditions do
+    static member private MapWhereList(conditions: IReadOnlyList<WhereCondition> | null) : SqlExpr | null =
+        match conditions with
+        | null -> null
+        | values when values.Count = 0 -> null
+        | values ->
+            let mutable result : SqlExpr option = None
+            for condition in values do
                 let current = QueryDefinitionCoreMapper.MapWhere(condition)
                 result <-
-                    if isNull result then current
-                    else BinaryExpr(result, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
-            result
+                    match result with
+                    | None -> Some current
+                    | Some previous ->
+                        Some (BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr)
+            match result with
+            | None -> null
+            | Some value -> value
 
     static member private MapWhere(condition: WhereCondition) : SqlExpr =
         let mutable result : SqlExpr =
@@ -317,9 +362,9 @@ type QueryDefinitionCoreMapper private () =
                     expression.Operator,
                     expression.RightExpression)
             | :? GroupWhereCondition as group ->
-                let mapped = QueryDefinitionCoreMapper.MapWhereList(group.Groups)
-                if isNull mapped then raise (InvalidOperationException("Empty WHERE groups are not valid Core predicates."))
-                mapped
+                match QueryDefinitionCoreMapper.MapWhereList(group.Groups) with
+                | null -> raise (InvalidOperationException("Empty WHERE groups are not valid Core predicates."))
+                | mapped -> mapped
             | :? SubQueryWhereCondition as subquery ->
                 QueryDefinitionCoreMapper.MapSubQueryWhere(subquery)
             | value ->
@@ -327,14 +372,15 @@ type QueryDefinitionCoreMapper private () =
         if condition.IsNot then result <- UnaryExpr("NOT", result, unknown) :> SqlExpr
         result
 
-    static member private MapExpressionPredicate(left: SelectCondition, opText: string, right: SelectCondition) =
+    static member private MapExpressionPredicate(left: SelectCondition, opText: string, right: SelectCondition | null) =
         let op = QueryDefinitionCoreMapper.NormalizeComparisonOperator(opText)
         let leftExpr = QueryDefinitionCoreMapper.MapExpr(left)
-        if isNull right then
+        match right with
+        | null ->
             if op = "IS" || op = "IS NOT" then IsNullExpr(leftExpr, (op = "IS NOT"), unknown) :> SqlExpr
             else raise (InvalidOperationException("Predicate operator '" + op + "' requires a right-hand expression."))
-        else
-            BinaryExpr(leftExpr, op, QueryDefinitionCoreMapper.MapExpr(right), unknown) :> SqlExpr
+        | rightExpression ->
+            BinaryExpr(leftExpr, op, QueryDefinitionCoreMapper.MapExpr(rightExpression), unknown) :> SqlExpr
 
     static member private MapBasicWhere(basic: BasicWhereCondition) =
         if String.IsNullOrWhiteSpace(basic.FieldName) then
@@ -369,14 +415,18 @@ type QueryDefinitionCoreMapper private () =
             ExistsExpr(mapped, (op = "NOT EXISTS"), unknown) :> SqlExpr
         elif op <> "IN" && op <> "NOT IN" then
             raise (InvalidOperationException("Unsupported subquery predicate operator '" + subquery.Operator + "'."))
-        elif String.IsNullOrWhiteSpace(subquery.FieldName) then
-            raise (InvalidOperationException(op + " subquery predicate requires a field name."))
         else
-            BinaryExpr(
-                ColumnExpr(QueryDefinitionCoreMapper.Identifier(subquery.FieldName), unknown),
-                op,
-                SubqueryExpr(mapped, unknown),
-                unknown) :> SqlExpr
+            match subquery.FieldName with
+            | null ->
+                raise (InvalidOperationException(op + " subquery predicate requires a field name."))
+            | fieldName when String.IsNullOrWhiteSpace(fieldName) ->
+                raise (InvalidOperationException(op + " subquery predicate requires a field name."))
+            | fieldName ->
+                BinaryExpr(
+                    ColumnExpr(QueryDefinitionCoreMapper.Identifier(fieldName), unknown),
+                    op,
+                    SubqueryExpr(mapped, unknown),
+                    unknown) :> SqlExpr
 
     static member private MapGroupBy(condition: GroupByCondition) =
         match condition with
@@ -387,16 +437,22 @@ type QueryDefinitionCoreMapper private () =
         | value ->
             raise (InvalidOperationException("Unsupported GROUP BY node for Core AST mapping: " + value.GetType().Name))
 
-    static member private MapHavingList(conditions: IReadOnlyList<HavingCondition>) : SqlExpr =
-        if isNull conditions || conditions.Count = 0 then Unchecked.defaultof<SqlExpr>
-        else
-            let mutable result : SqlExpr = null
-            for condition in conditions do
+    static member private MapHavingList(conditions: IReadOnlyList<HavingCondition> | null) : SqlExpr | null =
+        match conditions with
+        | null -> null
+        | values when values.Count = 0 -> null
+        | values ->
+            let mutable result : SqlExpr option = None
+            for condition in values do
                 let current = QueryDefinitionCoreMapper.MapHaving(condition)
                 result <-
-                    if isNull result then current
-                    else BinaryExpr(result, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr
-            result
+                    match result with
+                    | None -> Some current
+                    | Some previous ->
+                        Some (BinaryExpr(previous, (if condition.IsOr then "OR" else "AND"), current, unknown) :> SqlExpr)
+            match result with
+            | None -> null
+            | Some value -> value
 
     static member private MapHaving(condition: HavingCondition) =
         let mutable result : SqlExpr =
@@ -421,18 +477,19 @@ type QueryDefinitionCoreMapper private () =
             | :? ExpressionHavingCondition as expression ->
                 QueryDefinitionCoreMapper.MapExpressionPredicate(expression.LeftExpression, expression.Operator, expression.RightExpression)
             | :? GroupHavingCondition as group ->
-                let mapped = QueryDefinitionCoreMapper.MapHavingList(group.Groups)
-                if isNull mapped then raise (InvalidOperationException("Empty HAVING groups are not valid Core predicates."))
-                mapped
+                match QueryDefinitionCoreMapper.MapHavingList(group.Groups) with
+                | null -> raise (InvalidOperationException("Empty HAVING groups are not valid Core predicates."))
+                | mapped -> mapped
             | value ->
                 raise (InvalidOperationException("Unsupported HAVING node for Core AST mapping: " + value.GetType().Name))
         if condition.IsNot then result <- UnaryExpr("NOT", result, unknown) :> SqlExpr
         result
 
-    static member private MapOrderBy(conditions: IEnumerable<OrderByCondition>) =
-        if isNull conditions then ImmutableArray<OrderByItem>.Empty
-        else
-            conditions
+    static member private MapOrderBy(conditions: IEnumerable<OrderByCondition> | null) =
+        match conditions with
+        | null -> ImmutableArray<OrderByItem>.Empty
+        | values ->
+            values
             |> Seq.map (fun condition ->
                 let expression : SqlExpr =
                     match condition with
