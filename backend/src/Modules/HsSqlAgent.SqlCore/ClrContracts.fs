@@ -248,9 +248,9 @@ type SqlCompileEvidence(
     member _.PlanFingerprint = planFingerprint
     member _.EvidenceFingerprint = evidenceFingerprint
     static member internal DataKey = evidenceDataKey
-    static member TryGetFromException(exception: Exception) : SqlCompileEvidence =
-        ArgumentNullException.ThrowIfNull(exception)
-        match exception.Data[evidenceDataKey] with
+    static member TryGetFromException(error: Exception) : SqlCompileEvidence =
+        ArgumentNullException.ThrowIfNull(error)
+        match error.Data[evidenceDataKey] with
         | :? SqlCompileEvidence as evidence -> evidence
         | _ -> null
 
