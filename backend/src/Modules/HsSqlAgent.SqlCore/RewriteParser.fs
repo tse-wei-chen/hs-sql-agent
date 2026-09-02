@@ -1195,7 +1195,7 @@ module internal RewriteParser =
                 | _ -> None
         { Expression = expression; Alias = alias }
 
-    and private parseSqlServerOutput operation cursor =
+    and private parseSqlServerOutput (operation: DmlOperation) (cursor: Cursor) =
         let outputToken = cursor.Current
         if not (acceptKeyword "OUTPUT" cursor) then []
         else
@@ -1241,7 +1241,7 @@ module internal RewriteParser =
             while acceptSymbol ',' cursor do items.Add(parseItem())
             items |> Seq.toList
 
-    and private parseReturning cursor =
+    and private parseReturning (cursor: Cursor) =
         let returningToken = cursor.Current
         if isKeyword "RETURNING" returningToken && cursor.Dialect = SourceDialect.SqlServer then
             fail returningToken "SQL Server source grammar uses OUTPUT rather than RETURNING"
