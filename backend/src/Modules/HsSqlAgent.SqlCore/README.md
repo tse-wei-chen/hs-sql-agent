@@ -82,6 +82,11 @@ contract. Both are represented structurally and may cross-lower between those tw
 aliases for the remaining providers stay fail-closed until their mutation-specific alias grammar and
 name-resolution rules are modeled.
 
+PostgreSQL DELETE ... USING can lower to SQL Server joined DELETE for the proven no-target-alias
+shape by restating the target table in the Transact-SQL FROM source list. SQL Server source text does
+not gain PostgreSQL USING grammar, and RETURNING/OUTPUT remains independently fail-closed unless its
+own result-row contract is proven.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and

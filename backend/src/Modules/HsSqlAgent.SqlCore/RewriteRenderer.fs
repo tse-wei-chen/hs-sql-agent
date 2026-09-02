@@ -1535,10 +1535,23 @@ module internal RewriteRenderer =
             | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
                 " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
-        let mutable sql = "DELETE FROM " + renderIdentifier ctx.Provider delete.Target + targetAlias
+        let renderedTarget = renderIdentifier ctx.Provider delete.Target
+        let mutable sql = "DELETE FROM " + renderedTarget + targetAlias
         if not delete.Using.IsEmpty then
-            if ctx.Provider <> PostgreSql then invalidOp "DELETE ... USING is not supported by the target provider."
-            sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+            match ctx.Provider with
+            | PostgreSql ->
+                sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+            | SqlServer ->
+                if delete.TargetAlias.IsSome then
+                    invalidOp "SQL Server joined DELETE target aliases require FROM-scope alias declaration and are not represented by the current Core DML target-alias shape."
+                sql <-
+                    sql
+                    + " FROM "
+                    + renderedTarget
+                    + ", "
+                    + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+            | _ ->
+                invalidOp "DELETE ... USING is not supported by the target provider."
         delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
         sql + renderReturning ctx delete.Returning
 

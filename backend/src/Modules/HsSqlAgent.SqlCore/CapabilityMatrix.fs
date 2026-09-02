@@ -16,7 +16,7 @@ type SqlQuarterDatePartCapabilityRules private () =
 
 [<AbstractClass; Sealed>]
 type SqlCapabilityMatrix private () =
-    static member Version = "2026-09-02.72"
+    static member Version = "2026-09-02.73"
 
     static member private Capability(id, category, status, detail) =
         SqlCapability(id, category, status, detail)
@@ -542,7 +542,15 @@ type SqlCapabilityMatrix private () =
                     | _ ->
                         "UPDATE ... FROM remains fail-closed for this target provider.")
                 cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
-                cap("dml.delete.using","dml",(if provider=SqlAgentToolType.Postgres then translated else rejected),"DELETE USING is currently PostgreSQL-only.")
+                cap("dml.delete.using","dml",
+                    (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MsSqlServer then translated else rejected),
+                    match provider with
+                    | SqlAgentToolType.Postgres ->
+                        "PostgreSQL DELETE ... USING is represented structurally and emitted natively."
+                    | SqlAgentToolType.MsSqlServer ->
+                        "PostgreSQL DELETE ... USING without a Core DML target alias can lower to SQL Server joined DELETE by restating the target in the Transact-SQL FROM table_source. RETURNING/OUTPUT and target-alias contracts remain independently capability-gated."
+                    | _ ->
+                        "Joined DELETE remains fail-closed for this target provider until an equivalent target-row contract is proven.")
                 cap("dml.insert_select","dml",translated,"INSERT SELECT is supported for statically-known source width.")
                 cap("dml.insert_select.cte_scope","dml",translated,"Statement-root CTE INSERT SELECT placement is provider-aware.")
                 cap("dml.nested_cte_scope","dml",nestedStatus,

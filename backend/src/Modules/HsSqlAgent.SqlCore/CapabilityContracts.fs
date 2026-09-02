@@ -436,10 +436,21 @@ module internal SqlDmlUpdateFromCapabilityRules =
         validationError provider targetProfile "target"
 
 module internal SqlDmlDeleteUsingCapabilityRules =
-    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+    let SourceValidationError(provider: SqlAgentToolType) : string | null =
         if provider = SqlAgentToolType.Postgres then null
-        else "SQL capability 'dml.delete.using' remains fail-closed for provider " + string provider
-             + "; equivalent joined-delete, target-row, alias, and duplicate-match semantics are not yet proven."
+        else
+            "SQL capability 'dml.delete.using' is owned by PostgreSQL source grammar; source provider "
+            + string provider
+            + " remains fail-closed and must use its provider-native joined-delete syntax."
+
+    let TargetValidationError(provider: SqlAgentToolType) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres
+        | SqlAgentToolType.MsSqlServer -> null
+        | _ ->
+            "SQL capability 'dml.delete.using' remains fail-closed for provider "
+            + string provider
+            + "; no equivalent joined-delete lowering is proven."
 
 module internal SqlDmlReturningExpressionCapabilityRules =
     let SQLiteMinimumVersion = Version(3,35)
