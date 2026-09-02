@@ -83,9 +83,10 @@ jobs:
 
     - name: Build .NET 10 Project
       if: matrix.language == 'csharp'
+      working-directory: ./backend
       run: |
-        dotnet restore
-        dotnet build --configuration Release --no-incremental
+        dotnet restore hs-sql-agent.slnx
+        dotnet build hs-sql-agent.slnx --configuration Release --no-incremental
 
     # If the analyze step fails for one of the languages you are analyzing with
     # "We were unable to automatically build your code", modify the matrix above
