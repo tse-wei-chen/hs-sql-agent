@@ -197,6 +197,17 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             true,
             "UPDATE;RETURNING"),
         new(
+            "firebird-update-returning-expression-5",
+            "UPDATE users SET score = score + 1 WHERE id = 1 RETURNING score + 2 AS next_score",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Firebird,
+            new Version(5, 0),
+            new Version(5, 0),
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            true,
+            "UPDATE;RETURNING;next_score"),
+        new(
             "firebird-delete-returning-5",
             "DELETE FROM users WHERE id = 1 RETURNING id",
             SqlAgentToolType.Firebird,
@@ -260,16 +271,16 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     [Fact]
     public void NativeDmlMatrix_HasStableCapabilityCoverage()
     {
-        Assert.Equal(19, Cases.Length);
+        Assert.Equal(20, Cases.Length);
         Assert.Equal(
-            19,
+            20,
             Cases.Select(item => item.Name)
                 .Distinct(StringComparer.Ordinal)
                 .Count());
 
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Postgres));
         Assert.Equal(6, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
-        Assert.Equal(4, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
+        Assert.Equal(5, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MsSqlServer);
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MySQL);
         Assert.DoesNotContain(

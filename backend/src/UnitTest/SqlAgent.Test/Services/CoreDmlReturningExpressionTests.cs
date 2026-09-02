@@ -31,53 +31,45 @@ public sealed class CoreDmlReturningExpressionTests
     }
 
     [Fact]
-    public void Compile_ExpressionReturningToUnsupportedTarget_FailsClosed()
+    public void Compile_PostgresRichReturning_CrossLowersToFirebird5()
     {
         var parsed = CoreSqlTextParser.ParseDml(
-            "DELETE FROM users WHERE id = 1 RETURNING id",
+            "DELETE FROM users WHERE id = 1 RETURNING id + 1 AS next_id",
             SqlAgentToolType.Postgres);
-        parsed = WithExpression(
-            parsed,
-            new ColumnExpr(SqlIdentifier.Unquoted("id", SourceSpan.Unknown), SourceSpan.Unknown),
-            "returned_id");
-
         var firebirdProfile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Firebird,
             ServerVersion: new Version(5, 0));
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
-                parsed,
-                SqlAgentToolType.Firebird,
-                new SqlPlanValidationContext("policy-v1"),
-                targetProfile: firebirdProfile));
 
-        Assert.Contains("dml.returning.expression", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.Firebird,
+            new SqlPlanValidationContext("firebird-rich-returning-target-v1"),
+            targetProfile: firebirdProfile);
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("next_id", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Compile_ExpressionReturningFromUnsupportedRichSource_FailsClosedBeforeBinding()
+    public void Compile_Firebird5RichReturning_CrossLowersToPostgres()
     {
         var profile = new SqlProviderCapabilityProfile(
             SqlAgentToolType.Firebird,
             ServerVersion: new Version(5, 0));
         var parsed = CoreSqlTextParser.ParseDml(
-            "DELETE FROM users WHERE id = 1 RETURNING id",
+            "DELETE FROM users WHERE id = 1 RETURNING id + 1 AS next_id",
             SqlAgentToolType.Firebird,
             profile);
-        parsed = WithExpression(
+
+        var command = CoreDmlCompiler.CreateDefault().Compile(
             parsed,
-            new ColumnExpr(SqlIdentifier.Unquoted("id", SourceSpan.Unknown), SourceSpan.Unknown),
-            null);
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("firebird-rich-returning-source-v1"));
 
-        var error = Assert.Throws<SqlCompilationException>(() =>
-            CoreDmlCompiler.CreateDefault().Compile(
-                parsed,
-                SqlAgentToolType.Postgres,
-                new SqlPlanValidationContext("policy-v1")));
-
-        Assert.Contains("dml.returning.expression", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("source dialect", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("next_id", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
