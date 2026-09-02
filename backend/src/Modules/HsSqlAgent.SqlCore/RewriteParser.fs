@@ -2147,7 +2147,7 @@ module internal RewriteParser =
         expectKeyword "SET" cursor
         let assignments = ResizeArray<Assignment>()
         let seenAssignments = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        let parseAssignment () =
+        let parseAssignment () : Assignment =
             let targetColumn = identifier cursor
             let parts = Identifier.parts targetColumn
             if parts.Length <> 1 then
