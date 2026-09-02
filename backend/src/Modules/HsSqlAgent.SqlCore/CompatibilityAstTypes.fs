@@ -101,6 +101,15 @@ type FunctionCallExpr(name: SqlIdentifier, arguments: ImmutableArray<SqlExpr>, i
     member val AggregateOrderSyntax = AggregateOrderSyntaxKind.None with get, set
     member val AggregateSeparatorClause: string = null with get, set
 
+/// CLR compatibility representation of the canonical regular-expression predicate.
+/// This keeps typed regex semantics across ParsedStatement round-trips instead of
+/// relying on a reserved function-name string.
+[<Sealed>]
+type RegexExpr(value: SqlExpr, pattern: SqlExpr, span: SourceSpan) =
+    inherit SqlExpr(span)
+    member _.Value = value
+    member _.Pattern = pattern
+
 [<Sealed>]
 type FilterExpr(expression: SqlExpr, predicate: SqlExpr, span: SourceSpan) =
     inherit SqlExpr(span)

@@ -230,6 +230,9 @@ module internal RewriteLegacyAstAdapter =
             | _, Some operator -> Binary(operator, left, right)
             | _ -> failClosed ("binary operator '" + binary.Operator + "'") binary
 
+        | :? HsSqlAgent.SqlCore.Core.Ast.RegexExpr as regex ->
+            RegexMatch(exprOf regex.Value, exprOf regex.Pattern)
+
         | :? HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr as functionCall ->
             let arguments = functionCall.Arguments |> Seq.map exprOf |> Seq.toList
             let identifier = identifierOf functionCall.Name

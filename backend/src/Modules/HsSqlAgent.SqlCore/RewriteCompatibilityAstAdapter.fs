@@ -216,10 +216,9 @@ module internal RewriteCompatibilityAstAdapter =
                 expressionSpan)
 
         | Expr.RegexMatch(value, pattern) ->
-            HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
-                identifierFromText "CORE_REGEX_MATCH",
-                [ exprOf value; exprOf pattern ] |> ImmutableArray.CreateRange,
-                false,
+            HsSqlAgent.SqlCore.Core.Ast.RegexExpr(
+                exprOf value,
+                exprOf pattern,
                 expressionSpan)
 
         | Expr.FunctionCall call ->
