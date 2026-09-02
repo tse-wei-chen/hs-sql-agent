@@ -274,6 +274,28 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             false,
             "DELETE FROM; FROM ;profiles;WHERE"),
         new(
+            "oracle26-update-from",
+            "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Oracle,
+            new Version(26, 0),
+            new Version(26, 0),
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            false,
+            "UPDATE; FROM ;profiles;WHERE"),
+        new(
+            "oracle26-delete-from",
+            "DELETE FROM users FROM profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Oracle,
+            new Version(26, 0),
+            new Version(26, 0),
+            AssuranceKind.None,
+            SqlStatementKind.Delete,
+            false,
+            "DELETE FROM; FROM ;profiles;WHERE"),
+        new(
             "mysql-assured-upsert-8019",
             "INSERT INTO users (id, name) VALUES (1, 'Alice') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
             SqlAgentToolType.Postgres,
@@ -304,9 +326,9 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     [Fact]
     public void NativeDmlMatrix_HasStableCapabilityCoverage()
     {
-        Assert.Equal(23, Cases.Length);
+        Assert.Equal(25, Cases.Length);
         Assert.Equal(
-            23,
+            25,
             Cases.Select(item => item.Name)
                 .Distinct(StringComparer.Ordinal)
                 .Count());
@@ -316,9 +338,7 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
         Assert.Equal(2, Cases.Count(item => item.TargetDialect == SqlAgentToolType.MsSqlServer));
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MySQL);
-        Assert.DoesNotContain(
-            Cases,
-            item => item.TargetDialect == SqlAgentToolType.Oracle);
+        Assert.Equal(2, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Oracle));
     }
 
     [Theory]
