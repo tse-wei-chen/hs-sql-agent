@@ -160,6 +160,19 @@ public sealed class CoreDmlMergeMilestoneTests
         Assert.Contains("SQL Server", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    public void MergeAndMatchedKeywords_RemainContextualIdentifiersOutsideMergeGrammar(
+        SqlAgentToolType dialect)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT merge AS matched FROM users",
+            dialect);
+
+        Assert.IsType<SelectStatement>(parsed.Statement);
+    }
+
     private static string IdentifierText(SqlIdentifier identifier) =>
         string.Join('.', identifier.Parts.Select(part => part.Value));
 }
