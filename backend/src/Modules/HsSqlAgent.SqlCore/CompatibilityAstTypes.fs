@@ -416,6 +416,41 @@ type InsertStatement(target: NamedTableSource, columns: ImmutableArray<SqlIdenti
     member val Conflict: InsertConflictClause | null = null with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
+type MergeMatchedActionKind =
+    | Update = 0
+    | Delete = 1
+
+[<Sealed>]
+type MergeMatchedClause(kind: MergeMatchedActionKind, assignments: ImmutableArray<Assignment>, span: SourceSpan) =
+    inherit SqlNode(span)
+    member _.Kind = kind
+    member _.Assignments = assignments
+
+[<Sealed>]
+type MergeInsertClause(columns: ImmutableArray<SqlIdentifier>, values: ImmutableArray<SqlExpr>, span: SourceSpan) =
+    inherit SqlNode(span)
+    member _.Columns = columns
+    member _.Values = values
+
+[<Sealed>]
+type MergeStatement(
+    target: NamedTableSource,
+    sourceAlias: IdentifierPart,
+    sourceColumns: ImmutableArray<SqlIdentifier>,
+    sourceValues: ImmutableArray<SqlExpr>,
+    matchPredicate: SqlExpr,
+    matched: MergeMatchedClause,
+    notMatched: MergeInsertClause,
+    span: SourceSpan) =
+    inherit SqlStatement(span)
+    member _.Target = target
+    member _.SourceAlias = sourceAlias
+    member _.SourceColumns = sourceColumns
+    member _.SourceValues = sourceValues
+    member _.MatchPredicate = matchPredicate
+    member _.Matched = matched
+    member _.NotMatched = notMatched
+
 type SetOperationKind =
     | Union = 0
     | UnionAll = 1

@@ -77,6 +77,7 @@ type SqlStatementKind =
     | Insert = 1
     | Update = 2
     | Delete = 3
+    | Merge = 4
 
 type SqlDiagnosticStage =
     | Lexical = 0
