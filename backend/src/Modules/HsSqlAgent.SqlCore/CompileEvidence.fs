@@ -229,7 +229,7 @@ module internal CompileEvidenceBuilder =
                 appendToken builder detail.Name
                 appendToken builder detail.Value))
 
-    let private fingerprint context verdict decisionBoundary (planFingerprint: string | null) =
+    let private fingerprint context verdict decisionBoundary =
         let builder = StringBuilder()
         appendToken builder schemaVersion
         appendToken builder SqlCapabilityMatrix.Version
@@ -241,7 +241,6 @@ module internal CompileEvidenceBuilder =
         appendAssurances builder context.Assurances
         appendInt builder (int verdict)
         appendInt builder (int decisionBoundary)
-        appendToken builder planFingerprint
         SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
@@ -261,4 +260,4 @@ module internal CompileEvidenceBuilder =
             verdict,
             decisionBoundary,
             normalizedPlanFingerprint,
-            fingerprint context verdict decisionBoundary normalizedPlanFingerprint)
+            fingerprint context verdict decisionBoundary)
