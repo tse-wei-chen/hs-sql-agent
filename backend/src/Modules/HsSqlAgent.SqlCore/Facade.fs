@@ -23,7 +23,7 @@ type private SqlCoreTryState<'T> =
 type SqlCoreTryResult<'T> private (
     state: SqlCoreTryState<'T>,
     diagnostics: IReadOnlyList<string>,
-    compileEvidence: SqlCompileEvidence) =
+    compileEvidence: SqlCompileEvidence | null) =
 
     static let noTypedDiagnostics : IReadOnlyList<SqlDiagnostic> =
         Array.Empty<SqlDiagnostic>() :> IReadOnlyList<SqlDiagnostic>
@@ -62,7 +62,7 @@ type SqlCoreTryResult<'T> private (
     static member internal CapturedSuccess(
         value: 'T,
         diagnostics: IReadOnlyList<string>,
-        compileEvidence: SqlCompileEvidence) =
+        compileEvidence: SqlCompileEvidence | null) =
         SqlCoreTryResult<'T>(
             CapturedSuccess value,
             diagnostics,
@@ -73,7 +73,7 @@ type SqlCoreTryResult<'T> private (
         errorMessage: string,
         diagnostics: IReadOnlyList<string>,
         typedDiagnostics: IReadOnlyList<SqlDiagnostic>,
-        compileEvidence: SqlCompileEvidence) =
+        compileEvidence: SqlCompileEvidence | null) =
         SqlCoreTryResult<'T>(
             CapturedFailure(
                 errorCode,

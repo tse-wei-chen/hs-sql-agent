@@ -98,7 +98,7 @@ type SqlDiagnosticCategory =
     | Policy = 5
     | Invariant = 6
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type SqlDiagnosticSpan(start: int, length: int) =
     do
         if start < 0 then invalidArg (nameof start) "Diagnostic span start must be non-negative."
@@ -107,13 +107,13 @@ type SqlDiagnosticSpan(start: int, length: int) =
     member _.Length = length
     member _.End = start + length
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type SqlDiagnostic(
     code: string,
     stage: SqlDiagnosticStage,
     category: SqlDiagnosticCategory,
     message: string,
-    span: SqlDiagnosticSpan) =
+    span: SqlDiagnosticSpan | null) =
     do
         if String.IsNullOrWhiteSpace(code) then invalidArg (nameof code) "Diagnostic code cannot be empty."
         if String.IsNullOrWhiteSpace(message) then invalidArg (nameof message) "Diagnostic message cannot be empty."
@@ -124,7 +124,7 @@ type SqlDiagnostic(
     member _.Span = span
 
 [<Sealed>]
-type SqlParameterValue(name: string, value: obj) =
+type SqlParameterValue(name: string, value: obj | null) =
     member _.Name = name
     member _.Value = value
 
@@ -175,7 +175,7 @@ type SqlCompileSettingEvidence(name: string, value: string) =
     member _.Name = name
     member _.Value = value
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type SqlCompileProfileEvidence(
     provider: SqlAgentToolType,
     serverVersion: string | null,
@@ -203,7 +203,7 @@ type SqlCompileCapabilityEvidence(
     member _.Status = status
     member _.Detail = detail
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type SqlCompilePolicyEvidence(
     policyVersion: string,
     queryMaxRows: int,
@@ -228,7 +228,7 @@ type SqlCompileAssuranceEvidence(
     member _.Kind = kind
     member _.Details = details
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type SqlCompileEvidence(
     schemaVersion: string,
     capabilityMatrixVersion: string,
@@ -266,13 +266,13 @@ type SqlCompileEvidence(
     member _.PlanFingerprint = planFingerprint
     member _.EvidenceFingerprint = evidenceFingerprint
     static member internal DataKey = evidenceDataKey
-    static member TryGetFromException(error: Exception) : SqlCompileEvidence =
+    static member TryGetFromException(error: Exception) : SqlCompileEvidence | null =
         ArgumentNullException.ThrowIfNull(error)
         match error.Data[evidenceDataKey] with
         | :? SqlCompileEvidence as evidence -> evidence
         | _ -> null
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type CompiledSqlCommand private (
     sql: string,
     parameters: ImmutableArray<SqlParameterValue>,
@@ -280,7 +280,7 @@ type CompiledSqlCommand private (
     planFingerprint: string,
     targetProvider: SqlAgentToolType,
     returnsRows: bool,
-    compileEvidence: SqlCompileEvidence) =
+    compileEvidence: SqlCompileEvidence | null) =
 
     new(
         sql: string,
@@ -328,7 +328,7 @@ type CompiledSqlCommand private (
         planFingerprint: string,
         targetProvider: SqlAgentToolType,
         returnsRows: bool,
-        compileEvidence: SqlCompileEvidence) =
+        compileEvidence: SqlCompileEvidence | null) =
         CompiledSqlCommand(
             sql,
             parameters,
@@ -338,7 +338,7 @@ type CompiledSqlCommand private (
             returnsRows,
             compileEvidence)
 
-type SqlCompilationException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) as this =
+type SqlCompilationException(message: string, innerException: Exception | null, diagnostic: SqlDiagnostic | null) as this =
     inherit InvalidOperationException(message, innerException)
     new(message: string) = SqlCompilationException(message, null, null)
     new(message: string, innerException: Exception) = SqlCompilationException(message, innerException, null)
@@ -351,7 +351,7 @@ namespace HsSqlAgent.SqlCore.SqlParsing
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
 
-type SqlParseException(message: string, innerException: Exception, diagnostic: SqlDiagnostic) as this =
+type SqlParseException(message: string, innerException: Exception | null, diagnostic: SqlDiagnostic | null) as this =
     inherit Exception(message, innerException)
     new(message: string) = SqlParseException(message, null, null)
     new(message: string, innerException: Exception) = SqlParseException(message, innerException, null)
@@ -453,16 +453,16 @@ type SqlOffsetDateTimeValue() =
     new(value: DateTimeOffset) as this = SqlOffsetDateTimeValue() then this.Value <- value
 
 type BuildDbConnectionModelBase() =
-    member val Host: string = null with get, set
-    member val Port: string = null with get, set
-    member val Username: string = null with get, set
-    member val Password: string = null with get, set
-    member val Database: string = null with get, set
-    member val ExtraSettings: string = null with get, set
+    member val Host: string | null = null with get, set
+    member val Port: string | null = null with get, set
+    member val Username: string | null = null with get, set
+    member val Password: string | null = null with get, set
+    member val Database: string | null = null with get, set
+    member val ExtraSettings: string | null = null with get, set
 
 type BuildDbConnectionModel() =
     inherit BuildDbConnectionModelBase()
-    member val Provider: string = null with get, set
+    member val Provider = String.Empty with get, set
 
 type ColumnInfo() =
     let mutable name = String.Empty
@@ -540,7 +540,7 @@ type DmlCompilationPolicy(
 [<Sealed>]
 type DmlConflictTargetAssurance(primaryKeyColumns: ImmutableArray<string>) =
     let mutable matchedUniqueKeyColumns = ImmutableArray<string>.Empty
-    let mutable matchedUniqueKeyName: string = null
+    let mutable matchedUniqueKeyName: string | null = null
     let mutable matchedUniqueKeyIsPrimaryKey = false
     let mutable enforcedUniqueKeyCount = 0
     let mutable hasUnsupportedEnforcedUniqueKeys = false
@@ -615,13 +615,13 @@ type DmlResultRowAssurance private (targetTable: string, operation: DmlOperation
 [<Sealed>]
 type SqlPlanValidationContext private (
     policyVersion: string,
-    allowedTables: IReadOnlySet<string>,
+    allowedTables: IReadOnlySet<string> | null,
     dmlResultRowAssurance: DmlResultRowAssurance | null) =
 
     new(policyVersion: string) =
         SqlPlanValidationContext(policyVersion, null, null)
 
-    new(policyVersion: string, allowedTables: IReadOnlySet<string>) =
+    new(policyVersion: string, allowedTables: IReadOnlySet<string> | null) =
         SqlPlanValidationContext(policyVersion, allowedTables, null)
 
     member _.PolicyVersion = policyVersion
@@ -639,7 +639,7 @@ type SqlExecutionPlanPolicy(queryMaxRows: int) =
 
 [<Sealed>]
 type QueryExecutionResult(
-    rows: IReadOnlyList<IReadOnlyDictionary<string, obj>>,
+    rows: IReadOnlyList<IReadOnlyDictionary<string, obj | null>>,
     rowCount: int,
     duration: TimeSpan,
     diagnostics: IReadOnlyList<string>) =

@@ -12,7 +12,7 @@ type SourceSpan =
       End: int }
     static member Unknown = { Start = -1; End = -1 }
 
-[<AbstractClass; AllowNullLiteral>]
+[<AbstractClass>]
 type SqlNode(span: SourceSpan) =
     member _.Span = span
 
@@ -20,18 +20,18 @@ type SqlNode(span: SourceSpan) =
 type SqlStatement(span: SourceSpan) =
     inherit SqlNode(span)
 
-[<AbstractClass; AllowNullLiteral>]
+[<AbstractClass>]
 type SqlExpr(span: SourceSpan) =
     inherit SqlNode(span)
 
-[<Sealed; AllowNullLiteral>]
+[<Sealed>]
 type IdentifierPart(value: string, wasQuoted: bool, span: SourceSpan, preserveSpelling: bool) =
     new(value: string, wasQuoted: bool, span: SourceSpan) = IdentifierPart(value, wasQuoted, span, false)
     member _.Value = value
     member _.WasQuoted = wasQuoted
     member _.Span = span
     member _.PreserveSpelling = preserveSpelling
-    static member op_Implicit(value: string) : IdentifierPart =
+    static member op_Implicit(value: string) : IdentifierPart | null =
         if String.IsNullOrWhiteSpace(value) then null
         else IdentifierPart(value.Trim(), false, SourceSpan.Unknown)
 
@@ -61,7 +61,7 @@ type UnaryExpr(operatorName: string, operand: SqlExpr, span: SourceSpan) =
     member _.Operand = operand
 
 [<Sealed>]
-type BinaryExpr(left: SqlExpr, operatorName: string, right: SqlExpr, span: SourceSpan, likeEscape: string) =
+type BinaryExpr(left: SqlExpr, operatorName: string, right: SqlExpr, span: SourceSpan, likeEscape: string | null) =
     inherit SqlExpr(span)
     new(left: SqlExpr, operatorName: string, right: SqlExpr, span: SourceSpan) =
         BinaryExpr(left, operatorName, right, span, null)
@@ -99,7 +99,7 @@ type FunctionCallExpr(name: SqlIdentifier, arguments: ImmutableArray<SqlExpr>, i
     member _.IsDistinct = isDistinct
     member val AggregateOrderBy = ImmutableArray<OrderByItem>.Empty with get, set
     member val AggregateOrderSyntax = AggregateOrderSyntaxKind.None with get, set
-    member val AggregateSeparatorClause: string = null with get, set
+    member val AggregateSeparatorClause: string | null = null with get, set
 
 /// CLR compatibility representation of the canonical regular-expression predicate.
 /// This keeps typed regex semantics across ParsedStatement round-trips instead of
@@ -122,7 +122,7 @@ type JsonExtractionResultKind =
 type PostgresJsonAccessExpr(
     value: SqlExpr,
     selectorKind: PostgresJsonSelectorKind,
-    propertyKey: string,
+    propertyKey: string | null,
     arrayIndex: Nullable<int>,
     resultKind: JsonExtractionResultKind,
     span: SourceSpan) =
@@ -157,14 +157,14 @@ type WindowFrameBoundCore(kind: WindowFrameBoundKindCore, offset: Nullable<int>,
     member _.Offset = offset
 
 [<Sealed>]
-type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore, span: SourceSpan) =
+type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, span: SourceSpan) =
     inherit SqlNode(span)
     member _.Unit = unitKind
     member _.Start = startBound
     member _.End = endBound
 
 [<Sealed>]
-type WindowSpec(partitionBy: ImmutableArray<SqlExpr>, orderBy: ImmutableArray<OrderByItem>, frame: WindowFrame, span: SourceSpan) =
+type WindowSpec(partitionBy: ImmutableArray<SqlExpr>, orderBy: ImmutableArray<OrderByItem>, frame: WindowFrame | null, span: SourceSpan) =
     inherit SqlNode(span)
     member _.PartitionBy = partitionBy
     member _.OrderBy = orderBy
@@ -198,13 +198,13 @@ type CaseBranch(condition: SqlExpr, value: SqlExpr) =
     member _.Condition = condition
     member _.Value = value
 
-type CaseExpr(branches: ImmutableArray<CaseBranch>, elseExpression: SqlExpr, span: SourceSpan) =
+type CaseExpr(branches: ImmutableArray<CaseBranch>, elseExpression: SqlExpr | null, span: SourceSpan) =
     inherit SqlExpr(span)
     member _.Branches = branches
     member _.ElseExpression = elseExpression
 
 [<Sealed>]
-type SimpleCaseExpr(branches: ImmutableArray<CaseBranch>, elseExpression: SqlExpr, span: SourceSpan) =
+type SimpleCaseExpr(branches: ImmutableArray<CaseBranch>, elseExpression: SqlExpr | null, span: SourceSpan) =
     inherit CaseExpr(branches, elseExpression, span)
 
 [<Sealed>]
@@ -244,7 +244,7 @@ type TableSource(span: SourceSpan) =
     inherit SqlNode(span)
 
 [<Sealed>]
-type NamedTableSource(name: SqlIdentifier, alias: IdentifierPart, span: SourceSpan) =
+type NamedTableSource(name: SqlIdentifier, alias: IdentifierPart | null, span: SourceSpan) =
     inherit TableSource(span)
     member _.Name = name
     member _.Alias = alias
@@ -260,7 +260,7 @@ type DerivedTableSource(query: SqlStatement, alias: IdentifierPart, span: Source
     member val IsLateral = false with get, set
 
 [<Sealed>]
-type SelectItem(expression: SqlExpr, alias: IdentifierPart, span: SourceSpan) =
+type SelectItem(expression: SqlExpr, alias: IdentifierPart | null, span: SourceSpan) =
     inherit SqlNode(span)
     let normalizedAlias =
         if isNull alias then null
@@ -268,13 +268,13 @@ type SelectItem(expression: SqlExpr, alias: IdentifierPart, span: SourceSpan) =
         else alias
     member val Expression = expression with get, set
     member val Alias = normalizedAlias with get, set
-    member this.Deconstruct(expression: byref<SqlExpr>, aliasOut: byref<IdentifierPart>, spanOut: byref<SourceSpan>) =
+    member this.Deconstruct(expression: byref<SqlExpr>, aliasOut: byref<IdentifierPart | null>, spanOut: byref<SourceSpan>) =
         expression <- this.Expression
         aliasOut <- this.Alias
         spanOut <- this.Span
 
 [<Sealed>]
-type JoinSource(kind: string, source: TableSource, predicate: SqlExpr, span: SourceSpan) =
+type JoinSource(kind: string, source: TableSource, predicate: SqlExpr | null, span: SourceSpan) =
     inherit SqlNode(span)
     member _.Kind = kind
     member _.Source = source
@@ -295,11 +295,11 @@ type SelectStatement(
     ctes: ImmutableArray<CteDefinition>,
     distinct: bool,
     selectItems: ImmutableArray<SelectItem>,
-    fromSource: TableSource,
+    fromSource: TableSource | null,
     joins: ImmutableArray<JoinSource>,
-    whereExpr: SqlExpr,
+    whereExpr: SqlExpr | null,
     groupBy: ImmutableArray<SqlExpr>,
-    having: SqlExpr,
+    having: SqlExpr | null,
     orderBy: ImmutableArray<OrderByItem>,
     limit: Nullable<int>,
     offset: Nullable<int>,
@@ -340,13 +340,13 @@ type DmlReturningWildcardItem(span: SourceSpan) =
     inherit DmlReturningItem(span)
 
 [<Sealed>]
-type DmlReturningExpressionItem(expression: SqlExpr, alias: IdentifierPart, span: SourceSpan) =
+type DmlReturningExpressionItem(expression: SqlExpr, alias: IdentifierPart | null, span: SourceSpan) =
     inherit DmlReturningItem(span)
     member _.Expression = expression
     member _.Alias = alias
 
 [<Sealed>]
-type UpdateStatement(target: NamedTableSource, assignments: ImmutableArray<Assignment>, predicate: SqlExpr, span: SourceSpan) =
+type UpdateStatement(target: NamedTableSource, assignments: ImmutableArray<Assignment>, predicate: SqlExpr | null, span: SourceSpan) =
     inherit SqlStatement(span)
     member val Target = target with get, set
     member _.Assignments = assignments
@@ -358,7 +358,7 @@ type UpdateStatement(target: NamedTableSource, assignments: ImmutableArray<Assig
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 [<Sealed>]
-type DeleteStatement(target: NamedTableSource, predicate: SqlExpr, span: SourceSpan) =
+type DeleteStatement(target: NamedTableSource, predicate: SqlExpr | null, span: SourceSpan) =
     inherit SqlStatement(span)
     member val Target = target with get, set
     member _.Predicate = predicate
@@ -387,14 +387,14 @@ type InsertConflictActionKind =
     | UpdateProposedValues = 1
 
 [<Sealed>]
-type InsertConflictAssignment(column: SqlIdentifier, proposedColumn: SqlIdentifier, span: SourceSpan) =
+type InsertConflictAssignment(column: SqlIdentifier, proposedColumn: SqlIdentifier | null, span: SourceSpan) =
     inherit SqlNode(span)
     member _.Column = column
     /// Legacy direct proposed-row column. Rich conflict expressions leave this unset and use Value.
     member _.ProposedColumn = proposedColumn
     /// Closed compatibility AST expression for richer deterministic conflict-update values.
     /// Null preserves the legacy target = proposed-column constructor contract.
-    member val Value: SqlExpr = null with get, set
+    member val Value: SqlExpr | null = null with get, set
 
 [<Sealed>]
 type InsertConflictClause(
@@ -439,8 +439,8 @@ type MergeStatement(
     sourceColumns: ImmutableArray<SqlIdentifier>,
     sourceValues: ImmutableArray<SqlExpr>,
     matchPredicate: SqlExpr,
-    matched: MergeMatchedClause,
-    notMatched: MergeInsertClause,
+    matched: MergeMatchedClause | null,
+    notMatched: MergeInsertClause | null,
     span: SourceSpan) =
     inherit SqlStatement(span)
     member _.Target = target
@@ -551,7 +551,7 @@ type ParsedStatement(statement: SqlStatement, sourceDialect: SqlAgentToolType, e
     member _.SourceDialect = sourceDialect
     member val EnforceSourceDialectSyntax = enforceSourceDialectSyntax with get, set
     member val SourceProfile = sourceProfile with get, set
-    member val RawSql: string = null with get, set
+    member val RawSql: string | null = null with get, set
 
 [<Sealed>]
 type BoundStatement(statement: SqlStatement, facts: QueryFacts, sourceDialect: SqlAgentToolType) =
