@@ -413,6 +413,17 @@ module internal RewriteStages =
             delete.Using |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
             delete.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
             delete.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
+        | MergeStatement merge ->
+            merge.Source.Values |> NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+            validateAggregateExpr enforceSource source sourceProfile target targetProfile merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Value))
+            merge.NotMatched
+            |> Option.iter (fun insert ->
+                insert.Values |> NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
 
     let private emptyFunction name arguments =
         { FunctionCall.Name = FunctionName.create name
@@ -943,6 +954,28 @@ module internal RewriteStages =
                         Using = delete.Using |> List.map (normalizeSource source target)
                         Where = delete.Where |> Option.map (normalizeExpr source target)
                         Returning = normalizeReturning source target delete.Returning }
+            | MergeStatement merge ->
+                let matched =
+                    merge.Matched
+                    |> Option.map (function
+                        | MergeDelete -> MergeDelete
+                        | MergeUpdate assignments ->
+                            assignments
+                            |> NonEmpty.map (fun assignment ->
+                                { assignment with Value = normalizeExpr source target assignment.Value })
+                            |> MergeUpdate)
+                let notMatched =
+                    merge.NotMatched
+                    |> Option.map (fun insert ->
+                        { insert with Values = insert.Values |> NonEmpty.map (normalizeExpr source target) })
+                MergeStatement
+                    { merge with
+                        Source =
+                            { merge.Source with
+                                Values = merge.Source.Values |> NonEmpty.map (normalizeExpr source target) }
+                        MatchPredicate = normalizeExpr source target merge.MatchPredicate
+                        Matched = matched
+                        NotMatched = notMatched }
         { document with Statement = statement }
 
     let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile bound =
@@ -1222,6 +1255,18 @@ module internal RewriteStages =
             delete.Using |> List.iter (validateSource allowedTables)
             delete.Where |> Option.iter (validateExpr allowedTables)
             validateReturning allowedTables delete.Returning
+        | MergeStatement merge ->
+            ensureTableAllowed allowedTables merge.Target
+            merge.Source.Values |> NonEmpty.iter (validateExpr allowedTables)
+            validateExpr allowedTables merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments |> NonEmpty.iter (fun item -> validateExpr allowedTables item.Value))
+            merge.NotMatched
+            |> Option.iter (fun insert ->
+                insert.Values |> NonEmpty.iter (validateExpr allowedTables))
         document
 
     type private ClauseContext =
@@ -1955,6 +2000,22 @@ module internal RewriteStages =
             delete.Returning
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
+        | MergeStatement merge ->
+            merge.Source.Values
+            |> NonEmpty.iter (validateSemanticExpr targetRuntime InsertValueClause false false)
+            rejectVolatileMutationPredicate merge.MatchPredicate
+            validateSemanticExpr targetRuntime PredicateClause false false merge.MatchPredicate
+            merge.Matched
+            |> Option.iter (function
+                | MergeDelete -> ()
+                | MergeUpdate assignments ->
+                    assignments
+                    |> NonEmpty.iter (fun item ->
+                        validateSemanticExpr targetRuntime AssignmentClause false false item.Value))
+            merge.NotMatched
+            |> Option.iter (fun insert ->
+                insert.Values
+                |> NonEmpty.iter (validateSemanticExpr targetRuntime InsertValueClause false false))
 
     let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
         let document = Canonical.value canonical
