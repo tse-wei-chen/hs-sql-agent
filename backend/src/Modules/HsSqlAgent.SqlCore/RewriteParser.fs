@@ -1223,7 +1223,7 @@ module internal RewriteParser =
                         + "; opposite-row-image semantics remain fail-closed")
                 expectSymbol '.' cursor
 
-                if acceptSymbol '*' cursor then
+                if acceptOperator "*" cursor then
                     ReturningWildcard None
                 else
                     let column = singlePartIdentifier (identifierPart cursor)

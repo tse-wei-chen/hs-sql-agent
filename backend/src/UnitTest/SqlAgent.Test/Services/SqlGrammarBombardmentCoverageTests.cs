@@ -68,11 +68,11 @@ public sealed class SqlGrammarBombardmentCoverageTests
             NegativeDmlGrammarMutationMatrixTests.CrossProviderDmlCapabilityMatrix().Count();
 
         Assert.Equal(5189, positiveQuery);
-        Assert.Equal(431, positiveDml);
+        Assert.Equal(434, positiveDml);
         Assert.Equal(196, negativeQuery);
         Assert.Equal(83, negativeDml);
         Assert.Equal(
-            5899,
+            5902,
             positiveQuery + positiveDml + negativeQuery + negativeDml);
     }
 }

@@ -13,6 +13,9 @@ public sealed class CoreSqlServerOutputCapabilityTests
     [InlineData(DmlOperation.Insert, "INSERT INTO users (id, name) OUTPUT INSERTED.id VALUES (1, 'Alice')", "OUTPUT INSERTED.")]
     [InlineData(DmlOperation.Update, "UPDATE users SET name = 'Alice' OUTPUT INSERTED.id WHERE id = 1", "OUTPUT INSERTED.")]
     [InlineData(DmlOperation.Delete, "DELETE FROM users OUTPUT DELETED.id WHERE id = 1", "OUTPUT DELETED.")]
+    [InlineData(DmlOperation.Insert, "INSERT INTO users (id, name) OUTPUT INSERTED.* VALUES (1, 'Alice')", "OUTPUT INSERTED.*")]
+    [InlineData(DmlOperation.Update, "UPDATE users SET name = 'Alice' OUTPUT INSERTED.* WHERE id = 1", "OUTPUT INSERTED.*")]
+    [InlineData(DmlOperation.Delete, "DELETE FROM users OUTPUT DELETED.* WHERE id = 1", "OUTPUT DELETED.*")]
     public void Compile_Output_WithExactNoTriggerAssurance_RendersNativeRows(
         DmlOperation operation,
         string sql,
