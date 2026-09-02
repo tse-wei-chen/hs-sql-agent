@@ -249,12 +249,12 @@ and [<AllowNullLiteral>] NameValuePair() =
 [<AllowNullLiteral>]
 type TestDbConnectionBase() =
     member val SqlProvider = Nullable<SqlAgentToolType>() with get, set
-    member val Host: string = null with get, set
-    member val Port: string = null with get, set
-    member val Username: string = null with get, set
-    member val Password: string = null with get, set
-    member val Database: string = null with get, set
-    member val ExtraSettings: string = null with get, set
+    member val Host: string | null = null with get, set
+    member val Port: string | null = null with get, set
+    member val Username: string | null = null with get, set
+    member val Password: string | null = null with get, set
+    member val Database: string | null = null with get, set
+    member val ExtraSettings: string | null = null with get, set
 
 [<AllowNullLiteral>]
 type TestDbConnectionRequest() =
