@@ -162,7 +162,7 @@ module private FacadeResult =
             | :? SqlCompilationException as compilationError -> compilationError.Diagnostic
             | _ -> null
         match directDiagnostic with
-        | diagnostic when Object.ReferenceEquals(diagnostic, null) ->
+        | null ->
             match dataDiagnostic ex with
             | Some diagnostic -> singletonDiagnostic diagnostic
             | None ->
