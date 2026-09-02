@@ -74,18 +74,35 @@ public sealed class CoreDmlUpsertCapabilityMatrixTests
         Assert.Contains("fail-closed", capability.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Theory]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
-    [InlineData(SqlAgentToolType.Oracle)]
-    public void MergeProviders_RemainRejectedUntilCardinalityContractExists(
-        SqlAgentToolType provider)
+    [Fact]
+    public void SqlServer_DefaultMatrixRejectsButPublishesAssuredSingleRowMergePath()
     {
-        var capability = Capability(provider);
+        var capability = Capability(SqlAgentToolType.MsSqlServer);
+        var merge = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer).Capabilities,
+            x => x.Id == "dml.merge.single_row");
 
         Assert.Equal(SqlCapabilityStatus.Rejected, capability.Status);
-        Assert.Contains("MERGE", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlCapabilityStatus.Rejected, merge.Status);
+        Assert.Contains("single-row MERGE", capability.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DmlConflictTargetAssurance", merge.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("cardinality", capability.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("fail-closed", capability.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Oracle_MergeRemainsRejectedUntilOracleGrammarContractExists()
+    {
+        var capability = Capability(SqlAgentToolType.Oracle);
+        var merge = Assert.Single(
+            SqlCapabilityMatrix.ForProvider(SqlAgentToolType.Oracle).Capabilities,
+            x => x.Id == "dml.merge.single_row");
+
+        Assert.Equal(SqlCapabilityStatus.Rejected, capability.Status);
+        Assert.Equal(SqlCapabilityStatus.Rejected, merge.Status);
+        Assert.Contains("Oracle", merge.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MERGE", merge.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", merge.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

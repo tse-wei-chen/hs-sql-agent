@@ -784,10 +784,18 @@ module internal RewritePlanCapabilityValidation =
                 "SQL Server MERGE remains fail-closed without metadata-backed assurance for the complete unique or primary target match key."
                 proofs.MergeTargetKey
         let assuredSet = HashSet<string>(assured, StringComparer.OrdinalIgnoreCase)
+        let sourceColumnList = merge.Source.Columns |> NonEmpty.toList
+        if sourceColumnList.Length <> NonEmpty.length merge.Source.Values then
+            raise (SqlCompilationException(
+                "MERGE source column aliases must match the single VALUES row width exactly."))
         let sourceColumns =
             HashSet<string>(
-                merge.Source.Columns |> NonEmpty.toList |> List.map (fun column -> column.Value),
+                sourceColumnList |> List.map (fun column -> column.Value),
                 StringComparer.OrdinalIgnoreCase)
+        if sourceColumns.Count <> sourceColumnList.Length then
+            raise (SqlCompilationException("MERGE source column aliases cannot contain duplicates."))
+        if merge.Matched.IsNone && merge.NotMatched.IsNone then
+            raise (SqlCompilationException("MERGE requires at least one WHEN action."))
         let matchedTargetColumns = HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
         let rec collectMatch expression =
@@ -825,14 +833,34 @@ module internal RewritePlanCapabilityValidation =
         |> Option.iter (function
             | MergeDelete -> ()
             | MergeUpdate assignments ->
+                let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 assignments
                 |> NonEmpty.iter (fun assignment ->
+                    let parts = Identifier.parts assignment.Target
+                    if parts.Length <> 1 then
+                        raise (SqlCompilationException(
+                            "MERGE UPDATE assignment targets must be unqualified single-part columns."))
+                    let name = parts.Head.Value
+                    if not (assigned.Add name) then
+                        raise (SqlCompilationException(
+                            "MERGE UPDATE assigns column '" + name + "' more than once."))
                     validateMergeDirectValue merge.Source.Alias sourceColumns assignment.Value))
 
         merge.NotMatched
         |> Option.iter (fun insert ->
             if NonEmpty.length insert.Columns <> NonEmpty.length insert.Values then
                 raise (SqlCompilationException("MERGE INSERT columns and values must have the same width."))
+            let inserted = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            insert.Columns
+            |> NonEmpty.iter (fun identifier ->
+                let parts = Identifier.parts identifier
+                if parts.Length <> 1 then
+                    raise (SqlCompilationException(
+                        "MERGE INSERT target columns must be unqualified single-part columns."))
+                let name = parts.Head.Value
+                if not (inserted.Add name) then
+                    raise (SqlCompilationException(
+                        "MERGE INSERT target column '" + name + "' is declared more than once.")))
             insert.Values
             |> NonEmpty.iter (validateMergeDirectValue merge.Source.Alias sourceColumns))
 

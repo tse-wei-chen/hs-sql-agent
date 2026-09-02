@@ -651,6 +651,7 @@ static string StatementFamily(string typeName) =>
         "InsertStatement" => "Insert",
         "UpdateStatement" => "Update",
         "DeleteStatement" => "Delete",
+        "MergeStatement" => "Merge",
         _ => typeName
     };
 
