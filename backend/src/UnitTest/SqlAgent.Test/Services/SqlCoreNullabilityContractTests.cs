@@ -97,6 +97,15 @@ public class SqlCoreNullabilityContractTests
                 && p[0].ParameterType == typeof(string)
                 && p[3].ParameterType == typeof(SqlPlanValidationContext));
         Assert.Equal(NullabilityState.NotNull, Nullability.Create(compile.ReturnParameter).ReadState);
+
+        var tryCompile = typeof(SqlCoreFacade)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(method =>
+                method.Name == nameof(SqlCoreFacade.TryCompileQuery)
+                && method.GetParameters().Length == 5);
+        var tryReturn = Nullability.Create(tryCompile.ReturnParameter);
+        Assert.Equal(NullabilityState.NotNull, tryReturn.ReadState);
+        Assert.Equal(NullabilityState.NotNull, Assert.Single(tryReturn.GenericTypeArguments).ReadState);
     }
 
     private static void AssertNullableProperty<T>(string propertyName)

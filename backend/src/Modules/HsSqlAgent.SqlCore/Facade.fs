@@ -162,8 +162,7 @@ module private FacadeResult =
             | :? SqlCompilationException as compilationError -> compilationError.Diagnostic
             | _ -> null
         match directDiagnostic with
-        | diagnostic when not (isNull diagnostic) -> singletonDiagnostic diagnostic
-        | _ ->
+        | diagnostic when Object.ReferenceEquals(diagnostic, null) ->
             match dataDiagnostic ex with
             | Some diagnostic -> singletonDiagnostic diagnostic
             | None ->
@@ -193,6 +192,7 @@ module private FacadeResult =
                             ex.Message,
                             null))
                 | _ -> noTypedDiagnostics
+        | diagnostic -> singletonDiagnostic diagnostic
 
     let private evidenceForValue<'T> (value: 'T) =
         match box value with
