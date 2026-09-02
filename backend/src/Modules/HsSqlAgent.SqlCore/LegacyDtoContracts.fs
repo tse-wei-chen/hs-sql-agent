@@ -220,9 +220,10 @@ and JoinCondition() =
     member val Table = String.Empty with get, set
     member _.SubQuery
         with get() =
-            if isNull subQuery then null
-            elif String.IsNullOrWhiteSpace(subQuery.TableName) && isNull subQuery.FromQuery then null
-            else subQuery
+            match subQuery with
+            | null -> null
+            | value when String.IsNullOrWhiteSpace(value.TableName) && isNull value.FromQuery -> null
+            | value -> value
         and set value = subQuery <- value
     member val Alias: string | null = null with get, set
     member val Type = JoinType.Inner with get, set

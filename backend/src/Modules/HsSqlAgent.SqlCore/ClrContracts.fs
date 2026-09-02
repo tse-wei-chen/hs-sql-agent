@@ -397,17 +397,28 @@ type SqlProviderCapabilityProfile(
     member _.SessionSettings = sessionSettings
 
     member _.HasSessionMode(mode: string) =
-        not (String.IsNullOrWhiteSpace(mode))
-        && not (isNull sessionModes)
-        && (sessionModes |> Seq.exists (fun candidate -> String.Equals(candidate, mode, StringComparison.OrdinalIgnoreCase)))
+        if String.IsNullOrWhiteSpace(mode) then false
+        else
+            match sessionModes with
+            | null -> false
+            | modes ->
+                modes
+                |> Seq.exists (fun candidate ->
+                    String.Equals(candidate, mode, StringComparison.OrdinalIgnoreCase))
 
     member _.GetSessionSetting(name: string) : string | null =
-        if String.IsNullOrWhiteSpace(name) || isNull sessionSettings then null
+        if String.IsNullOrWhiteSpace(name) then null
         else
-            sessionSettings
-            |> Seq.tryPick (fun pair ->
-                if String.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase) then Some pair.Value else None)
-            |> Option.defaultValue null
+            match sessionSettings with
+            | null -> null
+            | settings ->
+                match
+                    settings
+                    |> Seq.tryPick (fun pair ->
+                        if String.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase) then Some pair.Value else None)
+                with
+                | Some value -> value
+                | None -> null
 
 type internal SqlProviderCapabilityProfileValidationIssue =
     | None = 0
@@ -417,11 +428,13 @@ type internal SqlProviderCapabilityProfileValidationIssue =
 [<AbstractClass; Sealed>]
 type internal SqlProviderCapabilityProfileRules private () =
     static member ValidationIssue(profile: SqlProviderCapabilityProfile | null, expectedProvider: SqlAgentToolType) =
-        if isNull profile then SqlProviderCapabilityProfileValidationIssue.None
-        elif profile.Provider <> expectedProvider then SqlProviderCapabilityProfileValidationIssue.ProviderMismatch
-        elif profile.CompatibilityLevel.HasValue && profile.CompatibilityLevel.Value < 0 then
+        match profile with
+        | null -> SqlProviderCapabilityProfileValidationIssue.None
+        | value when value.Provider <> expectedProvider ->
+            SqlProviderCapabilityProfileValidationIssue.ProviderMismatch
+        | value when value.CompatibilityLevel.HasValue && value.CompatibilityLevel.Value < 0 ->
             SqlProviderCapabilityProfileValidationIssue.NegativeCompatibilityLevel
-        else SqlProviderCapabilityProfileValidationIssue.None
+        | _ -> SqlProviderCapabilityProfileValidationIssue.None
 
 [<AbstractClass>]
 type SqlTemporalValue() = class end
@@ -558,7 +571,7 @@ type DmlConflictTargetAssurance(primaryKeyColumns: ImmutableArray<string>) =
         && not hasUnsupportedEnforcedUniqueKeys
 
     static member private NormalizeColumns(columns: IEnumerable<string>, assuranceName: string, parameterName: string) =
-        if isNull columns then nullArg parameterName
+        if Object.ReferenceEquals(columns, null) then nullArg parameterName
         let normalized =
             columns
             |> Seq.map (fun column ->

@@ -44,7 +44,7 @@ type SqlIdentifier(parts: ImmutableArray<IdentifierPart>, span: SourceSpan) =
         SqlIdentifier.Unquoted(value, SourceSpan.Unknown)
 
 [<Sealed>]
-type LiteralExpr(value: obj, span: SourceSpan) =
+type LiteralExpr(value: obj | null, span: SourceSpan) =
     inherit SqlExpr(span)
     member _.Value = value
 
@@ -261,10 +261,12 @@ type DerivedTableSource(query: SqlStatement, alias: IdentifierPart, span: Source
 [<Sealed>]
 type SelectItem(expression: SqlExpr, alias: IdentifierPart | null, span: SourceSpan) =
     inherit SqlNode(span)
-    let normalizedAlias =
-        if isNull alias then null
-        elif alias.Span = SourceSpan.Unknown then IdentifierPart(alias.Value, alias.WasQuoted, alias.Span, true)
-        else alias
+    let normalizedAlias : IdentifierPart | null =
+        match alias with
+        | null -> null
+        | value when value.Span = SourceSpan.Unknown ->
+            IdentifierPart(value.Value, value.WasQuoted, value.Span, true)
+        | value -> value
     member val Expression = expression with get, set
     member val Alias = normalizedAlias with get, set
     member this.Deconstruct(expression: byref<SqlExpr>, aliasOut: byref<IdentifierPart | null>, spanOut: byref<SourceSpan>) =

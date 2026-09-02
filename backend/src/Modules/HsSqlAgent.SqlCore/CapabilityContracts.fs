@@ -191,26 +191,35 @@ module internal SqlSourceDialectGrammarRules =
         SqlSourceDialectGrammarContract(flags, rowLimit)
 
     let UsesMySqlAnsiQuotedIdentifiers(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
-        sourceDialect = SqlAgentToolType.MySQL
-        && not (isNull sourceProfile)
-        && sourceProfile.Provider = SqlAgentToolType.MySQL
-        && (sourceProfile.HasSessionMode("ANSI_QUOTES") || sourceProfile.HasSessionMode("ANSI"))
+        if sourceDialect <> SqlAgentToolType.MySQL then false
+        else
+            match sourceProfile with
+            | null -> false
+            | profile when profile.Provider = SqlAgentToolType.MySQL ->
+                profile.HasSessionMode("ANSI_QUOTES") || profile.HasSessionMode("ANSI")
+            | _ -> false
 
     let UsesMySqlNoBackslashEscapes(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
-        sourceDialect = SqlAgentToolType.MySQL
-        && not (isNull sourceProfile)
-        && sourceProfile.Provider = SqlAgentToolType.MySQL
-        && sourceProfile.HasSessionMode("NO_BACKSLASH_ESCAPES")
+        if sourceDialect <> SqlAgentToolType.MySQL then false
+        else
+            match sourceProfile with
+            | null -> false
+            | profile when profile.Provider = SqlAgentToolType.MySQL ->
+                profile.HasSessionMode("NO_BACKSLASH_ESCAPES")
+            | _ -> false
 
 module internal SqlConcatCapabilityRules =
     let private v14 = Version(14,0)
     let private v17 = Version(17,0)
 
     let SupportsMySqlPipesAsConcat(sourceDialect: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) =
-        sourceDialect = SqlAgentToolType.MySQL
-        && not (isNull sourceProfile)
-        && sourceProfile.Provider = SqlAgentToolType.MySQL
-        && (sourceProfile.HasSessionMode("PIPES_AS_CONCAT") || sourceProfile.HasSessionMode("ANSI"))
+        if sourceDialect <> SqlAgentToolType.MySQL then false
+        else
+            match sourceProfile with
+            | null -> false
+            | profile when profile.Provider = SqlAgentToolType.MySQL ->
+                profile.HasSessionMode("PIPES_AS_CONCAT") || profile.HasSessionMode("ANSI")
+            | _ -> false
 
     let SourceSemanticValidationError(sourceDialect: SqlAgentToolType) : string | null =
         if sourceDialect = SqlAgentToolType.MySQL then
