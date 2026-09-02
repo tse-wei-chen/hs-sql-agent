@@ -4,7 +4,7 @@ These corpora are merge contracts for the SQL compiler rewrite. They are not a l
 
 ## Compatibility floors
 
-- `sql-main-compatibility-floor.json` is the curated historical compatibility floor.
+- `sql-main-compatibility-floor.json` is the curated historical compatibility floor and also carries reviewed capability-expansion probes whose base-main failure / PR success is intentional evidence; canonical SQL Server MERGE contributes five metadata-assured single-row probes.
 - `sql-generated-compatibility-floor.json` is the generated six-dialect query grammar floor.
 - `sql-generated-dml-compatibility-floor.json` is the generated six-dialect common DML floor.
 - `sql-generated-dml-predicate-compatibility-floor.json` is the six-dialect Cartesian UPDATE/DELETE predicate-assignment plus INSERT...SELECT projection/source-predicate floor.

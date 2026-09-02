@@ -33,6 +33,9 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
     var validationType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlPlanValidationContext");
     var policyType = RequiredType(assembly, "HsSqlAgent.SqlCore.Core.Pipeline.SqlExecutionPlanPolicy");
     var profileType = RequiredType(assembly, "HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile");
+    var conflictTargetAssuranceType = RequiredType(
+        assembly,
+        "HsSqlAgent.SqlCore.Core.Pipeline.DmlConflictTargetAssurance");
 
     var sourceDialects = corpus.ToDictionary(
         item => item.Name,
@@ -188,44 +191,37 @@ static int RunAssembly(string assemblyPath, string corpusPath, string outputPath
                     .Where(method => method.GetParameters().Length >= 3)
                     .Where(method => method.GetParameters()[0].ParameterType.IsInstanceOfType(parsed));
 
-                var compile = targetProfile is null
-                    ? compileMethods
-                        .Where(method => LeadingArgumentsFit(
-                            method.GetParameters(),
-                            [parsed, targetDialect, validation]))
-                        .OrderBy(method => method.GetParameters().Length)
-                        .FirstOrDefault()
-                    : compileMethods
-                        .Where(method => method.GetParameters().Length >= 4)
-                        .Where(method => LeadingArgumentsFit(
-                            method.GetParameters(),
-                            [parsed, targetDialect, validation, targetProfile]))
-                        .OrderBy(method => method.GetParameters().Length)
-                        .FirstOrDefault();
+                var conflictTargetAssurance = CreatePrimaryKeyAssurance(
+                    conflictTargetAssuranceType,
+                    item.ConflictTargetPrimaryKeyColumns);
+
+                object?[] compileLeading =
+                    targetProfile is null
+                        ? conflictTargetAssurance is null
+                            ? [parsed, targetDialect, validation]
+                            : [parsed, targetDialect, validation, conflictTargetAssurance]
+                        : conflictTargetAssurance is null
+                            ? [parsed, targetDialect, validation, targetProfile]
+                            : [parsed, targetDialect, validation, targetProfile, conflictTargetAssurance];
+
+                var compile = compileMethods
+                    .Where(method => LeadingArgumentsFit(
+                        method.GetParameters(),
+                        compileLeading))
+                    .OrderBy(method => method.GetParameters().Length)
+                    .FirstOrDefault();
 
                 if (compile is null)
                 {
                     throw new MissingMethodException(
                         dmlCompilerType.FullName,
-                        targetProfile is null
-                            ? "Compile(parsed, target, validation[, optional...])"
-                            : "Compile(parsed, target, validation, targetProfile[, optional...])");
+                        "Compile(parsed, target, validation[, targetProfile][, conflictTargetAssurance])");
                 }
 
-                compiledCommand = (targetProfile is null
-                    ? InvokeWithOptionalTail(
-                        compile,
-                        dmlCompiler,
-                        parsed,
-                        targetDialect,
-                        validation)
-                    : InvokeWithOptionalTail(
-                        compile,
-                        dmlCompiler,
-                        parsed,
-                        targetDialect,
-                        validation,
-                        targetProfile))
+                compiledCommand = InvokeWithOptionalTail(
+                    compile,
+                    dmlCompiler,
+                    compileLeading)
                     ?? throw new InvalidOperationException("DML Compile returned null.");
             }
             else
@@ -813,6 +809,28 @@ static object? CreateProviderProfile(
         null);
 }
 
+static object? CreatePrimaryKeyAssurance(
+    Type assuranceType,
+    string[]? columns)
+{
+    if (columns is null)
+        return null;
+    if (columns.Length == 0)
+        throw new InvalidOperationException(
+            "conflictTargetPrimaryKeyColumns cannot be empty when declared.");
+
+    var factory = assuranceType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+        .Where(method => method.Name == "FromPrimaryKey")
+        .Where(method => method.GetParameters().Length == 1)
+        .Where(method => LeadingArgumentsFit(method.GetParameters(), [columns]))
+        .SingleOrDefault()
+        ?? throw new MissingMethodException(assuranceType.FullName, "FromPrimaryKey");
+
+    return factory.Invoke(null, [columns])
+        ?? throw new InvalidOperationException(
+            "DmlConflictTargetAssurance.FromPrimaryKey returned null.");
+}
+
 static object CreateWithOptionalTail(Type type, params object?[] leading)
 {
     foreach (var constructor in type.GetConstructors().OrderBy(value => value.GetParameters().Length))
@@ -978,6 +996,7 @@ sealed record CorpusCase(
     int? TargetCompatibilityLevel = null,
     string[]? SourceSessionModes = null,
     string[]? TargetSessionModes = null,
+    string[]? ConflictTargetPrimaryKeyColumns = null,
     string? ExpectedStage = null,
     string? ExceptionTypeContains = null,
     string[]? MessageContains = null,
