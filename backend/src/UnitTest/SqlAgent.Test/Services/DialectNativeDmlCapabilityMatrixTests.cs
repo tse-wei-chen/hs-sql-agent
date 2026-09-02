@@ -230,6 +230,28 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
             true,
             "UPDATE OR INSERT INTO;MATCHING;RETURNING"),
         new(
+            "firebird-update-target-alias",
+            "UPDATE users AS u SET name = 'Alice' WHERE u.id = 1",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Firebird,
+            null,
+            null,
+            AssuranceKind.None,
+            SqlStatementKind.Update,
+            false,
+            "UPDATE; AS ;u;WHERE"),
+        new(
+            "firebird-delete-target-alias",
+            "DELETE FROM users AS u WHERE u.id = 1",
+            SqlAgentToolType.Firebird,
+            SqlAgentToolType.Firebird,
+            null,
+            null,
+            AssuranceKind.None,
+            SqlStatementKind.Delete,
+            false,
+            "DELETE FROM; AS ;u;WHERE"),
+        new(
             "sqlserver-update-from",
             "UPDATE users SET name = profiles.name FROM profiles WHERE users.id = profiles.user_id",
             SqlAgentToolType.MsSqlServer,
@@ -271,16 +293,16 @@ public sealed class DialectNativeDmlCapabilityMatrixTests
     [Fact]
     public void NativeDmlMatrix_HasStableCapabilityCoverage()
     {
-        Assert.Equal(20, Cases.Length);
+        Assert.Equal(22, Cases.Length);
         Assert.Equal(
-            20,
+            22,
             Cases.Select(item => item.Name)
                 .Distinct(StringComparer.Ordinal)
                 .Count());
 
         Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Postgres));
         Assert.Equal(6, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Sqlite));
-        Assert.Equal(5, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
+        Assert.Equal(7, Cases.Count(item => item.TargetDialect == SqlAgentToolType.Firebird));
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MsSqlServer);
         Assert.Single(Cases, item => item.TargetDialect == SqlAgentToolType.MySQL);
         Assert.DoesNotContain(
