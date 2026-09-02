@@ -40,6 +40,50 @@ public class DmlPlanFactoryNativeTests
     }
 
     [Fact]
+    public async Task CreateAsync_JoinedUpdate_PreservesAliasAndDerivedSourceInDistinctMatchPlan()
+    {
+        var metadata = CreateUsersMetadata(primaryKey: true);
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users AS u SET status = p.status FROM (SELECT user_id, status FROM profiles) AS p WHERE u.id = p.user_id",
+            SqlAgentToolType.Postgres);
+
+        var plan = await new DmlPlanFactory(metadata.Object).CreateAsync(
+            "connection",
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("policy-joined-update"),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var matchCommand = Assert.IsType<CompiledSqlCommand>(plan.MatchQueryCommand);
+
+        Assert.Contains("profiles", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("profiles", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DISTINCT", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("u", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("u", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreateAsync_JoinedDelete_CountOnlyIdentity_RemainsFailClosed()
+    {
+        var metadata = CreateUsersMetadata(primaryKey: false);
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users USING profiles WHERE users.id = profiles.user_id",
+            SqlAgentToolType.Postgres);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new DmlPlanFactory(metadata.Object).CreateAsync(
+                "connection",
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("policy-joined-delete-count-only"),
+                assurance: DmlRowIdentityAssurance.CountOnly,
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("Joined UPDATE/DELETE approval", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("row identity", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CreateAsync_InsertValues_BindsExactPayloadWithoutPrimaryKeyMatchPlan()
     {
         var metadata = CreateUsersMetadata(primaryKey: false);

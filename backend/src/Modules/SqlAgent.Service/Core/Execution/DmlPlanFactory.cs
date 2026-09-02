@@ -68,7 +68,7 @@ public sealed class DmlPlanFactory(
             cancellationToken);
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(identity.Schema, identity.Table),
-            null,
+            target.Alias,
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedStatement);
@@ -90,6 +90,13 @@ public sealed class DmlPlanFactory(
             targetProfile);
 
         var identityColumns = identity.Columns;
+        var auxiliarySources = MutationSources(resolvedStatement);
+        if (!auxiliarySources.IsDefaultOrEmpty && identityColumns.IsDefaultOrEmpty)
+        {
+            throw new InvalidOperationException(
+                "Joined UPDATE/DELETE approval requires resolved target row identity so duplicate auxiliary matches can be collapsed to the affected target-row set.");
+        }
+
         var selectItems = identityColumns.IsDefaultOrEmpty
             ? ImmutableArray.Create(new SelectItem(
                 new LiteralExpr(1, SourceSpan.Unknown),
@@ -97,17 +104,24 @@ public sealed class DmlPlanFactory(
                 SourceSpan.Unknown))
             : identityColumns
                 .Select(column => new SelectItem(
-                    new ColumnExpr(MetadataIdentifier(column), SourceSpan.Unknown),
+                    new ColumnExpr(TargetIdentityIdentifier(resolvedTarget, column), SourceSpan.Unknown),
                     null,
                     SourceSpan.Unknown))
                 .ToImmutableArray();
+        var matchJoins = auxiliarySources
+            .Select(source => new JoinSource(
+                "CROSS",
+                source,
+                null!,
+                SourceSpan.Unknown))
+            .ToImmutableArray();
 
         var matchStatement = new SelectStatement(
             ImmutableArray<CteDefinition>.Empty,
-            false,
+            !auxiliarySources.IsDefaultOrEmpty,
             selectItems,
             resolvedTarget,
-            ImmutableArray<JoinSource>.Empty,
+            matchJoins,
             predicate,
             ImmutableArray<SqlExpr>.Empty,
             null,
@@ -173,7 +187,7 @@ public sealed class DmlPlanFactory(
             cancellationToken);
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
-            null,
+            insert.Target.Alias,
             insert.Target.Span);
         var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedInsert);
@@ -269,6 +283,27 @@ public sealed class DmlPlanFactory(
         DeleteStatement delete => !delete.Returning.IsDefaultOrEmpty,
         _ => false
     };
+
+    private static ImmutableArray<TableSource> MutationSources(SqlStatement statement) => statement switch
+    {
+        UpdateStatement update when !update.FromSources.IsDefaultOrEmpty => update.FromSources,
+        UpdateStatement update => update.From.Cast<TableSource>().ToImmutableArray(),
+        DeleteStatement delete when !delete.UsingSources.IsDefaultOrEmpty => delete.UsingSources,
+        DeleteStatement delete => delete.Using.Cast<TableSource>().ToImmutableArray(),
+        _ => ImmutableArray<TableSource>.Empty
+    };
+
+    private static SqlIdentifier TargetIdentityIdentifier(
+        NamedTableSource target,
+        string column)
+    {
+        var qualifier = target.Alias ?? target.Name.Parts[^1];
+        return new SqlIdentifier(
+            ImmutableArray.Create(
+                qualifier,
+                new IdentifierPart(column, true, SourceSpan.Unknown)),
+            SourceSpan.Unknown);
+    }
 
     private CompiledSqlCommand CompileMutation(
         ParsedStatement parsed,
@@ -408,6 +443,7 @@ public sealed class DmlPlanFactory(
                     update.Span)
                 {
                     From = update.From,
+                    FromSources = update.FromSources,
                     Returning = update.Returning
                 };
                 return clone;
@@ -420,6 +456,7 @@ public sealed class DmlPlanFactory(
                     delete.Span)
                 {
                     Using = delete.Using,
+                    UsingSources = delete.UsingSources,
                     Returning = delete.Returning
                 };
                 return clone;
