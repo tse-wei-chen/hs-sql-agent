@@ -22,6 +22,91 @@ public sealed class CoreDmlConflictUpsertTests
     }
 
     [Fact]
+    public void Parse_PostgresConflictUpdate_ModelsDeterministicArithmeticValue()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO inventory (id, quantity) VALUES (1, 3) " +
+            "ON CONFLICT (id) DO UPDATE SET quantity = quantity + excluded.quantity * 2",
+            SqlAgentToolType.Postgres);
+        var insert = Assert.IsType<InsertStatement>(parsed.Statement);
+        var conflict = Assert.IsType<InsertConflictClause>(insert.Conflict);
+        var assignment = Assert.Single(conflict.Assignments);
+
+        Assert.Equal("quantity", IdentifierText(assignment.Column));
+        Assert.Null(assignment.ProposedColumn);
+        Assert.IsType<BinaryExpr>(assignment.Value);
+    }
+
+    [Fact]
+    public void Compile_PostgresConflictUpdate_DeterministicArithmetic_IsParameterized()
+    {
+        var command = CompileRaw(
+            "INSERT INTO inventory (id, quantity) VALUES (1, 3) " +
+            "ON CONFLICT (id) DO UPDATE SET quantity = quantity + excluded.quantity * 2",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("EXCLUDED.\"quantity\"", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"quantity\" +", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, command.Parameters.Length);
+        Assert.DoesNotContain(" * 2", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compile_SqliteConflictUpdate_DeterministicArithmetic_RequiresNativeVersionProof()
+    {
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 24));
+        var command = CompileRaw(
+            "INSERT INTO inventory (id, quantity) VALUES (1, 3) " +
+            "ON CONFLICT (id) DO UPDATE SET quantity = quantity + excluded.quantity * 2",
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.Sqlite,
+            profile,
+            profile);
+
+        Assert.Contains("ON CONFLICT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("excluded", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, command.Parameters.Length);
+    }
+
+    [Fact]
+    public void Compile_RichConflictUpdate_CrossProvider_RemainsFailClosed()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO inventory (id, quantity) VALUES (1, 3) " +
+            "ON CONFLICT (id) DO UPDATE SET quantity = quantity + excluded.quantity",
+            SqlAgentToolType.Postgres);
+        var sqlite = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite,
+            ServerVersion: new Version(3, 24));
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Sqlite,
+                new SqlPlanValidationContext("policy-v1"),
+                targetProfile: sqlite));
+
+        Assert.Contains("native-only", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("conflict-update", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_ConflictUpdateFunction_RemainsFailClosed()
+    {
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(
+                "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+                "ON CONFLICT (id) DO UPDATE SET name = LOWER(excluded.name)",
+                SqlAgentToolType.Postgres));
+
+        Assert.Contains("deterministic scalar", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("functions", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_PostgresDoNothing_EmitsExplicitConflictTarget()
     {
         var command = CompileRaw(

@@ -1380,6 +1380,31 @@ module internal RewriteRenderer =
     let private renderTrailingReturning (ctx: RenderContext) items =
         if ctx.Provider = SqlServer then "" else renderReturning ctx items
 
+    let private conflictArithmeticText = function
+        | ConflictAdd -> "+"
+        | ConflictSubtract -> "-"
+        | ConflictMultiply -> "*"
+        | ConflictDivide -> "/"
+        | ConflictModulo -> "%"
+
+    let rec private renderConflictValue (ctx: RenderContext) proposedQualifier = function
+        | ConflictProposedColumn identifier ->
+            proposedQualifier + "." + renderIdentifier ctx.Provider identifier
+        | ConflictTargetColumn identifier ->
+            renderIdentifier ctx.Provider identifier
+        | ConflictLiteral scalar ->
+            renderExpr ctx (Expr.Literal scalar)
+        | ConflictNegate operand ->
+            "(-" + renderConflictValue ctx proposedQualifier operand + ")"
+        | ConflictBinary(operator, left, right) ->
+            "("
+            + renderConflictValue ctx proposedQualifier left
+            + " "
+            + conflictArithmeticText operator
+            + " "
+            + renderConflictValue ctx proposedQualifier right
+            + ")"
+
     let private renderConflict (ctx: RenderContext) conflict =
         match conflict with
         | None -> ""
@@ -1396,7 +1421,14 @@ module internal RewriteRenderer =
                 | UpdateProposedValues assignments ->
                     if Option.isNone conflict.TargetColumns then
                         invalidOp "ON CONFLICT DO UPDATE reached rendering without an explicit conflict target."
-                    let values = assignments |> NonEmpty.toList |> List.map (fun assignment -> renderIdentifier ctx.Provider assignment.Target + " = EXCLUDED." + renderIdentifier ctx.Provider assignment.Proposed) |> String.concat ", "
+                    let values =
+                        assignments
+                        |> NonEmpty.toList
+                        |> List.map (fun assignment ->
+                            renderIdentifier ctx.Provider assignment.Target
+                            + " = "
+                            + renderConflictValue ctx "EXCLUDED" assignment.Value)
+                        |> String.concat ", "
                     " ON CONFLICT" + targetClause + " DO UPDATE SET " + values
             | _ -> invalidOp "Portable INSERT conflict lowering is not supported by the target provider."
 
@@ -1453,11 +1485,16 @@ module internal RewriteRenderer =
                     assignments
                     |> NonEmpty.toList
                     |> List.map (fun assignment ->
+                        let proposed =
+                            match ConflictValue.trySimpleProposed assignment.Value with
+                            | Some identifier -> identifier
+                            | None ->
+                                invalidOp "Validated MySQL conflict lowering admits only direct proposed-row assignments."
                         renderIdentifier MySql assignment.Target
                         + " = "
                         + alias
                         + "."
-                        + renderIdentifier MySql assignment.Proposed)
+                        + renderIdentifier MySql proposed)
                     |> String.concat ", "
             "INSERT INTO "
             + renderIdentifier MySql insert.Target

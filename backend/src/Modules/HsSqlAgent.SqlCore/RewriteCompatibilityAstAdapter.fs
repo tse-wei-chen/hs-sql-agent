@@ -555,10 +555,19 @@ module internal RewriteCompatibilityAstAdapter =
                 (values
                  |> NonEmpty.toList
                  |> List.map (fun assignment ->
-                    HsSqlAgent.SqlCore.Core.Ast.InsertConflictAssignment(
-                        identifierOf assignment.Target,
-                        identifierOf assignment.Proposed,
-                        unknown))
+                    let proposed =
+                        assignment.Value
+                        |> ConflictValue.trySimpleProposed
+                        |> Option.map identifierOf
+                        |> Option.defaultValue (Unchecked.defaultof<_>)
+                    let result =
+                        HsSqlAgent.SqlCore.Core.Ast.InsertConflictAssignment(
+                            identifierOf assignment.Target,
+                            proposed,
+                            unknown)
+                    if Option.isNone (ConflictValue.trySimpleProposed assignment.Value) then
+                        result.Value <- assignment.Value |> ConflictValue.toExpression |> exprOf
+                    result)
                  |> ImmutableArray.CreateRange)
         HsSqlAgent.SqlCore.Core.Ast.InsertConflictClause(
             conflict.TargetColumns

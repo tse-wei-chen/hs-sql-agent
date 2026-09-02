@@ -390,7 +390,11 @@ type InsertConflictActionKind =
 type InsertConflictAssignment(column: SqlIdentifier, proposedColumn: SqlIdentifier, span: SourceSpan) =
     inherit SqlNode(span)
     member _.Column = column
+    /// Legacy direct proposed-row column. Rich conflict expressions leave this unset and use Value.
     member _.ProposedColumn = proposedColumn
+    /// Closed compatibility AST expression for richer deterministic conflict-update values.
+    /// Null preserves the legacy target = proposed-column constructor contract.
+    member val Value: SqlExpr = null with get, set
 
 [<Sealed>]
 type InsertConflictClause(

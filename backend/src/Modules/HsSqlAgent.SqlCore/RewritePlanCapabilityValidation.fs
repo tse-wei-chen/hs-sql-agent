@@ -572,17 +572,50 @@ module internal RewritePlanCapabilityValidation =
             HashSet<string>(
                 insert.Columns |> List.map (fun column -> column.Value),
                 StringComparer.OrdinalIgnoreCase)
+
+        let rec validateValue = function
+            | ConflictProposedColumn identifier ->
+                let proposed = Identifier.text identifier
+                if not (insertColumns.Contains proposed) then
+                    raise (SqlCompilationException(
+                        "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values."))
+            | ConflictTargetColumn identifier ->
+                if Identifier.parts identifier |> List.length <> 1 then
+                    raise (SqlCompilationException(
+                        "Conflict-update target-row references must be unqualified single-part columns."))
+            | ConflictLiteral _ -> ()
+            | ConflictNegate operand -> validateValue operand
+            | ConflictBinary(_, left, right) ->
+                validateValue left
+                validateValue right
+
         let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
         assignments
         |> NonEmpty.iter (fun (assignment: ConflictAssignment) ->
             let target = Identifier.text assignment.Target
-            let proposed = Identifier.text assignment.Proposed
             if not (assigned.Add target) then
                 raise (SqlCompilationException(
                     "INSERT conflict DO UPDATE assigns column '" + target + "' more than once."))
-            if not (insertColumns.Contains proposed) then
+            validateValue assignment.Value)
+
+    let private validateRichConflictAssignments targetRuntime (proofs: ConflictProofs) (assignments: NonEmpty<ConflictAssignment>) =
+        let hasRichValues =
+            assignments
+            |> NonEmpty.toList
+            |> List.exists (fun assignment -> ConflictValue.trySimpleProposed assignment.Value |> Option.isNone)
+
+        if hasRichValues then
+            let target = TargetRuntime.provider targetRuntime
+            if proofs.SourceProvider <> target then
                 raise (SqlCompilationException(
-                    "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values.")))
+                    "Richer deterministic conflict-update expressions are native-only until cross-provider arithmetic, coercion and current-row semantics are proven. Source provider "
+                    + string proofs.SourceProvider + ", target provider " + string target + "."))
+            match targetRuntime with
+            | PostgreSqlRuntime
+            | SQLiteRuntime -> ()
+            | _ ->
+                raise (SqlCompilationException(
+                    "Richer deterministic conflict-update expressions are currently proven only for native PostgreSQL and SQLite ON CONFLICT targets; other provider lowerings remain fail-closed."))
 
     let private validatePortableConflict targetRuntime (proofs: ConflictProofs) (insert: Insert) (conflict: InsertConflict) =
         match insert.Input with
@@ -626,6 +659,7 @@ module internal RewritePlanCapabilityValidation =
             | Values _ -> ()
             | DefaultValues -> ()
             validateConflictAssignments insert assignments
+            validateRichConflictAssignments targetRuntime proofs assignments
 
     let private validateFirebirdFullProposedRowUpdate (insert: Insert) (assignments: NonEmpty<ConflictAssignment>) =
         let assignmentList = NonEmpty.toList assignments
@@ -640,7 +674,12 @@ module internal RewritePlanCapabilityValidation =
         let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
         for (assignment: ConflictAssignment) in assignmentList do
             let target = Identifier.text assignment.Target
-            let proposed = Identifier.text assignment.Proposed
+            let proposed =
+                match ConflictValue.trySimpleProposed assignment.Value with
+                | Some identifier -> Identifier.text identifier
+                | None ->
+                    raise (SqlCompilationException(
+                        "Firebird UPDATE OR INSERT can mirror the portable conflict contract only with direct proposed-row assignments; richer deterministic conflict expressions require MERGE semantics and remain fail-closed."))
             if not (StringComparer.OrdinalIgnoreCase.Equals(target, proposed)) then
                 raise (SqlCompilationException(
                     "Firebird UPDATE OR INSERT can mirror the portable conflict contract only when each assignment is target = proposed-row target for the same column."))
