@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
@@ -24,6 +25,7 @@ public interface ITypedQueryRuntime
 /// </summary>
 public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEvidenceObserver = null) : ITypedQueryRuntime
 {
+    private static readonly CompiledSqlCommandExecutor QueryExecutor = new();
     private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;
     public CompiledSqlCommand Compile(
         ISqlProvider provider,
@@ -101,28 +103,44 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        await using var connection = provider.Connections.Create(connectionString);
         try
         {
-            await using var connection = provider.Connections.Create(connectionString);
             await connection.OpenAsync(cancellationToken);
-            var verifiedProfile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
-            var command = Compile(
-                provider,
-                sql,
-                sourceDialect,
-                policy,
-                allowedTables,
-                verifiedProfile.TargetProfile);
-            var executor = new CompiledSqlCommandExecutor();
-            return await executor.ExecuteQueryAsync(
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (DbException exception)
+        {
+            throw provider.Errors.Map(exception, "query");
+        }
+
+        var verifiedProfile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
+        var command = Compile(
+            provider,
+            sql,
+            sourceDialect,
+            policy,
+            allowedTables,
+            verifiedProfile.TargetProfile);
+
+        try
+        {
+            return await QueryExecutor.ExecuteQueryAsync(
                 command,
                 connection,
                 policy.QueryTimeoutSeconds,
                 cancellationToken);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
         {
-            throw provider.Errors.Map(ex, "query");
+            throw;
+        }
+        catch (DbException exception)
+        {
+            throw provider.Errors.Map(exception, "query");
         }
     }
 
