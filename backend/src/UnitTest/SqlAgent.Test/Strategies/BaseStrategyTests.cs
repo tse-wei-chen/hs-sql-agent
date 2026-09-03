@@ -109,8 +109,11 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             TestOrdersTableName,
             TestContext.Current.CancellationToken);
         var target = Assert.Single(
-            matches.Where(match =>
-                string.Equals(match.Table, TestOrdersTableName, StringComparison.OrdinalIgnoreCase)));
+            matches,
+            match => string.Equals(
+                match.Table,
+                TestOrdersTableName,
+                StringComparison.OrdinalIgnoreCase));
 
         var columns = await metadata.GetColumnsAsync(
             connection,
