@@ -76,6 +76,7 @@ public partial class SqlAgentTool
         }
         catch (Exception ex)
         {
+            auditFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
             await _auditService.WriteEventAsync(
                 "mcp.query.executed",
                 AuditTarget(auditFacts),

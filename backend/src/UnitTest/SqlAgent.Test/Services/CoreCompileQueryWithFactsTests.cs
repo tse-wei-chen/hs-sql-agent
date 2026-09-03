@@ -63,4 +63,25 @@ public sealed class CoreCompileQueryWithFactsTests
         Assert.True(result.Facts.ContainsCte);
         Assert.True(result.Facts.ContainsSubquery);
     }
+    [Fact]
+    public void CompileQueryWithFacts_PolicyRejectionPreservesBoundFactsOnOriginalException()
+    {
+        const string sql = "SELECT id FROM public.secrets";
+        var validation = new SqlPlanValidationContext(
+            "single-parse-policy-rejection-v1",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" });
+
+        var error = Assert.Throws<UnauthorizedAccessException>(() =>
+            SqlCoreFacade.CompileQueryWithFacts(
+                sql,
+                SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres,
+                validation,
+                new SqlExecutionPlanPolicy(25)));
+
+        var facts = SqlCoreInspection.TryGetQueryFactsFromException(error);
+        Assert.NotNull(facts);
+        Assert.Contains("public.secrets", facts!.ReferencedTables, StringComparer.OrdinalIgnoreCase);
+    }
+
 }

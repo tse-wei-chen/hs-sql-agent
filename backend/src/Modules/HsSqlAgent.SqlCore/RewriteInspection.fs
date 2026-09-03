@@ -9,6 +9,16 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 module internal RewriteInspection =
 
+    let private queryFactsDataKey = "HsSqlAgent.SqlCore.QueryFacts"
+
+    let attachToException (facts: QueryFacts) (ex: exn) =
+        ex.Data[queryFactsDataKey] <- facts
+
+    let tryFromException (ex: exn) =
+        match ex.Data[queryFactsDataKey] with
+        | :? QueryFacts as facts -> Some facts
+        | _ -> None
+
     type State =
         { Tables: HashSet<string>
           Aliases: ResizeArray<QueryAliasFact>

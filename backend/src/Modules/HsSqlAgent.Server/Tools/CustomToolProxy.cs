@@ -222,6 +222,7 @@ public class CustomToolProxy(
         }
         catch (Exception ex)
         {
+            auditQueryFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
             await _auditService.WriteEventAsync(
                 $"mcp.{_name}.executed",
                 _name,

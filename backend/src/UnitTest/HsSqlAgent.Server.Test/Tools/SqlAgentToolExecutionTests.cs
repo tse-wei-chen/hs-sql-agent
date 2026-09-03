@@ -134,6 +134,13 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.secrets", TestContext.Current.CancellationToken);
 
         Assert.Contains("table denied", result, StringComparison.OrdinalIgnoreCase);
+        auditService.Verify(x => x.WriteEventAsync(
+            "mcp.query.executed",
+            "query",
+            "failed",
+            It.IsAny<AuditEventContext>(),
+            "table denied",
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

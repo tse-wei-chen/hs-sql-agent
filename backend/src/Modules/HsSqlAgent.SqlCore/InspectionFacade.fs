@@ -8,6 +8,19 @@ open HsSqlAgent.SqlCore.Rewrite
 
 [<AbstractClass; Sealed>]
 type SqlCoreInspection private () =
+    static member TryGetQueryFactsFromException(exception: Exception) =
+        ArgumentNullException.ThrowIfNull(exception)
+
+        let rec find (current: Exception | null) =
+            match current with
+            | null -> null
+            | value ->
+                match RewriteInspection.tryFromException value with
+                | Some facts -> facts
+                | None -> find value.InnerException
+
+        find exception
+
     static member GetDeterminismFacts(
         sql: string,
         sourceDialect: SqlAgentToolType,

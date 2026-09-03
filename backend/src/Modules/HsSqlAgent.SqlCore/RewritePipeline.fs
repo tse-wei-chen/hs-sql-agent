@@ -172,7 +172,11 @@ module internal RewritePipeline =
         let parsed = parse options sql
         let bound = bind options parsed
         let facts = RewriteInspection.inspectBound bound
-        parsed, facts, finishBound options bound
+        try
+            parsed, facts, finishBound options bound
+        with ex ->
+            RewriteInspection.attachToException facts ex
+            reraise()
 
     let compile options sql =
         compileWithParsed options sql |> snd
