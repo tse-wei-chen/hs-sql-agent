@@ -34,8 +34,6 @@ public partial class SqlAgentTool
             if (string.IsNullOrWhiteSpace(sql))
                 return "Error: SQL is missing.";
 
-            auditFacts = SqlCoreInspection.GetQueryFacts(sql, dbType);
-
             var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
             var allowedTables = ResolveTableWhitelist();
             QueryExecutionResult execution;
@@ -43,7 +41,7 @@ public partial class SqlAgentTool
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                execution = await _typedQueryRuntime.ExecuteAsync(
+                var compiledExecution = await _typedQueryRuntime.ExecuteWithFactsAsync(
                     provider,
                     sqlConfig.ConnectionString,
                     sql,
@@ -51,6 +49,8 @@ public partial class SqlAgentTool
                     securityPolicy,
                     allowedTables,
                     cancellationToken);
+                auditFacts = compiledExecution.Facts;
+                execution = compiledExecution.Execution;
             }
 
             var result = JsonSerializer.Serialize(execution.Rows);

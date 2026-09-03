@@ -117,13 +117,12 @@ public class CustomToolProxy(
             if (isQuery)
             {
                 auditQueryDialect = dbType;
-                auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
 
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                    var execution = await _typedQueryRuntime.ExecuteAsync(
+                    var compiledExecution = await _typedQueryRuntime.ExecuteWithFactsAsync(
                         provider,
                         sqlConfig.ConnectionString,
                         renderedSql,
@@ -131,6 +130,8 @@ public class CustomToolProxy(
                         _securityPolicyRuntimeState.GetCurrent(),
                         ResolveTableWhitelist(),
                         cancellationToken);
+                    auditQueryFacts = compiledExecution.Facts;
+                    var execution = compiledExecution.Execution;
                     queryReturnedRows = execution.RowCount;
                     result = JsonSerializer.Serialize(execution.Rows);
                 }

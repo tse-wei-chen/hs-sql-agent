@@ -11,8 +11,10 @@ public class ProviderRuntimeBoundaryTests
     [Fact]
     public void TypedQueryRuntime_PublicContract_IsProviderNative()
     {
-        var execute = Assert.Single(typeof(ITypedQueryRuntime).GetMethods());
-        Assert.Equal(typeof(ISqlProvider), execute.GetParameters()[0].ParameterType);
+        var executeMethods = typeof(ITypedQueryRuntime).GetMethods();
+        Assert.Equal(2, executeMethods.Length);
+        Assert.All(executeMethods, execute =>
+            Assert.Equal(typeof(ISqlProvider), execute.GetParameters()[0].ParameterType));
         Assert.DoesNotContain(
             typeof(TypedQueryRuntime).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
                 .SelectMany(method => method.GetParameters()),

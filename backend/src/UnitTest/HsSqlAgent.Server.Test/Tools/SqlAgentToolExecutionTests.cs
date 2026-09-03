@@ -2,6 +2,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.SqlCore;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Moq;
@@ -45,7 +46,7 @@ public class SqlAgentToolExecutionTests
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
 
         typedQueryRuntime
-            .Setup(x => x.ExecuteAsync(
+            .Setup(x => x.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
                 It.Is<string>(candidate => candidate.Contains("public.users", StringComparison.OrdinalIgnoreCase)),
@@ -53,11 +54,13 @@ public class SqlAgentToolExecutionTests
                 policy,
                 It.Is<IReadOnlySet<string>?>(tables => tables != null && tables.Contains("public.users")),
                 cancellationToken))
-            .ReturnsAsync(new QueryExecutionResult(
-                [new Dictionary<string, object?> { ["id"] = 7 }],
-                1,
-                TimeSpan.Zero,
-                []));
+            .ReturnsAsync(new QueryExecutionWithFacts(
+                new QueryExecutionResult(
+                    [new Dictionary<string, object?> { ["id"] = 7 }],
+                    1,
+                    TimeSpan.Zero,
+                    []),
+                SqlCoreInspection.GetQueryFacts("SELECT id FROM public.users", SqlAgentToolType.Postgres)));
 
         var tool = new SqlAgentTool(
             httpContextAccessor.Object,
@@ -109,7 +112,7 @@ public class SqlAgentToolExecutionTests
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
-            .Setup(x => x.ExecuteAsync(
+            .Setup(x => x.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<string>(),
@@ -162,7 +165,7 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("tool authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        typedQueryRuntime.Verify(x => x.ExecuteAsync(
+        typedQueryRuntime.Verify(x => x.ExecuteWithFactsAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -205,7 +208,7 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        typedQueryRuntime.Verify(x => x.ExecuteAsync(
+        typedQueryRuntime.Verify(x => x.ExecuteWithFactsAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -242,7 +245,7 @@ public class SqlAgentToolExecutionTests
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
-            .Setup(x => x.ExecuteAsync(
+            .Setup(x => x.ExecuteWithFactsAsync(
                 provider.Object,
                 "Host=localhost;Database=testdb",
                 It.IsAny<string>(),
@@ -250,7 +253,9 @@ public class SqlAgentToolExecutionTests
                 policy,
                 null,
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QueryExecutionResult([], 0, TimeSpan.Zero, []));
+            .ReturnsAsync(new QueryExecutionWithFacts(
+                new QueryExecutionResult([], 0, TimeSpan.Zero, []),
+                SqlCoreInspection.GetQueryFacts("SELECT id FROM public.users", SqlAgentToolType.Postgres)));
 
         var tool = new SqlAgentTool(
             httpContextAccessor.Object,
