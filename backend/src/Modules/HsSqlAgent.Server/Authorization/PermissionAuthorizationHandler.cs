@@ -82,10 +82,16 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
         string cacheKey,
         out HashSet<string> permissions)
     {
+        if (httpContext.Items.TryGetValue(RequestSnapshotKey, out var value) &&
+            value is Dictionary<string, HashSet<string>> snapshot &&
+            snapshot.TryGetValue(cacheKey, out var found))
+        {
+            permissions = found;
+            return true;
+        }
+
         permissions = null!;
-        return httpContext.Items.TryGetValue(RequestSnapshotKey, out var value) &&
-               value is Dictionary<string, HashSet<string>> snapshot &&
-               snapshot.TryGetValue(cacheKey, out permissions);
+        return false;
     }
 
     private static Dictionary<string, HashSet<string>> GetRequestSnapshot(HttpContext httpContext)
