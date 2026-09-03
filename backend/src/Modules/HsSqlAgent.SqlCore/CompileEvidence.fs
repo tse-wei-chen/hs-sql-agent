@@ -240,7 +240,7 @@ module internal CompileEvidenceBuilder =
         writer.AppendToken(
             if profile.CompatibilityLevel.HasValue then
                 profile.CompatibilityLevel.Value.ToString(CultureInfo.InvariantCulture)
-            else null)
+            else (null: string | null))
         writer.AppendInt(profile.SessionModes.Length)
         profile.SessionModes |> Seq.iter writer.AppendToken
         writer.AppendInt(profile.SessionSettings.Length)
