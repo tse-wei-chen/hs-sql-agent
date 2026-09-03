@@ -5,6 +5,9 @@ namespace HsSqlAgent.Server.Tools;
 
 public partial class SqlAgentTool
 {
+    private const string InvalidSqlConfigurationMessage =
+        "Invalid database provider or connection configuration.";
+
     private static bool CheckProviderAndConnectionString(
         SqlRuntimeConfig sqlConfig,
         out SqlAgentToolType dbType)

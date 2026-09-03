@@ -60,7 +60,7 @@ public class SqlAgentToolTests
 
         var queryDescription = queryMethod?.GetCustomAttribute<DescriptionAttribute>()?.Description;
         var dmlDescription = dmlMethod?.GetCustomAttribute<DescriptionAttribute>()?.Description;
-        var queryParam = Assert.Single(queryMethod!.GetParameters());
+        var queryParams = queryMethod!.GetParameters();
         var dmlParams = dmlMethod!.GetParameters();
 
         Assert.NotNull(queryDescription);
@@ -68,8 +68,11 @@ public class SqlAgentToolTests
         Assert.NotNull(dmlDescription);
         Assert.Contains("INSERT VALUES", dmlDescription, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("INSERT ... SELECT", dmlDescription, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(typeof(string), queryParam.ParameterType);
-        Assert.Equal("sql", queryParam.Name);
+        Assert.Equal(2, queryParams.Length);
+        Assert.Equal(typeof(string), queryParams[0].ParameterType);
+        Assert.Equal("sql", queryParams[0].Name);
+        Assert.Equal(typeof(CancellationToken), queryParams[1].ParameterType);
+        Assert.Equal("cancellationToken", queryParams[1].Name);
         Assert.Equal(3, dmlParams.Length);
         Assert.Equal(typeof(string), dmlParams[0].ParameterType);
         Assert.Equal("sql", dmlParams[0].Name);

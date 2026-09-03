@@ -18,12 +18,13 @@ public partial class SqlAgentTool
     ")]
     public async Task<string> ExecuteQuerySql(
         [Description("A single SELECT SQL statement to parse, validate, compile, and execute.")]
-        string sql)
+        string sql,
+        CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-            return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+            return InvalidSqlConfigurationMessage;
 
         var provider = _sqlProviderFactory.GetProvider(dbType);
         QueryFacts? auditFacts = null;
@@ -38,7 +39,7 @@ public partial class SqlAgentTool
             var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
             var allowedTables = ResolveTableWhitelist();
             QueryExecutionResult execution;
-            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -48,7 +49,8 @@ public partial class SqlAgentTool
                     sql,
                     dbType,
                     securityPolicy,
-                    allowedTables);
+                    allowedTables,
+                    cancellationToken);
             }
 
             var result = JsonSerializer.Serialize(execution.Rows);
@@ -64,8 +66,13 @@ public partial class SqlAgentTool
                     ReturnedRows = execution.RowCount,
                     Definition = DescribeQuery(sql, dbType, auditFacts)
                 },
-                $"Provider: {dbType}");
+                $"Provider: {dbType}",
+                cancellationToken);
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -81,7 +88,8 @@ public partial class SqlAgentTool
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditFacts is null ? null : DescribeQuery(sql, dbType, auditFacts)
                 },
-                ex.Message);
+                ex.Message,
+                cancellationToken);
             return "Execution failed: " + ex.Message;
         }
     }

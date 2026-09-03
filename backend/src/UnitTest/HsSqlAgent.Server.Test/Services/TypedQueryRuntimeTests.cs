@@ -133,6 +133,103 @@ public class TypedQueryRuntimeTests
             TypedQueryRuntime.CreateVerifiedTargetProfile(SqlAgentToolType.Postgres, connection.Object));
     }
 
+
+    [Fact]
+    public async Task ExecuteAsync_CompilerAuthorizationFailure_IsNotMappedAsProviderError()
+    {
+        var connection = CreateOpenConnection();
+        var connections = new Mock<IDbConnectionFactory>();
+        connections.Setup(x => x.Create("connection")).Returns(connection.Object);
+
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        provider.SetupGet(x => x.Connections).Returns(connections.Object);
+
+        var error = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().ExecuteAsync(
+                provider.Object,
+                "connection",
+                "SELECT id FROM public.secrets",
+                SqlAgentToolType.Postgres,
+                CreatePolicy(),
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" },
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("not allowed", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DbOpenFailure_UsesProviderErrorMapper()
+    {
+        var dbError = new TestDbException("database unavailable");
+        var mapped = new InvalidOperationException("mapped provider failure", dbError);
+        var connection = new Mock<DbConnection>();
+        connection.Setup(x => x.OpenAsync(It.IsAny<CancellationToken>())).ThrowsAsync(dbError);
+        var connections = new Mock<IDbConnectionFactory>();
+        connections.Setup(x => x.Create("connection")).Returns(connection.Object);
+        var errors = new Mock<IProviderErrorMapper>();
+        errors.Setup(x => x.Map(dbError, "query")).Returns(mapped);
+
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Connections).Returns(connections.Object);
+        provider.SetupGet(x => x.Errors).Returns(errors.Object);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TypedQueryRuntime().ExecuteAsync(
+                provider.Object,
+                "connection",
+                "SELECT 1",
+                SqlAgentToolType.Postgres,
+                CreatePolicy(),
+                null,
+                TestContext.Current.CancellationToken));
+
+        Assert.Same(mapped, actual);
+        errors.Verify(x => x.Map(dbError, "query"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Cancellation_DoesNotUseProviderErrorMapper()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+
+        var connection = new Mock<DbConnection>();
+        connection.Setup(x => x.OpenAsync(source.Token))
+            .ThrowsAsync(new OperationCanceledException(source.Token));
+        var connections = new Mock<IDbConnectionFactory>();
+        connections.Setup(x => x.Create("connection")).Returns(connection.Object);
+        var errors = new Mock<IProviderErrorMapper>(MockBehavior.Strict);
+
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Connections).Returns(connections.Object);
+        provider.SetupGet(x => x.Errors).Returns(errors.Object);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            new TypedQueryRuntime().ExecuteAsync(
+                provider.Object,
+                "connection",
+                "SELECT 1",
+                SqlAgentToolType.Postgres,
+                CreatePolicy(),
+                null,
+                source.Token));
+
+        errors.VerifyNoOtherCalls();
+    }
+
+    private static Mock<DbConnection> CreateOpenConnection()
+    {
+        var connection = new Mock<DbConnection>();
+        connection.Setup(x => x.OpenAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        connection.SetupGet(x => x.State).Returns(ConnectionState.Open);
+        connection.SetupGet(x => x.ServerVersion).Returns("17.0");
+        return connection;
+    }
+
+    private sealed class TestDbException(string message) : DbException(message);
+
     private static Mock<ISqlProvider> CreateProvider(SqlAgentToolType type)
     {
         var provider = new Mock<ISqlProvider>();

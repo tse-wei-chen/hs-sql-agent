@@ -30,6 +30,8 @@ public class SqlAgentToolExecutionTests
         context.Items[McpContextItemKeys.TableWhitelist] = "public.users";
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);
 
+        using var cancellationSource = new CancellationTokenSource();
+        var cancellationToken = cancellationSource.Token;
         var policy = new SecurityPolicyModel
         {
             QueryMaxRows = 25,
@@ -37,7 +39,7 @@ public class SqlAgentToolExecutionTests
         };
         securityPolicyState.Setup(x => x.GetCurrent()).Returns(policy);
         concurrencyLimiter
-            .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .Setup(x => x.TryAcquireAsync(cancellationToken))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
@@ -50,7 +52,7 @@ public class SqlAgentToolExecutionTests
                 SqlAgentToolType.Postgres,
                 policy,
                 It.Is<IReadOnlySet<string>?>(tables => tables != null && tables.Contains("public.users")),
-                It.IsAny<CancellationToken>()))
+                cancellationToken))
             .ReturnsAsync(new QueryExecutionResult(
                 [new Dictionary<string, object?> { ["id"] = 7 }],
                 1,
@@ -66,7 +68,7 @@ public class SqlAgentToolExecutionTests
             concurrencyLimiter.Object,
             typedQueryRuntime.Object);
 
-        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users");
+        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", cancellationToken);
 
         Assert.Contains("\"id\":7", result, StringComparison.Ordinal);
         typedQueryRuntime.VerifyAll();
@@ -79,7 +81,7 @@ public class SqlAgentToolExecutionTests
                 && audit.Operation == "select"
                 && audit.ReturnedRows == 1),
             It.Is<string>(detail => detail.Contains("Postgres", StringComparison.Ordinal)),
-            It.IsAny<CancellationToken>()), Times.Once);
+            cancellationToken), Times.Once);
     }
 
     [Fact]
@@ -263,6 +265,33 @@ public class SqlAgentToolExecutionTests
 
         Assert.Equal("[]", result);
         typedQueryRuntime.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ExecuteQuerySql_InvalidConfiguration_DoesNotExposeConnectionString()
+    {
+        const string secretConnectionString =
+            "Host=prod.example;Database=payments;Username=service;Password=super-secret";
+        var httpContextAccessor = new Mock<IHttpContextAccessor>();
+        var context = new DefaultHttpContext();
+        context.Items[McpContextItemKeys.SqlProvider] = "NotAProvider";
+        context.Items[McpContextItemKeys.SqlConnectionString] = secretConnectionString;
+        httpContextAccessor.Setup(x => x.HttpContext).Returns(context);
+
+        var tool = new SqlAgentTool(
+            httpContextAccessor.Object,
+            Mock.Of<ISqlProviderFactory>(),
+            Mock.Of<IAuditService>(),
+            Mock.Of<IDbSemanticService>(),
+            Mock.Of<ISecurityPolicyRuntimeState>(),
+            Mock.Of<ISqlExecutionConcurrencyLimiter>(),
+            Mock.Of<ITypedQueryRuntime>());
+
+        var result = await tool.ExecuteQuerySql("SELECT 1");
+
+        Assert.Equal("Invalid database provider or connection configuration.", result);
+        Assert.DoesNotContain("super-secret", result, StringComparison.Ordinal);
+        Assert.DoesNotContain(secretConnectionString, result, StringComparison.Ordinal);
     }
 
 }

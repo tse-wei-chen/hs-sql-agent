@@ -11,7 +11,8 @@ public partial class SqlAgentTool
     [McpServerTool, Description("Get column names and types of a table.")]
     public async Task<string> GetColumns(
         [Description("The schema name")] string schemaName,
-        [Description("The table name")] string tableName)
+        [Description("The table name")] string tableName,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -19,20 +20,21 @@ public partial class SqlAgentTool
             EnsureTableAllowed(QualifiedTable(schemaName, tableName));
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+                return InvalidSqlConfigurationMessage;
             if (string.IsNullOrEmpty(tableName))
                 return "Table name cannot be empty.";
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             List<ColumnInfo> columns;
-            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
                 var metadata = await provider.Metadata.GetColumnsAsync(
                     sqlConfig.ConnectionString,
                     schemaName,
-                    tableName);
+                    tableName,
+                    cancellationToken);
                 columns = metadata
                     .Select(column => new ColumnInfo(
                         column.Name,
@@ -46,7 +48,7 @@ public partial class SqlAgentTool
             if (dbId.HasValue)
             {
                 var whitelist = ResolveTableWhitelist();
-                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value);
+                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value, cancellationToken);
                 var tableSemantics = semanticModel.Entities.Where(s =>
                     string.Equals(s.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(s.TableName, tableName, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -81,62 +83,90 @@ public partial class SqlAgentTool
                 }
             }
 
-            await _auditService.WriteLogAsync("mcp.get_columns", $"{schemaName}.{tableName}", "success");
+            await _auditService.WriteLogAsync(
+                "mcp.get_columns",
+                $"{schemaName}.{tableName}",
+                "success",
+                cancellationToken: cancellationToken);
             return JsonSerializer.Serialize(columns);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync("mcp.get_columns", $"{schemaName}.{tableName}", "failed", ex.Message);
+            await _auditService.WriteLogAsync(
+                "mcp.get_columns",
+                $"{schemaName}.{tableName}",
+                "failed",
+                ex.Message,
+                cancellationToken);
             return $"Error getting columns: {ex.Message}";
         }
     }
 
     [McpServerTool, Description("Get list of schemas in the database.")]
-    public async Task<string> GetSchemas()
+    public async Task<string> GetSchemas(CancellationToken cancellationToken = default)
     {
         try
         {
             ValidateToolAccess("get_schemas");
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+                return InvalidSqlConfigurationMessage;
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             IEnumerable<string> schemas;
-            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                schemas = await provider.Metadata.GetSchemasAsync(sqlConfig.ConnectionString);
+                schemas = await provider.Metadata.GetSchemasAsync(sqlConfig.ConnectionString, cancellationToken);
             }
 
-            await _auditService.WriteLogAsync("mcp.get_schemas", "database", "success");
+            await _auditService.WriteLogAsync(
+                "mcp.get_schemas",
+                "database",
+                "success",
+                cancellationToken: cancellationToken);
             return string.Join(", ", schemas);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync("mcp.get_schemas", "database", "failed", ex.Message);
+            await _auditService.WriteLogAsync(
+                "mcp.get_schemas",
+                "database",
+                "failed",
+                ex.Message,
+                cancellationToken);
             return $"Error getting schemas: {ex.Message}";
         }
     }
 
     [McpServerTool, Description("Get list of tables in a schema.")]
-    public async Task<string> GetTables([Description("The schema name")] string schemaName)
+    public async Task<string> GetTables(
+        [Description("The schema name")] string schemaName,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             ValidateToolAccess("get_tables");
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+                return InvalidSqlConfigurationMessage;
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             IEnumerable<string> tables;
-            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync())
+            await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                tables = await provider.Metadata.GetTablesAsync(sqlConfig.ConnectionString, schemaName);
+                tables = await provider.Metadata.GetTablesAsync(sqlConfig.ConnectionString, schemaName, cancellationToken);
             }
 
             var whitelist = ResolveTableWhitelist();
@@ -146,7 +176,7 @@ public partial class SqlAgentTool
             var dbId = ResolveDbManagementId();
             if (dbId.HasValue)
             {
-                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value);
+                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value, cancellationToken);
                 var tablesWithDesc = tables.Select(t =>
                 {
                     var semantic = semanticModel.Entities.FirstOrDefault(item =>
@@ -166,16 +196,33 @@ public partial class SqlAgentTool
                     return parts.Count > 0 ? $"{t} ({string.Join(". ", parts)})" : t;
                 });
 
-                await _auditService.WriteLogAsync("mcp.get_tables", schemaName, "success");
+                await _auditService.WriteLogAsync(
+                    "mcp.get_tables",
+                    schemaName,
+                    "success",
+                    cancellationToken: cancellationToken);
                 return string.Join(", ", tablesWithDesc);
             }
 
-            await _auditService.WriteLogAsync("mcp.get_tables", schemaName, "success");
+            await _auditService.WriteLogAsync(
+                "mcp.get_tables",
+                schemaName,
+                "success",
+                cancellationToken: cancellationToken);
             return string.Join(", ", tables);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync("mcp.get_tables", schemaName, "failed", ex.Message);
+            await _auditService.WriteLogAsync(
+                "mcp.get_tables",
+                schemaName,
+                "failed",
+                ex.Message,
+                cancellationToken);
             return $"Error getting tables: {ex.Message}";
         }
     }

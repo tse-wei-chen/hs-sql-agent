@@ -37,7 +37,7 @@ public partial class SqlAgentTool
 
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return $"Invalid provider or connection string: {sqlConfig.Provider} - {sqlConfig.ConnectionString}";
+                return InvalidSqlConfigurationMessage;
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             parsedMutation = await _typedDmlRuntime.ParseDmlWithVerifiedRuntimeProfileAsync(
@@ -95,6 +95,10 @@ public partial class SqlAgentTool
                 $"Operation: {descriptor.Operation} (committed after {validationDetail})",
                 cancellationToken);
             return execution.Result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
