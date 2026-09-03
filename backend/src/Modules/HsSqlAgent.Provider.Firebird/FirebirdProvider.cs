@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.Firebird;
 
-public class FirebirdProvider : SqlProviderBase, IProviderConnectionMetadataReader
+public class FirebirdProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader
 {
     private readonly IDmlPreviewTransactionFactory _previewTransactions =
         new FirebirdDmlPreviewTransactionFactory();
@@ -164,6 +164,97 @@ public class FirebirdProvider : SqlProviderBase, IProviderConnectionMetadataRead
             ((string)r.DATA_TYPE).TrimEnd(),
             Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
+    }
+
+    public async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+        DbConnection connection,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        if (triggerOperation.HasValue)
+            throw new NotSupportedException("Firebird DML planning does not expose SQL Server trigger assurance.");
+        if (schemaName is not null
+            && !string.Equals(schemaName, "Default", StringComparison.OrdinalIgnoreCase))
+            return [];
+
+        if (!includeColumns)
+        {
+            const string targetSql = @"
+                SELECT TRIM(RDB$RELATION_NAME) AS TABLE_NAME
+                FROM RDB$RELATIONS
+                WHERE RDB$SYSTEM_FLAG = 0
+                  AND RDB$VIEW_BLR IS NULL
+                  AND UPPER(TRIM(RDB$RELATION_NAME)) = UPPER(@tableName);";
+            var targets = await connection.QueryAsync<string>(new CommandDefinition(
+                targetSql,
+                new { tableName },
+                cancellationToken: cancellationToken));
+            return [.. targets.Select(table => new DatabaseDmlPlanningMetadata(
+                "Default",
+                table,
+                []))];
+        }
+
+        const string sql = @"
+            SELECT TRIM(r.RDB$RELATION_NAME) AS TABLE_NAME,
+                   TRIM(f.RDB$FIELD_NAME) AS COLUMN_NAME,
+                   CASE t.RDB$TYPE_NAME
+                       WHEN 'SHORT' THEN 'SMALLINT'
+                       WHEN 'LONG' THEN 'INTEGER'
+                       WHEN 'INT64' THEN 'BIGINT'
+                       WHEN 'FLOAT' THEN 'FLOAT'
+                       WHEN 'DOUBLE' THEN 'DOUBLE PRECISION'
+                       WHEN 'VARYING' THEN 'VARCHAR'
+                       WHEN 'TEXT' THEN 'CHAR'
+                       WHEN 'BLOB' THEN 'BLOB'
+                       WHEN 'TIMESTAMP' THEN 'TIMESTAMP'
+                       WHEN 'SQL_DATE' THEN 'DATE'
+                       WHEN 'SQL_TIME' THEN 'TIME'
+                       WHEN 'BOOLEAN' THEN 'BOOLEAN'
+                       ELSE TRIM(t.RDB$TYPE_NAME)
+                   END AS DATA_TYPE,
+                   CASE WHEN pk.RDB$FIELD_NAME IS NULL THEN 0 ELSE 1 END AS IS_PRIMARY_KEY,
+                   CASE WHEN pk.RDB$FIELD_POSITION IS NULL THEN NULL ELSE pk.RDB$FIELD_POSITION + 1 END AS PRIMARY_KEY_ORDINAL
+            FROM RDB$RELATIONS r
+            JOIN RDB$RELATION_FIELDS f ON f.RDB$RELATION_NAME = r.RDB$RELATION_NAME
+            JOIN RDB$FIELDS fs ON fs.RDB$FIELD_NAME = f.RDB$FIELD_SOURCE
+            JOIN RDB$TYPES t ON t.RDB$TYPE = fs.RDB$FIELD_TYPE
+                            AND t.RDB$FIELD_NAME = 'RDB$FIELD_TYPE'
+            LEFT JOIN (
+                SELECT rc.RDB$RELATION_NAME, seg.RDB$FIELD_NAME, seg.RDB$FIELD_POSITION
+                FROM RDB$RELATION_CONSTRAINTS rc
+                JOIN RDB$INDEX_SEGMENTS seg ON seg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME
+                WHERE rc.RDB$CONSTRAINT_TYPE = 'PRIMARY KEY'
+            ) pk ON pk.RDB$RELATION_NAME = f.RDB$RELATION_NAME
+                AND pk.RDB$FIELD_NAME = f.RDB$FIELD_NAME
+            WHERE r.RDB$SYSTEM_FLAG = 0
+              AND r.RDB$VIEW_BLR IS NULL
+              AND UPPER(TRIM(r.RDB$RELATION_NAME)) = UPPER(@tableName)
+            ORDER BY f.RDB$FIELD_POSITION;";
+        var rows = (await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken))).ToArray();
+
+        return [.. rows
+            .GroupBy(row => ((string)row.TABLE_NAME).TrimEnd(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => new DatabaseDmlPlanningMetadata(
+                "Default",
+                group.Key,
+                [.. group.Select(row => new DatabaseColumnMetadata(
+                    "Default",
+                    group.Key,
+                    ((string)row.COLUMN_NAME).TrimEnd(),
+                    ((string)row.DATA_TYPE).TrimEnd(),
+                    Convert.ToInt32(row.IS_PRIMARY_KEY) != 0,
+                    row.PRIMARY_KEY_ORDINAL is null
+                        ? null
+                        : Convert.ToInt32(row.PRIMARY_KEY_ORDINAL))) ]))];
     }
 
     public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)

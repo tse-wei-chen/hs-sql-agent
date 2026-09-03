@@ -65,6 +65,32 @@ public interface IProviderConnectionMetadataReader
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Immutable metadata snapshot used by DML planning. When triggerOperation is requested,
+/// HasEnabledDmlTrigger is populated only when the provider can prove trigger metadata completeness;
+/// null means the required assurance could not be established and callers must fail closed.
+/// </summary>
+public sealed record DatabaseDmlPlanningMetadata(
+    string Schema,
+    string Table,
+    IReadOnlyList<DatabaseColumnMetadata> Columns,
+    bool? HasEnabledDmlTrigger = null);
+
+/// <summary>
+/// Optional additive capability that resolves a DML target and the metadata required by row-impact
+/// planning in one provider-native catalog command over an already-open connection.
+/// </summary>
+public interface IProviderConnectionDmlPlanningMetadataReader
+{
+    Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+        DbConnection connection,
+        string? schema,
+        string table,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default);
+}
+
 public interface IProviderMetadataReader
 {
     Task<IReadOnlyList<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);

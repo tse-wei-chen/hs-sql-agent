@@ -63,6 +63,25 @@ public sealed class ProviderPackageBoundaryTests
     }
 
     [Fact]
+    public void ConcreteProviders_ExposeSingleCommandDmlPlanningMetadataCapability()
+    {
+        Type[] providers =
+        [
+            typeof(PostgresProvider),
+            typeof(MySqlProvider),
+            typeof(SqliteProvider),
+            typeof(MsSqlServerProvider),
+            typeof(OracleProvider),
+            typeof(FirebirdProvider)
+        ];
+
+        foreach (var provider in providers)
+            Assert.True(
+                typeof(IProviderConnectionDmlPlanningMetadataReader).IsAssignableFrom(provider),
+                $"{provider.FullName} must expose connection-aware DML planning metadata snapshots.");
+    }
+
+    [Fact]
     public void FirebirdPreviewSafety_IsOwnedByFirebirdProviderAssembly()
     {
         Assert.Equal(

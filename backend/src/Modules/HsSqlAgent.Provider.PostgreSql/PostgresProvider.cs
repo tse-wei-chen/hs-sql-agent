@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.PostgreSql;
 
-public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataReader
+public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 
@@ -162,6 +162,87 @@ public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataRead
             (string)r.data_type,
             (bool)r.is_primary_key,
             r.primary_key_ordinal is null ? null : Convert.ToInt32(r.primary_key_ordinal)))];
+    }
+
+    public async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+        DbConnection connection,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        if (triggerOperation.HasValue)
+            throw new NotSupportedException("PostgreSQL DML planning does not expose SQL Server trigger assurance.");
+
+        var schemaPredicate = schemaName is null
+            ? string.Empty
+            : " AND lower(t.table_schema) = lower(@schemaName)";
+
+        if (!includeColumns)
+        {
+            var targetSql = $@"
+                SELECT t.table_schema, t.table_name
+                FROM information_schema.tables t
+                WHERE lower(t.table_name) = lower(@tableName){schemaPredicate}
+                ORDER BY t.table_schema, t.table_name;";
+            var targets = await connection.QueryAsync(new CommandDefinition(
+                targetSql,
+                new { schemaName, tableName },
+                cancellationToken: cancellationToken));
+            return [.. targets.Select(row => new DatabaseDmlPlanningMetadata(
+                (string)row.table_schema,
+                (string)row.table_name,
+                []))];
+        }
+
+        var sql = $@"
+            SELECT t.table_schema, t.table_name,
+                   c.column_name, c.data_type,
+                   (pk.ordinal_position IS NOT NULL) AS is_primary_key,
+                   pk.ordinal_position AS primary_key_ordinal
+            FROM information_schema.tables t
+            LEFT JOIN information_schema.columns c
+              ON c.table_schema = t.table_schema
+             AND c.table_name = t.table_name
+            LEFT JOIN (
+                SELECT tc.table_schema, tc.table_name, kcu.column_name, kcu.ordinal_position
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                 AND tc.constraint_schema = kcu.constraint_schema
+                 AND tc.table_schema = kcu.table_schema
+                 AND tc.table_name = kcu.table_name
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+            ) pk
+              ON pk.table_schema = t.table_schema
+             AND pk.table_name = t.table_name
+             AND pk.column_name = c.column_name
+            WHERE lower(t.table_name) = lower(@tableName){schemaPredicate}
+            ORDER BY t.table_schema, t.table_name, c.ordinal_position;";
+        var rows = (await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { schemaName, tableName },
+            cancellationToken: cancellationToken))).ToArray();
+
+        return [.. rows
+            .GroupBy(row => ((string)row.table_schema, (string)row.table_name))
+            .Select(group => new DatabaseDmlPlanningMetadata(
+                group.Key.Item1,
+                group.Key.Item2,
+                [.. group
+                    .Where(row => row.column_name is not null)
+                    .Select(row => new DatabaseColumnMetadata(
+                        group.Key.Item1,
+                        group.Key.Item2,
+                        (string)row.column_name,
+                        (string)row.data_type,
+                        (bool)row.is_primary_key,
+                        row.primary_key_ordinal is null
+                            ? null
+                            : Convert.ToInt32(row.primary_key_ordinal))) ]))];
     }
 
     public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
