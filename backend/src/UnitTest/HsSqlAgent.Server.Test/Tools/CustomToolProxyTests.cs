@@ -253,15 +253,7 @@ public class CustomToolProxyTests
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("insert_user", 42, It.IsAny<CancellationToken>()))
             .ReturnsAsync(tool);
 
-        var metadata = new Mock<IProviderMetadataReader>();
-        metadata.Setup(x => x.GetColumnsAsync(
-                "Host=localhost;Database=testdb",
-                "public",
-                "users",
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new DatabaseColumnMetadata("public", "users", "name", "text", false)
-            ]);
+        var metadata = new Mock<IProviderMetadataReader>(MockBehavior.Strict);
         var verificationConnection = new Mock<DbConnection>();
         verificationConnection.SetupGet(x => x.State).Returns(System.Data.ConnectionState.Open);
         verificationConnection.SetupGet(x => x.ServerVersion).Returns("17.5");
@@ -295,7 +287,7 @@ public class CustomToolProxyTests
         Assert.Contains("cancelled by user", result, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, approval.ElicitCount);
         connections.Verify(x => x.Create("Host=localhost;Database=testdb"), Times.Exactly(2));
-        metadata.VerifyAll();
+        metadata.VerifyNoOtherCalls();
     }
 
     [Fact]
