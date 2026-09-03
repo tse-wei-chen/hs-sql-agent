@@ -4,6 +4,7 @@ using System.Security.Claims;
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
 using Auth.Service.Interfaces;
+using Auth.Service.Models;
 using Auth.Service.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
