@@ -312,6 +312,7 @@ public class McpAccessKeyServiceTests
 
     #region Lifecycle Tests
 
+
     [Fact]
     public async Task UpdateKeyAsync_ShouldUpdateConfigurationAndInvalidateValidationCache()
     {
@@ -340,12 +341,26 @@ public class McpAccessKeyServiceTests
         Assert.Equal("new", key.Name);
         Assert.Equal("https://app.example.com", key.CorsAllowedOrigins);
         Assert.Equal(5, key.DbManagementId);
+
+        var validationCacheKey = McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash);
+        _cacheMock.Verify(c => c.SetAsync(
+            validationCacheKey,
+            It.Is<McpAccessKeyValidationResult>(cached =>
+                !cached.IsValid &&
+                cached.Reason == "Key configuration is changing."),
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            validationCacheKey,
+            CancellationToken.None), Times.Once);
         _cacheMock.Verify(c => c.SetAsync(
             McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
             true,
             It.IsAny<TimeSpan?>(),
             CancellationToken.None), Times.Once);
+
     }
+
 
     [Fact]
     public async Task RotateKeyAsync_ShouldIssueReplacementAndImmediatelyRevokeOldKey()
@@ -374,17 +389,26 @@ public class McpAccessKeyServiceTests
         Assert.Equal("get_tables", result.AllowedTools);
         Assert.False(key.IsActive);
         Assert.NotNull(key.RevokedAt);
+
+        var validationCacheKey = McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash);
         _cacheMock.Verify(c => c.SetAsync(
-            McpAccessKeyCacheKeys.ForRevokedKeyId(1),
+            validationCacheKey,
+            It.Is<McpAccessKeyValidationResult>(cached =>
+                !cached.IsValid &&
+                cached.Reason == "Key revoked."),
+            It.Is<TimeSpan?>(expiry => expiry.HasValue && expiry.Value > TimeSpan.FromMinutes(5)),
+            CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            validationCacheKey,
+            CancellationToken.None), Times.Never);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
             true,
             It.IsAny<TimeSpan?>(),
             CancellationToken.None), Times.Once);
-        _cacheMock.Verify(c => c.SetAsync(
-            McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
-            true,
-            It.IsAny<TimeSpan?>(),
-            CancellationToken.None), Times.Once);
+
     }
+
 
     [Fact]
     public async Task RotateKeyAsync_ShouldKeepOldKeyActiveOnlyForGracePeriod()
@@ -406,11 +430,24 @@ public class McpAccessKeyServiceTests
         Assert.True(key.IsActive);
         Assert.Null(key.RevokedAt);
         Assert.True(key.ExpiresAt >= before && key.ExpiresAt <= DateTime.UtcNow.AddMinutes(16));
+
+        var validationCacheKey = McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash);
+        _cacheMock.Verify(c => c.SetAsync(
+            validationCacheKey,
+            It.Is<McpAccessKeyValidationResult>(cached =>
+                !cached.IsValid &&
+                cached.Reason == "Key configuration is changing."),
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            validationCacheKey,
+            CancellationToken.None), Times.Once);
         _cacheMock.Verify(c => c.SetAsync(
             McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
             true,
             It.IsAny<TimeSpan?>(),
             CancellationToken.None), Times.Once);
+
     }
 
     [Fact]
@@ -549,10 +586,10 @@ public class McpAccessKeyServiceTests
         Assert.Equal("Key expired.", result.Reason);
     }
 
+
     [Fact]
-    public async Task ValidateAsync_ShouldReturnTrueAndDecryptedDetails_WhenKeyIsValid()
+    public async Task ValidateAsync_ShouldReturnTrueAndEncryptedRuntimeDatabaseConfiguration_WhenKeyIsValid()
     {
-        // Arrange
         var rawKey = "12345678-secret";
         var prefix = "12345678";
         var expiresAt = DateTime.UtcNow.AddHours(1);
@@ -572,26 +609,43 @@ public class McpAccessKeyServiceTests
             }
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(keys);
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement>
+        {
+            new()
+            {
+                Id = 10,
+                SqlProvider = "PostgreSQL",
+                Host = "db.internal",
+                Port = "5432",
+                Username = "service",
+                PasswordHash = "ENCRYPTED_db-password",
+                Database = "app",
+                ExtraSettings = "SSL Mode=Require"
+            }
+        });
 
-        // Act
         var result = await _service.ValidateAsync(rawKey, TestContext.Current.CancellationToken);
 
-        // Assert
         Assert.True(result.IsValid);
         Assert.Null(result.Reason);
         Assert.Equal(1, result.KeyId);
         Assert.Equal("Valid Key", result.Name);
         Assert.Equal(10, result.DbManagementId);
         Assert.Equal(expiresAt, result.ExpiresAt);
+        Assert.Equal("PostgreSQL", result.SqlProvider);
+
+        Assert.NotNull(result.DatabaseConfiguration);
+        Assert.Equal("db.internal", result.DatabaseConfiguration.Host);
+        Assert.Equal("5432", result.DatabaseConfiguration.Port);
+        Assert.Equal("service", result.DatabaseConfiguration.Username);
+        Assert.Equal("ENCRYPTED_db-password", result.DatabaseConfiguration.PasswordHash);
+        Assert.Equal("app", result.DatabaseConfiguration.Database);
+        Assert.Equal("SSL Mode=Require", result.DatabaseConfiguration.ExtraSettings);
 
         Assert.NotNull(result.CorsAllowedOriginsSet);
         Assert.Contains("http://localhost:3000", result.CorsAllowedOriginsSet);
         Assert.Contains("http://app.com", result.CorsAllowedOriginsSet);
     }
-
-    #endregion
-
-    #region RevokeKeyAsync Tests
 
     [Fact]
     public async Task RevokeKeyAsync_ShouldReturnFalse_WhenKeyNotFound()
@@ -607,10 +661,10 @@ public class McpAccessKeyServiceTests
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
+
     [Fact]
-    public async Task RevokeKeyAsync_ShouldDeactivateKeyAndReturnTrue_WhenKeyExists()
+    public async Task RevokeKeyAsync_ShouldDeactivateKeyAndPublishValidationTombstone_WhenKeyExists()
     {
-        // Arrange
         var key = new McpAccessKey
         {
             Id = 1,
@@ -619,27 +673,34 @@ public class McpAccessKeyServiceTests
         };
         _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey> { key });
 
-        // Act
         var result = await _service.RevokeKeyAsync(1, "tester", TestContext.Current.CancellationToken);
 
-        // Assert
         Assert.True(result);
         Assert.False(key.IsActive);
         Assert.NotNull(key.RevokedAt);
         Assert.Equal("tester", key.RevokedBy);
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+
+        var validationCacheKey = McpAccessKeyCacheKeys.ForStoredHash(key.KeyHash);
         _cacheMock.Verify(c => c.SetAsync(
-            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
-            true,
+            validationCacheKey,
+            It.Is<McpAccessKeyValidationResult>(cached =>
+                !cached.IsValid &&
+                cached.Reason == "Key revoked."),
             It.Is<TimeSpan?>(expiry =>
                 expiry.HasValue &&
                 expiry.Value > TimeSpan.FromMinutes(5)),
             CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            validationCacheKey,
+            CancellationToken.None), Times.Never);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+
     }
-
-    #endregion
-
-    #region TouchLastUsedAsync Tests
 
     [Fact]
     public async Task TouchLastUsedAsync_ShouldUpdateLastUsedAt_WhenKeyExists()

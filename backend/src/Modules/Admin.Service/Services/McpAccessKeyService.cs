@@ -23,7 +23,7 @@ public class McpAccessKeyService(
         "execute_query_sql", "get_columns", "get_schemas", "get_tables", "execute_dml_sql"
     };
     private static readonly TimeSpan RevocationTombstoneExpiry = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan ChangedKeyRefreshExpiry = TimeSpan.FromMinutes(6);
+    private static readonly TimeSpan CacheBarrierExpiry = TimeSpan.FromMinutes(6);
     private static readonly char[] CorsOriginsSeparators = [',', ';', '\n', '\r'];
     private readonly IAdminContext _context = context;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
@@ -141,8 +141,7 @@ public class McpAccessKeyService(
         entity.RateLimitMode = request.RateLimitMode;
         entity.PermitLimitOverride = request.PermitLimitOverride;
         entity.WindowSecondsOverride = request.WindowSecondsOverride;
-        await MarkKeyChangedAsync(entity.Id);
-        await _context.SaveChangesAsync(cancellationToken);
+        await CommitWithValidationBarrierAsync(entity, cancellationToken);
 
         var now = DateTime.UtcNow;
         var result = new McpAccessKeyListItem
@@ -218,10 +217,10 @@ public class McpAccessKeyService(
                 oldKey.ExpiresAt = graceExpiry;
         }
 
-        await MarkKeyChangedAsync(oldKey.Id);
         if (request.GracePeriodMinutes == 0)
-            await MarkKeyRevokedAsync(oldKey.Id);
-        await _context.SaveChangesAsync(cancellationToken);
+            await CommitWithRevocationTombstoneAsync(oldKey, cancellationToken);
+        else
+            await CommitWithValidationBarrierAsync(oldKey, cancellationToken);
         return CreateIssueResult(replacement, plaintext);
     }
 
@@ -270,10 +269,8 @@ public class McpAccessKeyService(
         key.RevokedAt = DateTime.UtcNow;
         key.RevokedBy = actorId;
 
-        // Publish the tombstone before committing so a cache failure cannot leave a
-        // successfully revoked key usable with stale validation data.
-        await MarkKeyRevokedAsync(key.Id);
-        await _context.SaveChangesAsync(cancellationToken);
+        // Publish the tombstone on the exact validation cache key before committing.
+        await CommitWithRevocationTombstoneAsync(key, cancellationToken);
         return true;
     }
 
@@ -315,6 +312,25 @@ public class McpAccessKeyService(
             return new McpAccessKeyValidationResult { IsValid = false, Reason = "Key expired." };
         }
 
+        McpRuntimeDatabaseConfiguration? databaseConfiguration = null;
+        if (entity.DbManagementId.HasValue)
+        {
+            databaseConfiguration = await _context.DbManagement
+                .AsNoTracking()
+                .Where(db => db.Id == entity.DbManagementId.Value)
+                .Select(db => new McpRuntimeDatabaseConfiguration
+                {
+                    SqlProvider = db.SqlProvider ?? string.Empty,
+                    Host = db.Host ?? string.Empty,
+                    Port = db.Port ?? string.Empty,
+                    Username = db.Username ?? string.Empty,
+                    PasswordHash = db.PasswordHash ?? string.Empty,
+                    Database = db.Database ?? string.Empty,
+                    ExtraSettings = db.ExtraSettings
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
         return new McpAccessKeyValidationResult
         {
             IsValid = true,
@@ -323,8 +339,9 @@ public class McpAccessKeyService(
             AllowedTools = entity.AllowedTools,
             CorsAllowedOrigins = entity.CorsAllowedOrigins,
             CorsAllowedOriginsSet = ParseCorsAllowedOrigins(entity.CorsAllowedOrigins),
-            SqlProvider = entity.SqlProvider,
+            SqlProvider = databaseConfiguration?.SqlProvider ?? entity.SqlProvider,
             DbManagementId = entity.DbManagementId,
+            DatabaseConfiguration = databaseConfiguration,
             TableWhitelist = entity.TableWhitelist,
             ExpiresAt = entity.ExpiresAt,
             RateLimitMode = entity.RateLimitMode,
@@ -446,14 +463,94 @@ public class McpAccessKeyService(
         }
     }
 
-    private Task MarkKeyChangedAsync(int keyId)
+    private async Task CommitWithValidationBarrierAsync(
+        McpAccessKey entity,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = McpAccessKeyCacheKeys.ForStoredHash(entity.KeyHash);
+        await _cache.SetAsync(
+            cacheKey,
+            new McpAccessKeyValidationResult
+            {
+                IsValid = false,
+                Reason = "Key configuration is changing."
+            },
+            CacheBarrierExpiry,
+            CancellationToken.None);
+        await MarkLegacyChangedAsync(entity.Id);
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            try
+            {
+                await _cache.RemoveAsync(cacheKey, CancellationToken.None);
+                await _cache.RemoveAsync(
+                    McpAccessKeyCacheKeys.ForChangedKeyId(entity.Id),
+                    CancellationToken.None);
+            }
+            catch
+            {
+                // Preserve the persistence exception; the barrier remains fail-closed if cleanup also fails.
+            }
+
+            throw;
+        }
+
+        // Keep the legacy changed marker until its TTL expires. A v3 runtime will keep
+        // revalidating beyond its five-minute validation-cache lifetime during a rolling upgrade.
+        await _cache.RemoveAsync(cacheKey, CancellationToken.None);
+    }
+
+    private async Task CommitWithRevocationTombstoneAsync(
+        McpAccessKey entity,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = McpAccessKeyCacheKeys.ForStoredHash(entity.KeyHash);
+        await _cache.SetAsync(
+            cacheKey,
+            new McpAccessKeyValidationResult
+            {
+                IsValid = false,
+                Reason = "Key revoked."
+            },
+            RevocationTombstoneExpiry,
+            CancellationToken.None);
+        await MarkLegacyRevokedAsync(entity.Id);
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            try
+            {
+                await _cache.RemoveAsync(cacheKey, CancellationToken.None);
+                await _cache.RemoveAsync(
+                    McpAccessKeyCacheKeys.ForRevokedKeyId(entity.Id),
+                    CancellationToken.None);
+            }
+            catch
+            {
+                // Preserve the persistence exception.
+            }
+
+            throw;
+        }
+    }
+
+    private Task MarkLegacyChangedAsync(int keyId)
         => _cache.SetAsync(
             McpAccessKeyCacheKeys.ForChangedKeyId(keyId),
             true,
-            ChangedKeyRefreshExpiry,
+            CacheBarrierExpiry,
             CancellationToken.None);
 
-    private Task MarkKeyRevokedAsync(int keyId)
+    private Task MarkLegacyRevokedAsync(int keyId)
         => _cache.SetAsync(
             McpAccessKeyCacheKeys.ForRevokedKeyId(keyId),
             true,

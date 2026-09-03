@@ -8,10 +8,16 @@ using System.Text;
 using Admin.Service.Interfaces;
 namespace Admin.Service.Services;
 
-public class DbManagementService(IAdminContext context, ICryptoService cryptoService, IOptions<McpKeySettings> mcpKeySettings) : IDbManagementService
+public class DbManagementService(
+    IAdminContext context,
+    ICryptoService cryptoService,
+    IOptions<McpKeySettings> mcpKeySettings,
+    ICacheService cache) : IDbManagementService
 {
+    private static readonly TimeSpan CacheBarrierExpiry = TimeSpan.FromMinutes(6);
     private readonly IAdminContext _context = context;
     private readonly ICryptoService _cryptoService = cryptoService;
+    private readonly ICacheService _cache = cache;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
     public async Task<DbManagementVM> CreateDbAsync(DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
@@ -88,7 +94,8 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
             existingDbManagement.UpdatedAt = DateTime.UtcNow;
             existingDbManagement.UpdatedBy = dbManagement.UpdatedBy;
 
-            await _context.SaveChangesAsync(cancellationToken);
+            var dependentCacheKeys = await GetDependentValidationCacheKeysAsync(id, cancellationToken);
+            await CommitWithValidationBarriersAsync(dependentCacheKeys, cancellationToken);
         }
     }
 
@@ -127,6 +134,70 @@ public class DbManagementService(IAdminContext context, ICryptoService cryptoSer
             _context.DbManagement.Remove(existingDbManagement);
             await _context.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private async Task<IReadOnlyList<string>> GetDependentValidationCacheKeysAsync(
+        int dbManagementId,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var hashes = await _context.McpAccessKeys
+            .AsNoTracking()
+            .Where(key =>
+                key.DbManagementId == dbManagementId &&
+                key.IsActive &&
+                !key.RevokedAt.HasValue &&
+                (!key.ExpiresAt.HasValue || key.ExpiresAt > now))
+            .Select(key => key.KeyHash)
+            .ToListAsync(cancellationToken);
+
+        return hashes
+            .Where(hash => !string.IsNullOrWhiteSpace(hash))
+            .Select(McpAccessKeyCacheKeys.ForStoredHash)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private async Task CommitWithValidationBarriersAsync(
+        IReadOnlyList<string> cacheKeys,
+        CancellationToken cancellationToken)
+    {
+        foreach (var cacheKey in cacheKeys)
+        {
+            await _cache.SetAsync(
+                cacheKey,
+                new McpAccessKeyValidationResult
+                {
+                    IsValid = false,
+                    Reason = "Database configuration is changing."
+                },
+                CacheBarrierExpiry,
+                CancellationToken.None);
+        }
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            foreach (var cacheKey in cacheKeys)
+            {
+                try
+                {
+                    await _cache.RemoveAsync(cacheKey, CancellationToken.None);
+                }
+                catch
+                {
+                    // Preserve the persistence exception.
+                }
+            }
+
+            throw;
+        }
+
+        foreach (var cacheKey in cacheKeys)
+            await _cache.RemoveAsync(cacheKey, CancellationToken.None);
     }
 
     private static void EnsureNotBootstrapManaged(DbManagement entity)

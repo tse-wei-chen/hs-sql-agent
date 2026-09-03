@@ -16,6 +16,7 @@ public class DbManagementServiceTests
     private readonly Mock<IAdminContext> _contextMock;
     private readonly Mock<ICryptoService> _cryptoServiceMock;
     private readonly Mock<IOptions<McpKeySettings>> _mcpKeySettingsMock;
+    private readonly Mock<ICacheService> _cacheMock;
     private readonly DbManagementService _service;
     private readonly string _testHmacSecret = "test-secret-key-12345";
     private readonly byte[] _hmacSecretBytes;
@@ -25,6 +26,7 @@ public class DbManagementServiceTests
         _contextMock = new Mock<IAdminContext>();
         _cryptoServiceMock = new Mock<ICryptoService>();
         _mcpKeySettingsMock = new Mock<IOptions<McpKeySettings>>();
+        _cacheMock = new Mock<ICacheService>();
 
         _mcpKeySettingsMock.Setup(s => s.Value).Returns(new McpKeySettings
         {
@@ -39,7 +41,11 @@ public class DbManagementServiceTests
         _contextMock.Setup(c => c.CustomSqlTools).ReturnsDbSet(new List<CustomSqlTool>());
         _contextMock.Setup(c => c.CustomSqlToolRevisions).ReturnsDbSet(new List<CustomSqlToolRevision>());
 
-        _service = new DbManagementService(_contextMock.Object, _cryptoServiceMock.Object, _mcpKeySettingsMock.Object);
+        _service = new DbManagementService(
+            _contextMock.Object,
+            _cryptoServiceMock.Object,
+            _mcpKeySettingsMock.Object,
+            _cacheMock.Object);
     }
 
     [Fact]
@@ -260,6 +266,46 @@ public class DbManagementServiceTests
         Assert.Equal(expectedEncryptedPassword, existingDb.PasswordHash);
 
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once, "SaveChanges was not called after updating entity.");
+    }
+
+    [Fact]
+    public async Task UpdateDbAsync_ShouldInvalidateValidationCacheForActiveDependentKeys()
+    {
+        var existingDb = new DbManagement
+        {
+            Id = 7,
+            Name = "OldName",
+            PasswordHash = "old-hash"
+        };
+        const string keyHash = "stored-key-hash";
+        _contextMock.Setup(c => c.DbManagement).ReturnsDbSet(new List<DbManagement> { existingDb });
+        _contextMock.Setup(c => c.McpAccessKeys).ReturnsDbSet(new List<McpAccessKey>
+        {
+            new()
+            {
+                Id = 11,
+                DbManagementId = 7,
+                KeyHash = keyHash,
+                IsActive = true
+            }
+        });
+
+        await _service.UpdateDbAsync(
+            7,
+            new DbManagementRequest { Name = "NewName" },
+            TestContext.Current.CancellationToken);
+
+        var validationCacheKey = McpAccessKeyCacheKeys.ForStoredHash(keyHash);
+        _cacheMock.Verify(c => c.SetAsync(
+            validationCacheKey,
+            It.Is<McpAccessKeyValidationResult>(cached =>
+                !cached.IsValid &&
+                cached.Reason == "Database configuration is changing."),
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.RemoveAsync(
+            validationCacheKey,
+            CancellationToken.None), Times.Once);
     }
 
     [Theory]
