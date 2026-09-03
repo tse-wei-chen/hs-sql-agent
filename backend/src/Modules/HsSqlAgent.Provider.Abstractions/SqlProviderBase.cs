@@ -6,6 +6,7 @@ public abstract class SqlProviderBase :
     ISqlProvider,
     IDbConnectionFactory,
     IProviderMetadataReader,
+    IProviderTableLookup,
     IProviderDmlPreviewTransactionSource
 {
     private IProviderErrorMapper? _errors;
@@ -23,6 +24,30 @@ public abstract class SqlProviderBase :
     public abstract DbConnection CreateConnection(string? connectionString);
     public abstract Task<List<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
     public abstract Task<List<string>> GetTablesAsync(string connectionString, string schemaName, CancellationToken cancellationToken = default);
+
+    public virtual async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+
+        var matches = new List<DatabaseTableMetadata>();
+        var schemas = await GetSchemasAsync(connectionString, cancellationToken);
+        foreach (var schema in schemas)
+        {
+            var tables = await GetTablesAsync(connectionString, schema, cancellationToken);
+            foreach (var table in tables)
+            {
+                if (string.Equals(table, tableName, StringComparison.OrdinalIgnoreCase))
+                    matches.Add(new DatabaseTableMetadata(schema, table));
+            }
+        }
+
+        return matches;
+    }
+
     public abstract Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
     public abstract Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default);
 

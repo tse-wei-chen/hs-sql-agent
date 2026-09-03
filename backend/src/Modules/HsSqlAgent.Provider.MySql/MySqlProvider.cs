@@ -57,6 +57,27 @@ public class MySqlProvider : SqlProviderBase
         }
     }
 
+    public override async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        using var connection = CreateConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            SELECT TABLE_SCHEMA, TABLE_NAME
+            FROM information_schema.TABLES
+            WHERE TABLE_TYPE = 'BASE TABLE'
+              AND LOWER(TABLE_NAME) = LOWER(@tableName);";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(row => new DatabaseTableMetadata(
+            (string)row.TABLE_SCHEMA,
+            (string)row.TABLE_NAME))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         try

@@ -25,6 +25,21 @@ public class SqliteProvider : SqlProviderBase
         return [.. await connection.QueryAsync<string>(new CommandDefinition("SELECT name FROM sqlite_master WHERE type='table';", cancellationToken: cancellationToken))];
     }
 
+    public override async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        using var connection = CreateConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = "SELECT name FROM sqlite_master WHERE type='table' AND name = @tableName COLLATE NOCASE;";
+        var tables = await connection.QueryAsync<string>(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. tables.Select(table => new DatabaseTableMetadata("main", table))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);

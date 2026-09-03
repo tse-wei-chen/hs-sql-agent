@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using HsSqlAgent.Provider.Abstractions;
 
 namespace SqlAgent.Service.Core.Execution;
 
@@ -82,24 +83,37 @@ public sealed class DmlRowIdentityResolver(IProviderMetadataReader metadataReade
         }
 
         var requestedTable = parts[0];
-        var matches = new List<(string Schema, string Table)>();
-        var schemas = await _metadataReader.GetSchemasAsync(connectionString, cancellationToken);
-        foreach (var schema in schemas)
+        IReadOnlyList<DatabaseTableMetadata> matches;
+        if (_metadataReader is IProviderTableLookup tableLookup)
         {
-            var tables = await _metadataReader.GetTablesAsync(
+            matches = await tableLookup.FindTablesAsync(
                 connectionString,
-                schema,
+                requestedTable,
                 cancellationToken);
-            foreach (var table in tables)
+        }
+        else
+        {
+            var fallbackMatches = new List<DatabaseTableMetadata>();
+            var schemas = await _metadataReader.GetSchemasAsync(connectionString, cancellationToken);
+            foreach (var schema in schemas)
             {
-                if (string.Equals(table, requestedTable, StringComparison.OrdinalIgnoreCase))
-                    matches.Add((schema, table));
+                var tables = await _metadataReader.GetTablesAsync(
+                    connectionString,
+                    schema,
+                    cancellationToken);
+                foreach (var table in tables)
+                {
+                    if (string.Equals(table, requestedTable, StringComparison.OrdinalIgnoreCase))
+                        fallbackMatches.Add(new DatabaseTableMetadata(schema, table));
+                }
             }
+
+            matches = fallbackMatches;
         }
 
         return matches.Count switch
         {
-            1 => matches[0],
+            1 => (matches[0].Schema, matches[0].Table),
             0 => throw new InvalidOperationException(
                 $"DML target '{tableName}' could not be resolved to a physical table. Schema-qualify the target explicitly."),
             _ => throw new InvalidOperationException(

@@ -37,6 +37,26 @@ public class FirebirdProvider : SqlProviderBase
         return [.. await connection.QueryAsync<string>(sql)];
     }
 
+    public override async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        using var connection = CreateConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            SELECT TRIM(RDB$RELATION_NAME) AS TABLE_NAME
+            FROM RDB$RELATIONS
+            WHERE RDB$SYSTEM_FLAG = 0
+              AND RDB$VIEW_BLR IS NULL
+              AND UPPER(TRIM(RDB$RELATION_NAME)) = UPPER(@tableName);";
+        var tables = await connection.QueryAsync<string>(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. tables.Select(table => new DatabaseTableMetadata("Default", table))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);

@@ -52,6 +52,26 @@ public class PostgresProvider : SqlProviderBase
         }
     }
 
+    public override async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        using var connection = CreateConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            SELECT table_schema, table_name
+            FROM information_schema.tables
+            WHERE lower(table_name) = lower(@tableName);";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(row => new DatabaseTableMetadata(
+            (string)row.table_schema,
+            (string)row.table_name))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         const string sql = @"
