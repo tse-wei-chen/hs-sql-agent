@@ -8,8 +8,8 @@ open HsSqlAgent.SqlCore.Rewrite
 
 [<AbstractClass; Sealed>]
 type SqlCoreInspection private () =
-    static member TryGetQueryFactsFromException(exception: Exception) =
-        ArgumentNullException.ThrowIfNull(exception)
+    static member TryGetQueryFactsFromException(error: Exception) =
+        ArgumentNullException.ThrowIfNull(error)
 
         let rec find (current: Exception | null) =
             match current with
@@ -19,7 +19,7 @@ type SqlCoreInspection private () =
                 | Some facts -> facts
                 | None -> find value.InnerException
 
-        find exception
+        find error
 
     static member GetDeterminismFacts(
         sql: string,
