@@ -211,15 +211,14 @@ module internal CompileEvidenceBuilder =
                 let written = encoding.GetBytes(value, 0, value.Length, buffer, 0)
                 hash.AppendData(buffer, 0, written)
 
-        member this.AppendToken(value: string | null) =
-            match value with
-            | null ->
-                this.Append("-1:;")
-            | nonNull ->
-                this.Append(nonNull.Length.ToString(CultureInfo.InvariantCulture))
-                this.Append(":")
-                this.Append(nonNull)
-                this.Append(";")
+        member this.AppendNullToken() =
+            this.Append("-1:;")
+
+        member this.AppendToken(value: string) =
+            this.Append(value.Length.ToString(CultureInfo.InvariantCulture))
+            this.Append(":")
+            this.Append(value)
+            this.Append(";")
 
         member this.AppendInt(value: int) =
             this.AppendToken(value.ToString(CultureInfo.InvariantCulture))
@@ -236,11 +235,14 @@ module internal CompileEvidenceBuilder =
 
     let private appendProfile (writer: Utf8HashWriter) (profile: SqlCompileProfileEvidence) =
         writer.AppendInt(int profile.Provider)
-        writer.AppendToken(profile.ServerVersion)
-        writer.AppendToken(
-            if profile.CompatibilityLevel.HasValue then
-                profile.CompatibilityLevel.Value.ToString(CultureInfo.InvariantCulture)
-            else (null: string | null))
+        match profile.ServerVersion with
+        | null -> writer.AppendNullToken()
+        | serverVersion -> writer.AppendToken(serverVersion)
+        if profile.CompatibilityLevel.HasValue then
+            writer.AppendToken(
+                profile.CompatibilityLevel.Value.ToString(CultureInfo.InvariantCulture))
+        else
+            writer.AppendNullToken()
         writer.AppendInt(profile.SessionModes.Length)
         profile.SessionModes |> Seq.iter writer.AppendToken
         writer.AppendInt(profile.SessionSettings.Length)
