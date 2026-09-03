@@ -15,7 +15,6 @@ public class McpAccessKeyAuthMiddleware(
     IAuditService auditService,
     IMcpAccessKeyLastUsedQueue lastUsedQueue,
     ICacheService cache,
-    IDbManagementService dbManagementService,
     IDbSetterService dbSetterService,
     ICryptoService cryptoService,
     IOptions<McpKeySettings> mcpKeySettings,
@@ -41,7 +40,6 @@ public class McpAccessKeyAuthMiddleware(
     private readonly IAuditService _auditService = auditService;
     private readonly IMcpAccessKeyLastUsedQueue _lastUsedQueue = lastUsedQueue;
     private readonly ICacheService _cache = cache;
-    private readonly IDbManagementService _dbManagementService = dbManagementService;
     private readonly IDbSetterService _dbSetterService = dbSetterService;
     private readonly ICryptoService _cryptoService = cryptoService;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
@@ -72,24 +70,20 @@ public class McpAccessKeyAuthMiddleware(
         var connString = string.Empty;
         string? databaseName = null;
 
-        if (validation.DbManagementId.HasValue)
+        if (validation.DatabaseConfiguration is { } databaseConfiguration)
         {
-            var dbc = await _dbManagementService.GetDbByIdAsync(validation.DbManagementId.Value, true, context.RequestAborted);
-            if (dbc is DbManagementPwdVM pwdDbc)
+            databaseName = databaseConfiguration.Database;
+            provider = databaseConfiguration.SqlProvider;
+            connString = await _dbSetterService.BuildDbConnectionAsync(new BuildDbConnectionModel
             {
-                databaseName = pwdDbc.Database;
-                provider = pwdDbc.SqlProvider ?? string.Empty;
-                connString = await _dbSetterService.BuildDbConnectionAsync(new BuildDbConnectionModel
-                {
-                    Provider = pwdDbc.SqlProvider ?? "MsSqlServer",
-                    Host = pwdDbc.Host,
-                    Port = pwdDbc.Port,
-                    Database = pwdDbc.Database,
-                    Username = pwdDbc.Username,
-                    Password = _cryptoService.DecryptText(pwdDbc.PasswordHash, _hmacSecret),
-                    ExtraSettings = pwdDbc.ExtraSettings
-                }, context.RequestAborted) ?? string.Empty;
-            }
+                Provider = databaseConfiguration.SqlProvider,
+                Host = databaseConfiguration.Host,
+                Port = databaseConfiguration.Port,
+                Database = databaseConfiguration.Database,
+                Username = databaseConfiguration.Username,
+                Password = _cryptoService.DecryptText(databaseConfiguration.PasswordHash, _hmacSecret),
+                ExtraSettings = databaseConfiguration.ExtraSettings
+            }, context.RequestAborted) ?? string.Empty;
         }
 
         context.Items[McpContextItemKeys.AccessKeyId] = validation.KeyId.Value;
@@ -322,9 +316,9 @@ public class McpAccessKeyAuthMiddleware(
         var cacheKey = McpAccessKeyCacheKeys.ForRawKey(rawKey, _hmacSecret);
 
         var cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
-        if (cached is not null && !await RequiresFreshValidationAsync(cached, ct))
+        if (cached is not null)
         {
-            return await RejectIfRevokedOrExpiredAsync(cached, ct);
+            return RejectIfExpired(cached);
         }
 
         var lockIndex = GetStripedLockIndex(cacheKey.GetHashCode(), StripedLocks.Length);
@@ -334,9 +328,9 @@ public class McpAccessKeyAuthMiddleware(
         try
         {
             cached = await _cache.GetAsync<McpAccessKeyValidationResult>(cacheKey, ct);
-            if (cached is not null && !await RequiresFreshValidationAsync(cached, ct))
+            if (cached is not null)
             {
-                return await RejectIfRevokedOrExpiredAsync(cached, ct);
+                return RejectIfExpired(cached);
             }
 
             var result = RejectIfExpired(await _keyService.ValidateAsync(rawKey, ct));
@@ -351,14 +345,6 @@ public class McpAccessKeyAuthMiddleware(
             semaphore.Release();
         }
     }
-
-    private async Task<bool> RequiresFreshValidationAsync(
-        McpAccessKeyValidationResult result,
-        CancellationToken cancellationToken)
-        => result.IsValid && result.KeyId.HasValue &&
-           await _cache.GetAsync<bool>(
-               McpAccessKeyCacheKeys.ForChangedKeyId(result.KeyId.Value),
-               cancellationToken);
 
     internal static int GetStripedLockIndex(int hashCode, int lockCount)
         => (int)((uint)hashCode % (uint)lockCount);
@@ -392,21 +378,4 @@ public class McpAccessKeyAuthMiddleware(
         };
     }
 
-    private async Task<McpAccessKeyValidationResult> RejectIfRevokedOrExpiredAsync(
-        McpAccessKeyValidationResult result,
-        CancellationToken cancellationToken)
-    {
-        result = RejectIfExpired(result);
-        if (!result.IsValid || !result.KeyId.HasValue)
-        {
-            return result;
-        }
-
-        var revoked = await _cache.GetAsync<bool>(
-            McpAccessKeyCacheKeys.ForRevokedKeyId(result.KeyId.Value),
-            cancellationToken);
-        return revoked
-            ? new McpAccessKeyValidationResult { IsValid = false, Reason = "Key revoked." }
-            : result;
-    }
 }
