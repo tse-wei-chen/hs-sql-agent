@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Buffers
 open System.Collections.Generic
 open System.Collections.Immutable
 open System.Globalization
@@ -189,76 +190,112 @@ module internal CompileEvidenceBuilder =
           Assurances =
             assuranceEvidence conflictTargetAssurance resultRowAssurance }
 
-    let private appendToken (builder: StringBuilder) (value: string | null) =
-        match value with
-        | null ->
-            builder.Append("-1:;") |> ignore
-        | nonNull ->
-            builder.Append(nonNull.Length).Append(':').Append(nonNull).Append(';') |> ignore
+    type private Utf8HashWriter(hash: IncrementalHash) =
+        let pool = ArrayPool<byte>.Shared
+        let encoding = Encoding.UTF8
+        let mutable buffer = pool.Rent(256)
+        let mutable disposed = false
 
-    let private appendInt (builder: StringBuilder) (value: int) =
-        appendToken builder (value.ToString(CultureInfo.InvariantCulture))
+        member private _.EnsureCapacity(required: int) =
+            if required > buffer.Length then
+                let replacement = pool.Rent(required)
+                pool.Return(buffer)
+                buffer <- replacement
 
-    let private appendBool (builder: StringBuilder) value =
-        appendToken builder (if value then "1" else "0")
+        member this.Append(value: string) =
+            if disposed then
+                raise (ObjectDisposedException("Utf8HashWriter"))
+            if not (String.IsNullOrEmpty(value)) then
+                let required = encoding.GetByteCount(value)
+                this.EnsureCapacity(required)
+                let written = encoding.GetBytes(value, 0, value.Length, buffer, 0)
+                hash.AppendData(buffer, 0, written)
 
-    let private appendProfile (builder: StringBuilder) (profile: SqlCompileProfileEvidence) =
-        appendInt builder (int profile.Provider)
-        appendToken builder profile.ServerVersion
-        appendToken builder (
+        member this.AppendToken(value: string | null) =
+            match value with
+            | null ->
+                this.Append("-1:;")
+            | nonNull ->
+                this.Append(nonNull.Length.ToString(CultureInfo.InvariantCulture))
+                this.Append(":")
+                this.Append(nonNull)
+                this.Append(";")
+
+        member this.AppendInt(value: int) =
+            this.AppendToken(value.ToString(CultureInfo.InvariantCulture))
+
+        member this.AppendBool(value: bool) =
+            this.AppendToken(if value then "1" else "0")
+
+        interface IDisposable with
+            member _.Dispose() =
+                if not disposed then
+                    disposed <- true
+                    pool.Return(buffer)
+                    buffer <- [||]
+
+    let private appendProfile (writer: Utf8HashWriter) (profile: SqlCompileProfileEvidence) =
+        writer.AppendInt(int profile.Provider)
+        writer.AppendToken(profile.ServerVersion)
+        writer.AppendToken(
             if profile.CompatibilityLevel.HasValue then
                 profile.CompatibilityLevel.Value.ToString(CultureInfo.InvariantCulture)
             else null)
-        appendInt builder profile.SessionModes.Length
-        profile.SessionModes |> Seq.iter (appendToken builder)
-        appendInt builder profile.SessionSettings.Length
+        writer.AppendInt(profile.SessionModes.Length)
+        profile.SessionModes |> Seq.iter writer.AppendToken
+        writer.AppendInt(profile.SessionSettings.Length)
         profile.SessionSettings
         |> Seq.iter (fun item ->
-            appendToken builder item.Name
-            appendToken builder item.Value)
+            writer.AppendToken(item.Name)
+            writer.AppendToken(item.Value))
 
-    let private appendCapabilities (builder: StringBuilder) (capabilities: ImmutableArray<SqlCompileCapabilityEvidence>) =
-        appendInt builder capabilities.Length
+    let private appendCapabilities
+        (writer: Utf8HashWriter)
+        (capabilities: ImmutableArray<SqlCompileCapabilityEvidence>) =
+        writer.AppendInt(capabilities.Length)
         capabilities
         |> Seq.iter (fun capability ->
-            appendInt builder (int capability.Side)
-            appendToken builder capability.Id
-            appendToken builder capability.Category
-            appendInt builder (int capability.Status))
+            writer.AppendInt(int capability.Side)
+            writer.AppendToken(capability.Id)
+            writer.AppendToken(capability.Category)
+            writer.AppendInt(int capability.Status))
 
-    let private appendPolicy (builder: StringBuilder) (policy: SqlCompilePolicyEvidence) =
-        appendToken builder policy.PolicyVersion
-        appendInt builder policy.QueryMaxRows
-        appendBool builder policy.RequireUpdatePredicate
-        appendBool builder policy.RequireDeletePredicate
-        appendInt builder policy.AllowedTables.Length
-        policy.AllowedTables |> Seq.iter (appendToken builder)
+    let private appendPolicy (writer: Utf8HashWriter) (policy: SqlCompilePolicyEvidence) =
+        writer.AppendToken(policy.PolicyVersion)
+        writer.AppendInt(policy.QueryMaxRows)
+        writer.AppendBool(policy.RequireUpdatePredicate)
+        writer.AppendBool(policy.RequireDeletePredicate)
+        writer.AppendInt(policy.AllowedTables.Length)
+        policy.AllowedTables |> Seq.iter writer.AppendToken
 
-    let private appendAssurances (builder: StringBuilder) (assurances: ImmutableArray<SqlCompileAssuranceEvidence>) =
-        appendInt builder assurances.Length
+    let private appendAssurances
+        (writer: Utf8HashWriter)
+        (assurances: ImmutableArray<SqlCompileAssuranceEvidence>) =
+        writer.AppendInt(assurances.Length)
         assurances
         |> Seq.iter (fun assurance ->
-            appendToken builder assurance.Kind
-            appendInt builder assurance.Details.Length
+            writer.AppendToken(assurance.Kind)
+            writer.AppendInt(assurance.Details.Length)
             assurance.Details
             |> Seq.iter (fun detail ->
-                appendToken builder detail.Name
-                appendToken builder detail.Value))
+                writer.AppendToken(detail.Name)
+                writer.AppendToken(detail.Value)))
 
     let private fingerprint context verdict decisionBoundary decisionCode =
-        let builder = StringBuilder()
-        appendToken builder schemaVersion
-        appendToken builder SqlCapabilityMatrix.Version
-        appendProfile builder context.SourceProfile
-        appendProfile builder context.TargetProfile
-        appendCapabilities builder context.SourceCapabilities
-        appendCapabilities builder context.TargetCapabilities
-        appendPolicy builder context.Policy
-        appendAssurances builder context.Assurances
-        appendInt builder (int verdict)
-        appendInt builder (int decisionBoundary)
-        appendToken builder decisionCode
-        SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))
+        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+        use writer = new Utf8HashWriter(hash)
+        writer.AppendToken(schemaVersion)
+        writer.AppendToken(SqlCapabilityMatrix.Version)
+        appendProfile writer context.SourceProfile
+        appendProfile writer context.TargetProfile
+        appendCapabilities writer context.SourceCapabilities
+        appendCapabilities writer context.TargetCapabilities
+        appendPolicy writer context.Policy
+        appendAssurances writer context.Assurances
+        writer.AppendInt(int verdict)
+        writer.AppendInt(int decisionBoundary)
+        writer.AppendToken(decisionCode)
+        hash.GetHashAndReset()
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 

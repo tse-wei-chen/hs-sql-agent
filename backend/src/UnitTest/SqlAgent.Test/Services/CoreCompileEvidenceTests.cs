@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
@@ -66,11 +69,27 @@ public sealed class CoreCompileEvidenceTests
             evidence.SourceCapabilities.Select(item => item.Id).OrderBy(id => id, StringComparer.OrdinalIgnoreCase),
             evidence.SourceCapabilities.Select(item => item.Id));
         Assert.Equal(first.PlanFingerprint, evidence.PlanFingerprint);
+        Assert.Equal(LegacyEvidenceFingerprint(evidence), evidence.EvidenceFingerprint);
 
         // Runtime literal values intentionally remain part of PlanFingerprint, but not the
         // compile-context EvidenceFingerprint.
         Assert.NotEqual(first.PlanFingerprint, second.PlanFingerprint);
         Assert.Equal(evidence.EvidenceFingerprint, secondEvidence.EvidenceFingerprint);
+    }
+
+    [Fact]
+    public void EvidenceFingerprint_PreservesLegacyUtf8Serialization()
+    {
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT 1",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("compile-evidence-策略-v1"),
+            new SqlExecutionPlanPolicy());
+
+        var evidence = Assert.IsType<SqlCompileEvidence>(command.CompileEvidence);
+
+        Assert.Equal(LegacyEvidenceFingerprint(evidence), evidence.EvidenceFingerprint);
     }
 
     [Fact]
@@ -175,6 +194,7 @@ public sealed class CoreCompileEvidenceTests
         Assert.False(string.IsNullOrWhiteSpace(evidence.DecisionCode));
         Assert.Null(evidence.PlanFingerprint);
         Assert.Equal(evidence.EvidenceFingerprint, secondEvidence.EvidenceFingerprint);
+        Assert.Equal(LegacyEvidenceFingerprint(evidence), evidence.EvidenceFingerprint);
     }
 
     [Fact]
@@ -286,6 +306,110 @@ public sealed class CoreCompileEvidenceTests
             Assert.Equal(SqlCompileCapabilitySide.Source, item.Side));
         Assert.All(evidence.TargetCapabilities, item =>
             Assert.Equal(SqlCompileCapabilitySide.Target, item.Side));
+    }
+
+    private static string LegacyEvidenceFingerprint(SqlCompileEvidence evidence)
+    {
+        var builder = new StringBuilder();
+        AppendToken(builder, evidence.SchemaVersion);
+        AppendToken(builder, evidence.CapabilityMatrixVersion);
+        AppendProfile(builder, evidence.SourceProfile);
+        AppendProfile(builder, evidence.TargetProfile);
+        AppendCapabilities(builder, evidence.SourceCapabilities);
+        AppendCapabilities(builder, evidence.TargetCapabilities);
+        AppendPolicy(builder, evidence.Policy);
+        AppendAssurances(builder, evidence.Assurances);
+        AppendInt(builder, (int)evidence.Verdict);
+        AppendInt(builder, (int)evidence.DecisionBoundary);
+        AppendToken(builder, evidence.DecisionCode);
+        return Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())))
+            .ToLowerInvariant();
+    }
+
+    private static void AppendToken(StringBuilder builder, string? value)
+    {
+        if (value is null)
+        {
+            builder.Append("-1:;");
+            return;
+        }
+
+        builder.Append(value.Length).Append(':').Append(value).Append(';');
+    }
+
+    private static void AppendInt(StringBuilder builder, int value)
+        => AppendToken(builder, value.ToString(CultureInfo.InvariantCulture));
+
+    private static void AppendBool(StringBuilder builder, bool value)
+        => AppendToken(builder, value ? "1" : "0");
+
+    private static void AppendProfile(
+        StringBuilder builder,
+        SqlCompileProfileEvidence profile)
+    {
+        AppendInt(builder, (int)profile.Provider);
+        AppendToken(builder, profile.ServerVersion);
+        AppendToken(
+            builder,
+            profile.CompatibilityLevel.HasValue
+                ? profile.CompatibilityLevel.Value.ToString(CultureInfo.InvariantCulture)
+                : null);
+        AppendInt(builder, profile.SessionModes.Length);
+        foreach (var mode in profile.SessionModes)
+            AppendToken(builder, mode);
+        AppendInt(builder, profile.SessionSettings.Length);
+        foreach (var setting in profile.SessionSettings)
+        {
+            AppendToken(builder, setting.Name);
+            AppendToken(builder, setting.Value);
+        }
+    }
+
+    private static void AppendCapabilities(
+        StringBuilder builder,
+        IEnumerable<SqlCompileCapabilityEvidence> capabilities)
+    {
+        var values = capabilities.ToArray();
+        AppendInt(builder, values.Length);
+        foreach (var capability in values)
+        {
+            AppendInt(builder, (int)capability.Side);
+            AppendToken(builder, capability.Id);
+            AppendToken(builder, capability.Category);
+            AppendInt(builder, (int)capability.Status);
+        }
+    }
+
+    private static void AppendPolicy(
+        StringBuilder builder,
+        SqlCompilePolicyEvidence policy)
+    {
+        AppendToken(builder, policy.PolicyVersion);
+        AppendInt(builder, policy.QueryMaxRows);
+        AppendBool(builder, policy.RequireUpdatePredicate);
+        AppendBool(builder, policy.RequireDeletePredicate);
+        AppendInt(builder, policy.AllowedTables.Length);
+        foreach (var table in policy.AllowedTables)
+            AppendToken(builder, table);
+    }
+
+    private static void AppendAssurances(
+        StringBuilder builder,
+        IEnumerable<SqlCompileAssuranceEvidence> assurances)
+    {
+        var values = assurances.ToArray();
+        AppendInt(builder, values.Length);
+        foreach (var assurance in values)
+        {
+            AppendToken(builder, assurance.Kind);
+            AppendInt(builder, assurance.Details.Length);
+            foreach (var detail in assurance.Details)
+            {
+                AppendToken(builder, detail.Name);
+                AppendToken(builder, detail.Value);
+            }
+        }
     }
 
     private static SqlProviderCapabilityProfile MySqlProfile(bool reverseInsertion)
