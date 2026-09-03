@@ -353,6 +353,12 @@ public class McpAccessKeyServiceTests
         _cacheMock.Verify(c => c.RemoveAsync(
             validationCacheKey,
             CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+
     }
 
 
@@ -395,6 +401,12 @@ public class McpAccessKeyServiceTests
         _cacheMock.Verify(c => c.RemoveAsync(
             validationCacheKey,
             CancellationToken.None), Times.Never);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+
     }
 
 
@@ -430,6 +442,12 @@ public class McpAccessKeyServiceTests
         _cacheMock.Verify(c => c.RemoveAsync(
             validationCacheKey,
             CancellationToken.None), Times.Once);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForChangedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+
     }
 
     [Fact]
@@ -676,6 +694,12 @@ public class McpAccessKeyServiceTests
         _cacheMock.Verify(c => c.RemoveAsync(
             validationCacheKey,
             CancellationToken.None), Times.Never);
+        _cacheMock.Verify(c => c.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(key.Id),
+            true,
+            It.IsAny<TimeSpan?>(),
+            CancellationToken.None), Times.Once);
+
     }
 
     [Fact]
