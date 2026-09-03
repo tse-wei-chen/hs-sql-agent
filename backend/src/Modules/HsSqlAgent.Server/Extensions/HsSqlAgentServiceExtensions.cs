@@ -247,6 +247,7 @@ public static class HsSqlAgentServiceExtensions
             operability.HealthProbeEnabled = source.HealthProbeEnabled;
             operability.HealthProbeIntervalSeconds = source.HealthProbeIntervalSeconds;
             operability.HealthProbeTimeoutSeconds = source.HealthProbeTimeoutSeconds;
+            operability.HealthProbeMaxConcurrency = source.HealthProbeMaxConcurrency;
             operability.SlowQueryThresholdMs = source.SlowQueryThresholdMs;
             operability.AlertWebhookUrl = source.AlertWebhookUrl;
             operability.AlertWebhookSecret = source.AlertWebhookSecret;

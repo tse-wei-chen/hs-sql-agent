@@ -92,6 +92,7 @@ services:
       - Operability__HealthProbeEnabled=${HEALTH_PROBE_ENABLED}
       - Operability__HealthProbeIntervalSeconds=${HEALTH_PROBE_INTERVAL_SECONDS}
       - Operability__HealthProbeTimeoutSeconds=${HEALTH_PROBE_TIMEOUT_SECONDS}
+      - Operability__HealthProbeMaxConcurrency=${HEALTH_PROBE_MAX_CONCURRENCY:-4}
       - Operability__SlowQueryThresholdMs=${SLOW_QUERY_THRESHOLD_MS}
       - Operability__AlertWebhookUrl=${ALERT_WEBHOOK_URL}
       - Operability__AlertWebhookSecret=${ALERT_WEBHOOK_SECRET}
