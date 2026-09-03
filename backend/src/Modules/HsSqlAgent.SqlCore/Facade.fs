@@ -242,6 +242,10 @@ module private FacadeCompile =
             validationContext
             executionPolicy
 
+    let queryTextWithFacts sql sourceDialect targetProvider (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) validationContext executionPolicy =
+        RewriteFacadeAdapter.compileQueryWithFactsValidated
+            sql sourceDialect targetProvider sourceProfile targetProfile validationContext executionPolicy
+
     let dmlText sql sourceDialect targetProvider (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) validationContext policy conflictTargetAssurance =
         RewriteFacadeAdapter.compileDmlValidated
             sql
@@ -398,6 +402,34 @@ type SqlCoreFacade private () =
             targetProfile
             validationContext
             executionPolicy
+
+    static member CompileQueryWithFacts(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy) : CompiledQueryWithFacts =
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        FacadeCompile.queryTextWithFacts sql sourceDialect targetProvider null null validationContext executionPolicy
+
+    static member CompileQueryWithFacts(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        sourceProfile: SqlProviderCapabilityProfile | null,
+        targetProfile: SqlProviderCapabilityProfile | null) : CompiledQueryWithFacts =
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        match sourceProfile with
+        | null -> ()
+        | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
+        match targetProfile with
+        | null -> ()
+        | profile -> FacadeCompile.validateProfile targetProvider "targetProfile" profile
+        FacadeCompile.queryTextWithFacts sql sourceDialect targetProvider sourceProfile targetProfile validationContext executionPolicy
 
     static member CompileDml(
         sql: string,

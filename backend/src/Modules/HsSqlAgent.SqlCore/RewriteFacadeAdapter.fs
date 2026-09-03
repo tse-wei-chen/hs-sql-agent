@@ -681,6 +681,33 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
+    let private runWithQueryFacts (options: RewritePipeline.CompileOptions) (sql: string) =
+        try
+            RewritePipeline.compileWithQueryFacts options sql
+        with
+        | :? UnauthorizedAccessException -> reraise()
+        | :? SqlCompilationException -> reraise()
+        | :? SqlParseException -> reraise()
+        | :? ArgumentException as ex when String.Equals(ex.ParamName, "sql", StringComparison.Ordinal) ->
+            raise (SqlParseException(ex.Message, ex))
+        | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
+            raise (compilationExceptionFrom ex)
+
+    let private buildTranslatedCommand evidenceContext target policyVersion parsed rendered =
+        let parameterValues = parameters target rendered.Parameters
+        let kind = RewriteCompatibilityAstAdapter.kind parsed
+        let command =
+            CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
+        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+        let evidence =
+            CompileEvidenceBuilder.build
+                evidenceContext
+                SqlCompileVerdict.Translated
+                SqlCompileDecisionBoundary.Completed
+                "SQL_COMPILE_TRANSLATED"
+                fingerprint
+        CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows, evidence)
+
     let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let evidenceContext =
@@ -708,25 +735,7 @@ module internal RewriteFacadeAdapter =
                         policy
                         allowed)
                     sql
-            let parameterValues = parameters target rendered.Parameters
-            let kind = RewriteCompatibilityAstAdapter.kind parsed
-            let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
-            let evidence =
-                CompileEvidenceBuilder.build
-                    evidenceContext
-                    SqlCompileVerdict.Translated
-                    SqlCompileDecisionBoundary.Completed
-                    "SQL_COMPILE_TRANSLATED"
-                    fingerprint
-            CompiledSqlCommand.Create(
-                rendered.Sql,
-                parameterValues,
-                kind,
-                fingerprint,
-                target,
-                rendered.ReturnsRows,
-                evidence)
+            buildTranslatedCommand evidenceContext target policyVersion parsed rendered
         with ex ->
             attachRejectedEvidence evidenceContext ex
             reraise()
@@ -745,6 +754,33 @@ module internal RewriteFacadeAdapter =
                 error
             raise error
         command
+
+    let compileQueryWithFactsValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (executionPolicy: SqlExecutionPlanPolicy) =
+        ArgumentNullException.ThrowIfNull(validationContext)
+        ArgumentNullException.ThrowIfNull(executionPolicy)
+        ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
+        if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
+        let queryExecutionPolicy = queryPolicy executionPolicy.QueryMaxRows
+        let allowed = allowedTables validationContext.AllowedTables
+        let evidenceContext =
+            compileEvidenceContext source target sourceProfile targetProfile null null validationContext.PolicyVersion queryExecutionPolicy allowed
+        try
+            let parsed, facts, rendered =
+                runWithQueryFacts
+                    (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed)
+                    sql
+            let command =
+                buildTranslatedCommand evidenceContext target validationContext.PolicyVersion parsed rendered
+            if command.Kind <> SqlStatementKind.Query then
+                let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
+                attachReclassifiedEvidence command SqlCompileDecisionBoundary.InputValidation "SQL_API_STATEMENT_KIND_MISMATCH" error
+                raise error
+            CompiledQueryWithFacts(command, facts)
+        with ex ->
+            match SqlCompileEvidence.TryGetFromException(ex) with
+            | null -> attachRejectedEvidence evidenceContext ex
+            | _ -> ()
+            reraise()
 
     let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
