@@ -15,7 +15,8 @@ namespace Auth.Service.Services;
 public class AuthService(
     IAuthContext context,
     IOptions<JwtSettings> jwtSettings,
-    IOptions<EnterpriseIdentitySettings>? enterpriseIdentitySettings = null) : IAuthService
+    IOptions<EnterpriseIdentitySettings>? enterpriseIdentitySettings = null,
+    IAuthRuntimeStateCache? authRuntimeStateCache = null) : IAuthService
 {
     public const string SuperUserRoleName = "SuperUser";
     public const string SecurityVersionClaim = "security_version";
@@ -26,6 +27,7 @@ public class AuthService(
     private readonly IAuthContext _context = context;
     private readonly JwtSettings _jwtSettings = jwtSettings.Value;
     private readonly EnterpriseIdentitySettings _enterpriseIdentitySettings = enterpriseIdentitySettings?.Value ?? new();
+    private readonly IAuthRuntimeStateCache? _authRuntimeStateCache = authRuntimeStateCache;
 
     public async Task<bool> IsFirstRunAsync(CancellationToken cancellationToken = default)
         => !await _context.Members.AnyAsync(cancellationToken);
@@ -164,7 +166,11 @@ public class AuthService(
         {
             session.RevokedAt = now;
             session.RevocationReason = "Refresh token reuse detected.";
-            await _context.SaveChangesAsync(cancellationToken);
+            await RunSecurityMutationAsync(
+                memberId,
+                "Refresh token reuse revoked the session.",
+                ct => _context.SaveChangesAsync(ct),
+                cancellationToken);
             throw new UnauthorizedAccessException("Refresh token has already been used.");
         }
 
@@ -181,6 +187,7 @@ public class AuthService(
         {
             throw new UnauthorizedAccessException("Refresh token has already been used.");
         }
+        await InvalidateRuntimeStateAsync(memberId);
 
         return await BuildAuthResultAsync(memberId, session.Id, nextRefreshTokenId, cancellationToken);
     }
@@ -222,7 +229,11 @@ public class AuthService(
         {
             session.RevokedAt = DateTime.UtcNow;
             session.RevocationReason = reason;
-            await _context.SaveChangesAsync(cancellationToken);
+            await RunSecurityMutationAsync(
+                memberId,
+                reason,
+                ct => _context.SaveChangesAsync(ct),
+                cancellationToken);
         }
     }
 
@@ -244,7 +255,11 @@ public class AuthService(
             session.RevokedAt = now;
             session.RevocationReason = reason;
         }
-        await _context.SaveChangesAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            memberId,
+            reason,
+            ct => _context.SaveChangesAsync(ct),
+            cancellationToken);
     }
 
     private async Task<Role> EnsureSuperUserRoleAsync(CancellationToken cancellationToken)
@@ -298,6 +313,7 @@ public class AuthService(
         };
         _context.AuthSessions.Add(session);
         await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateRuntimeStateAsync(memberId);
         return await BuildAuthResultAsync(memberId, session.Id, refreshTokenId, cancellationToken);
     }
 
@@ -433,6 +449,23 @@ public class AuthService(
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+
+    private Task RunSecurityMutationAsync(
+        int memberId,
+        string reason,
+        Func<CancellationToken, Task> mutation,
+        CancellationToken cancellationToken) =>
+        _authRuntimeStateCache is null
+            ? mutation(cancellationToken)
+            : _authRuntimeStateCache.RunWithBarrierAsync(
+                memberId,
+                reason,
+                mutation,
+                cancellationToken);
+
+    private Task InvalidateRuntimeStateAsync(int memberId) =>
+        _authRuntimeStateCache?.InvalidateAsync(memberId, CancellationToken.None)
+        ?? Task.CompletedTask;
 
     private static string HashTokenId(string tokenId)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tokenId)));
