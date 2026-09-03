@@ -12,6 +12,7 @@ public class OperabilitySettings
     public string SiemWebhookUrl { get; set; } = string.Empty;
     public string SiemWebhookSecret { get; set; } = string.Empty;
     public int DeliveryMaxAttempts { get; set; } = 6;
+    public int DeliveryMaxConcurrency { get; set; } = 4;
     public int AuditRetentionDays { get; set; }
     public string AuditRetentionMode { get; set; } = "Purge";
     public string AuditArchivePath { get; set; } = "data/audit-archive";

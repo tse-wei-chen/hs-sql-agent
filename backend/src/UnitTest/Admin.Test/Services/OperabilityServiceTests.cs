@@ -12,6 +12,64 @@ namespace Admin.Test.Services;
 public class OperabilityServiceTests
 {
     [Fact]
+    public async Task RetryDeliveryAsync_ShouldOnlyTransitionDeadLetter()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
+        await using var context = new AdminContext(options);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        var now = DateTime.UtcNow;
+        context.OutboundDeliveries.AddRange(
+            new OutboundDelivery
+            {
+                Id = 1,
+                Category = "alert",
+                DedupeKey = "dead",
+                TargetUrl = "https://alerts.example/events",
+                Payload = "{}",
+                Status = "dead-letter",
+                AttemptCount = 6,
+                CreatedAt = now,
+                NextAttemptAt = now,
+                LastAttemptAt = now,
+                LastError = "failed"
+            },
+            new OutboundDelivery
+            {
+                Id = 2,
+                Category = "alert",
+                DedupeKey = "processing",
+                TargetUrl = "https://alerts.example/events",
+                Payload = "{}",
+                Status = "processing",
+                AttemptCount = 1,
+                CreatedAt = now,
+                NextAttemptAt = now,
+                LastAttemptAt = now
+            });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var service = new OperabilityService(context, Options.Create(new OperabilitySettings()));
+
+        Assert.True(await service.RetryDeliveryAsync(1, TestContext.Current.CancellationToken));
+        Assert.False(await service.RetryDeliveryAsync(2, TestContext.Current.CancellationToken));
+
+        var deadLetter = await context.OutboundDeliveries
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == 1, TestContext.Current.CancellationToken);
+        var processing = await context.OutboundDeliveries
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == 2, TestContext.Current.CancellationToken);
+        Assert.Equal("pending", deadLetter.Status);
+        Assert.Equal(0, deadLetter.AttemptCount);
+        Assert.Null(deadLetter.LastAttemptAt);
+        Assert.Null(deadLetter.LastError);
+        Assert.Equal("processing", processing.Status);
+        Assert.Equal(1, processing.AttemptCount);
+    }
+
+    [Fact]
     public async Task MetricsAndKeyUsage_ShouldAggregateLatencySuccessAndRateLimits()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

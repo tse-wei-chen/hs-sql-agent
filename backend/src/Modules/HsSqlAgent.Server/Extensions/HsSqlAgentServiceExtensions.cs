@@ -254,6 +254,7 @@ public static class HsSqlAgentServiceExtensions
             operability.SiemWebhookUrl = source.SiemWebhookUrl;
             operability.SiemWebhookSecret = source.SiemWebhookSecret;
             operability.DeliveryMaxAttempts = source.DeliveryMaxAttempts;
+            operability.DeliveryMaxConcurrency = source.DeliveryMaxConcurrency;
             operability.AuditRetentionDays = source.AuditRetentionDays;
             operability.AuditRetentionMode = source.AuditRetentionMode;
             operability.AuditArchivePath = source.AuditArchivePath;
