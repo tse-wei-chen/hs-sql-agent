@@ -11,6 +11,7 @@ public interface IHsSqlAgentMetrics
     void McpRequestStarted();
     void McpRequestCompleted(int statusCode, TimeSpan duration);
     void RecordRateLimitRejection(string layer);
+    void RecordSqlCompile(string verdict, string boundary, string decisionCode, string sourceProvider, string targetProvider);
     void RecordDbHealth(int databaseId, string provider, string status, long latencyMs);
 }
 
@@ -27,6 +28,7 @@ public sealed class HsSqlAgentMetrics : IHsSqlAgentMetrics, IAuditMetricSink, ID
     private readonly Histogram<long> _returnedRows;
     private readonly Histogram<long> _affectedRows;
     private readonly Counter<long> _rateLimitRejections;
+    private readonly Counter<long> _sqlCompiles;
     private readonly Counter<long> _dmlApprovals;
     private readonly ConcurrentDictionary<int, DbHealthMeasurement> _databaseHealth = new();
 
@@ -40,6 +42,7 @@ public sealed class HsSqlAgentMetrics : IHsSqlAgentMetrics, IAuditMetricSink, ID
         _returnedRows = _meter.CreateHistogram<long>("hsqlagent.sql.rows.returned", "{row}", "Rows returned by query executions.");
         _affectedRows = _meter.CreateHistogram<long>("hsqlagent.sql.rows.affected", "{row}", "Rows affected by DML executions.");
         _rateLimitRejections = _meter.CreateCounter<long>("hsqlagent.rate_limit.rejections", "{rejection}", "Rejected requests by rate-limit layer.");
+        _sqlCompiles = _meter.CreateCounter<long>("hsqlagent.sql.compiles", "{compile}", "SQL compiler decisions by verdict, boundary, diagnostic code and provider pair.");
         _dmlApprovals = _meter.CreateCounter<long>("hsqlagent.dml.approvals", "{approval}", "DML approval outcomes.");
         _meter.CreateObservableGauge(
             "hsqlagent.db.health.databases",
@@ -66,6 +69,21 @@ public sealed class HsSqlAgentMetrics : IHsSqlAgentMetrics, IAuditMetricSink, ID
 
     public void RecordRateLimitRejection(string layer)
         => _rateLimitRejections.Add(1, new TagList { { "layer", Normalize(layer) } });
+
+    public void RecordSqlCompile(
+        string verdict,
+        string boundary,
+        string decisionCode,
+        string sourceProvider,
+        string targetProvider)
+        => _sqlCompiles.Add(1, new TagList
+        {
+            { "verdict", Normalize(verdict) },
+            { "boundary", Normalize(boundary) },
+            { "decision_code", Normalize(decisionCode) },
+            { "source_provider", Normalize(sourceProvider) },
+            { "target_provider", Normalize(targetProvider) }
+        });
 
     public void RecordDbHealth(int databaseId, string provider, string status, long latencyMs)
         => _databaseHealth[databaseId] = new(Normalize(provider), Normalize(status), Math.Max(0, latencyMs));

@@ -36,5 +36,23 @@ administration endpoints.
 The Server package brings in `HsSqlAgent.SqlCore`, provider abstractions and all six supported
 providers: PostgreSQL, MySQL, SQLite, SQL Server, Oracle and Firebird.
 
+## Compiler observability
+
+`HsSqlAgent.SqlCore` remains telemetry-provider agnostic and returns deterministic
+`SqlCompileEvidence` with each translated or rejected compile decision. The Server package observes
+that evidence at the runtime boundary:
+
+- structured `ILogger` events contain verdict, decision boundary/code, source/target provider,
+  capability-matrix version and evidence fingerprint;
+- when `Telemetry.OtlpEndpoint` is configured, those logs and `sql.compile.decision` trace spans
+  are exported through OTLP;
+- `hsqlagent.sql.compiles` is emitted through the existing OpenTelemetry meter and Prometheus
+  exporter with low-cardinality verdict/boundary/decision/provider labels.
+
+Raw SQL, runtime literal/parameter values, full evidence objects, allowed-table snapshots,
+evidence fingerprints and trace IDs are not used as Prometheus labels. The database-backed
+`AuditLog` remains the durable governance/audit store rather than a general compiler telemetry
+store.
+
 Full configuration and deployment documentation:
 https://github.com/tse-wei-chen/hs-sql-agent
