@@ -53,7 +53,7 @@ public sealed class SqlCompileEvidenceObserverTests
 
         observer.Observe(evidence);
 
-        var compileMetric = Assert.Single(measurements.Where(item => item.Name == "hsqlagent.sql.compiles"));
+        var compileMetric = Assert.Single(measurements, item => item.Name == "hsqlagent.sql.compiles");
         Assert.Equal("translated", Tag(compileMetric, "verdict"));
         Assert.Equal("completed", Tag(compileMetric, "boundary"));
         Assert.Equal("postgres", Tag(compileMetric, "source_provider"));
