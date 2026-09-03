@@ -342,7 +342,7 @@ public class CustomToolProxyTests
             .ReturnsAsync(tool);
 
         SetupPostgresProvider();
-        _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
+        _typedQueryRuntimeMock.Setup(r => r.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<string>(),
@@ -350,7 +350,9 @@ public class CustomToolProxyTests
                 It.IsAny<SecurityPolicyModel>(),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QueryExecutionResult([], 0, TimeSpan.Zero, []));
+            .ReturnsAsync(new QueryExecutionWithFacts(
+                new QueryExecutionResult([], 0, TimeSpan.Zero, []),
+                SqlCoreInspection.GetQueryFacts("SELECT * FROM users", SqlAgentToolType.Postgres)));
 
         _ = await _proxy.Execute(
             JsonSerializer.SerializeToElement(new { }),
