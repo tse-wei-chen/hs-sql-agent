@@ -39,35 +39,37 @@ public class TokenRevocationMiddleware(RequestDelegate next)
                 return;
             }
 
-            var memberState = await authContext.Members
+            var now = DateTime.UtcNow;
+            var authState = await authContext.Members
                 .AsNoTracking()
-                .Where(x => x.Id == memberId)
-                .Select(x => new { x.IsActive, x.SecurityVersion })
+                .Where(member => member.Id == memberId)
+                .Select(member => new
+                {
+                    member.IsActive,
+                    member.SecurityVersion,
+                    SessionIsActive = member.AuthSessions.Any(session =>
+                        session.Id == sessionId &&
+                        session.RevokedAt == null &&
+                        session.ExpiresAt > now)
+                })
                 .FirstOrDefaultAsync(context.RequestAborted);
 
-            if (memberState is null)
+            if (authState is null)
             {
                 await WriteAuthFailureAsync(context, "session_invalid", "The account no longer exists.");
                 return;
             }
-            if (!memberState.IsActive)
+            if (!authState.IsActive)
             {
                 await WriteAuthFailureAsync(context, "account_disabled", "This account has been disabled.");
                 return;
             }
-            if (memberState.SecurityVersion != tokenSecurityVersion)
+            if (authState.SecurityVersion != tokenSecurityVersion)
             {
                 await WriteAuthFailureAsync(context, "permissions_changed", "Account permissions changed. Sign in again.");
                 return;
             }
-
-            var now = DateTime.UtcNow;
-            var sessionIsActive = await authContext.AuthSessions
-                .AsNoTracking()
-                .AnyAsync(x => x.Id == sessionId && x.MemberId == memberId &&
-                               x.RevokedAt == null && x.ExpiresAt > now,
-                    context.RequestAborted);
-            if (!sessionIsActive)
+            if (!authState.SessionIsActive)
             {
                 await WriteAuthFailureAsync(context, "session_expired", "This session expired or was revoked.");
                 return;

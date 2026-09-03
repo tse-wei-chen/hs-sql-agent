@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Auth.Service.Data;
@@ -5,6 +6,9 @@ using Auth.Service.Data.Entites;
 using Auth.Service.Interfaces;
 using Auth.Service.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
 using HsSqlAgent.Server.Middleware;
 using Moq.EntityFrameworkCore;
@@ -22,14 +26,28 @@ public class TokenRevocationMiddlewareTests
     {
         _revocationMock = new Mock<ITokenRevocationService>();
         _authContextMock = new Mock<IAuthContext>();
-        _authContextMock.Setup(x => x.Members).ReturnsDbSet(new List<Member>
+
+        var member = new Member
         {
-            new() { Id = 1, Username = "user", Mail = "user@test.com", PasswordHash = "hash", IsActive = true, SecurityVersion = 1 }
-        });
-        _authContextMock.Setup(x => x.AuthSessions).ReturnsDbSet(new List<AuthSession>
+            Id = 1,
+            Username = "user",
+            Mail = "user@test.com",
+            NormalizedMail = "USER@TEST.COM",
+            PasswordHash = "hash",
+            IsActive = true,
+            SecurityVersion = 1
+        };
+        var session = new AuthSession
         {
-            new() { Id = ActiveSessionId, MemberId = 1, ExpiresAt = DateTime.UtcNow.AddDays(1) }
-        });
+            Id = ActiveSessionId,
+            MemberId = member.Id,
+            Member = member,
+            ExpiresAt = DateTime.UtcNow.AddDays(1)
+        };
+        member.AuthSessions.Add(session);
+
+        _authContextMock.Setup(x => x.Members).ReturnsDbSet(new List<Member> { member });
+        _authContextMock.Setup(x => x.AuthSessions).ReturnsDbSet(new List<AuthSession> { session });
     }
 
     [Fact]
@@ -96,6 +114,89 @@ public class TokenRevocationMiddlewareTests
         _revocationMock.Verify(r => r.IsRevokedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+
+    [Fact]
+    public async Task InvokeAsync_AuthenticatedRequest_LoadsMemberAndSessionStateWithOneSqlCommand()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var counter = new CommandCountingInterceptor();
+        var options = new DbContextOptionsBuilder<AuthContext>()
+            .UseSqlite(connection)
+            .AddInterceptors(counter)
+            .Options;
+        await using var authContext = new AuthContext(options);
+        await authContext.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        var member = new Member
+        {
+            Id = 1,
+            Username = "user",
+            Mail = "user@test.com",
+            NormalizedMail = "USER@TEST.COM",
+            PasswordHash = "hash",
+            IsActive = true,
+            SecurityVersion = 1
+        };
+        authContext.Members.Add(member);
+        authContext.AuthSessions.Add(new AuthSession
+        {
+            Id = ActiveSessionId,
+            MemberId = member.Id,
+            ExpiresAt = DateTime.UtcNow.AddDays(1),
+            CurrentRefreshTokenHash = new string('a', 64)
+        });
+        await authContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        authContext.ChangeTracker.Clear();
+        counter.Reset();
+
+        var context = CreateContextWithJti("valid-jti");
+        _revocationMock.Setup(r => r.IsRevokedAsync("valid-jti", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var nextCalled = false;
+        var middleware = new TokenRevocationMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+
+        await middleware.InvokeAsync(context, _revocationMock.Object, authContext);
+
+        Assert.True(nextCalled);
+        Assert.Equal(1, counter.ReaderCommandCount);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ReturnsSessionExpired_WhenSessionIsMissing_ButMemberIsValid()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Username = "user",
+            Mail = "user@test.com",
+            NormalizedMail = "USER@TEST.COM",
+            PasswordHash = "hash",
+            IsActive = true,
+            SecurityVersion = 1
+        };
+        _authContextMock.Setup(x => x.Members).ReturnsDbSet(new List<Member> { member });
+        _authContextMock.Setup(x => x.AuthSessions).ReturnsDbSet(new List<AuthSession>());
+
+        var context = CreateContextWithJti("valid-jti");
+        context.Response.Body = new MemoryStream();
+        _revocationMock.Setup(r => r.IsRevokedAsync("valid-jti", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var middleware = new TokenRevocationMiddleware(_ => Task.CompletedTask);
+
+        await middleware.InvokeAsync(context, _revocationMock.Object, _authContextMock.Object);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        context.Response.Body.Position = 0;
+        using var reader = new StreamReader(context.Response.Body);
+        var body = await reader.ReadToEndAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("session_expired", body, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task InvokeAsync_Returns401_WhenSecurityVersionIsStale()
     {
@@ -117,6 +218,26 @@ public class TokenRevocationMiddlewareTests
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.False(nextCalled);
+    }
+
+
+    private sealed class CommandCountingInterceptor : DbCommandInterceptor
+    {
+        private int _readerCommandCount;
+
+        public int ReaderCommandCount => Volatile.Read(ref _readerCommandCount);
+
+        public void Reset() => Interlocked.Exchange(ref _readerCommandCount, 0);
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _readerCommandCount);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     private static DefaultHttpContext CreateContextWithJti(string jti)
