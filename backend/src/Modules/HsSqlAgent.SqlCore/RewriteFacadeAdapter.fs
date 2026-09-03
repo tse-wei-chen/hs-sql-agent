@@ -14,6 +14,7 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
+open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 /// CLR boundary adapter. SQL text crosses into the closed F# DU exactly once here.
@@ -693,7 +694,7 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private buildTranslatedCommand evidenceContext target policyVersion parsed rendered =
+    let private buildTranslatedCommand evidenceContext target policyVersion (parsed: ParsedSql) (rendered: RenderedCommand) =
         let parameterValues = parameters target rendered.Parameters
         let kind = RewriteCompatibilityAstAdapter.kind parsed
         let command =
