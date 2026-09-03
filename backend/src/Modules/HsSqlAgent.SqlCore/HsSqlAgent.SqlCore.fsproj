@@ -35,6 +35,7 @@
     <Compile Include="CompatibilityTemporalLiteralParser.fs" />
     <Compile Include="LegacyDtoContracts.fs" />
     <Compile Include="CompatibilityAstTypes.fs" />
+    <Compile Include="QueryCompilationContracts.fs" />
     <Compile Include="LegacyDtoMapper.fs" />
     <Compile Include="CapabilityContracts.fs" />
     <Compile Include="CapabilityMatrix.fs" />
@@ -54,6 +55,7 @@
     <Compile Include="RewriteStructuralValidation.fs" />
     <Compile Include="RewriteCompatibilityAstAdapter.fs" />
     <Compile Include="RewriteBinder.fs" />
+    <Compile Include="RewriteInspection.fs" />
     <Compile Include="RewriteStages.fs" />
     <Compile Include="RewritePolicy.fs" />
     <Compile Include="RewriteRenderer.fs" />

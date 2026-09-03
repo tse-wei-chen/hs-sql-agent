@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.Server.Services;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
@@ -34,8 +35,6 @@ public partial class SqlAgentTool
             if (string.IsNullOrWhiteSpace(sql))
                 return "Error: SQL is missing.";
 
-            auditFacts = SqlCoreInspection.GetQueryFacts(sql, dbType);
-
             var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
             var allowedTables = ResolveTableWhitelist();
             QueryExecutionResult execution;
@@ -43,14 +42,31 @@ public partial class SqlAgentTool
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                execution = await _typedQueryRuntime.ExecuteAsync(
-                    provider,
-                    sqlConfig.ConnectionString,
-                    sql,
-                    dbType,
-                    securityPolicy,
-                    allowedTables,
-                    cancellationToken);
+                if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
+                {
+                    var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
+                        provider,
+                        sqlConfig.ConnectionString,
+                        sql,
+                        dbType,
+                        securityPolicy,
+                        allowedTables,
+                        cancellationToken);
+                    auditFacts = compiledExecution.Facts;
+                    execution = compiledExecution.Execution;
+                }
+                else
+                {
+                    auditFacts = SqlCoreInspection.GetQueryFacts(sql, dbType);
+                    execution = await _typedQueryRuntime.ExecuteAsync(
+                        provider,
+                        sqlConfig.ConnectionString,
+                        sql,
+                        dbType,
+                        securityPolicy,
+                        allowedTables,
+                        cancellationToken);
+                }
             }
 
             var result = JsonSerializer.Serialize(execution.Rows);
@@ -76,6 +92,7 @@ public partial class SqlAgentTool
         }
         catch (Exception ex)
         {
+            auditFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
             await _auditService.WriteEventAsync(
                 "mcp.query.executed",
                 AuditTarget(auditFacts),

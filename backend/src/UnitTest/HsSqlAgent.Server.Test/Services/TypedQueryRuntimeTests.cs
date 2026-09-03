@@ -115,6 +115,31 @@ public class TypedQueryRuntimeTests
     }
 
     [Fact]
+    public void CompileWithFacts_UsesSameBoundDocumentForAuditFactsAndCommand()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = CreateProvider(SqlAgentToolType.Postgres);
+        const string sql =
+            "WITH active AS (SELECT id FROM public.users WHERE enabled = true) " +
+            "SELECT a.id FROM active a WHERE EXISTS (SELECT 1 FROM public.orders o WHERE o.user_id = a.id)";
+
+        var result = runtime.CompileWithFacts(
+            provider.Object,
+            sql,
+            SqlAgentToolType.Postgres,
+            CreatePolicy(maxRows: 25),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users", "public.orders" },
+            targetProfile: null);
+
+        Assert.Equal(SqlStatementKind.Select, result.Command.Kind);
+        Assert.Contains("public.users", result.Facts.ReferencedTables, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("public.orders", result.Facts.ReferencedTables, StringComparer.OrdinalIgnoreCase);
+        Assert.True(result.Facts.ContainsCte);
+        Assert.True(result.Facts.ContainsSubquery);
+        Assert.Contains("LIMIT", result.Command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void CreateVerifiedTargetProfile_UsesOpenConnectionServerVersion()
     {
         var connection = new Mock<DbConnection>();

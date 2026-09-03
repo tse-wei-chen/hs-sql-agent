@@ -2,6 +2,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.SqlCore;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Moq;
@@ -45,7 +46,8 @@ public class SqlAgentToolExecutionTests
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
 
         typedQueryRuntime
-            .Setup(x => x.ExecuteAsync(
+            .As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
                 It.Is<string>(candidate => candidate.Contains("public.users", StringComparison.OrdinalIgnoreCase)),
@@ -53,11 +55,13 @@ public class SqlAgentToolExecutionTests
                 policy,
                 It.Is<IReadOnlySet<string>?>(tables => tables != null && tables.Contains("public.users")),
                 cancellationToken))
-            .ReturnsAsync(new QueryExecutionResult(
-                [new Dictionary<string, object?> { ["id"] = 7 }],
-                1,
-                TimeSpan.Zero,
-                []));
+            .ReturnsAsync(new QueryExecutionWithFacts(
+                new QueryExecutionResult(
+                    [new Dictionary<string, object?> { ["id"] = 7 }],
+                    1,
+                    TimeSpan.Zero,
+                    []),
+                SqlCoreInspection.GetQueryFacts("SELECT id FROM public.users", SqlAgentToolType.Postgres)));
 
         var tool = new SqlAgentTool(
             httpContextAccessor.Object,
@@ -109,7 +113,8 @@ public class SqlAgentToolExecutionTests
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
-            .Setup(x => x.ExecuteAsync(
+            .As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<string>(),
@@ -131,6 +136,13 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.secrets", TestContext.Current.CancellationToken);
 
         Assert.Contains("table denied", result, StringComparison.OrdinalIgnoreCase);
+        auditService.Verify(x => x.WriteEventAsync(
+            "mcp.query.executed",
+            "query",
+            "failed",
+            It.IsAny<AuditEventContext>(),
+            "table denied",
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -242,7 +254,8 @@ public class SqlAgentToolExecutionTests
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
-            .Setup(x => x.ExecuteAsync(
+            .As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
                 provider.Object,
                 "Host=localhost;Database=testdb",
                 It.IsAny<string>(),
@@ -250,7 +263,9 @@ public class SqlAgentToolExecutionTests
                 policy,
                 null,
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QueryExecutionResult([], 0, TimeSpan.Zero, []));
+            .ReturnsAsync(new QueryExecutionWithFacts(
+                new QueryExecutionResult([], 0, TimeSpan.Zero, []),
+                SqlCoreInspection.GetQueryFacts("SELECT id FROM public.users", SqlAgentToolType.Postgres)));
 
         var tool = new SqlAgentTool(
             httpContextAccessor.Object,

@@ -117,20 +117,39 @@ public class CustomToolProxy(
             if (isQuery)
             {
                 auditQueryDialect = dbType;
-                auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
 
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                    var execution = await _typedQueryRuntime.ExecuteAsync(
-                        provider,
-                        sqlConfig.ConnectionString,
-                        renderedSql,
-                        dbType,
-                        _securityPolicyRuntimeState.GetCurrent(),
-                        ResolveTableWhitelist(),
-                        cancellationToken);
+                    QueryExecutionResult execution;
+                    var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
+                    var allowedTables = ResolveTableWhitelist();
+                    if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
+                    {
+                        var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
+                            provider,
+                            sqlConfig.ConnectionString,
+                            renderedSql,
+                            dbType,
+                            securityPolicy,
+                            allowedTables,
+                            cancellationToken);
+                        auditQueryFacts = compiledExecution.Facts;
+                        execution = compiledExecution.Execution;
+                    }
+                    else
+                    {
+                        auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
+                        execution = await _typedQueryRuntime.ExecuteAsync(
+                            provider,
+                            sqlConfig.ConnectionString,
+                            renderedSql,
+                            dbType,
+                            securityPolicy,
+                            allowedTables,
+                            cancellationToken);
+                    }
                     queryReturnedRows = execution.RowCount;
                     result = JsonSerializer.Serialize(execution.Rows);
                 }
@@ -221,6 +240,7 @@ public class CustomToolProxy(
         }
         catch (Exception ex)
         {
+            auditQueryFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
             await _auditService.WriteEventAsync(
                 $"mcp.{_name}.executed",
                 _name,

@@ -13,6 +13,9 @@ public class ProviderRuntimeBoundaryTests
     {
         var execute = Assert.Single(typeof(ITypedQueryRuntime).GetMethods());
         Assert.Equal(typeof(ISqlProvider), execute.GetParameters()[0].ParameterType);
+        var factsExecute = Assert.Single(typeof(ITypedQueryRuntimeFacts).GetMethods());
+        Assert.Equal(typeof(ISqlProvider), factsExecute.GetParameters()[0].ParameterType);
+        Assert.True(typeof(ITypedQueryRuntimeFacts).IsAssignableFrom(typeof(TypedQueryRuntime)));
         Assert.DoesNotContain(
             typeof(TypedQueryRuntime).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
                 .SelectMany(method => method.GetParameters()),

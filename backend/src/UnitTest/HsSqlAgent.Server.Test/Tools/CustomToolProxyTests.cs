@@ -4,6 +4,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.SqlCore;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Protocol;
@@ -35,6 +36,7 @@ public class CustomToolProxyTests
         _securityPolicyRuntimeStateMock = new Mock<ISecurityPolicyRuntimeState>();
         _sqlConcurrencyLimiterMock = new Mock<ISqlExecutionConcurrencyLimiter>();
         _typedQueryRuntimeMock = new Mock<ITypedQueryRuntime>();
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>();
         _sqlConcurrencyLimiterMock
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
@@ -130,7 +132,7 @@ public class CustomToolProxyTests
             .Returns("email");
 
         SetupPostgresProvider();
-        _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>().Setup(r => r.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
                 It.Is<string>(sql => sql.Contains("users", StringComparison.OrdinalIgnoreCase)),
@@ -138,11 +140,13 @@ public class CustomToolProxyTests
                 It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == 1000 && p.QueryTimeoutSeconds == 30),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QueryExecutionResult(
-                [new Dictionary<string, object?> { ["email"] = "test@example.com" }],
-                1,
-                TimeSpan.Zero,
-                []));
+            .ReturnsAsync(new QueryExecutionWithFacts(
+                new QueryExecutionResult(
+                    [new Dictionary<string, object?> { ["email"] = "test@example.com" }],
+                    1,
+                    TimeSpan.Zero,
+                    []),
+                SqlCoreInspection.GetQueryFacts("SELECT email FROM users", SqlAgentToolType.Postgres)));
 
         var result = await _proxy.Execute(
             JsonSerializer.SerializeToElement(new { email = "test@example.com" }),
@@ -171,7 +175,7 @@ public class CustomToolProxyTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("table authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        _typedQueryRuntimeMock.Verify(x => x.ExecuteAsync(
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>().Verify(x => x.ExecuteWithFactsAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -339,7 +343,7 @@ public class CustomToolProxyTests
             .ReturnsAsync(tool);
 
         SetupPostgresProvider();
-        _typedQueryRuntimeMock.Setup(r => r.ExecuteAsync(
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>().Setup(r => r.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<string>(),
@@ -347,7 +351,9 @@ public class CustomToolProxyTests
                 It.IsAny<SecurityPolicyModel>(),
                 It.IsAny<IReadOnlySet<string>?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new QueryExecutionResult([], 0, TimeSpan.Zero, []));
+            .ReturnsAsync(new QueryExecutionWithFacts(
+                new QueryExecutionResult([], 0, TimeSpan.Zero, []),
+                SqlCoreInspection.GetQueryFacts("SELECT * FROM users", SqlAgentToolType.Postgres)));
 
         _ = await _proxy.Execute(
             JsonSerializer.SerializeToElement(new { }),

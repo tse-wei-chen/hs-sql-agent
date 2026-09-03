@@ -111,15 +111,21 @@ module internal RewritePipeline =
             ex.Data[diagnosticDataKey] <- diagnostic
             reraise()
 
-    let private finish options parsed =
+    let private bind options parsed =
+        let sourceProviderType =
+            options.Source
+            |> VerifiedSource.dialect
+            |> sourceProvider
+        parsed |> RewriteBinder.bind sourceProviderType
+
+    let private finishBound options bound =
         let source = options.Source
         let target = options.Target
         let sourceDialect = VerifiedSource.dialect source
         let sourceSemantics = VerifiedSource.semantics source
         let targetRuntime = VerifiedTarget.runtime target
 
-        parsed
-        |> RewriteBinder.bind (sourceProvider sourceDialect)
+        bound
         |> RewriteStages.normalize
             sourceSemantics.EnforceDialectSyntax
             sourceDialect
@@ -143,17 +149,34 @@ module internal RewritePipeline =
         |> RewritePolicy.authorize options.Policy
         |> renderWithDiagnostic
 
+    let private finish options parsed =
+        parsed
+        |> bind options
+        |> finishBound options
+
+    let private parse options sql =
+        let source = options.Source
+        RewriteParser.parseForWith
+            (VerifiedSource.semantics source)
+            (VerifiedSource.dialect source)
+            sql
+
     let compileParsed options parsed =
         finish options parsed
 
     let compileWithParsed options sql =
-        let source = options.Source
-        let parsed =
-            RewriteParser.parseForWith
-                (VerifiedSource.semantics source)
-                (VerifiedSource.dialect source)
-                sql
+        let parsed = parse options sql
         parsed, finish options parsed
+
+    let compileWithQueryFacts options sql =
+        let parsed = parse options sql
+        let bound = bind options parsed
+        let facts = RewriteInspection.inspectBound bound
+        try
+            parsed, facts, finishBound options bound
+        with ex ->
+            RewriteInspection.attachToException facts ex
+            reraise()
 
     let compile options sql =
         compileWithParsed options sql |> snd
