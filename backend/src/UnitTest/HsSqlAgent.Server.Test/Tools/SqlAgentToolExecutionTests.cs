@@ -128,7 +128,7 @@ public class SqlAgentToolExecutionTests
             concurrencyLimiter.Object,
             typedQueryRuntime.Object);
 
-        var result = await tool.ExecuteQuerySql("SELECT id FROM public.secrets");
+        var result = await tool.ExecuteQuerySql("SELECT id FROM public.secrets", TestContext.Current.CancellationToken);
 
         Assert.Contains("table denied", result, StringComparison.OrdinalIgnoreCase);
     }
@@ -159,7 +159,7 @@ public class SqlAgentToolExecutionTests
             concurrencyLimiter.Object,
             typedQueryRuntime.Object);
 
-        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users");
+        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("tool authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
         typedQueryRuntime.Verify(x => x.ExecuteAsync(
@@ -202,7 +202,7 @@ public class SqlAgentToolExecutionTests
             concurrencyLimiter.Object,
             typedQueryRuntime.Object);
 
-        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users");
+        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
         typedQueryRuntime.Verify(x => x.ExecuteAsync(
@@ -261,7 +261,7 @@ public class SqlAgentToolExecutionTests
             concurrencyLimiter.Object,
             typedQueryRuntime.Object);
 
-        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users");
+        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Equal("[]", result);
         typedQueryRuntime.VerifyAll();
@@ -287,7 +287,7 @@ public class SqlAgentToolExecutionTests
             Mock.Of<ISqlExecutionConcurrencyLimiter>(),
             Mock.Of<ITypedQueryRuntime>());
 
-        var result = await tool.ExecuteQuerySql("SELECT 1");
+        var result = await tool.ExecuteQuerySql("SELECT 1", TestContext.Current.CancellationToken);
 
         Assert.Equal("Invalid database provider or connection configuration.", result);
         Assert.DoesNotContain("super-secret", result, StringComparison.Ordinal);
