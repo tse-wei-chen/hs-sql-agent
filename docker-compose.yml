@@ -76,6 +76,7 @@ services:
       - Operability__SiemWebhookUrl=${SIEM_WEBHOOK_URL}
       - Operability__SiemWebhookSecret=${SIEM_WEBHOOK_SECRET}
       - Operability__DeliveryMaxAttempts=${DELIVERY_MAX_ATTEMPTS}
+      - Operability__DeliveryMaxConcurrency=${DELIVERY_MAX_CONCURRENCY:-4}
       - Operability__AuditRetentionDays=${AUDIT_RETENTION_DAYS}
       - Operability__AuditRetentionMode=${AUDIT_RETENTION_MODE}
       - Operability__AuditArchivePath=${AUDIT_ARCHIVE_PATH}

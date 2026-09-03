@@ -132,10 +132,18 @@ public class OperabilityService(
 
     public async Task<bool> RetryDeliveryAsync(long id, CancellationToken cancellationToken = default)
     {
-        var item = await context.OutboundDeliveries.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (item is null) return false;
-        item.Status = "pending"; item.AttemptCount = 0; item.NextAttemptAt = DateTime.UtcNow; item.LastError = null;
-        await context.SaveChangesAsync(cancellationToken);
+        var retried = await context.OutboundDeliveries
+            .Where(x => x.Id == id && x.Status == "dead-letter")
+            .ExecuteUpdateAsync(
+                updates => updates
+                    .SetProperty(x => x.Status, "pending")
+                    .SetProperty(x => x.AttemptCount, 0)
+                    .SetProperty(x => x.NextAttemptAt, DateTime.UtcNow)
+                    .SetProperty(x => x.LastAttemptAt, (DateTime?)null)
+                    .SetProperty(x => x.DeliveredAt, (DateTime?)null)
+                    .SetProperty(x => x.LastError, (string?)null),
+                cancellationToken);
+        if (retried != 1) return false;
         deliverySignal?.Notify();
         return true;
     }
