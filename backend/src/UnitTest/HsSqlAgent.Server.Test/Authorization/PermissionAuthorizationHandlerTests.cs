@@ -5,6 +5,7 @@ using Auth.Service.Data.Entites;
 using Common.Interfaces;
 using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Moq;
 using Moq.EntityFrameworkCore;
 using Xunit;
@@ -172,6 +173,69 @@ public class PermissionAuthorizationHandlerTests
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
         _contextMock.Verify(c => c.PermissionActions, Times.Never);
+    }
+
+
+    [Fact]
+    public async Task HandleAsync_MultipleRequirementsOnCacheMiss_LoadsDatabaseOnce()
+    {
+        var role = new Role { Id = 1, Name = "Admin" };
+        var permission = new Permission { Id = 1, Name = "Test", Path = "/test/path" };
+        var view = new AuthAction { Id = 1, Code = "view", Name = "view" };
+        var edit = new AuthAction { Id = 2, Code = "edit", Name = "edit" };
+        var permissionActions = new List<PermissionAction>
+        {
+            new()
+            {
+                Id = 1,
+                RoleId = 1,
+                PermissionId = 1,
+                ActionId = 1,
+                Role = role,
+                Permission = permission,
+                Action = view
+            },
+            new()
+            {
+                Id = 2,
+                RoleId = 1,
+                PermissionId = 1,
+                ActionId = 2,
+                Role = role,
+                Permission = permission,
+                Action = edit
+            }
+        };
+        _contextMock.Setup(c => c.PermissionActions).ReturnsDbSet(permissionActions);
+        _cacheMock
+            .Setup(c => c.GetAsync<HashSet<string>>(
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((HashSet<string>?)null);
+
+        var user = CreateUser("1");
+        var httpContext = new DefaultHttpContext { User = user };
+        var context = new AuthorizationHandlerContext(
+            [
+                new PermissionRequirement("/test/path", "view"),
+                new PermissionRequirement("/test/path", "edit")
+            ],
+            user,
+            httpContext);
+        var handler = new PermissionAuthorizationHandler(_contextMock.Object, _cacheMock.Object);
+
+        await handler.HandleAsync(context);
+
+        Assert.Empty(context.PendingRequirements);
+        _cacheMock.Verify(c => c.GetAsync<HashSet<string>>(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _cacheMock.Verify(c => c.SetAsync(
+            It.IsAny<string>(),
+            It.IsAny<HashSet<string>>(),
+            It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _contextMock.Verify(c => c.PermissionActions, Times.Once);
     }
 
     [Fact]
