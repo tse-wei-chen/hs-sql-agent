@@ -9,7 +9,8 @@ public class MsSqlServerProvider :
     SqlProviderBase,
     IProviderDmlResultRowMetadataReader,
     IProviderConnectionMetadataReader,
-    IProviderConnectionDmlResultRowMetadataReader
+    IProviderConnectionDmlResultRowMetadataReader,
+    IProviderConnectionDmlPlanningMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
@@ -157,6 +158,117 @@ public class MsSqlServerProvider :
             (string)r.DATA_TYPE,
             (bool)r.IS_PRIMARY_KEY,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
+    }
+
+    public async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+        DbConnection connection,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+
+        var eventType = triggerOperation switch
+        {
+            null => null,
+            DmlOperation.Insert => "INSERT",
+            DmlOperation.Update => "UPDATE",
+            DmlOperation.Delete => "DELETE",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(triggerOperation),
+                triggerOperation,
+                "SQL Server DML trigger metadata supports INSERT, UPDATE, and DELETE only.")
+        };
+
+        const string sql = @"
+            SELECT
+                s.name AS SCHEMA_NAME,
+                t.name AS TABLE_NAME,
+                CASE WHEN @includeColumns = 1 THEN c.name ELSE NULL END AS COLUMN_NAME,
+                CASE WHEN @includeColumns = 1 THEN ty.name ELSE NULL END AS DATA_TYPE,
+                CAST(CASE
+                    WHEN @includeColumns = 1 AND ic.column_id IS NOT NULL THEN 1
+                    ELSE 0
+                END AS bit) AS IS_PRIMARY_KEY,
+                CASE WHEN @includeColumns = 1 THEN ic.key_ordinal ELSE NULL END AS PRIMARY_KEY_ORDINAL,
+                CASE
+                    WHEN @eventType IS NULL THEN NULL
+                    ELSE HAS_PERMS_BY_NAME(
+                        QUOTENAME(s.name) + N'.' + QUOTENAME(t.name),
+                        'OBJECT',
+                        'VIEW DEFINITION')
+                END AS CAN_VIEW_DEFINITION,
+                CASE
+                    WHEN @eventType IS NULL THEN NULL
+                    ELSE CAST(CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM sys.triggers tr
+                        JOIN sys.trigger_events te ON te.object_id = tr.object_id
+                        WHERE tr.parent_id = t.object_id
+                          AND tr.is_disabled = 0
+                          AND te.type_desc = @eventType
+                    ) THEN 1 ELSE 0 END AS bit)
+                END AS HAS_ENABLED_TRIGGER
+            FROM sys.tables t
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            LEFT JOIN sys.columns c
+              ON c.object_id = t.object_id
+             AND @includeColumns = 1
+            LEFT JOIN sys.types ty
+              ON ty.user_type_id = c.user_type_id
+            LEFT JOIN sys.indexes i
+              ON i.object_id = t.object_id
+             AND i.is_primary_key = 1
+            LEFT JOIN sys.index_columns ic
+              ON ic.object_id = t.object_id
+             AND ic.index_id = i.index_id
+             AND ic.column_id = c.column_id
+            WHERE LOWER(t.name) = LOWER(@tableName)
+              AND (
+                  (@schemaName IS NULL AND (s.principal_id = 1 OR s.name = 'dbo'))
+                  OR (@schemaName IS NOT NULL AND LOWER(s.name) = LOWER(@schemaName))
+              )
+            ORDER BY s.name, t.name, c.column_id;";
+
+        var rows = (await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { schemaName, tableName, includeColumns, eventType },
+            cancellationToken: cancellationToken))).ToArray();
+
+        return [.. rows
+            .GroupBy(row => ((string)row.SCHEMA_NAME, (string)row.TABLE_NAME))
+            .Select(group =>
+            {
+                bool? hasEnabledTrigger = null;
+                if (triggerOperation.HasValue)
+                {
+                    var first = group.First();
+                    if (first.CAN_VIEW_DEFINITION is not null
+                        && Convert.ToInt32(first.CAN_VIEW_DEFINITION) == 1)
+                    {
+                        hasEnabledTrigger = (bool)first.HAS_ENABLED_TRIGGER;
+                    }
+                }
+
+                return new DatabaseDmlPlanningMetadata(
+                    group.Key.Item1,
+                    group.Key.Item2,
+                    [.. group
+                        .Where(row => row.COLUMN_NAME is not null)
+                        .Select(row => new DatabaseColumnMetadata(
+                            group.Key.Item1,
+                            group.Key.Item2,
+                            (string)row.COLUMN_NAME,
+                            (string)row.DATA_TYPE,
+                            (bool)row.IS_PRIMARY_KEY,
+                            row.PRIMARY_KEY_ORDINAL is null
+                                ? null
+                                : Convert.ToInt32(row.PRIMARY_KEY_ORDINAL))) ],
+                    hasEnabledTrigger);
+            })];
     }
 
     public async Task<bool> HasEnabledDmlTriggerAsync(

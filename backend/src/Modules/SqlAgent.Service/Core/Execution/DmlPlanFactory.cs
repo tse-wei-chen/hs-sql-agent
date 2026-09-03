@@ -18,6 +18,8 @@ public sealed class DmlPlanFactory(
     CoreSqlCompiler? queryCompiler = null)
 {
     private readonly DmlRowIdentityResolver _rowIdentityResolver = new(metadataReader);
+    private readonly IProviderConnectionDmlPlanningMetadataReader? _dmlPlanningMetadataReader =
+        metadataReader as IProviderConnectionDmlPlanningMetadataReader;
     private readonly HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader? _dmlResultRowMetadataReader =
         metadataReader as HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader;
     // Explicit legacy compilers remain an opt-in compatibility seam for tests/custom hosts.
@@ -117,18 +119,40 @@ public sealed class DmlPlanFactory(
         if (string.IsNullOrWhiteSpace(requestedTarget))
             throw new InvalidOperationException("DML target table must not be empty.");
 
-        var identity = metadataConnection is null
-            ? await _rowIdentityResolver.ResolveTargetAsync(
-                connectionString,
-                requestedTarget,
-                assurance,
-                cancellationToken)
-            : await _rowIdentityResolver.ResolveTargetAsync(
-                metadataConnection,
-                connectionString,
-                requestedTarget,
-                assurance,
+        DatabaseDmlPlanningMetadata? planningMetadata = null;
+        DmlRowIdentityResolution identity;
+        var triggerOperation = targetProvider == SqlAgentToolType.MsSqlServer
+            && ReturnsRows(parsedMutation.Statement)
+                ? operation
+                : (DmlOperation?)null;
+        if (ShouldUsePlanningSnapshot(metadataConnection, target.Name, triggerOperation.HasValue))
+        {
+            var requested = RequestedTargetParts(target.Name);
+            var matches = await _dmlPlanningMetadataReader!.GetDmlPlanningMetadataAsync(
+                metadataConnection!,
+                requested.Schema,
+                requested.Table,
+                includeColumns: true,
+                triggerOperation,
                 cancellationToken);
+            planningMetadata = ResolvePlanningTarget(matches, requestedTarget);
+            identity = ResolveRowIdentity(planningMetadata, requestedTarget, assurance);
+        }
+        else
+        {
+            identity = metadataConnection is null
+                ? await _rowIdentityResolver.ResolveTargetAsync(
+                    connectionString,
+                    requestedTarget,
+                    assurance,
+                    cancellationToken)
+                : await _rowIdentityResolver.ResolveTargetAsync(
+                    metadataConnection,
+                    connectionString,
+                    requestedTarget,
+                    assurance,
+                    cancellationToken);
+        }
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(identity.Schema, identity.Table),
             target.Alias,
@@ -144,6 +168,8 @@ public sealed class DmlPlanFactory(
             operation,
             identity.Schema,
             identity.Table,
+            planningMetadata is not null && triggerOperation.HasValue,
+            planningMetadata?.HasEnabledDmlTrigger,
             cancellationToken);
 
         var mutationCommand = CompileMutation(
@@ -245,16 +271,40 @@ public sealed class DmlPlanFactory(
 
         // INSERT VALUES needs only physical-target resolution and authorization. It has no
         // pre-existing target row set, so loading column/primary-key metadata here is pure overhead.
-        var targetResolution = metadataConnection is null
-            ? await _rowIdentityResolver.ResolvePhysicalTargetAsync(
-                connectionString,
-                requestedTarget,
-                cancellationToken)
-            : await _rowIdentityResolver.ResolvePhysicalTargetAsync(
-                metadataConnection,
-                connectionString,
-                requestedTarget,
+        DatabaseDmlPlanningMetadata? planningMetadata = null;
+        DmlPhysicalTargetResolution targetResolution;
+        var triggerOperation = targetProvider == SqlAgentToolType.MsSqlServer
+            && ReturnsRows(parsedMutation.Statement)
+                ? DmlOperation.Insert
+                : (DmlOperation?)null;
+        if (ShouldUsePlanningSnapshot(metadataConnection, insert.Target.Name, triggerOperation.HasValue))
+        {
+            var requested = RequestedTargetParts(insert.Target.Name);
+            var matches = await _dmlPlanningMetadataReader!.GetDmlPlanningMetadataAsync(
+                metadataConnection!,
+                requested.Schema,
+                requested.Table,
+                includeColumns: false,
+                triggerOperation,
                 cancellationToken);
+            planningMetadata = ResolvePlanningTarget(matches, requestedTarget);
+            targetResolution = new DmlPhysicalTargetResolution(
+                planningMetadata.Schema,
+                planningMetadata.Table);
+        }
+        else
+        {
+            targetResolution = metadataConnection is null
+                ? await _rowIdentityResolver.ResolvePhysicalTargetAsync(
+                    connectionString,
+                    requestedTarget,
+                    cancellationToken)
+                : await _rowIdentityResolver.ResolvePhysicalTargetAsync(
+                    metadataConnection,
+                    connectionString,
+                    requestedTarget,
+                    cancellationToken);
+        }
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
             insert.Target.Alias,
@@ -270,6 +320,8 @@ public sealed class DmlPlanFactory(
             DmlOperation.Insert,
             targetResolution.Schema,
             targetResolution.Table,
+            planningMetadata is not null && triggerOperation.HasValue,
+            planningMetadata?.HasEnabledDmlTrigger,
             cancellationToken);
 
         var mutationCommand = CompileMutation(
@@ -314,32 +366,48 @@ public sealed class DmlPlanFactory(
         DmlOperation operation,
         string schema,
         string table,
+        bool hasPlanningTriggerMetadata,
+        bool? planningHasEnabledTrigger,
         CancellationToken cancellationToken)
     {
         if (targetProvider != SqlAgentToolType.MsSqlServer || !ReturnsRows(resolvedStatement))
             return validationContext;
 
-        if (_dmlResultRowMetadataReader is null)
+        bool hasEnabledTrigger;
+        if (hasPlanningTriggerMetadata)
         {
-            throw new InvalidOperationException(
-                "SQL Server OUTPUT requires provider trigger metadata support; no DML result-row metadata reader is available for the resolved target.");
-        }
+            if (!planningHasEnabledTrigger.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"SQL Server OUTPUT trigger assurance for '{schema}.{table}' requires VIEW DEFINITION metadata visibility; Core remains fail-closed when trigger metadata completeness cannot be proven.");
+            }
 
-        var hasEnabledTrigger =
-            metadataConnection is not null
-            && _dmlResultRowMetadataReader is IProviderConnectionDmlResultRowMetadataReader connectionTriggerMetadata
-                ? await connectionTriggerMetadata.HasEnabledDmlTriggerAsync(
-                    metadataConnection,
-                    schema,
-                    table,
-                    operation,
-                    cancellationToken)
-                : await _dmlResultRowMetadataReader.HasEnabledDmlTriggerAsync(
-                    connectionString,
-                    schema,
-                    table,
-                    operation,
-                    cancellationToken);
+            hasEnabledTrigger = planningHasEnabledTrigger.Value;
+        }
+        else
+        {
+            if (_dmlResultRowMetadataReader is null)
+            {
+                throw new InvalidOperationException(
+                    "SQL Server OUTPUT requires provider trigger metadata support; no DML result-row metadata reader is available for the resolved target.");
+            }
+
+            hasEnabledTrigger =
+                metadataConnection is not null
+                && _dmlResultRowMetadataReader is IProviderConnectionDmlResultRowMetadataReader connectionTriggerMetadata
+                    ? await connectionTriggerMetadata.HasEnabledDmlTriggerAsync(
+                        metadataConnection,
+                        schema,
+                        table,
+                        operation,
+                        cancellationToken)
+                    : await _dmlResultRowMetadataReader.HasEnabledDmlTriggerAsync(
+                        connectionString,
+                        schema,
+                        table,
+                        operation,
+                        cancellationToken);
+        }
 
         if (hasEnabledTrigger)
         {
@@ -355,6 +423,61 @@ public sealed class DmlPlanFactory(
             DmlResultRowAssurance.NoEnabledTriggers(
                 $"{schema}.{table}",
                 operation));
+    }
+
+    private bool ShouldUsePlanningSnapshot(
+        DbConnection? metadataConnection,
+        SqlIdentifier target,
+        bool triggerMetadataRequired) =>
+        metadataConnection is not null
+        && _dmlPlanningMetadataReader is not null
+        && (target.Parts.Length == 1
+            || (target.Parts.Length == 2 && triggerMetadataRequired));
+
+    private static (string? Schema, string Table) RequestedTargetParts(SqlIdentifier target) =>
+        target.Parts.Length switch
+        {
+            1 => (null, target.Parts[0].Value),
+            2 => (target.Parts[0].Value, target.Parts[1].Value),
+            _ => throw new InvalidOperationException(
+                $"DML target '{IdentifierText(target)}' must be <table> or <schema>.<table> for metadata planning.")
+        };
+
+    private static DatabaseDmlPlanningMetadata ResolvePlanningTarget(
+        IReadOnlyList<DatabaseDmlPlanningMetadata> matches,
+        string requestedTarget) =>
+        matches.Count switch
+        {
+            1 => matches[0],
+            0 => throw new InvalidOperationException(
+                $"DML target '{requestedTarget}' could not be resolved to a physical table. Schema-qualify the target explicitly."),
+            _ => throw new InvalidOperationException(
+                $"DML target '{requestedTarget}' is ambiguous across schemas. Schema-qualify the target explicitly.")
+        };
+
+    private static DmlRowIdentityResolution ResolveRowIdentity(
+        DatabaseDmlPlanningMetadata metadata,
+        string requestedTarget,
+        DmlRowIdentityAssurance assurance)
+    {
+        var primaryKey = metadata.Columns
+            .Where(column => column.IsPrimaryKey)
+            .OrderBy(column => column.PrimaryKeyOrdinal ?? int.MaxValue)
+            .ThenBy(column => column.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(column => column.Name)
+            .ToImmutableArray();
+
+        if (!primaryKey.IsDefaultOrEmpty)
+            return new DmlRowIdentityResolution(metadata.Schema, metadata.Table, primaryKey);
+
+        if (assurance == DmlRowIdentityAssurance.CountOnly)
+            return new DmlRowIdentityResolution(
+                metadata.Schema,
+                metadata.Table,
+                ImmutableArray<string>.Empty);
+
+        throw new InvalidOperationException(
+            $"Strict DML row-identity assurance requires a primary key on '{metadata.Schema}.{metadata.Table}'.");
     }
 
     private static bool ReturnsRows(SqlStatement statement) => statement switch

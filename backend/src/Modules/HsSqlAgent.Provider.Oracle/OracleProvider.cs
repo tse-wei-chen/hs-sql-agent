@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.Oracle;
 
-public class OracleProvider : SqlProviderBase, IProviderConnectionMetadataReader
+public class OracleProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
 
@@ -138,6 +138,86 @@ public class OracleProvider : SqlProviderBase, IProviderConnectionMetadataReader
             (string)r.DATA_TYPE,
             Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
+    }
+
+    public async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+        DbConnection connection,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        if (triggerOperation.HasValue)
+            throw new NotSupportedException("Oracle DML planning does not expose SQL Server trigger assurance.");
+
+        var schemaPredicate = schemaName is null
+            ? string.Empty
+            : " AND UPPER(t.OWNER) = UPPER(:schemaName)";
+
+        if (!includeColumns)
+        {
+            var targetSql = $@"
+                SELECT t.OWNER, t.TABLE_NAME
+                FROM ALL_TABLES t
+                WHERE UPPER(t.TABLE_NAME) = UPPER(:tableName){schemaPredicate}
+                ORDER BY t.OWNER, t.TABLE_NAME";
+            var targets = await connection.QueryAsync(new CommandDefinition(
+                targetSql,
+                new { schemaName, tableName },
+                cancellationToken: cancellationToken));
+            return [.. targets.Select(row => new DatabaseDmlPlanningMetadata(
+                (string)row.OWNER,
+                (string)row.TABLE_NAME,
+                []))];
+        }
+
+        var sql = $@"
+            SELECT t.OWNER, t.TABLE_NAME,
+                   c.COLUMN_NAME, c.DATA_TYPE,
+                   CASE WHEN pk.POSITION IS NULL THEN 0 ELSE 1 END AS IS_PRIMARY_KEY,
+                   pk.POSITION AS PRIMARY_KEY_ORDINAL
+            FROM ALL_TABLES t
+            LEFT JOIN ALL_TAB_COLUMNS c
+              ON c.OWNER = t.OWNER
+             AND c.TABLE_NAME = t.TABLE_NAME
+            LEFT JOIN (
+                SELECT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME, acc.POSITION
+                FROM ALL_CONSTRAINTS ac
+                JOIN ALL_CONS_COLUMNS acc
+                  ON acc.OWNER = ac.OWNER
+                 AND acc.CONSTRAINT_NAME = ac.CONSTRAINT_NAME
+                 AND acc.TABLE_NAME = ac.TABLE_NAME
+                WHERE ac.CONSTRAINT_TYPE = 'P'
+            ) pk
+              ON pk.OWNER = t.OWNER
+             AND pk.TABLE_NAME = t.TABLE_NAME
+             AND pk.COLUMN_NAME = c.COLUMN_NAME
+            WHERE UPPER(t.TABLE_NAME) = UPPER(:tableName){schemaPredicate}
+            ORDER BY t.OWNER, t.TABLE_NAME, c.COLUMN_ID";
+        var rows = (await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { schemaName, tableName },
+            cancellationToken: cancellationToken))).ToArray();
+
+        return [.. rows
+            .GroupBy(row => ((string)row.OWNER, (string)row.TABLE_NAME))
+            .Select(group => new DatabaseDmlPlanningMetadata(
+                group.Key.Item1,
+                group.Key.Item2,
+                [.. group
+                    .Where(row => row.COLUMN_NAME is not null)
+                    .Select(row => new DatabaseColumnMetadata(
+                        group.Key.Item1,
+                        group.Key.Item2,
+                        (string)row.COLUMN_NAME,
+                        (string)row.DATA_TYPE,
+                        Convert.ToInt32(row.IS_PRIMARY_KEY) != 0,
+                        row.PRIMARY_KEY_ORDINAL is null
+                            ? null
+                            : Convert.ToInt32(row.PRIMARY_KEY_ORDINAL))) ]))];
     }
 
     public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)

@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.Sqlite;
 
-public class SqliteProvider : SqlProviderBase, IProviderConnectionMetadataReader
+public class SqliteProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
@@ -92,6 +92,72 @@ public class SqliteProvider : SqlProviderBase, IProviderConnectionMetadataReader
                 pk > 0,
                 pk > 0 ? pk : null);
         })];
+    }
+
+    public async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+        DbConnection connection,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        if (triggerOperation.HasValue)
+            throw new NotSupportedException("SQLite DML planning does not expose SQL Server trigger assurance.");
+        if (schemaName is not null
+            && !string.Equals(schemaName, "main", StringComparison.OrdinalIgnoreCase))
+            return [];
+
+        if (!includeColumns)
+        {
+            const string targetSql =
+                "SELECT name AS TABLE_NAME FROM sqlite_master " +
+                "WHERE type='table' AND name = @tableName COLLATE NOCASE;";
+            var targets = await connection.QueryAsync(new CommandDefinition(
+                targetSql,
+                new { tableName },
+                cancellationToken: cancellationToken));
+            return [.. targets.Select(row => new DatabaseDmlPlanningMetadata(
+                "main",
+                (string)row.TABLE_NAME,
+                []))];
+        }
+
+        const string sql = @"
+            SELECT m.name AS TABLE_NAME,
+                   p.name AS COLUMN_NAME,
+                   p.type AS DATA_TYPE,
+                   p.pk AS PRIMARY_KEY_ORDINAL
+            FROM sqlite_master AS m
+            LEFT JOIN pragma_table_info(m.name) AS p ON 1 = 1
+            WHERE m.type = 'table'
+              AND m.name = @tableName COLLATE NOCASE
+            ORDER BY p.cid;";
+        var rows = (await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken))).ToArray();
+
+        return [.. rows
+            .GroupBy(row => (string)row.TABLE_NAME, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new DatabaseDmlPlanningMetadata(
+                "main",
+                group.Key,
+                [.. group
+                    .Where(row => row.COLUMN_NAME is not null)
+                    .Select(row =>
+                    {
+                        var ordinal = Convert.ToInt32(row.PRIMARY_KEY_ORDINAL);
+                        return new DatabaseColumnMetadata(
+                            "main",
+                            group.Key,
+                            (string)row.COLUMN_NAME,
+                            (string)row.DATA_TYPE,
+                            ordinal > 0,
+                            ordinal > 0 ? ordinal : null);
+                    }) ]))];
     }
 
     public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
