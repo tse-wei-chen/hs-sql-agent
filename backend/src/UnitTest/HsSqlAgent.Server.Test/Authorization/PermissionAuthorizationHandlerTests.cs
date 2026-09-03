@@ -5,6 +5,7 @@ using Auth.Service.Data.Entites;
 using Common.Interfaces;
 using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Moq;
 using Moq.EntityFrameworkCore;
 using Xunit;
@@ -141,6 +142,135 @@ public class PermissionAuthorizationHandlerTests
         _contextMock.Verify(c => c.PermissionActions, Times.Never);
     }
 
+
+    [Fact]
+    public async Task HandleAsync_MultipleRequirementsInSameRequest_UsesDistributedCacheOnce()
+    {
+        _cacheMock
+            .Setup(c => c.GetAsync<HashSet<string>>(
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string>
+            {
+                "/test/path.view",
+                "/test/path.edit"
+            });
+
+        var user = CreateUser("1");
+        var httpContext = new DefaultHttpContext { User = user };
+        var requirements = new PermissionRequirement[]
+        {
+            new("/test/path", "view"),
+            new("/test/path", "edit")
+        };
+        var context = new AuthorizationHandlerContext(requirements, user, httpContext);
+        var handler = new PermissionAuthorizationHandler(_contextMock.Object, _cacheMock.Object);
+
+        await handler.HandleAsync(context);
+
+        Assert.Empty(context.PendingRequirements);
+        _cacheMock.Verify(c => c.GetAsync<HashSet<string>>(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _contextMock.Verify(c => c.PermissionActions, Times.Never);
+    }
+
+
+    [Fact]
+    public async Task HandleAsync_MultipleRequirementsOnCacheMiss_LoadsDatabaseOnce()
+    {
+        var role = new Role { Id = 1, Name = "Admin" };
+        var permission = new Permission { Id = 1, Name = "Test", Path = "/test/path" };
+        var view = new AuthAction { Id = 1, Code = "view", Name = "view" };
+        var edit = new AuthAction { Id = 2, Code = "edit", Name = "edit" };
+        var permissionActions = new List<PermissionAction>
+        {
+            new()
+            {
+                Id = 1,
+                RoleId = 1,
+                PermissionId = 1,
+                ActionId = 1,
+                Role = role,
+                Permission = permission,
+                Action = view
+            },
+            new()
+            {
+                Id = 2,
+                RoleId = 1,
+                PermissionId = 1,
+                ActionId = 2,
+                Role = role,
+                Permission = permission,
+                Action = edit
+            }
+        };
+        _contextMock.Setup(c => c.PermissionActions).ReturnsDbSet(permissionActions);
+        _cacheMock
+            .Setup(c => c.GetAsync<HashSet<string>>(
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((HashSet<string>?)null);
+
+        var user = CreateUser("1");
+        var httpContext = new DefaultHttpContext { User = user };
+        var context = new AuthorizationHandlerContext(
+            [
+                new PermissionRequirement("/test/path", "view"),
+                new PermissionRequirement("/test/path", "edit")
+            ],
+            user,
+            httpContext);
+        var handler = new PermissionAuthorizationHandler(_contextMock.Object, _cacheMock.Object);
+
+        await handler.HandleAsync(context);
+
+        Assert.Empty(context.PendingRequirements);
+        _cacheMock.Verify(c => c.GetAsync<HashSet<string>>(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _cacheMock.Verify(c => c.SetAsync(
+            It.IsAny<string>(),
+            It.IsAny<HashSet<string>>(),
+            It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _contextMock.Verify(c => c.PermissionActions, Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_RequestSnapshot_DoesNotLeakAcrossHttpRequests()
+    {
+        _cacheMock
+            .Setup(c => c.GetAsync<HashSet<string>>(
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<string> { "/test/path.view" });
+
+        var user = CreateUser("1");
+        var handler = new PermissionAuthorizationHandler(_contextMock.Object, _cacheMock.Object);
+
+        var firstRequest = new DefaultHttpContext { User = user };
+        var first = new AuthorizationHandlerContext(
+            [new PermissionRequirement("/test/path", "view")],
+            user,
+            firstRequest);
+        await handler.HandleAsync(first);
+
+        var secondRequest = new DefaultHttpContext { User = user };
+        var second = new AuthorizationHandlerContext(
+            [new PermissionRequirement("/test/path", "view")],
+            user,
+            secondRequest);
+        await handler.HandleAsync(second);
+
+        Assert.True(first.HasSucceeded);
+        Assert.True(second.HasSucceeded);
+        _cacheMock.Verify(c => c.GetAsync<HashSet<string>>(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
     [Fact]
     public async Task HandleAsync_Succeeds_WhenUserHasAnyOneOfRequiredPermissions()
     {
@@ -208,15 +338,22 @@ public class PermissionAuthorizationHandlerTests
 
     private static AuthorizationHandlerContext CreateContext(string path, string action, params string[] roleIds)
     {
+        var user = CreateUser(roleIds);
+        var requirement = new PermissionRequirement(path, action);
+        return new AuthorizationHandlerContext(
+            [requirement],
+            user,
+            new DefaultHttpContext { User = user });
+    }
+
+    private static ClaimsPrincipal CreateUser(params string[] roleIds)
+    {
         var claims = new List<Claim>();
         foreach (var id in roleIds)
             claims.Add(new Claim("role_id", id));
         claims.Add(new Claim(ClaimTypes.Role, "Admin"));
         claims.Add(new Claim(JwtRegisteredClaimNames.Sub, "42"));
         claims.Add(new Claim(Auth.Service.Services.AuthService.SecurityVersionClaim, "1"));
-
-        var user = new ClaimsPrincipal(new ClaimsIdentity(claims, "test"));
-        var requirement = new PermissionRequirement(path, action);
-        return new AuthorizationHandlerContext([requirement], user, null);
+        return new ClaimsPrincipal(new ClaimsIdentity(claims, "test"));
     }
 }

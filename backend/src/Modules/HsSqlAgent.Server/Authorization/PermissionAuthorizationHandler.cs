@@ -1,6 +1,7 @@
 using Auth.Service.Data;
 using Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace HsSqlAgent.Server.Authorization;
@@ -9,6 +10,7 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
     : AuthorizationHandler<PermissionRequirement>
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
+    private static readonly object RequestSnapshotKey = new();
 
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext ctx,
@@ -21,6 +23,7 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
             .Select(c => int.TryParse(c.Value, out var id) ? id : (int?)null)
             .Where(id => id.HasValue)
             .Select(id => id!.Value)
+            .Distinct()
             .OrderBy(x => x)
             .ToList();
 
@@ -33,22 +36,72 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
             return;
 
         var cacheKey = $"perm:user:{memberId}:v{securityVersion}:roles:{string.Join("|", roleIds)}";
-        var permissions = await cache.GetAsync<HashSet<string>>(cacheKey);
+        var httpContext = ctx.Resource as HttpContext;
+        var cancellationToken = httpContext?.RequestAborted ?? CancellationToken.None;
 
-        if (permissions is null)
+        HashSet<string> permissions;
+        if (httpContext is not null &&
+            TryGetRequestSnapshot(httpContext, cacheKey, out var requestPermissions))
         {
-            var rows = await context.PermissionActions
-                .AsNoTracking()
-                .Where(x => roleIds.Contains(x.RoleId))
-                .Select(x => x.Permission.Path + "." + x.Action.Code)
-                .Distinct()
-                .ToListAsync();
-
-            permissions = [.. rows];
-            await cache.SetAsync(cacheKey, permissions, CacheTtl);
+            permissions = requestPermissions;
+        }
+        else
+        {
+            permissions = await LoadPermissionsAsync(cacheKey, roleIds, cancellationToken);
+            if (httpContext is not null)
+                GetRequestSnapshot(httpContext)[cacheKey] = permissions;
         }
 
         if (req.Permissions.Any(permissions.Contains))
             ctx.Succeed(req);
+    }
+
+    private async Task<HashSet<string>> LoadPermissionsAsync(
+        string cacheKey,
+        IReadOnlyCollection<int> roleIds,
+        CancellationToken cancellationToken)
+    {
+        var permissions = await cache.GetAsync<HashSet<string>>(cacheKey, cancellationToken);
+        if (permissions is not null)
+            return permissions;
+
+        var rows = await context.PermissionActions
+            .AsNoTracking()
+            .Where(x => roleIds.Contains(x.RoleId))
+            .Select(x => x.Permission.Path + "." + x.Action.Code)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        permissions = [.. rows];
+        await cache.SetAsync(cacheKey, permissions, CacheTtl, cancellationToken);
+        return permissions;
+    }
+
+    private static bool TryGetRequestSnapshot(
+        HttpContext httpContext,
+        string cacheKey,
+        out HashSet<string> permissions)
+    {
+        if (httpContext.Items.TryGetValue(RequestSnapshotKey, out var value) &&
+            value is Dictionary<string, HashSet<string>> snapshot &&
+            snapshot.TryGetValue(cacheKey, out var found))
+        {
+            permissions = found;
+            return true;
+        }
+
+        permissions = null!;
+        return false;
+    }
+
+    private static Dictionary<string, HashSet<string>> GetRequestSnapshot(HttpContext httpContext)
+    {
+        if (httpContext.Items.TryGetValue(RequestSnapshotKey, out var value) &&
+            value is Dictionary<string, HashSet<string>> snapshot)
+            return snapshot;
+
+        snapshot = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        httpContext.Items[RequestSnapshotKey] = snapshot;
+        return snapshot;
     }
 }
