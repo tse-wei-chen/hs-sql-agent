@@ -21,7 +21,10 @@ namespace HsSqlAgent.Server.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditService auditService) : ControllerBase
+public class CustomSqlToolController(
+    ICustomSqlToolService toolService,
+    IAuditService auditService,
+    ISqlCompileEvidenceObserver? compileEvidenceObserver = null) : ControllerBase
 {
     [HttpGet]
     [HasPermission("/runtime/custom-tools", "view")]
@@ -105,6 +108,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             tool,
             securityPolicyRuntimeState.GetCurrent(),
             dbManagementService,
+            compileEvidenceObserver,
             cancellationToken);
         if (validationError != null) return BadRequest(validationError);
 
@@ -158,7 +162,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 Type = target.Type,
                 ParametersJson = target.ParametersJson,
                 DbManagementId = current.DbManagementId
-            }, securityPolicyRuntimeState.GetCurrent(), dbManagementService, cancellationToken);
+            }, securityPolicyRuntimeState.GetCurrent(), dbManagementService, compileEvidenceObserver, cancellationToken);
             if (validationError != null) return BadRequest(validationError);
 
             var rolledBack = await toolService.RollbackAsync(id, revisionId, CurrentActor(), cancellationToken);
@@ -185,6 +189,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
         CustomSqlTool tool,
         SecurityPolicyModel? policy,
         IDbManagementService dbManagementService,
+        ISqlCompileEvidenceObserver? compileEvidenceObserver,
         CancellationToken cancellationToken)
     {
         var draftError = ValidateDraft(tool);
@@ -206,7 +211,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                 var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
                 TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
 
-                _ = SqlCoreFacade.CompileDml(
+                var command = SqlCoreFacade.CompileDml(
                     parsedDml,
                     dbType,
                     new SqlPlanValidationContext("custom-tool-definition-validation"),
@@ -217,19 +222,22 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
                         policy?.AllowFullTableDelete ?? false),
                     targetProfile: null,
                     conflictTargetAssurance: null);
+                compileEvidenceObserver?.Observe(command.CompileEvidence);
                 return null;
             }
 
-            _ = SqlCoreFacade.CompileQuery(
+            var queryCommand = SqlCoreFacade.CompileQuery(
                 sql,
                 dbType,
                 dbType,
                 new SqlPlanValidationContext("custom-tool-definition-validation"),
                 new SqlExecutionPlanPolicy(policy?.QueryMaxRows ?? 0));
+            compileEvidenceObserver?.Observe(queryCommand.CompileEvidence);
             return null;
         }
         catch (Exception ex) when (ex is SqlParseException or ArgumentException or InvalidOperationException or JsonException or NotSupportedException)
         {
+            compileEvidenceObserver?.Observe(ex);
             return new { error = "SQL template validation failed.", detail = ex.Message };
         }
     }
@@ -292,6 +300,7 @@ public class CustomSqlToolController(ICustomSqlToolService toolService, IAuditSe
             tool,
             securityPolicyRuntimeState.GetCurrent(),
             dbManagementService,
+            compileEvidenceObserver,
             cancellationToken);
         if (definitionError != null) return BadRequest(definitionError);
 

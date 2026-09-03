@@ -27,8 +27,10 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Interfaces;
 using SqlAgent.Service.Services;
@@ -136,6 +138,7 @@ public static class HsSqlAgentServiceExtensions
         services.AddSingleton<HsSqlAgentMetrics>();
         services.AddSingleton<IHsSqlAgentMetrics>(provider => provider.GetRequiredService<HsSqlAgentMetrics>());
         services.AddSingleton<IAuditMetricSink>(provider => provider.GetRequiredService<HsSqlAgentMetrics>());
+        services.AddSingleton<ISqlCompileEvidenceObserver, SqlCompileEvidenceObserver>();
 
         if (options.Telemetry.PrometheusEnabled || !string.IsNullOrWhiteSpace(options.Telemetry.OtlpEndpoint))
         {
@@ -186,6 +189,23 @@ public static class HsSqlAgentServiceExtensions
                 });
         }
 
+        if (!string.IsNullOrWhiteSpace(options.Telemetry.OtlpEndpoint))
+        {
+            var otlpEndpoint = new Uri(options.Telemetry.OtlpEndpoint);
+            services.AddLogging(logging => logging.AddOpenTelemetry(logs =>
+            {
+                logs.IncludeScopes = true;
+                logs.IncludeFormattedMessage = false;
+                logs.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(options.Telemetry.ServiceName));
+                logs.AddOtlpExporter(exporter => exporter.Endpoint = otlpEndpoint);
+            }));
+            services.AddOpenTelemetry()
+                .ConfigureResource(resource => resource.AddService(options.Telemetry.ServiceName))
+                .WithTracing(tracing => tracing
+                    .AddSource(SqlCompileEvidenceObserver.ActivitySourceName)
+                    .AddOtlpExporter(exporter => exporter.Endpoint = otlpEndpoint));
+        }
+
         // --- SQL provider runtime ---
         services.AddScoped<ISqlStrategy, MySqlStrategy>();
         services.AddScoped<ISqlStrategy, PostgresStrategy>();
@@ -199,7 +219,8 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<IDbSetterService, DbSetterService>();
         services.AddScoped<ITypedQueryRuntime, TypedQueryRuntime>();
         services.AddSingleton(provider => new TypedDmlRuntime(
-            challengeStore: provider.GetRequiredService<IDmlApprovalChallengeStore>()));
+            challengeStore: provider.GetRequiredService<IDmlApprovalChallengeStore>(),
+            compileEvidenceObserver: provider.GetRequiredService<ISqlCompileEvidenceObserver>()));
 
         // --- Options ---
         services.Configure<JwtSettings>(jwt =>

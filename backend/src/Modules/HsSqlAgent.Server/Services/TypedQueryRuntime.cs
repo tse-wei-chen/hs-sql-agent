@@ -22,8 +22,9 @@ public interface ITypedQueryRuntime
 /// Server-side SELECT execution boundary. SQL text enters the F# compiler facade directly; callers
 /// cannot construct or mutate a compatibility AST to bypass binding, validation, policy, or rendering.
 /// </summary>
-public sealed class TypedQueryRuntime : ITypedQueryRuntime
+public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEvidenceObserver = null) : ITypedQueryRuntime
 {
+    private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;
     public CompiledSqlCommand Compile(
         ISqlProvider provider,
         string sql,
@@ -52,23 +53,38 @@ public sealed class TypedQueryRuntime : ITypedQueryRuntime
         if (targetProfile is not null
             && sourceDialect == provider.Type)
         {
-            return SqlCoreFacade.CompileQuery(
+            return ObserveCompile(() => SqlCoreFacade.CompileQuery(
                 sql,
                 sourceDialect,
                 provider.Type,
                 validationContext,
                 executionPolicy,
                 targetProfile,
-                targetProfile);
+                targetProfile));
         }
 
-        return SqlCoreFacade.CompileQuery(
+        return ObserveCompile(() => SqlCoreFacade.CompileQuery(
             sql,
             sourceDialect,
             provider.Type,
             validationContext,
             executionPolicy,
-            targetProfile);
+            targetProfile));
+    }
+
+    private CompiledSqlCommand ObserveCompile(Func<CompiledSqlCommand> compile)
+    {
+        try
+        {
+            var command = compile();
+            _compileEvidenceObserver?.Observe(command.CompileEvidence);
+            return command;
+        }
+        catch (Exception exception)
+        {
+            _compileEvidenceObserver?.Observe(exception);
+            throw;
+        }
     }
 
     public async Task<QueryExecutionResult> ExecuteAsync(

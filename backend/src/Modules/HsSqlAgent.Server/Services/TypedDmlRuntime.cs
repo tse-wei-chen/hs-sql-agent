@@ -15,7 +15,8 @@ namespace HsSqlAgent.Server.Services;
 public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
     IDmlApprovalChallengeStore? challengeStore = null,
-    IDmlPreviewTransactionFactory? previewTransactionFactory = null)
+    IDmlPreviewTransactionFactory? previewTransactionFactory = null,
+    ISqlCompileEvidenceObserver? compileEvidenceObserver = null)
 {
     private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
         new ProviderDmlPreviewTransactionFactory();
@@ -24,6 +25,7 @@ public sealed class TypedDmlRuntime(
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
     private readonly IDmlPreviewTransactionFactory? _previewTransactionFactory = previewTransactionFactory;
+    private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;
 
     public async Task<ParsedStatement> ParseDmlWithVerifiedRuntimeProfileAsync(
         ISqlProvider provider,
@@ -91,16 +93,26 @@ public sealed class TypedDmlRuntime(
             policy.AllowFullTableUpdate,
             policy.AllowFullTableDelete);
 
-        var plan = await new DmlPlanFactory(provider.Metadata).CreateAsync(
-            connectionString,
-            parsedMutation,
-            provider.Type,
-            validationContext,
-            compilationPolicy,
-            DmlRowIdentityAssurance.Strict,
-            policy.DmlMaxAffectedRows,
-            cancellationToken: cancellationToken,
-            targetProfile: verifiedProfile.TargetProfile);
+        ValidatedDmlPlan plan;
+        try
+        {
+            plan = await new DmlPlanFactory(provider.Metadata).CreateAsync(
+                connectionString,
+                parsedMutation,
+                provider.Type,
+                validationContext,
+                compilationPolicy,
+                DmlRowIdentityAssurance.Strict,
+                policy.DmlMaxAffectedRows,
+                cancellationToken: cancellationToken,
+                targetProfile: verifiedProfile.TargetProfile);
+            _compileEvidenceObserver?.Observe(plan.MutationCommand.CompileEvidence);
+        }
+        catch (Exception exception)
+        {
+            _compileEvidenceObserver?.Observe(exception);
+            throw;
+        }
 
         var coordinator = new DmlCoordinator(
             provider.Connections,
