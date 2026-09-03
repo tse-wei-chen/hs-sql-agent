@@ -27,74 +27,182 @@ public class DbHealthMonitorService(
         while (await timer.WaitForNextTickAsync(stoppingToken)) await ProbeAllAsync(stoppingToken);
     }
 
-    private async Task ProbeAllAsync(CancellationToken cancellationToken)
+    internal async Task ProbeAllAsync(CancellationToken cancellationToken)
     {
         try
         {
-            using var scope = scopeFactory.CreateScope();
-            var context = scope.ServiceProvider.GetRequiredService<IAdminContext>();
-            var crypto = scope.ServiceProvider.GetRequiredService<ICryptoService>();
-            var keySettings = scope.ServiceProvider.GetRequiredService<IOptions<McpKeySettings>>().Value;
-            var tester = scope.ServiceProvider.GetRequiredService<IDbSetterService>();
-            var operability = scope.ServiceProvider.GetRequiredService<IOperabilityService>();
-            var databases = await context.DbManagement.AsNoTracking().ToListAsync(cancellationToken);
-            foreach (var db in databases)
+            List<DbManagement> databases;
+            using (var inventoryScope = scopeFactory.CreateScope())
             {
-                var stopwatch = Stopwatch.StartNew();
-                TestDbConnectionVM result;
-                try
-                {
-                    if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var provider))
-                        throw new InvalidOperationException("Invalid SQL provider.");
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, settings.Value.HealthProbeTimeoutSeconds)));
-                    result = await tester.TestDbConnectionAsync(new TestDbConnectionBase
-                    {
-                        SqlProvider = provider, Host = db.Host, Port = db.Port, Username = db.Username,
-                        Password = crypto.DecryptText(db.PasswordHash, Encoding.UTF8.GetBytes(keySettings.HmacSecretKey)),
-                        Database = db.Database, ExtraSettings = db.ExtraSettings
-                    }, timeout.Token);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-                {
-                    result = new TestDbConnectionVM { IsSuccess = false, ErrorMessage = ex.Message };
-                }
-
-                var now = DateTime.UtcNow;
-                var state = await context.DbHealthStates.FirstOrDefaultAsync(x => x.DbManagementId == db.Id, cancellationToken);
-                if (state is null)
-                {
-                    state = new DbHealthState { DbManagementId = db.Id };
-                    context.DbHealthStates.Add(state);
-                }
-                state.LastCheckedAt = now;
-                state.LatencyMs = stopwatch.ElapsedMilliseconds;
-                if (result.IsSuccess)
-                {
-                    state.Status = "healthy"; state.LastSuccessAt = now; state.ConsecutiveFailures = 0;
-                    state.OutageStartedAt = null; state.LastError = null;
-                }
-                else
-                {
-                    if (state.ConsecutiveFailures == 0) state.OutageStartedAt = now;
-                    state.ConsecutiveFailures++;
-                    state.Status = state.ConsecutiveFailures >= 3 ? "unhealthy" : "degraded";
-                    state.LastError = result.ErrorMessage?.Length > 2000 ? result.ErrorMessage[..2000] : result.ErrorMessage;
-                }
-                await context.SaveChangesAsync(cancellationToken);
-                metrics?.RecordDbHealth(db.Id, db.SqlProvider ?? "unknown", state.Status, stopwatch.ElapsedMilliseconds);
-
-                if (state.Status == "unhealthy" && !string.IsNullOrWhiteSpace(settings.Value.AlertWebhookUrl))
-                {
-                    var outage = state.OutageStartedAt?.Ticks ?? 0;
-                    await operability.QueueDeliveryAsync(
-                        "alert", $"db-health:{db.Id}:{outage}", settings.Value.AlertWebhookUrl,
-                        JsonSerializer.Serialize(new { type = "db_health", dbId = db.Id, db.Name, state.Status, state.ConsecutiveFailures, state.LastError, occurredAt = now }),
-                        cancellationToken);
-                }
+                var context = inventoryScope.ServiceProvider.GetRequiredService<IAdminContext>();
+                databases = await context.DbManagement.AsNoTracking().ToListAsync(cancellationToken);
             }
+
+            if (databases.Count == 0) return;
+
+            var results = new DbProbeResult[databases.Count];
+            var indexedDatabases = databases
+                .Select(static (database, index) => (Database: database, Index: index))
+                .ToArray();
+            var parallelOptions = new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Math.Clamp(settings.Value.HealthProbeMaxConcurrency, 1, 32)
+            };
+
+            await Parallel.ForEachAsync(indexedDatabases, parallelOptions, async (item, token) =>
+            {
+                results[item.Index] = await ProbeOneAsync(item.Database, token);
+            });
+
+            await PersistResultsAsync(results, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex) { logger.LogError(ex, "Scheduled database health probe failed."); }
     }
+
+    private async Task<DbProbeResult> ProbeOneAsync(DbManagement db, CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var crypto = scope.ServiceProvider.GetRequiredService<ICryptoService>();
+        var keySettings = scope.ServiceProvider.GetRequiredService<IOptions<McpKeySettings>>().Value;
+        var tester = scope.ServiceProvider.GetRequiredService<IDbSetterService>();
+
+        var stopwatch = Stopwatch.StartNew();
+        TestDbConnectionVM result;
+        try
+        {
+            if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var provider))
+                throw new InvalidOperationException("Invalid SQL provider.");
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, settings.Value.HealthProbeTimeoutSeconds)));
+            result = await tester.TestDbConnectionAsync(new TestDbConnectionBase
+            {
+                SqlProvider = provider,
+                Host = db.Host,
+                Port = db.Port,
+                Username = db.Username,
+                Password = crypto.DecryptText(
+                    db.PasswordHash,
+                    Encoding.UTF8.GetBytes(keySettings.HmacSecretKey)),
+                Database = db.Database,
+                ExtraSettings = db.ExtraSettings
+            }, timeout.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            result = new TestDbConnectionVM { IsSuccess = false, ErrorMessage = ex.Message };
+        }
+
+        return new DbProbeResult(
+            db.Id,
+            db.Name,
+            db.SqlProvider ?? "unknown",
+            DateTime.UtcNow,
+            stopwatch.ElapsedMilliseconds,
+            result.IsSuccess,
+            result.ErrorMessage);
+    }
+
+    private async Task PersistResultsAsync(
+        IReadOnlyCollection<DbProbeResult> results,
+        CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<IAdminContext>();
+        var currentDatabases = await context.DbManagement
+            .GroupJoin(
+                context.DbHealthStates,
+                db => db.Id,
+                health => health.DbManagementId,
+                (db, health) => new { db.Id, Health = health.FirstOrDefault() })
+            .ToListAsync(cancellationToken);
+        var states = currentDatabases.ToDictionary(x => x.Id, x => x.Health);
+        var persisted = new List<(DbProbeResult Probe, DbHealthState State)>(results.Count);
+
+        foreach (var probe in results)
+        {
+            if (!states.TryGetValue(probe.DbManagementId, out var state))
+                continue;
+
+            if (state is null)
+            {
+                state = new DbHealthState { DbManagementId = probe.DbManagementId };
+                context.DbHealthStates.Add(state);
+                states[probe.DbManagementId] = state;
+            }
+
+            state.LastCheckedAt = probe.CheckedAt;
+            state.LatencyMs = probe.LatencyMs;
+            if (probe.IsSuccess)
+            {
+                state.Status = "healthy";
+                state.LastSuccessAt = probe.CheckedAt;
+                state.ConsecutiveFailures = 0;
+                state.OutageStartedAt = null;
+                state.LastError = null;
+            }
+            else
+            {
+                if (state.ConsecutiveFailures == 0)
+                    state.OutageStartedAt = probe.CheckedAt;
+                state.ConsecutiveFailures++;
+                state.Status = state.ConsecutiveFailures >= 3 ? "unhealthy" : "degraded";
+                state.LastError = probe.ErrorMessage?.Length > 2000
+                    ? probe.ErrorMessage[..2000]
+                    : probe.ErrorMessage;
+            }
+
+            persisted.Add((probe, state));
+        }
+
+        if (persisted.Count == 0) return;
+
+        await context.SaveChangesAsync(cancellationToken);
+
+        foreach (var item in persisted)
+            metrics?.RecordDbHealth(
+                item.Probe.DbManagementId,
+                item.Probe.Provider,
+                item.State.Status,
+                item.Probe.LatencyMs);
+
+        if (string.IsNullOrWhiteSpace(settings.Value.AlertWebhookUrl))
+            return;
+
+        var unhealthy = persisted.Where(x => x.State.Status == "unhealthy").ToArray();
+        if (unhealthy.Length == 0)
+            return;
+
+        var operability = scope.ServiceProvider.GetRequiredService<IOperabilityService>();
+        foreach (var item in unhealthy)
+        {
+            var outage = item.State.OutageStartedAt?.Ticks ?? 0;
+            await operability.QueueDeliveryAsync(
+                "alert",
+                $"db-health:{item.Probe.DbManagementId}:{outage}",
+                settings.Value.AlertWebhookUrl,
+                JsonSerializer.Serialize(new
+                {
+                    type = "db_health",
+                    dbId = item.Probe.DbManagementId,
+                    item.Probe.Name,
+                    item.State.Status,
+                    item.State.ConsecutiveFailures,
+                    item.State.LastError,
+                    occurredAt = item.Probe.CheckedAt
+                }),
+                cancellationToken);
+        }
+    }
+
+    private sealed record DbProbeResult(
+        int DbManagementId,
+        string Name,
+        string Provider,
+        DateTime CheckedAt,
+        long LatencyMs,
+        bool IsSuccess,
+        string? ErrorMessage);
 }
