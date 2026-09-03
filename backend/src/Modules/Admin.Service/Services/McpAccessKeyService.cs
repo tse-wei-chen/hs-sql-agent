@@ -477,6 +477,7 @@ public class McpAccessKeyService(
             },
             CacheBarrierExpiry,
             CancellationToken.None);
+        await MarkLegacyChangedAsync(entity.Id);
 
         try
         {
@@ -487,6 +488,9 @@ public class McpAccessKeyService(
             try
             {
                 await _cache.RemoveAsync(cacheKey, CancellationToken.None);
+                await _cache.RemoveAsync(
+                    McpAccessKeyCacheKeys.ForChangedKeyId(entity.Id),
+                    CancellationToken.None);
             }
             catch
             {
@@ -496,6 +500,8 @@ public class McpAccessKeyService(
             throw;
         }
 
+        // Keep the legacy changed marker until its TTL expires. A v3 runtime will keep
+        // revalidating beyond its five-minute validation-cache lifetime during a rolling upgrade.
         await _cache.RemoveAsync(cacheKey, CancellationToken.None);
     }
 
@@ -513,6 +519,7 @@ public class McpAccessKeyService(
             },
             RevocationTombstoneExpiry,
             CancellationToken.None);
+        await MarkLegacyRevokedAsync(entity.Id);
 
         try
         {
@@ -523,6 +530,9 @@ public class McpAccessKeyService(
             try
             {
                 await _cache.RemoveAsync(cacheKey, CancellationToken.None);
+                await _cache.RemoveAsync(
+                    McpAccessKeyCacheKeys.ForRevokedKeyId(entity.Id),
+                    CancellationToken.None);
             }
             catch
             {
@@ -532,6 +542,20 @@ public class McpAccessKeyService(
             throw;
         }
     }
+
+    private Task MarkLegacyChangedAsync(int keyId)
+        => _cache.SetAsync(
+            McpAccessKeyCacheKeys.ForChangedKeyId(keyId),
+            true,
+            CacheBarrierExpiry,
+            CancellationToken.None);
+
+    private Task MarkLegacyRevokedAsync(int keyId)
+        => _cache.SetAsync(
+            McpAccessKeyCacheKeys.ForRevokedKeyId(keyId),
+            true,
+            RevocationTombstoneExpiry,
+            CancellationToken.None);
 
     private static void EnsureNotBootstrapManaged(McpAccessKey entity)
     {
