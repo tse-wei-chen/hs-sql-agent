@@ -37,6 +37,27 @@ public class OracleProvider : SqlProviderBase
         return [.. await connection.QueryAsync<string>(sql, new { schemaName = schemaName.ToUpperInvariant() })];
     }
 
+    public override async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        using var connection = CreateConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            SELECT OWNER, TABLE_NAME
+            FROM ALL_TABLES
+            WHERE UPPER(TABLE_NAME) = UPPER(:tableName)
+            ORDER BY OWNER, TABLE_NAME";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(row => new DatabaseTableMetadata(
+            (string)row.OWNER,
+            (string)row.TABLE_NAME))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);

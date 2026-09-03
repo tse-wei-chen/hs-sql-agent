@@ -77,6 +77,25 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.Contains(TestSchemaName, schemas, StringComparer.OrdinalIgnoreCase);
     }
 
+
+    [Fact]
+    public virtual async Task FindTablesAsync_ShouldResolveKnownPhysicalTable()
+    {
+        var lookup = Assert.IsAssignableFrom<IProviderTableLookup>(ProviderStrategy);
+
+        var matches = await lookup.FindTablesAsync(
+            Fixture.ConnectionString,
+            TestOrdersTableName,
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains(
+            matches,
+            match => string.Equals(
+                match.Table,
+                TestOrdersTableName,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public virtual async Task GetColumnsAsync_ShouldReturnColumnTypes()
     {

@@ -1,5 +1,9 @@
 namespace HsSqlAgent.Provider.Abstractions;
 
+public sealed record DatabaseTableMetadata(
+    string Schema,
+    string Table);
+
 public sealed record DatabaseColumnMetadata(
     string Schema,
     string Table,
@@ -25,6 +29,19 @@ public sealed record DatabaseUniqueKeyMetadata(
         && !HasExpressions
         && !HasPrefixKeyParts
         && Columns.Count > 0;
+}
+
+/// <summary>
+/// Optional additive metadata capability for resolving an unqualified table name without
+/// enumerating every schema. Implementations return every physical match so callers preserve
+/// ambiguity detection instead of silently selecting a default schema.
+/// </summary>
+public interface IProviderTableLookup
+{
+    Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IProviderMetadataReader

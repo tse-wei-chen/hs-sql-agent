@@ -86,6 +86,50 @@ public class DmlRowIdentityResolverTests
         Assert.Contains("could not be resolved", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+
+    [Fact]
+    public async Task ResolveAsync_UnqualifiedTarget_UsesProviderLookupWithoutSchemaEnumeration()
+    {
+        var metadata = new FastLookupMetadataReader(
+            [new DatabaseTableMetadata("public", "users")],
+            [new DatabaseColumnMetadata("public", "users", "id", "int", true, 1)]);
+        var resolver = new DmlRowIdentityResolver(metadata);
+
+        var result = await resolver.ResolveAsync(
+            "connection",
+            "users",
+            DmlRowIdentityAssurance.Strict,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(["id"], result);
+        Assert.Equal(1, metadata.FindTablesCalls);
+        Assert.Equal(0, metadata.GetSchemasCalls);
+        Assert.Equal(0, metadata.GetTablesCalls);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ProviderLookup_PreservesAmbiguityFailure()
+    {
+        var metadata = new FastLookupMetadataReader(
+            [
+                new DatabaseTableMetadata("archive", "users"),
+                new DatabaseTableMetadata("public", "users")
+            ],
+            []);
+        var resolver = new DmlRowIdentityResolver(metadata);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => resolver.ResolveAsync(
+            "connection",
+            "users",
+            DmlRowIdentityAssurance.Strict,
+            TestContext.Current.CancellationToken));
+
+        Assert.Contains("ambiguous", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, metadata.FindTablesCalls);
+        Assert.Equal(0, metadata.GetSchemasCalls);
+        Assert.Equal(0, metadata.GetTablesCalls);
+    }
+
     [Fact]
     public async Task ResolveAsync_Strict_RejectsTableWithoutPrimaryKey()
     {
@@ -132,6 +176,57 @@ public class DmlRowIdentityResolverTests
             TestContext.Current.CancellationToken));
 
         Assert.Contains("<table> or <schema>.<table>", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+
+    private sealed class FastLookupMetadataReader(
+        IReadOnlyList<DatabaseTableMetadata> matches,
+        IReadOnlyList<DatabaseColumnMetadata> columns)
+        : IProviderMetadataReader, IProviderTableLookup
+    {
+        public int FindTablesCalls { get; private set; }
+        public int GetSchemasCalls { get; private set; }
+        public int GetTablesCalls { get; private set; }
+
+        public Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+            string connectionString,
+            string tableName,
+            CancellationToken cancellationToken = default)
+        {
+            FindTablesCalls++;
+            return Task.FromResult(matches);
+        }
+
+        public Task<IReadOnlyList<string>> GetSchemasAsync(
+            string connectionString,
+            CancellationToken cancellationToken = default)
+        {
+            GetSchemasCalls++;
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
+
+        public Task<IReadOnlyList<string>> GetTablesAsync(
+            string connectionString,
+            string schema,
+            CancellationToken cancellationToken = default)
+        {
+            GetTablesCalls++;
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
+
+        public Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+            string connectionString,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(columns);
+
+        public Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+            string connectionString,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DatabaseUniqueKeyMetadata>>([]);
     }
 
     private sealed class StubMetadataReader(

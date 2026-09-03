@@ -59,6 +59,28 @@ public class MsSqlServerProvider : SqlProviderBase, IProviderDmlResultRowMetadat
         return [.. await connection.QueryAsync<string>(new CommandDefinition(sql, new { schemaName }, cancellationToken: cancellationToken))];
     }
 
+    public override async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        string connectionString,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        using var connection = CreateConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            SELECT s.name AS SCHEMA_NAME, t.name AS TABLE_NAME
+            FROM sys.tables t
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE (s.principal_id = 1 OR s.name = 'dbo')
+              AND LOWER(t.name) = LOWER(@tableName);";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(row => new DatabaseTableMetadata(
+            (string)row.SCHEMA_NAME,
+            (string)row.TABLE_NAME))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);
