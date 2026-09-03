@@ -174,7 +174,7 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("tool authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        typedQueryRuntime.As<ITypedQueryRuntimeFacts>().Verify(x => x.ExecuteWithFactsAsync(
+        typedQueryRuntime.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -217,7 +217,7 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        typedQueryRuntime.As<ITypedQueryRuntimeFacts>().Verify(x => x.ExecuteWithFactsAsync(
+        typedQueryRuntime.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
