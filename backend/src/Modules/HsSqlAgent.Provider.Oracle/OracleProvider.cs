@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.Oracle;
 
-public class OracleProvider : SqlProviderBase
+public class OracleProvider : SqlProviderBase, IProviderConnectionMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Oracle;
 
@@ -58,6 +58,26 @@ public class OracleProvider : SqlProviderBase
             (string)row.TABLE_NAME))];
     }
 
+    public async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        DbConnection connection,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT OWNER, TABLE_NAME
+            FROM ALL_TABLES
+            WHERE UPPER(TABLE_NAME) = UPPER(:tableName)
+            ORDER BY OWNER, TABLE_NAME";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(row => new DatabaseTableMetadata(
+            (string)row.OWNER,
+            (string)row.TABLE_NAME))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);
@@ -80,6 +100,42 @@ public class OracleProvider : SqlProviderBase
             ORDER BY c.COLUMN_ID";
         var rows = await connection.QueryAsync(sql, new { schemaName = schemaName.ToUpperInvariant(), tableName = tableName.ToUpperInvariant() });
         return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE,
+            Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
+            r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
+    }
+
+    public async Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+        DbConnection connection,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT c.COLUMN_NAME, c.DATA_TYPE,
+                   CASE WHEN pk.POSITION IS NULL THEN 0 ELSE 1 END AS IS_PRIMARY_KEY,
+                   pk.POSITION AS PRIMARY_KEY_ORDINAL
+            FROM ALL_TAB_COLUMNS c
+            LEFT JOIN (
+                SELECT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME, acc.POSITION
+                FROM ALL_CONSTRAINTS ac
+                JOIN ALL_CONS_COLUMNS acc
+                  ON acc.OWNER = ac.OWNER
+                 AND acc.CONSTRAINT_NAME = ac.CONSTRAINT_NAME
+                 AND acc.TABLE_NAME = ac.TABLE_NAME
+                WHERE ac.CONSTRAINT_TYPE = 'P'
+            ) pk ON pk.OWNER = c.OWNER AND pk.TABLE_NAME = c.TABLE_NAME AND pk.COLUMN_NAME = c.COLUMN_NAME
+            WHERE c.OWNER = :schemaName AND c.TABLE_NAME = :tableName
+            ORDER BY c.COLUMN_ID";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { schemaName = schemaName.ToUpperInvariant(), tableName = tableName.ToUpperInvariant() },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(r => new DatabaseColumnMetadata(
+            schemaName,
+            tableName,
+            (string)r.COLUMN_NAME,
+            (string)r.DATA_TYPE,
             Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
     }

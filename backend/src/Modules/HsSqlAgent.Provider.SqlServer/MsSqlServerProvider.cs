@@ -5,7 +5,11 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.SqlServer;
 
-public class MsSqlServerProvider : SqlProviderBase, IProviderDmlResultRowMetadataReader
+public class MsSqlServerProvider :
+    SqlProviderBase,
+    IProviderDmlResultRowMetadataReader,
+    IProviderConnectionMetadataReader,
+    IProviderConnectionDmlResultRowMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MsSqlServer;
 
@@ -81,6 +85,27 @@ public class MsSqlServerProvider : SqlProviderBase, IProviderDmlResultRowMetadat
             (string)row.TABLE_NAME))];
     }
 
+    public async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        DbConnection connection,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT s.name AS SCHEMA_NAME, t.name AS TABLE_NAME
+            FROM sys.tables t
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE (s.principal_id = 1 OR s.name = 'dbo')
+              AND LOWER(t.name) = LOWER(@tableName);";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(row => new DatabaseTableMetadata(
+            (string)row.SCHEMA_NAME,
+            (string)row.TABLE_NAME))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);
@@ -99,6 +124,38 @@ public class MsSqlServerProvider : SqlProviderBase, IProviderDmlResultRowMetadat
             ORDER BY c.ORDINAL_POSITION";
         var rows = await connection.QueryAsync(new CommandDefinition(sql, new { schemaName, tableName }, cancellationToken: cancellationToken));
         return [.. rows.Select(r => new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE, (bool)r.IS_PRIMARY_KEY,
+            r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
+    }
+
+    public async Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+        DbConnection connection,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT c.COLUMN_NAME, c.DATA_TYPE,
+                   CASE WHEN ic.column_id IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END AS IS_PRIMARY_KEY,
+                   ic.key_ordinal AS PRIMARY_KEY_ORDINAL
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            LEFT JOIN sys.schemas s ON s.name = c.TABLE_SCHEMA
+            LEFT JOIN sys.tables t ON t.schema_id = s.schema_id AND t.name = c.TABLE_NAME
+            LEFT JOIN sys.indexes i ON i.object_id = t.object_id AND i.is_primary_key = 1
+            LEFT JOIN sys.columns sc ON sc.object_id = t.object_id AND sc.name = c.COLUMN_NAME
+            LEFT JOIN sys.index_columns ic ON ic.object_id = t.object_id AND ic.index_id = i.index_id AND ic.column_id = sc.column_id
+            WHERE c.TABLE_SCHEMA = @schemaName AND c.TABLE_NAME = @tableName
+            ORDER BY c.ORDINAL_POSITION";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { schemaName, tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(r => new DatabaseColumnMetadata(
+            schemaName,
+            tableName,
+            (string)r.COLUMN_NAME,
+            (string)r.DATA_TYPE,
+            (bool)r.IS_PRIMARY_KEY,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
     }
 
@@ -126,6 +183,65 @@ public class MsSqlServerProvider : SqlProviderBase, IProviderDmlResultRowMetadat
 
         using var connection = CreateConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
+        const string sql = @"
+            DECLARE @qualified nvarchar(517) =
+                QUOTENAME(@schemaName) + N'.' + QUOTENAME(@tableName);
+            DECLARE @objectId int = OBJECT_ID(@qualified, N'U');
+
+            SELECT
+                @objectId AS OBJECT_ID,
+                HAS_PERMS_BY_NAME(@qualified, 'OBJECT', 'VIEW DEFINITION') AS CAN_VIEW_DEFINITION,
+                CAST(CASE WHEN @objectId IS NOT NULL AND EXISTS (
+                    SELECT 1
+                    FROM sys.triggers tr
+                    JOIN sys.trigger_events te ON te.object_id = tr.object_id
+                    WHERE tr.parent_id = @objectId
+                      AND tr.is_disabled = 0
+                      AND te.type_desc = @eventType
+                ) THEN 1 ELSE 0 END AS bit) AS HAS_ENABLED_TRIGGER;";
+
+        var row = await connection.QuerySingleAsync(new CommandDefinition(
+            sql,
+            new { schemaName, tableName, eventType },
+            cancellationToken: cancellationToken));
+
+        if (row.OBJECT_ID is null)
+        {
+            throw new InvalidOperationException(
+                $"SQL Server trigger metadata could not resolve target table '{schemaName}.{tableName}'.");
+        }
+
+        if (row.CAN_VIEW_DEFINITION is null || Convert.ToInt32(row.CAN_VIEW_DEFINITION) != 1)
+        {
+            throw new InvalidOperationException(
+                $"SQL Server OUTPUT trigger assurance for '{schemaName}.{tableName}' requires VIEW DEFINITION metadata visibility; Core remains fail-closed when trigger metadata completeness cannot be proven.");
+        }
+
+        return (bool)row.HAS_ENABLED_TRIGGER;
+    }
+
+    public async Task<bool> HasEnabledDmlTriggerAsync(
+        DbConnection connection,
+        string schemaName,
+        string tableName,
+        DmlOperation operation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(schemaName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+
+        var eventType = operation switch
+        {
+            DmlOperation.Insert => "INSERT",
+            DmlOperation.Update => "UPDATE",
+            DmlOperation.Delete => "DELETE",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(operation),
+                operation,
+                "SQL Server DML trigger metadata supports INSERT, UPDATE, and DELETE only.")
+        };
+
         const string sql = @"
             DECLARE @qualified nvarchar(517) =
                 QUOTENAME(@schemaName) + N'.' + QUOTENAME(@tableName);

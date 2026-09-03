@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.Sqlite;
 
-public class SqliteProvider : SqlProviderBase
+public class SqliteProvider : SqlProviderBase, IProviderConnectionMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Sqlite;
 
@@ -40,6 +40,20 @@ public class SqliteProvider : SqlProviderBase
         return [.. tables.Select(table => new DatabaseTableMetadata("main", table))];
     }
 
+    public async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        DbConnection connection,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = "SELECT name FROM sqlite_master WHERE type='table' AND name = @tableName COLLATE NOCASE;";
+        var tables = await connection.QueryAsync<string>(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. tables.Select(table => new DatabaseTableMetadata("main", table))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);
@@ -50,6 +64,34 @@ public class SqliteProvider : SqlProviderBase
         var escaped = verified.Replace("'", "''", StringComparison.Ordinal);
         var rows = await connection.QueryAsync(new CommandDefinition($"SELECT name AS COLUMN_NAME, type AS DATA_TYPE, pk AS PRIMARY_KEY_ORDINAL FROM pragma_table_info('{escaped}') ORDER BY cid", cancellationToken: cancellationToken));
         return [.. rows.Select(r => { var pk = Convert.ToInt32(r.PRIMARY_KEY_ORDINAL); return new ColumnInfo((string)r.COLUMN_NAME, (string)r.DATA_TYPE, pk > 0, pk > 0 ? pk : null); })];
+    }
+
+    public async Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+        DbConnection connection,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string checkSql = "SELECT name FROM sqlite_master WHERE type='table' AND name = @tbl;";
+        var verified = await connection.QueryFirstOrDefaultAsync<string>(
+            new CommandDefinition(checkSql, new { tbl = tableName }, cancellationToken: cancellationToken));
+        if (string.IsNullOrEmpty(verified)) return [];
+        var escaped = verified.Replace("'", "''", StringComparison.Ordinal);
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            $"SELECT name AS COLUMN_NAME, type AS DATA_TYPE, pk AS PRIMARY_KEY_ORDINAL FROM pragma_table_info('{escaped}') ORDER BY cid",
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(r =>
+        {
+            var pk = Convert.ToInt32(r.PRIMARY_KEY_ORDINAL);
+            return new DatabaseColumnMetadata(
+                schemaName,
+                tableName,
+                (string)r.COLUMN_NAME,
+                (string)r.DATA_TYPE,
+                pk > 0,
+                pk > 0 ? pk : null);
+        })];
     }
 
     public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)

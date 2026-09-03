@@ -96,7 +96,8 @@ public sealed class TypedDmlRuntime(
         ValidatedDmlPlan plan;
         try
         {
-            plan = await new DmlPlanFactory(provider.Metadata).CreateAsync(
+            plan = await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
+                verificationConnection,
                 connectionString,
                 parsedMutation,
                 provider.Type,

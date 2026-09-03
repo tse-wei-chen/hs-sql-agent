@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.PostgreSql;
 
-public class PostgresProvider : SqlProviderBase
+public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 
@@ -72,6 +72,25 @@ public class PostgresProvider : SqlProviderBase
             (string)row.table_name))];
     }
 
+    public async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        DbConnection connection,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT table_schema, table_name
+            FROM information_schema.tables
+            WHERE lower(table_name) = lower(@tableName);";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(row => new DatabaseTableMetadata(
+            (string)row.table_schema,
+            (string)row.table_name))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         const string sql = @"
@@ -104,6 +123,45 @@ public class PostgresProvider : SqlProviderBase
         {
             throw new Exception($"Error getting columns: {ex.Message}, please try again !!");
         }
+    }
+
+    public async Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+        DbConnection connection,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT c.column_name, c.data_type,
+                   (pk.ordinal_position IS NOT NULL) AS is_primary_key,
+                   pk.ordinal_position AS primary_key_ordinal
+            FROM information_schema.columns c
+            LEFT JOIN (
+                SELECT kcu.column_name, kcu.ordinal_position
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                 AND tc.constraint_schema = kcu.constraint_schema
+                 AND tc.table_schema = kcu.table_schema
+                 AND tc.table_name = kcu.table_name
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+                  AND tc.table_schema = @schemaName
+                  AND tc.table_name = @tableName
+            ) pk ON pk.column_name = c.column_name
+            WHERE c.table_schema = @schemaName AND c.table_name = @tableName
+            ORDER BY c.ordinal_position;";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { schemaName, tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(r => new DatabaseColumnMetadata(
+            schemaName,
+            tableName,
+            (string)r.column_name,
+            (string)r.data_type,
+            (bool)r.is_primary_key,
+            r.primary_key_ordinal is null ? null : Convert.ToInt32(r.primary_key_ordinal)))];
     }
 
     public override async Task<List<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)

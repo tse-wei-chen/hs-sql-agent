@@ -96,6 +96,32 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                 StringComparison.OrdinalIgnoreCase));
     }
 
+
+    [Fact]
+    public virtual async Task ConnectionMetadataAsync_ShouldReuseOpenProviderConnection()
+    {
+        var metadata = Assert.IsAssignableFrom<IProviderConnectionMetadataReader>(ProviderStrategy);
+        await using var connection = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        var matches = await metadata.FindTablesAsync(
+            connection,
+            TestOrdersTableName,
+            TestContext.Current.CancellationToken);
+        var target = Assert.Single(
+            matches.Where(match =>
+                string.Equals(match.Table, TestOrdersTableName, StringComparison.OrdinalIgnoreCase)));
+
+        var columns = await metadata.GetColumnsAsync(
+            connection,
+            target.Schema,
+            target.Table,
+            TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(columns);
+        Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+    }
+
     [Fact]
     public virtual async Task GetColumnsAsync_ShouldReturnColumnTypes()
     {
