@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Admin.Service.Models;
+using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.SqlCore.Models;
 using Moq;
@@ -228,7 +229,9 @@ public class TypedQueryRuntimeTests
         return connection;
     }
 
-    private sealed class TestDbException(string message) : DbException(message);
+    private sealed class TestDbException(string message) : DbException(message)
+    {
+    }
 
     private static Mock<ISqlProvider> CreateProvider(SqlAgentToolType type)
     {
