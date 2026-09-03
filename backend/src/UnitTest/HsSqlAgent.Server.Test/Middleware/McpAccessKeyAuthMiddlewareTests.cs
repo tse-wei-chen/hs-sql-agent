@@ -29,7 +29,6 @@ public class McpAccessKeyAuthMiddlewareTests
     private readonly Mock<IMcpAccessKeyService> _keyServiceMock;
     private readonly Mock<IAuditService> _auditServiceMock;
     private readonly Mock<IMcpAccessKeyLastUsedQueue> _lastUsedQueueMock;
-    private readonly Mock<IDbManagementService> _dbManagementServiceMock;
     private readonly Mock<IDbSetterService> _dbSetterServiceMock;
     private readonly Mock<ICryptoService> _cryptoServiceMock;
     private readonly Mock<ICacheService> _cacheMock;
@@ -43,9 +42,11 @@ public class McpAccessKeyAuthMiddlewareTests
         _auditServiceMock = new Mock<IAuditService>();
         _lastUsedQueueMock = new Mock<IMcpAccessKeyLastUsedQueue>();
         _cacheMock = new Mock<ICacheService>();
-        _dbManagementServiceMock = new Mock<IDbManagementService>();
         _dbSetterServiceMock = new Mock<IDbSetterService>();
         _cryptoServiceMock = new Mock<ICryptoService>();
+        _cryptoServiceMock
+            .Setup(c => c.DecryptText("encrypted-password", It.IsAny<byte[]>()))
+            .Returns("decrypted");
         _settings = Options.Create(new McpKeySettings { HmacSecretKey = "test-secret-key-at-least-32-bytes-long!" });
         _loggerMock = new Mock<ILogger<McpAccessKeyAuthMiddleware>>();
 
@@ -54,7 +55,6 @@ public class McpAccessKeyAuthMiddlewareTests
             _auditServiceMock.Object,
             _lastUsedQueueMock.Object,
             _cacheMock.Object,
-            _dbManagementServiceMock.Object,
             _dbSetterServiceMock.Object,
             _cryptoServiceMock.Object,
             _settings,
@@ -126,6 +126,15 @@ public class McpAccessKeyAuthMiddlewareTests
             KeyId = 1,
             Name = "Test Key",
             DbManagementId = 10,
+            DatabaseConfiguration = new McpRuntimeDatabaseConfiguration
+            {
+                SqlProvider = "PostgreSQL",
+                Host = "localhost",
+                Port = "5432",
+                Database = "testdb",
+                Username = "admin",
+                PasswordHash = "encrypted-password"
+            },
             AllowedTools = "execute_query_sql,get_tables",
             CorsAllowedOrigins = "http://localhost:3000",
             TableWhitelist = "dbo.users,dbo.orders"
@@ -136,20 +145,15 @@ public class McpAccessKeyAuthMiddlewareTests
 
         _lastUsedQueueMock.Setup(q => q.TryEnqueue(1)).Returns(true);
 
-        var dbc = new DbManagementPwdVM
-        {
-            Id = 10,
-            Name = "TestDB",
-            SqlProvider = "PostgreSQL",
-            Host = "localhost",
-            Port = "5432",
-            Database = "testdb",
-            Username = "admin",
-            PasswordHash = "encrypted-password"
-        };
-        _dbManagementServiceMock.Setup(d => d.GetDbByIdAsync(10, true, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(dbc);
-        _dbSetterServiceMock.Setup(d => d.BuildDbConnectionAsync(It.IsAny<BuildDbConnectionModel>(), It.IsAny<CancellationToken>()))
+        _dbSetterServiceMock.Setup(d => d.BuildDbConnectionAsync(
+                It.Is<BuildDbConnectionModel>(model =>
+                    model.Provider == "PostgreSQL" &&
+                    model.Host == "localhost" &&
+                    model.Port == "5432" &&
+                    model.Database == "testdb" &&
+                    model.Username == "admin" &&
+                    model.Password == "decrypted"),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("Host=localhost;Port=5432;Database=testdb;Username=admin;Password=decrypted");
 
         var nextCalled = false;
@@ -248,7 +252,7 @@ public class McpAccessKeyAuthMiddlewareTests
     }
 
     [Fact]
-    public async Task InvokeAsync_ShouldReturn401_WhenCachedKeyWasRevoked()
+    public async Task InvokeAsync_ShouldReturn401_WhenValidationCacheContainsRevocationTombstone()
     {
         var context = new DefaultHttpContext();
         context.Request.Path = "/mcp";
@@ -259,28 +263,28 @@ public class McpAccessKeyAuthMiddlewareTests
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new McpAccessKeyValidationResult
             {
-                IsValid = true,
-                KeyId = 42
+                IsValid = false,
+                Reason = "Key revoked."
             });
-        _cacheMock.Setup(c => c.GetAsync<bool>(
-                McpAccessKeyCacheKeys.ForRevokedKeyId(42),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
 
         await _middleware.InvokeAsync(context, _ => Task.CompletedTask);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        _cacheMock.Verify(c => c.GetAsync<McpAccessKeyValidationResult>(
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _cacheMock.Verify(c => c.GetAsync<bool>(
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _keyServiceMock.Verify(
             k => k.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
     [Fact]
-    public async Task InvokeAsync_ShouldBypassCachedPermissions_WhenKeyWasChanged()
+    public async Task InvokeAsync_ShouldUseValidCachedIdentity_WithSingleCacheLookup()
     {
         var context = new DefaultHttpContext();
         context.Request.Path = "/mcp";
-        context.Request.Headers["X-MCP-Server-Key"] = "changed-key";
+        context.Request.Headers["X-MCP-Server-Key"] = "cached-key";
         context.Response.Body = new MemoryStream();
         _cacheMock.Setup(c => c.GetAsync<McpAccessKeyValidationResult>(
                 It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -290,25 +294,18 @@ public class McpAccessKeyAuthMiddlewareTests
                 KeyId = 42,
                 AllowedTools = "get_tables"
             });
-        _cacheMock.Setup(c => c.GetAsync<bool>(
-                McpAccessKeyCacheKeys.ForChangedKeyId(42),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-        _keyServiceMock.Setup(k => k.ValidateAsync("changed-key", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new McpAccessKeyValidationResult
-            {
-                IsValid = true,
-                KeyId = 42,
-                AllowedTools = "execute_query_sql"
-            });
         _lastUsedQueueMock.Setup(q => q.TryEnqueue(42)).Returns(true);
 
         await _middleware.InvokeAsync(context, _ => Task.CompletedTask);
 
-        Assert.Equal("execute_query_sql", context.Items[Common.Models.McpContextItemKeys.AllowedTools]);
+        Assert.Equal("get_tables", context.Items[Common.Models.McpContextItemKeys.AllowedTools]);
+        _cacheMock.Verify(c => c.GetAsync<McpAccessKeyValidationResult>(
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _cacheMock.Verify(c => c.GetAsync<bool>(
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _keyServiceMock.Verify(
-            k => k.ValidateAsync("changed-key", It.IsAny<CancellationToken>()),
-            Times.Once);
+            k => k.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
